@@ -93,6 +93,18 @@ def inv(v): # type: (Vocab) -> List[z3.ExprRef]
         z3.Forall(N, z3.Implies(v.unlock_msg(N), z3.Not(v.server_holds_lock)))
     ]
 
+def send_lock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
+    n = z3.Const('n', node)
+    return z3.Exists(n,
+                     z3.And(
+                         insert(v2.lock_msg, v1.lock_msg, n),
+                         unchanged(v2.grant_msg, v1.grant_msg),
+                         unchanged(v2.holds_lock, v1.holds_lock),
+                         unchanged(v2.unlock_msg, v1.unlock_msg),
+                         v2.server_holds_lock == v1.server_holds_lock
+                     )
+    )
+
 def recv_lock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
     n = z3.Const('n', node)
     return z3.Exists(n,
@@ -186,6 +198,7 @@ def main(): # type: () -> None
             raise Exception('no')
         print ' ok.'
 
+    check_transition(s, send_lock)
     check_transition(s, recv_lock)
     check_transition(s, recv_grant)
     check_transition(s, unlock)
