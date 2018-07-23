@@ -1,5 +1,6 @@
 check: mypyvy.py stubs/z3/__init__.pyi
-	MYPYPATH=./stubs mypy --py2 mypyvy.py
+	$(eval D := $(shell pwd))
+	cd; MYPYPATH=$(D)/stubs mypy --py2 $(D)/mypyvy.py
 
 run: check
 	python mypyvy.py
