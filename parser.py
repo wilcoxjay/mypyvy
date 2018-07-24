@@ -7,14 +7,17 @@ reserved = {
     'modifies': 'MODIFIES',
     'sort': 'SORT',
     'mutable': 'MUTABLE',
+    'immutable': 'IMMUTABLE',
     'relation': 'RELATION',
+    'constant': 'CONSTANT',
     'init': 'INIT',
     'transition': 'TRANSITION',
     'invariant': 'INVARIANT',
+    'axiom': 'AXIOM',
     'old': 'OLD',
     'modifies': 'MODIFIES',
-    'forall': 'FORALL'
-#    'exists': 'EXISTS'
+    'forall': 'FORALL',
+    'exists': 'EXISTS'
 }
 
 tokens = [
@@ -102,9 +105,9 @@ def p_decl_sort(p):
     'decl : SORT id'
     p[0] = ast.SortDecl(p[2])
 
-def p_decl_mut_opt(p):
-    '''mut_opt : MUTABLE
-               | empty'''
+def p_decl_mut(p):
+    '''mut : MUTABLE
+           | IMMUTABLE'''
     p[0] = p[1] == 'mutable'
 
 def p_arity_empty(p):
@@ -128,8 +131,16 @@ def p_sort(p):
     p[0] = ast.UninterpretedSort(p[1])
 
 def p_decl_relation(p):
-    'decl : mut_opt RELATION id LPAREN arity RPAREN'
+    'decl : mut RELATION id LPAREN arity RPAREN'
     p[0] = ast.RelationDecl(p[3], p[5], p[1])
+
+def p_decl_constant(p):
+    'decl : mut CONSTANT id COLON sort'
+    p[0] = ast.ConstantDecl(p[3], p[5], p[1])
+
+def p_decl_axiom(p):
+    'decl : AXIOM opt_name expr'
+    p[0] = ast.AxiomDecl(p[2] or p.slice[1], p[3])
 
 def p_decl_init(p):
     'decl : INIT opt_name expr'
@@ -150,6 +161,10 @@ def p_opt_name_some(p):
 def p_expr_forall(p):
     'expr : FORALL sortedvars DOT expr'
     p[0] = ast.QuantifierExpr('FORALL', p[2], p[4])
+
+def p_expr_exists(p):
+    'expr : EXISTS sortedvars DOT expr'
+    p[0] = ast.QuantifierExpr('EXISTS', p[2], p[4])
 
 def p_sortedvar(p):
     'sortedvar : id COLON sort'

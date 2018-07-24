@@ -29,7 +29,8 @@ class Expr(object):
     def resolve(self, scope): # type: (Scope) -> None
         raise Exception('Unexpected expression %s does not implement resolve method' % repr(self))
 
-    def to_z3(self, key, key_old=None, old=False): # type: (str, Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         raise Exception('Unexpected expression %s does not implement to_z3 method' % repr(self))
 
 UNOPS = set([
@@ -48,7 +49,7 @@ class UnaryExpr(Expr):
         assert op in UNOPS
         self.op = op
         self.arg = arg
-        self.z3 = {} # type: Dict[str, z3.ExprRef]
+        self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
 
     def resolve(self, scope): # type: (Scope) -> None
         self.arg.resolve(scope)
@@ -56,7 +57,8 @@ class UnaryExpr(Expr):
     def __repr__(self): # type: () -> str
         return 'UnaryExpr(%s, %s)' % (self.op, repr(self.arg))
 
-    def to_z3(self, key, key_old=None, old=False): # type: (str, Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         if key not in self.z3:
             if self.op == 'OLD':
                 assert not old and key_old is not None
@@ -90,7 +92,7 @@ class BinaryExpr(Expr):
         self.op = op
         self.arg1 = arg1
         self.arg2 = arg2
-        self.z3 = {} # type: Dict[str, z3.ExprRef]
+        self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
 
     def resolve(self, scope): # type: (Scope) -> None
         self.arg1.resolve(scope)
@@ -101,7 +103,8 @@ class BinaryExpr(Expr):
                                            repr(self.arg1),
                                            repr(self.arg2))
 
-    def to_z3(self, key, key_old=None, old=False): # type: (str, Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         if key not in self.z3:
             self.z3[key] = z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
 
@@ -112,7 +115,7 @@ class AppExpr(Expr):
         self.rel = rel
         self.args = args
         self.decl = None # type: Optional[RelationDecl]
-        self.z3 = {} # type: Dict[str, z3.ExprRef]
+        self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
 
     def resolve(self, scope): # type: (Scope) -> None
         x = scope.get(self.rel)
@@ -128,7 +131,8 @@ class AppExpr(Expr):
     def __repr__(self): # type: () -> str
         return 'AppExpr(%s, %s)' % (self.rel.value, self.args)
 
-    def to_z3(self, key, key_old=None, old=False): # type: (str, Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         assert self.decl is not None
 
         if key not in self.z3:
@@ -166,8 +170,8 @@ class QuantifierExpr(Expr):
         self.quant = quant
         self.vs = vs
         self.body = body
-        self.z3 = {} # type: Dict[str, z3.ExprRef]
-        self.binders = {} # type: Dict[Tuple[str, str], z3.ExprRef]
+        self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
+        self.binders = {} # type: Dict[str, z3.ExprRef]
 
     def resolve(self, scope): # type: (Scope) -> None
         for sv in self.vs:
@@ -179,13 +183,14 @@ class QuantifierExpr(Expr):
     def __repr__(self): # type: () -> str
         return 'QuantifierExpr(%s, %s, %s)' % (self.quant, self.vs, repr(self.body))
 
-    def to_z3(self, key, key_old=None, old=False): # type: (str, Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         if key not in self.z3:
             bs = []
             for sv in self.vs:
                 n = sv.name.value
-                self.binders[(key, n)] = z3.Const(n, sv.sort.to_z3())
-                bs.append(self.binders[(key, n)])
+                self.binders[n] = z3.Const(n, sv.sort.to_z3())
+                bs.append(self.binders[n])
 
             self.z3[key] = (z3.ForAll if self.quant == 'FORALL' else z3.Exists)(bs, self.body.to_z3(key, key_old, old))
 
@@ -207,17 +212,19 @@ class Id(Expr):
         return 'Id(%s, decl=%s)' % (self.name.value,
                                     id(self.decl) if self.decl is not None else 'None')
 
-    def to_z3(self, key, key_old=None, old=False): # type: (str, Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         assert self.decl is not None
 
         if isinstance(self.decl, QuantifierExpr) or \
            isinstance(self.decl, TransitionDecl):
-            return self.decl.binders[(key, self.name.value)]
-        elif isinstance(self.decl, RelationDecl):
+            return self.decl.binders[self.name.value]
+        elif isinstance(self.decl, RelationDecl) or \
+             isinstance(self.decl, ConstantDecl):
             if not old:
                 k = key
             else:
-                assert key_old is not None
+                assert not self.decl.mutable or key_old is not None
                 k = key_old
             x = self.decl.to_z3(k)
             assert isinstance(x, z3.ExprRef)
@@ -277,7 +284,8 @@ class RelationDecl(Decl):
         self.name = name
         self.arity = arity
         self.mutable = mutable
-        self.z3 = {} # type: Dict[str,Union[z3.FuncDeclRef, z3.ExprRef]]
+        self.mut_z3 = {} # type: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]]
+        self.immut_z3 = None # type: Optional[Union[z3.FuncDeclRef, z3.ExprRef]]
 
     def resolve(self, scope): # type: (Scope) -> None
         for sort in self.arity:
@@ -288,25 +296,57 @@ class RelationDecl(Decl):
     def __repr__(self): # type: () -> str
         return 'RelationDecl(%s, %s, mutable=%s)' % (self.name.value, self.arity, self.mutable)
 
-    def to_z3(self, key): # type: (str) -> Union[z3.FuncDeclRef, z3.ExprRef]
-        if key not in self.z3:
-            if len(self.arity) > 0:
-                a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
-                self.z3[key] = z3.Function(key + '_' + self.name.value, *a)
-            else:
-                self.z3[key] = z3.Const(key + '_' + self.name.value, z3.BoolSort())
+    def to_z3(self, key): # type: (Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]
+        if self.mutable:
+            assert key is not None
+            if key not in self.mut_z3:
+                if len(self.arity) > 0:
+                    a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
+                    self.mut_z3[key] = z3.Function(key + '_' + self.name.value, *a)
+                else:
+                    self.mut_z3[key] = z3.Const(key + '_' + self.name.value, z3.BoolSort())
 
-        return self.z3[key]
+            return self.mut_z3[key]
+        else:
+            if self.immut_z3 is None:
+                if len(self.arity) > 0:
+                    a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
+                    self.immut_z3 = z3.Function(self.name.value, *a)
+                else:
+                    self.immut_z3 = z3.Const(self.name.value, z3.BoolSort())
+
+            return self.immut_z3
 
 
-class ConstDecl(Decl):
-    def __init__(self, name, sort): # type: (Token, Sort) -> None
+class ConstantDecl(Decl):
+    def __init__(self, name, sort, mutable): # type: (Token, Sort, bool) -> None
         self.name = name
         self.sort = sort
+        self.mutable = mutable
+        self.mut_z3 = {} # type: Dict[str, z3.ExprRef]
+        self.immut_z3 = None # type: Optional[z3.ExprRef]
+
+
+    def __repr__(self): # type: () -> str
+        return 'ConstantDecl(%s, %s, mutable=%s)' % (self.name.value, self.sort, self.mutable)
 
     def resolve(self, scope): # type: (Scope) -> None
         self.sort.resolve(scope)
         scope.add_constant(self.name, self)
+
+    def to_z3(self, key): # type: (Optional[str]) -> z3.ExprRef
+        if self.mutable:
+            assert key is not None
+            if key not in self.mut_z3:
+                self.mut_z3[key] = z3.Const(key + '_' + self.name.value, self.sort.to_z3())
+
+            return self.mut_z3[key]
+        else:
+            if self.immut_z3 is None:
+                self.immut_z3 = z3.Const(self.name.value, self.sort.to_z3())
+
+            return self.immut_z3
+
 
 class InitDecl(Decl):
     def __init__(self, name, expr): # type: (Token, Expr) -> None
@@ -344,7 +384,7 @@ class TransitionDecl(Decl):
         self.expr = expr
         self.prog = None # type: Optional[Program]
         self.z3 = {} # type: Dict[str, z3.ExprRef]
-        self.binders = {} # type: Dict[Tuple[str, str], z3.ExprRef]
+        self.binders = {} # type: Dict[str, z3.ExprRef]
 
     def resolve(self, scope): # type: (Scope) -> None
         assert len(scope.stack) == 0
@@ -371,17 +411,15 @@ class TransitionDecl(Decl):
             bs = []
             for p in self.params:
                 n = p.name.value
-                self.binders[(key, n)] = z3.Const(key + '_' + n, p.sort.to_z3())
-                bs.append(self.binders[(key, n)])
+                self.binders[n] = z3.Const(n, p.sort.to_z3())
+                bs.append(self.binders[n])
 
             mods = []
             for d in self.prog.relations_and_constants():
-                assert isinstance(d, RelationDecl)
-
-                if any(mc.decl == d for mc in self.mods):
+                if not d.mutable or any(mc.decl == d for mc in self.mods):
                     continue
 
-                if len(d.arity) == 0:
+                if isinstance(d, ConstantDecl) or len(d.arity) == 0:
                     lhs = d.to_z3(key)
                     rhs = d.to_z3(key_old)
                     assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
@@ -421,14 +459,28 @@ class InvariantDecl(Decl):
                                           repr(self.expr))
 
 
-Binder = Union[RelationDecl, ConstDecl, TransitionDecl, QuantifierExpr]
+class AxiomDecl(Decl):
+    def __init__(self, name, expr): # type: (Token, Expr) -> None
+        self.name = name
+        self.expr = expr
+
+    def resolve(self, scope): # type: (Scope) -> None
+        self.expr.resolve(scope)
+        # TODO: check that no mutable relations are mentioned
+
+    def __repr__(self): # type: () -> str
+        return 'AxiomDecl(%s, %s)' % (self.name.value if self.name is not None else 'None',
+                                      repr(self.expr))
+
+
+Binder = Union[RelationDecl, ConstantDecl, TransitionDecl, QuantifierExpr]
 
 class Scope:
     def __init__(self, prog): # type: (Program) -> None
         self.stack = [] # type: List[Tuple[List[SortedVar], Binder]]
         self.sorts = {} # type: Dict[str, SortDecl]
         self.relations = {} # type: Dict[str, RelationDecl]
-        self.constants = {} # type: Dict[str, ConstDecl]
+        self.constants = {} # type: Dict[str, ConstantDecl]
         self.prog = prog
 
     def push(self, vs, binder): # type: (List[SortedVar], Binder) -> None
@@ -447,7 +499,7 @@ class Scope:
         # otherwise, check for constants/relations (whose domains are disjoint)
         return self.constants.get(name.value) or self.relations.get(name.value)
 
-    def add_constant(self, constant, decl): # type: (Token, ConstDecl) -> None
+    def add_constant(self, constant, decl): # type: (Token, ConstantDecl) -> None
         assert len(self.stack) == 0
 
         if constant.value in self.constants:
@@ -509,17 +561,23 @@ class Program(object):
             if isinstance(d, TransitionDecl):
                 yield d
 
-    def relations_and_constants(self): # type: () -> Iterator[Union[RelationDecl, ConstDecl]]
+    def axioms(self): # type: () -> Iterator[AxiomDecl]
         for d in self.decls:
-            if isinstance(d, RelationDecl) or \
-               isinstance(d, ConstDecl):
+            if isinstance(d, AxiomDecl):
                 yield d
 
-    def inits_transitions_and_invs(self): # type: () -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl]]
+    def relations_and_constants(self): # type: () -> Iterator[Union[RelationDecl, ConstantDecl]]
+        for d in self.decls:
+            if isinstance(d, RelationDecl) or \
+               isinstance(d, ConstantDecl):
+                yield d
+
+    def decls_containing_exprs(self): # type: () -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl]]
         for d in self.decls:
             if isinstance(d, InitDecl) or \
                isinstance(d, TransitionDecl) or \
-               isinstance(d, InvariantDecl):
+               isinstance(d, InvariantDecl) or \
+               isinstance(d, AxiomDecl):
                 yield d
 
     def resolve(self): # type: () -> None
@@ -531,8 +589,8 @@ class Program(object):
         for rc in self.relations_and_constants():
             rc.resolve(scope)
 
-        for iti in self.inits_transitions_and_invs():
-            iti.resolve(scope)
+        for d in self.decls_containing_exprs():
+            d.resolve(scope)
 
 
     def __repr__(self): # type: () -> str
