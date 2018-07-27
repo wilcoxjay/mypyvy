@@ -5,4 +5,8 @@ check: mypyvy.py stubs/z3/__init__.pyi
 run: check
 	python mypyvy.py
 
-.PHONY: check run
+test: check
+	time python mypyvy.py lockserv.pyv
+	time python mypyvy.py consensus.pyv
+
+.PHONY: check run test
