@@ -158,17 +158,22 @@ def p_opt_name_some(p):
     'opt_name : LBRACKET id RBRACKET'
     p[0] = p[2]
 
-def p_expr_forall(p):
-    'expr : FORALL sortedvars DOT expr'
-    p[0] = ast.QuantifierExpr('FORALL', p[2], p[4])
+def p_quant(p):
+    '''quant : FORALL
+             | EXISTS'''
+    p[0] = p.slice[1]
 
-def p_expr_exists(p):
-    'expr : EXISTS sortedvars DOT expr'
-    p[0] = ast.QuantifierExpr('EXISTS', p[2], p[4])
+def p_expr_quantifier(p):
+    'expr : quant sortedvars DOT expr'
+    p[0] = ast.QuantifierExpr(p[1], p[2], p[4])
 
 def p_sortedvar(p):
     'sortedvar : id COLON sort'
     p[0] = ast.SortedVar(p[1], p[3])
+
+def p_sortedvar_nosort(p):
+    'sortedvar : id'
+    p[0] = ast.SortedVar(p[1], None)
 
 def p_sortedvars0_one(p):
     'sortedvars0 : sortedvars'
@@ -188,7 +193,7 @@ def p_sortedvars_more(p):
 
 def p_expr_not(p):
     'expr : BANG expr'
-    p[0] = ast.UnaryExpr('NOT', p[2])
+    p[0] = ast.UnaryExpr(p.slice[1], 'NOT', p[2])
 
 def p_expr_app(p):
     'expr : id LPAREN args RPAREN'
@@ -196,32 +201,32 @@ def p_expr_app(p):
 
 def p_expr_and(p):
     'expr : expr AMPERSAND expr'
-    p[0] = ast.BinaryExpr('AND', p[1], p[3])
+    p[0] = ast.BinaryExpr(p.slice[2], 'AND', p[1], p[3])
 
 def p_expr_or(p):
     'expr : expr PIPE expr'
-    p[0] = ast.BinaryExpr('OR', p[1], p[3])
+    p[0] = ast.BinaryExpr(p.slice[2], 'OR', p[1], p[3])
 
 def p_expr_iff(p):
     'expr : expr IFF expr'
-    p[0] = ast.BinaryExpr('IFF', p[1], p[3])
+    p[0] = ast.BinaryExpr(p.slice[2], 'IFF', p[1], p[3])
     
 def p_expr_implies(p):
     'expr : expr IMPLIES expr'
-    p[0] = ast.BinaryExpr('IMPLIES', p[1], p[3])
+    p[0] = ast.BinaryExpr(p.slice[2], 'IMPLIES', p[1], p[3])
 
 def p_expr_eq(p):
     'expr : expr EQUAL expr'
-    p[0] = ast.BinaryExpr('EQUAL', p[1], p[3])
+    p[0] = ast.BinaryExpr(p.slice[2], 'EQUAL', p[1], p[3])
 
 def p_expr_noteq(p):
     'expr : expr NOTEQ expr'
-    p[0] = ast.BinaryExpr('NOTEQ', p[1], p[3])
+    p[0] = ast.BinaryExpr(p.slice[2], 'NOTEQ', p[1], p[3])
 
 
 def p_expr_old(p):
     'expr : OLD LPAREN expr RPAREN'
-    p[0] = ast.UnaryExpr('OLD', p[3])
+    p[0] = ast.UnaryExpr(p.slice[1], 'OLD', p[3])
 
 def p_args_empty(p):
     'args : empty'

@@ -7,50 +7,50 @@ mutable relation holds_lock(node)
 mutable relation server_holds_lock()
 
 init
-  forall N:node.
+  forall N.
     !lock_msg(N) & !grant_msg(N) &
     !unlock_msg(N) & !holds_lock(N) &
     !server_holds_lock
 
 transition send_lock(n: node)
   modifies lock_msg
-  forall N:node. lock_msg(N) <-> old(lock_msg(N)) | N = n
+  forall N. lock_msg(N) <-> old(lock_msg(N)) | N = n
 
 transition recv_lock(n: node)
   modifies lock_msg, server_holds_lock, grant_msg
   old(lock_msg(n)) &
   old(server_holds_lock) &
   !server_holds_lock &
-  (forall N:node. lock_msg(N) <-> old(lock_msg(N)) & N != n) &
-  (forall N:node. grant_msg(N) <-> old(grant_msg(N)) | N = n)
+  (forall N. lock_msg(N) <-> old(lock_msg(N)) & N != n) &
+  (forall N. grant_msg(N) <-> old(grant_msg(N)) | N = n)
 
 transition recv_grant(n: node)
   modifies grant_msg, holds_lock
   old(grant_msg(n)) &
-  (forall N:node. grant_msg(N) <-> old(grant_msg(N)) & N != n) &
-  (forall N:node. holds_lock(N) <-> old(holds_lock(N)) | N = n)
+  (forall N. grant_msg(N) <-> old(grant_msg(N)) & N != n) &
+  (forall N. holds_lock(N) <-> old(holds_lock(N)) | N = n)
 
 transition unlock(n: node)
   modifies holds_lock, unlock_msg
   old(holds_lock(n)) &
-  (forall N:node. holds_lock(N) <-> old(holds_lock(N)) & N != n) &
-  (forall N:node. unlock_msg(N) <-> old(unlock_msg(N)) | N = n)
+  (forall N. holds_lock(N) <-> old(holds_lock(N)) & N != n) &
+  (forall N. unlock_msg(N) <-> old(unlock_msg(N)) | N = n)
 
 transition recv_unlock(n: node)
   modifies unlock_msg, server_holds_lock
   old(unlock_msg(n)) &
-  (forall N:node. unlock_msg(N) <-> old(unlock_msg(N)) & N != n) &
+  (forall N. unlock_msg(N) <-> old(unlock_msg(N)) & N != n) &
   server_holds_lock
 
-invariant [mutex] forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
-invariant forall N1:node, N2:node. grant_msg(N1) & grant_msg(N2) -> N1 = N2
-invariant forall N1:node, N2:node. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+invariant [mutex] forall N1, N2. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+invariant forall N1, N2. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+invariant forall N1, N2. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
 
-invariant forall N1:node, N2:node. !(holds_lock(N1) & grant_msg(N2))
-invariant forall N1:node, N2:node. !(holds_lock(N1) & unlock_msg(N2))
-invariant forall N1:node, N2:node. !(grant_msg(N1) & unlock_msg(N2))
+invariant forall N1, N2. !(holds_lock(N1) & grant_msg(N2))
+invariant forall N1, N2. !(holds_lock(N1) & unlock_msg(N2))
+invariant forall N1, N2. !(grant_msg(N1) & unlock_msg(N2))
 
-invariant forall N:node. !(grant_msg(N) & server_holds_lock)
-invariant forall N:node. !(holds_lock(N) & server_holds_lock)
-invariant forall N:node. !(unlock_msg(N) & server_holds_lock)
+invariant forall N. !(grant_msg(N) & server_holds_lock)
+invariant forall N. !(holds_lock(N) & server_holds_lock)
+invariant forall N. !(unlock_msg(N) & server_holds_lock)
 

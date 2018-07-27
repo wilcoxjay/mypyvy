@@ -4,6 +4,7 @@ import ply.yacc
 
 import z3
 from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any
+from typing_extensions import Protocol
 from contextlib import contextmanager
 
 Token = ply.lex.LexToken
@@ -21,12 +22,18 @@ class Sort(object):
     def to_z3(self): # type: () -> z3.SortRef
         raise Exception('Unexpected sort %s does not implement to_z3 method' % repr(self))
 
+    def __eq__(self, other): # type: (object) -> bool
+        raise Exception('Unexpected sort %s does not implement __eq__ method' % repr(self))
+
+    def __ne__(self, other): # type: (object) -> bool
+        raise Exception('Unexpected sort %s does not implement __ne__ method' % repr(self))
+
 
 class Expr(object):
     def __repr__(self): # type: () -> str
         raise Exception('Unexpected expr does not implement __repr__ method')
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope, sort): # type: (Scope, Optional[InferenceSort]) -> InferenceSort
         raise Exception('Unexpected expression %s does not implement resolve method' % repr(self))
 
     def to_z3(self, key=None, key_old=None, old=False):
@@ -43,16 +50,40 @@ z3_UNOPS = {
 } # type: Any
 # Dict[str, Callable[[z3.ExprRef], z3.ExprRef]]
 
+def check_constraint(tok, expected, actual):
+    # type: (Token, Optional[InferenceSort], InferenceSort) -> None
+    if expected is None:
+        pass
+    elif isinstance(expected, Sort):
+        if isinstance(actual, Sort):
+            if expected != actual:
+                error(tok, 'expected sort %s but got %s' % (expected, actual))
+        else:
+            actual.solve(expected)
+    else:
+        if isinstance(actual, Sort):
+            expected.solve(actual)
+        else:
+            expected.merge(actual)
+
+
 
 class UnaryExpr(Expr):
-    def __init__(self, op, arg): # type: (str, Expr) -> None
+    def __init__(self, tok, op, arg): # type: (Token, str, Expr) -> None
         assert op in UNOPS
+        self.tok = tok
         self.op = op
         self.arg = arg
         self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
 
-    def resolve(self, scope): # type: (Scope) -> None
-        self.arg.resolve(scope)
+    def resolve(self, scope, sort): # type: (Scope, Optional[InferenceSort]) -> InferenceSort
+        if self.op == 'OLD':
+            return self.arg.resolve(scope, sort)
+        else:
+            assert self.op == 'NOT'
+            check_constraint(self.tok, sort, BoolSort)
+            self.arg.resolve(scope, BoolSort)
+            return BoolSort
 
     def __repr__(self): # type: () -> str
         return 'UnaryExpr(%s, %s)' % (self.op, repr(self.arg))
@@ -87,16 +118,27 @@ z3_BINOPS = {
 } # type: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]]
 
 class BinaryExpr(Expr):
-    def __init__(self, op, arg1, arg2): # type: (str, Expr, Expr) -> None
+    def __init__(self, tok, op, arg1, arg2): # type: (Token, str, Expr, Expr) -> None
         assert op in BINOPS
+        self.tok = tok
         self.op = op
         self.arg1 = arg1
         self.arg2 = arg2
         self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
 
-    def resolve(self, scope): # type: (Scope) -> None
-        self.arg1.resolve(scope)
-        self.arg2.resolve(scope)
+    def resolve(self, scope, sort): # type: (Scope, Optional[InferenceSort]) -> InferenceSort
+        check_constraint(self.tok, sort, BoolSort)
+
+        if self.op in ['AND', 'OR', 'IMPLIES', 'IFF']:
+            self.arg1.resolve(scope, BoolSort)
+            self.arg2.resolve(scope, BoolSort)
+        else:
+            assert self.op in ['EQUAL', 'NOTEQ']
+            s = self.arg1.resolve(scope, None)
+            self.arg2.resolve(scope, s)
+
+        return BoolSort
+
 
     def __repr__(self): # type: () -> str
         return 'BinaryExpr(%s, %s, %s)' % (self.op,
@@ -117,7 +159,7 @@ class AppExpr(Expr):
         self.decl = None # type: Optional[RelationDecl]
         self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope, sort): # type: (Scope, Optional[InferenceSort]) -> InferenceSort
         x = scope.get(self.rel)
         assert isinstance(x, RelationDecl)
         self.decl = x
@@ -125,8 +167,12 @@ class AppExpr(Expr):
         if self.decl is None:
             error(self.rel, 'Unresolved relation name %s' % self.rel.value)
 
-        for arg in self.args:
-            arg.resolve(scope)
+        check_constraint(self.rel, sort, BoolSort)
+
+        for (arg, s) in zip(self.args, self.decl.arity):
+            arg.resolve(scope, s)
+
+        return BoolSort
 
     def __repr__(self): # type: () -> str
         return 'AppExpr(%s, %s)' % (self.rel.value, self.args)
@@ -153,35 +199,67 @@ class SortedVar(object):
         self.sort = sort
 
     def resolve(self, scope): # type: (Scope) -> None
+        if self.sort is None:
+            error(self.name, 'type annotation required for variable %s' % (self.name.value,))
+
         self.sort.resolve(scope)
 
     def __repr__(self): # type: () -> str
         return 'SortedVar(%s, %s)' % (self.name.value, repr(self.sort))
 
 
-QUANTS = set([
-    'FORALL',
-    'EXISTS'
-])
+class HasSortField(Protocol):
+    sort = None # type: InferenceSort
+
+class SortInferencePlaceholder(object):
+    def __init__(self, d=None):
+        self.backpatches = [] # type: List[HasSortField]
+        if d is not None:
+            self.add(d)
+
+    def add(self, d): # type: (HasSortField) -> None
+        self.backpatches.append(d)
+
+    def solve(self, sort): # type: (Sort) -> None
+        for d in self.backpatches:
+            d.sort = sort
+
+    def merge(self, other): # type: (SortInferencePlaceholder) -> None
+        for d in other.backpatches:
+            assert d.sort is other
+            d.sort = self
+            self.backpatches.append(d)
+
+InferenceSort = Union[Sort, SortInferencePlaceholder]
 
 class QuantifierExpr(Expr):
-    def __init__(self, quant, vs, body): # type: (str, List[SortedVar], Expr) -> None
-        assert quant in QUANTS
+    def __init__(self, quant, vs, body): # type: (Token, List[SortedVar], Expr) -> None
         self.quant = quant
         self.vs = vs
         self.body = body
         self.z3 = {} # type: Dict[Optional[str], z3.ExprRef]
         self.binders = {} # type: Dict[str, z3.ExprRef]
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope, sort): # type: (Scope, Optional[InferenceSort]) -> InferenceSort
+        check_constraint(self.quant, sort, BoolSort)
+
         for sv in self.vs:
-            sv.resolve(scope)
+            if sv.sort is None:
+                sv.sort = SortInferencePlaceholder(sv)
+            else:
+                sv.sort.resolve(scope)
 
         with scope.in_scope(self.vs, self):
-            self.body.resolve(scope)
+            self.body.resolve(scope, BoolSort)
+
+        for sv in self.vs:
+            if isinstance(sv.sort, SortInferencePlaceholder):
+                error(sv.name, 'Could not infer sort for variable %s' % (sv.name.value,))
+
+        return BoolSort
 
     def __repr__(self): # type: () -> str
-        return 'QuantifierExpr(%s, %s, %s)' % (self.quant, self.vs, repr(self.body))
+        return 'QuantifierExpr(%s, %s, %s)' % (self.quant.type, self.vs, repr(self.body))
 
     def to_z3(self, key=None, key_old=None, old=False):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
@@ -192,7 +270,7 @@ class QuantifierExpr(Expr):
                 self.binders[n] = z3.Const(n, sv.sort.to_z3())
                 bs.append(self.binders[n])
 
-            self.z3[key] = (z3.ForAll if self.quant == 'FORALL' else z3.Exists)(bs, self.body.to_z3(key, key_old, old))
+            self.z3[key] = (z3.ForAll if self.quant.type == 'FORALL' else z3.Exists)(bs, self.body.to_z3(key, key_old, old))
 
         return self.z3[key]
 
@@ -203,10 +281,32 @@ class Id(Expr):
         self.name = name
         self.decl = None # type: Optional[Binder]
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope, sort): # type: (Scope, Optional[InferenceSort]) -> InferenceSort
         self.decl = scope.get(self.name)
         if self.decl is None:
             error(self.name, 'Unresolved variable %s' % (self.name.value,))
+
+        if isinstance(self.decl, QuantifierExpr):
+            for sv in self.decl.vs:
+                if sv.name.value == self.name.value:
+                    check_constraint(self.name, sort, sv.sort)
+                    return sv.sort
+            assert False
+        elif isinstance(self.decl, TransitionDecl):
+            for p in self.decl.params:
+                if p.name.value == self.name.value:
+                    check_constraint(self.name, sort, p.sort)
+                    return p.sort
+            assert False
+        elif isinstance(self.decl, RelationDecl):
+            check_constraint(self.name, sort, BoolSort)
+            return BoolSort
+        elif isinstance(self.decl, ConstantDecl):
+            check_constraint(self.name, sort, self.decl.sort)
+            return self.decl.sort
+        else:
+            assert False
+
 
     def __repr__(self): # type: () -> str
         return 'Id(%s, decl=%s)' % (self.name.value,
@@ -252,11 +352,32 @@ class UninterpretedSort(Sort):
 
         return self.decl.to_z3()
 
+    def __eq__(self, other): # type: (object) -> bool
+        return isinstance(other, UninterpretedSort) and \
+            other.name.value == self.name.value
 
-# class BoolSort(Sort):
-#     def resolve(self, scope):
-#         pass
+    def __ne__(self, other): # type: (object) -> bool
+        return not (self == other)
 
+
+class _BoolSort(Sort):
+    def __repr__(self): # type: () -> str
+        return 'bool'
+
+    def resolve(self, scope): # type: (Scope) -> None
+        pass
+
+    def to_z3(self): # type: () -> z3.SortRef
+        return z3.BoolSort()
+
+    def __eq__(self, other): # type: (object) -> bool
+        return isinstance(other, _BoolSort)
+
+    def __ne__(self, other): # type: (object) -> bool
+        return not (self == other)
+
+
+BoolSort = _BoolSort()
 
 class Decl(object):
     def __repr__(self): # type: () -> str
@@ -354,7 +475,7 @@ class InitDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope): # type: (Scope) -> None
-        self.expr.resolve(scope)
+        self.expr.resolve(scope, BoolSort)
 
     def __repr__(self): # type: () -> str
         return 'InitDecl(%s, %s)' % (self.name.value if self.name is not None else 'None',
@@ -398,7 +519,7 @@ class TransitionDecl(Decl):
             mod.resolve(scope)
 
         with scope.in_scope(self.params, self):
-            self.expr.resolve(scope)
+            self.expr.resolve(scope, BoolSort)
 
     def __repr__(self): # type: () -> str
         return 'TransitionDecl(%s, %s, %s, %s)' % (self.name.value, self.params,
@@ -452,7 +573,7 @@ class InvariantDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope): # type: (Scope) -> None
-        self.expr.resolve(scope)
+        self.expr.resolve(scope, BoolSort)
 
     def __repr__(self): # type: () -> str
         return 'InvariantDecl(%s, %s)' % (self.name.value if self.name is not None else 'None',
@@ -465,7 +586,7 @@ class AxiomDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope): # type: (Scope) -> None
-        self.expr.resolve(scope)
+        self.expr.resolve(scope, BoolSort)
         # TODO: check that no mutable relations are mentioned
 
     def __repr__(self): # type: () -> str
