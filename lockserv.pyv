@@ -43,14 +43,14 @@ transition recv_unlock(n: node)
   server_holds_lock
 
 invariant [mutex] forall N1, N2. holds_lock(N1) & holds_lock(N2) -> N1 = N2
-invariant forall N1, N2. grant_msg(N1) & grant_msg(N2) -> N1 = N2
-invariant forall N1, N2. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
-
-invariant forall N1, N2. !(holds_lock(N1) & grant_msg(N2))
-invariant forall N1, N2. !(holds_lock(N1) & unlock_msg(N2))
-invariant forall N1, N2. !(grant_msg(N1) & unlock_msg(N2))
-
-invariant forall N. !(grant_msg(N) & server_holds_lock)
-invariant forall N. !(holds_lock(N) & server_holds_lock)
-invariant forall N. !(unlock_msg(N) & server_holds_lock)
+# invariant forall N1, N2. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+# invariant forall N1, N2. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+# 
+# invariant forall N1, N2. !(holds_lock(N1) & grant_msg(N2))
+# invariant forall N1, N2. !(holds_lock(N1) & unlock_msg(N2))
+# invariant forall N1, N2. !(grant_msg(N1) & unlock_msg(N2))
+# 
+# invariant forall N. !(grant_msg(N) & server_holds_lock)
+# invariant forall N. !(holds_lock(N) & server_holds_lock)
+# invariant forall N. !(unlock_msg(N) & server_holds_lock)
 
