@@ -4,6 +4,8 @@ class LexToken:
     lineno: int
     value: str
     type: str
+    filename: str
+    col: int
 
 class Lexer: ...
 
