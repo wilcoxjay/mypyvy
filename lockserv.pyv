@@ -6,11 +6,11 @@ mutable relation unlock_msg(node)
 mutable relation holds_lock(node)
 mutable relation server_holds_lock()
 
-init
-  forall N.
-    !lock_msg(N) & !grant_msg(N) &
-    !unlock_msg(N) & !holds_lock(N) &
-    !server_holds_lock
+init forall N. !lock_msg(N)
+init forall N. !grant_msg(N)
+init forall N. !unlock_msg(N)
+init forall N. !holds_lock(N)
+init server_holds_lock
 
 transition send_lock(n: node)
   modifies lock_msg

@@ -1,6 +1,7 @@
 import z3
 import sys
-from typing import List, Any, Optional, Callable, Set, Tuple
+from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable
+import copy
 
 z3.Forall = z3.ForAll # type: ignore
 
@@ -101,7 +102,7 @@ def check_transitions(s, prog): # type: (z3.Solver, ast.Program) -> None
                         check_unsat(s, prog)
 
 def check_implication(s, hyps, concs):
-    # type: (z3.Solver, Set[ast.Expr], Set[ast.Expr]) -> Optional[z3.ModelRef]
+    # type: (z3.Solver, Iterable[ast.Expr], Iterable[ast.Expr]) -> Optional[z3.ModelRef]
     with s:
         for e in hyps:
             s.add(e.to_z3('one'))
@@ -115,18 +116,84 @@ def check_implication(s, hyps, concs):
 
     return None
 
-def safe_resolve(e, scope, sort):
+def safe_resolve(e, scope, sort): # type: (ast.Expr, ast.Scope, ast.InferenceSort) -> None
     try:
         e.resolve(scope, sort)
     except Exception as exn:
         print 'internal error: tried to construct unresolvable intermediate expression'
         print e
         print exn
-        raise e
+        raise exn
+
+class Diagram(object):
+    # This class represents a formula of the form
+    #
+    #     exists X1, ..., X_k.
+    #         C1 & C2 & ... & C_n
+    #
+    # in a way that is slightly more convenient than a usual ast for computing an
+    # unsat core of the C_i.  Instead of just an ast, this class stores a list of
+    # vars and a list of conjuncts.  In order to make resolution work seamlessly,
+    # it also constructs an internal ast of the formula, which structurally shares
+    # all the conjuncts from the list.  This ast is ignored except for purposes
+    # of resolving all the C_i.
+
+    def __init__(self, vs, conjuncts): # type: (List[ast.SortedVar], List[ast.Expr]) -> None
+        self.vs = vs
+        self.conjuncts = conjuncts
+        self.q = ast.QuantifierExpr(None, 'EXISTS', vs, ast.And(*self.conjuncts))
+        self.trackers = [] # type: List[z3.ExprRef]
+
+    def __str__(self): # type: () -> str
+        return 'exists %s.\n  %s' % (
+            ', '.join(v.name for v in self.vs),
+            ' &\n  '.join(str(c) for c in self.conjuncts)
+        )
+
+    def resolve(self, scope): # type: (ast.Scope) -> None
+        safe_resolve(self.q, scope, ast.BoolSort)
+
+    def to_z3(self, key): # type: (str) -> z3.ExprRef
+        bs = []
+        for sv in self.vs:
+            n = sv.name
+            assert sv.sort is not None and not isinstance(sv.sort, ast.SortInferencePlaceholder)
+            self.q.binders[n] = z3.Const(n, sv.sort.to_z3())
+            bs.append(self.q.binders[n])
+
+        z3conjs = []
+        self.trackers = []
+        for i, c in enumerate(self.conjuncts):
+            p = z3.Bool('p%d' % i)
+            self.trackers.append(p)
+            z3conjs.append(p == c.to_z3(key))
+
+        return z3.Exists(bs, z3.And(*z3conjs))
+
+    def minimize_from_core(self, core): # type: (Set[int]) -> ast.Expr
+        '''return a minimized diagram (in expression form)
+        that has been minimized using the given unsat core
+
+        the returned expression is in an inconsistent resolution state
+        and should be immediately re-resolved.
+
+        self becomes essentially invalid after calling this method,
+        due to sharing between self and the returned expression.
+        '''
+
+        assert len(core) > 0
+
+        cs = [self.conjuncts[i] for i in core]
+        vs = [v for v in self.vs if any(c.contains_var(v.name) for c in cs)]
+
+        if len(vs) == 0:
+            return ast.And(*cs)
+        else:
+            return ast.QuantifierExpr(None, 'EXISTS', vs, ast.And(*cs))
 
 
 def diagram_from_model(prog, m, key):
-    # type: (ast.Program, z3.ModelRef, str) -> ast.Expr
+    # type: (ast.Program, z3.ModelRef, str) -> Diagram
 
     assert prog.scope is not None
 
@@ -180,36 +247,53 @@ def diagram_from_model(prog, m, key):
                     conjs.append(e)
 
     vs = [ast.SortedVar(None, v, ast.UninterpretedSort(None, s)) for v, s in l]
-    q = ast.QuantifierExpr(None, 'EXISTS', vs, ast.And(*conjs))
 
-    safe_resolve(q, prog.scope, None)
+    diag = Diagram(vs, conjs)
 
-    return q
+    diag.resolve(prog.scope)
+
+    return diag
 
 def find_predecessor(s, prog, pre_frames, diag):
-    # type: (z3.Solver, ast.Program, Set[ast.Expr], ast.Expr) -> Optional[Tuple[ast.TransitionDecl, ast.Expr]]
+    # type: (z3.Solver, ast.Program, Set[ast.Expr], Diagram) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[ast.TransitionDecl, Diagram]]]
 
+    core = set() # type: Set[int]
     with s:
         for f in pre_frames:
             s.add(f.to_z3('old'))
+
         s.add(diag.to_z3('new'))
 
         for t in prog.transitions():
             print 'checking %s' % t.name
             with s:
                 s.add(t.to_z3('new', 'old'))
-                res = s.check()
+                res = s.check(*diag.trackers)
 
                 if res != z3.unsat:
                     print 'found predecessor via %s' % t.name
                     m = s.model()
                     print m
-                    return (t, diagram_from_model(prog, m, 'old'))
-    return None
+                    return (res, (t, diagram_from_model(prog, m, 'old')))
+                else:
+                    uc = s.unsat_core()
+                    print 'uc'
+                    print uc
+
+                    res = s.check(*[diag.trackers[i] for i in core])
+                    if res == z3.unsat:
+                        print 'but existing core sufficient, skipping'
+                        continue
+
+                    for x in uc:
+                        assert isinstance(x, z3.ExprRef)
+                        core.add(int(x.decl().name()[1:]))
+
+    return (z3.unsat, core)
 
 
 def block(s, prog, fs, diag, j, trace):
-    # type: (z3.Solver, ast.Program, List[Set[ast.Expr]], ast.Expr, int, List[Tuple[ast.TransitionDecl, ast.Expr]]) -> None
+    # type: (z3.Solver, ast.Program, List[Set[ast.Expr]], Diagram, int, List[Tuple[ast.TransitionDecl, Diagram]]) -> None
     if j == 0: # or (j == 1 and sat(init and diag)
         print trace
         raise Exception('abstract counterexample')
@@ -219,20 +303,82 @@ def block(s, prog, fs, diag, j, trace):
         print 'blocking diagram in frame %s' % j
         print diag
 
-        print fs[j-1]
-        x = find_predecessor(s, prog, fs[j-1], diag)
-        if x is None:
+        print 'frame %d is' % (j-1)
+        print '\n'.join(str(x) for x in fs[j-1])
+        res, x = find_predecessor(s, prog, fs[j-1], diag)
+        if res == z3.unsat:
             print 'no predecessor: blocked!'
+            assert isinstance(x, set)
+            core = x # type: Set[int]
             break
+        assert isinstance(x, tuple), (res, x)
         trans, pre_diag = x
 
         trace.append(x)
         block(s, prog, fs, pre_diag, j-1, trace)
         trace.pop()
 
-    for i in range(j+1):
-        fs[i].add(ast.Not(diag))
+    print 'core'
+    print core
 
+    # TODO: now use core
+
+    print 'unminimized diag'
+    print diag
+
+    e = ast.Not(diag.minimize_from_core(core))
+    assert prog.scope is not None
+    e.resolve(prog.scope, ast.BoolSort)
+
+    print 'minimized negated clause'
+    print e
+
+    for i in range(j+1):
+        fs[i].add(e)
+
+def check_inductive_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> Optional[Set[ast.Expr]]
+    for i in range(len(fs) - 1):
+        if check_implication(s, fs[i+1], fs[i]) is None:
+            return fs[i+1]
+    return None
+
+
+
+def push_forward_frames(s, prog, fs): # type: (z3.Solver, ast.Program, List[Set[ast.Expr]]) -> None
+    for i, f in enumerate(fs[:-1]):
+        print 'pushing in frame %d' % i
+        with s:
+            for c in f:
+                s.add(c.to_z3('old'))
+
+            for c in f:
+                with s:
+                    s.add(z3.Not(c.to_z3('new')))
+
+                    preserved = True
+
+                    for t in prog.transitions():
+                        with s:
+                            s.add(t.to_z3('new', 'old'))
+
+                            if s.check() != z3.unsat:
+                                preserved = False
+                                break
+
+                    if preserved:
+                        print 'managed to push %s' % c
+                        fs[i+1].add(c)
+
+
+def simplify_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> None
+    for i, f in enumerate(fs):
+        print 'simplifying frame %d' % i
+        to_consider = copy.copy(f)
+        while to_consider:
+            c = to_consider.pop()
+            if check_implication(s, f - {c}, {c}) is None:
+                print 'removed %s' % c
+                f.remove(c)
 
 def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
     assert prog.scope is not None
@@ -245,15 +391,28 @@ def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
     fs.append(set([ast.Bool(None, True)]))
 
     while True:
-        print 'considering frame %s' % len(fs)
-
-        if fs[-1] <= fs[-2]:
-            return fs[-1]
+        print 'considering frame %s' % (len(fs) - 1,)
 
         m = check_implication(s, fs[-1], safety)
         if m is None:
-            print 'frame is safe, starting new frame'
+            f = check_inductive_frames(s, fs)
+            if f is not None:
+                print 'frame is safe and inductive. done!'
+                print '\n'.join(str(x) for x in f)
+                return f
+
+
+            print 'frame is safe but not inductive. starting new frame'
             fs.append(set([ast.Bool(None, True)]))
+
+            push_forward_frames(s, prog, fs)
+            simplify_frames(s, fs)
+
+            for i, f in enumerate(fs):
+                print 'frame %d is' % i
+                print '\n'.join(str(x) for x in f)
+                print ''
+
         else:
             print 'frame is not safe'
             print m
@@ -288,14 +447,14 @@ def main(): # type: () -> None
 
     prog.resolve()
 
-    print repr(prog)
-    print prog
+#    print repr(prog)
+#    print prog
 
-#     s = z3.Solver()
-#     for a in prog.axioms():
-#         s.add(a.expr.to_z3())
-# 
-#     updr(s, prog)
+    s = z3.Solver()
+    for a in prog.axioms():
+        s.add(a.expr.to_z3())
+
+    updr(s, prog)
     # check_init(s, prog)
     # check_transitions(s, prog)
     # 
