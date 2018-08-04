@@ -31,7 +31,7 @@ transition become_leader(n: node)
 
 
 invariant [one_leader] forall N1, N2. leader(N1) & leader(N2) -> N1 = N2
-invariant forall N1, N2. votes(N1, N2) -> vote_msg(N2, N1)
-invariant forall V, L1, L2. vote_msg(V, L1) & vote_msg(V, L2) -> L1 = L2
-invariant forall L, N. leader(L) & member(N, voting_quorum) -> votes(L, N)
+# invariant forall N1, N2. votes(N1, N2) -> vote_msg(N2, N1)
+# invariant forall V, L1, L2. vote_msg(V, L1) & vote_msg(V, L2) -> L1 = L2
+# invariant forall L, N. leader(L) & member(N, voting_quorum) -> votes(L, N)
 

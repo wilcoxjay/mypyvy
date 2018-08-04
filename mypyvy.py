@@ -2,6 +2,10 @@ import z3
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable
 import copy
+import datetime
+import logging
+
+logging.basicConfig(level=logging.WARNING)
 
 z3.Forall = z3.ForAll # type: ignore
 
@@ -116,6 +120,24 @@ def check_implication(s, hyps, concs):
 
     return None
 
+def check_two_state_implication_all_transitions(s, prog, old_hyps, new_conc):
+    # type: (z3.Solver, ast.Program, Iterable[ast.Expr], ast.Expr) -> Optional[z3.ModelRef]
+    with s:
+        for h in old_hyps:
+            s.add(h.to_z3('old'))
+
+        s.add(z3.Not(new_conc.to_z3('new')))
+
+        for t in prog.transitions():
+            with s:
+                s.add(t.to_z3('new', 'old'))
+
+                if s.check() != z3.unsat:
+                    return s.model()
+
+    return None
+
+
 def safe_resolve(e, scope, sort): # type: (ast.Expr, ast.Scope, ast.InferenceSort) -> None
     try:
         e.resolve(scope, sort)
@@ -168,28 +190,42 @@ class Diagram(object):
             self.trackers.append(p)
             z3conjs.append(p == c.to_z3(key))
 
-        return z3.Exists(bs, z3.And(*z3conjs))
+        if len(bs) > 0:
+            return z3.Exists(bs, z3.And(*z3conjs))
+        else:
+            return z3.And(*z3conjs)
 
-    def minimize_from_core(self, core): # type: (Set[int]) -> ast.Expr
-        '''return a minimized diagram (in expression form)
-        that has been minimized using the given unsat core
+    def to_ast(self): # type: () -> ast.Expr
+        if len(self.conjuncts) == 0:
+            return ast.Bool(None, True)
+        elif len(self.vs) == 0:
+            return self.q.body
+        else:
+            return self.q
 
-        the returned expression is in an inconsistent resolution state
-        and should be immediately re-resolved.
+    def _reinit(self): # type: () -> None
+        self.q.vs = self.vs
+        self.q.body = ast.And(*self.conjuncts)
+        self.q.binders = {}
 
-        self becomes essentially invalid after calling this method,
-        due to sharing between self and the returned expression.
-        '''
-
+    def minimize_from_core(self, core): # type: (Set[int]) -> None
         assert len(core) > 0
 
-        cs = [self.conjuncts[i] for i in core]
-        vs = [v for v in self.vs if any(c.contains_var(v.name) for c in cs)]
+        self.conjuncts = [self.conjuncts[i] for i in core]
+        self.prune_unused_vars()
 
-        if len(vs) == 0:
-            return ast.And(*cs)
-        else:
-            return ast.QuantifierExpr(None, 'EXISTS', vs, ast.And(*cs))
+    def remove_clause(self, i): # type: (int) -> ast.Expr
+        c = self.conjuncts.pop(i)
+        self._reinit()
+        return c
+
+    def add_clause(self, i, c): # type: (int, ast.Expr) -> None
+        self.conjuncts.insert(i, c)
+        self._reinit()
+
+    def prune_unused_vars(self): # type: () -> None
+        self.vs = [v for v in self.vs if any(c.contains_var(v.name) for c in self.conjuncts)]
+        self._reinit()
 
 
 def diagram_from_model(prog, m, key):
@@ -223,14 +259,14 @@ def diagram_from_model(prog, m, key):
 
     for z3decl in m.decls():
         if str(z3decl).startswith(key):
-            decl = prog.scope.get(str(z3decl)[len(key)+1:])
-            assert not isinstance(decl, ast.QuantifierExpr)
-            if decl is not None:
-                assert isinstance(decl, ast.RelationDecl) # TODO: remove
+            name = str(z3decl)[len(key)+1:]
+        else:
+            name = str(z3decl)
 
-                # print z3decl
-                # print decl
-
+        decl = prog.scope.get(name)
+        assert not isinstance(decl, ast.QuantifierExpr)
+        if decl is not None:
+            if isinstance(decl, ast.RelationDecl):
                 if len(decl.arity) > 0:
                     for row in product([univs[z3decl.domain(i)] for i in range(z3decl.arity())]):
                         ans = m.eval(z3decl(*[d[col] for col in row]))
@@ -245,6 +281,12 @@ def diagram_from_model(prog, m, key):
                     e = const if ans else ast.Not(const)
 
                     conjs.append(e)
+            else:
+                assert isinstance(decl, ast.ConstantDecl)
+
+                v = m.eval(z3decl()).decl().name()
+                e = ast.Eq(ast.Id(None, decl.name), ast.Id(None, v.replace('!val!', '')))
+                conjs.append(e)
 
     vs = [ast.SortedVar(None, v, ast.UninterpretedSort(None, s)) for v, s in l]
 
@@ -253,6 +295,25 @@ def diagram_from_model(prog, m, key):
     diag.resolve(prog.scope)
 
     return diag
+
+def generalize_diag(s, prog, diag, f):
+    # type: (z3.Solver, ast.Program, Diagram, Set[ast.Expr]) -> None
+    logging.info('generalizing diagram')
+    logging.info(str(diag))
+
+    i = 0
+    while i < len(diag.conjuncts):
+        c = diag.remove_clause(i)
+        if check_two_state_implication_all_transitions(s, prog, f, ast.Not(diag.to_ast())) is not None:
+            diag.add_clause(i, c)
+            i += 1
+        else:
+            logging.info('eliminated clause %s' % c)
+
+    diag.prune_unused_vars()
+
+    logging.info('generalized diag')
+    logging.info(str(diag))
 
 def find_predecessor(s, prog, pre_frames, diag):
     # type: (z3.Solver, ast.Program, Set[ast.Expr], Diagram) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[ast.TransitionDecl, Diagram]]]
@@ -265,24 +326,24 @@ def find_predecessor(s, prog, pre_frames, diag):
         s.add(diag.to_z3('new'))
 
         for t in prog.transitions():
-            print 'checking %s' % t.name
+            logging.info('checking %s' % t.name)
             with s:
                 s.add(t.to_z3('new', 'old'))
                 res = s.check(*diag.trackers)
 
                 if res != z3.unsat:
-                    print 'found predecessor via %s' % t.name
+                    logging.info('found predecessor via %s' % t.name)
                     m = s.model()
-                    print m
+                    logging.info(str(m))
                     return (res, (t, diagram_from_model(prog, m, 'old')))
                 else:
                     uc = s.unsat_core()
-                    print 'uc'
-                    print uc
+                    logging.info('uc')
+                    logging.info(str(uc))
 
                     res = s.check(*[diag.trackers[i] for i in core])
                     if res == z3.unsat:
-                        print 'but existing core sufficient, skipping'
+                        logging.info('but existing core sufficient, skipping')
                         continue
 
                     for x in uc:
@@ -292,22 +353,27 @@ def find_predecessor(s, prog, pre_frames, diag):
     return (z3.unsat, core)
 
 
-def block(s, prog, fs, diag, j, trace):
-    # type: (z3.Solver, ast.Program, List[Set[ast.Expr]], Diagram, int, List[Tuple[ast.TransitionDecl, Diagram]]) -> None
+def block(s, prog, fs, diag, j, trace, safety_goal=True):
+    # type: (z3.Solver, ast.Program, List[Set[ast.Expr]], Diagram, int, List[Tuple[ast.TransitionDecl, Diagram]], bool) -> bool
     if j == 0: # or (j == 1 and sat(init and diag)
-        print trace
-        raise Exception('abstract counterexample')
+        if safety_goal:
+            print trace
+            raise Exception('abstract counterexample')
+        else:
+            logging.info('failed to block diagram')
+            logging.info(str(diag))
+            return False
 
     # print fs
     while True:
-        print 'blocking diagram in frame %s' % j
-        print diag
+        logging.info('blocking diagram in frame %s' % j)
+        logging.info(str(diag))
 
-        print 'frame %d is' % (j-1)
-        print '\n'.join(str(x) for x in fs[j-1])
+        logging.info('frame %d is' % (j-1))
+        logging.info('\n'.join(str(x) for x in fs[j-1]))
         res, x = find_predecessor(s, prog, fs[j-1], diag)
         if res == z3.unsat:
-            print 'no predecessor: blocked!'
+            logging.info('no predecessor: blocked!')
             assert isinstance(x, set)
             core = x # type: Set[int]
             break
@@ -315,26 +381,31 @@ def block(s, prog, fs, diag, j, trace):
         trans, pre_diag = x
 
         trace.append(x)
-        block(s, prog, fs, pre_diag, j-1, trace)
+        if not block(s, prog, fs, pre_diag, j-1, trace, safety_goal):
+            return False
         trace.pop()
 
-    print 'core'
-    print core
+    logging.info('core')
+    logging.info(str(core))
 
     # TODO: now use core
 
-    print 'unminimized diag'
-    print diag
+    logging.info('unminimized diag')
+    logging.info(str(diag))
 
-    e = ast.Not(diag.minimize_from_core(core))
-    assert prog.scope is not None
-    e.resolve(prog.scope, ast.BoolSort)
+    diag.minimize_from_core(core)
 
-    print 'minimized negated clause'
-    print e
+    generalize_diag(s, prog, diag, fs[j-1])
+
+    e = ast.Not(diag.to_ast())
+
+    logging.info('minimized negated clause')
+    logging.info(str(e))
 
     for i in range(j+1):
         fs[i].add(e)
+
+    return True
 
 def check_inductive_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> Optional[Set[ast.Expr]]
     for i in range(len(fs) - 1):
@@ -346,38 +417,26 @@ def check_inductive_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> O
 
 def push_forward_frames(s, prog, fs): # type: (z3.Solver, ast.Program, List[Set[ast.Expr]]) -> None
     for i, f in enumerate(fs[:-1]):
-        print 'pushing in frame %d' % i
-        with s:
-            for c in f:
-                s.add(c.to_z3('old'))
+        logging.info('pushing in frame %d' % i)
 
-            for c in f:
-                with s:
-                    s.add(z3.Not(c.to_z3('new')))
-
-                    preserved = True
-
-                    for t in prog.transitions():
-                        with s:
-                            s.add(t.to_z3('new', 'old'))
-
-                            if s.check() != z3.unsat:
-                                preserved = False
-                                break
-
-                    if preserved:
-                        print 'managed to push %s' % c
-                        fs[i+1].add(c)
+        for c in copy.copy(f):
+            m = check_two_state_implication_all_transitions(s, prog, f, c)
+            if m is None:
+                logging.info('managed to push %s' % c)
+                fs[i+1].add(c)
+            else:
+                diag = diagram_from_model(prog, m, 'old')
+                block(s, prog, fs, diag, i, [], False)
 
 
 def simplify_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> None
     for i, f in enumerate(fs):
-        print 'simplifying frame %d' % i
+        logging.info('simplifying frame %d' % i)
         to_consider = copy.copy(f)
         while to_consider:
             c = to_consider.pop()
             if check_implication(s, f - {c}, {c}) is None:
-                print 'removed %s' % c
+                logging.info('removed %s' % c)
                 f.remove(c)
 
 def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
@@ -409,13 +468,13 @@ def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
             simplify_frames(s, fs)
 
             for i, f in enumerate(fs):
-                print 'frame %d is' % i
-                print '\n'.join(str(x) for x in f)
-                print ''
+                logging.info('frame %d is' % i)
+                logging.info('\n'.join(str(x) for x in f))
+                logging.info('')
 
         else:
             print 'frame is not safe'
-            print m
+            logging.info(str(m))
             d = diagram_from_model(prog, m, 'one')
 
             block(s, prog, fs, d, len(fs)-1, [])
@@ -436,6 +495,13 @@ def debug_tokens(filename):
             break      # No more input
         print(tok)
 
+def verify(s, prog): # type: (z3.Solver, ast.Program) -> None
+    check_init(s, prog)
+    check_transitions(s, prog)
+    
+    print 'all ok!'
+
+
 def main(): # type: () -> None
     if len(sys.argv) != 2:
         print 'Expected exactly one argument(filename)'
@@ -455,10 +521,7 @@ def main(): # type: () -> None
         s.add(a.expr.to_z3())
 
     updr(s, prog)
-    # check_init(s, prog)
-    # check_transitions(s, prog)
-    # 
-    # print 'all ok!'
+    # verify(s, prog)
 
 if __name__ == '__main__':
     main()

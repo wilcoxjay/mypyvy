@@ -308,12 +308,17 @@ class BinaryExpr(Expr):
 
 
 def And(*args): # type: (*Expr) -> Expr
-    assert len(args) > 0
+    if len(args) == 0:
+        return Bool(None, True)
+
     ans = args[0]
     for e in args[1:]:
         ans = BinaryExpr(None, 'AND', ans, e)
 
     return ans
+
+def Eq(arg1, arg2): # type: (Expr, Expr) -> Expr
+    return BinaryExpr(None, 'EQUAL', arg1, arg2)
 
 def Neq(arg1, arg2): # type: (Expr, Expr) -> Expr
     return BinaryExpr(None, 'NOTEQ', arg1, arg2)
