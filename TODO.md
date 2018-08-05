@@ -1,0 +1,5 @@
+- check epr graph
+- switch to POD representation of expressions -- i hate oop
+- inductive generalization
+- model minimization?
+- phase automata
