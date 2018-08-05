@@ -1,0 +1,5 @@
+*.pyc
+.mypy_cache/
+.z3-trace
+parser.out
+parsetab.py
