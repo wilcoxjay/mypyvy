@@ -662,7 +662,7 @@ class Decl(object):
 
 
 class SortDecl(Decl):
-    def __init__(self, tok, name): # type: (Token, str) -> None
+    def __init__(self, tok, name): # type: (Optional[Token], str) -> None
         self.tok = tok
         self.name = name
         self.z3 = None # type: Optional[z3.SortRef]
@@ -683,7 +683,7 @@ class SortDecl(Decl):
         return self.z3
 
 class RelationDecl(Decl):
-    def __init__(self, tok, name, arity, mutable): # type: (Token, str, Arity, bool) -> None
+    def __init__(self, tok, name, arity, mutable): # type: (Optional[Token], str, Arity, bool) -> None
         self.tok = tok
         self.name = name
         self.arity = arity
@@ -728,7 +728,7 @@ class RelationDecl(Decl):
 
 
 class ConstantDecl(Decl):
-    def __init__(self, tok, name, sort, mutable): # type: (Token, str, Sort, bool) -> None
+    def __init__(self, tok, name, sort, mutable): # type: (Optional[Token], str, Sort, bool) -> None
         self.tok = tok
         self.name = name
         self.sort = sort
@@ -772,7 +772,7 @@ def close_free_vars(expr, in_scope=[]): # type: (Expr, List[str]) -> Expr
         return QuantifierExpr(None, 'FORALL', [SortedVar(None, v, None) for v in vs], expr)
 
 class InitDecl(Decl):
-    def __init__(self, tok, name, expr): # type: (Token, Optional[str], Expr) -> None
+    def __init__(self, tok, name, expr): # type: (Optional[Token], Optional[str], Expr) -> None
         self.tok = tok
         self.name = name
         self.expr = expr
@@ -791,7 +791,7 @@ class InitDecl(Decl):
                               self.expr)
 
 class ModifiesClause(object):
-    def __init__(self, tok, name): # type: (Token, str) -> None
+    def __init__(self, tok, name): # type: (Optional[Token], str) -> None
         self.tok = tok
         self.name = name
         self.decl = None # type: Optional[Binder]
@@ -810,7 +810,7 @@ class ModifiesClause(object):
 
 class TransitionDecl(Decl):
     def __init__(self, tok, name, params, mods, expr):
-        # type: (Token, str, List[SortedVar], List[ModifiesClause], Expr) -> None
+        # type: (Optional[Token], str, List[SortedVar], List[ModifiesClause], Expr) -> None
         self.tok = tok
         self.name = name
         self.params = params
@@ -890,7 +890,7 @@ class TransitionDecl(Decl):
         return z3.Exists(bs, z3.And(self.expr.to_z3(key, key_old), *mods))
 
 class InvariantDecl(Decl):
-    def __init__(self, tok, name, expr): # type: (Token, Optional[str], Expr) -> None
+    def __init__(self, tok, name, expr): # type: (Optional[Token], Optional[str], Expr) -> None
         self.tok = tok
         self.name = name
         self.expr = expr
@@ -909,7 +909,7 @@ class InvariantDecl(Decl):
 
 
 class AxiomDecl(Decl):
-    def __init__(self, tok, name, expr): # type: (Token, Optional[str], Expr) -> None
+    def __init__(self, tok, name, expr): # type: (Optional[Token], Optional[str], Expr) -> None
         self.tok = tok
         self.name = name
         self.expr = expr

@@ -87,7 +87,8 @@ def check_init(s, prog): # type: (z3.Solver, ast.Program) -> None
                 s.add(z3.Not(inv.expr.to_z3('one')))
 
                 print '  implies invariant %s...' % \
-                    (inv.name if inv.name is not None else 'on line %s' % inv.tok.lineno,),
+                    (inv.name if inv.name is not None else 'on line %s' % inv.tok.lineno \
+                     if inv.tok is not None else '',),
 
                 check_unsat(s, prog, 'one')
 
@@ -107,7 +108,8 @@ def check_transitions(s, prog): # type: (z3.Solver, ast.Program) -> None
                         s.add(z3.Not(inv.expr.to_z3('new')))
 
                         print '  preserves invariant %s...' % \
-                            (inv.name if inv.name is not None else 'on line %s' % inv.tok.lineno,),
+                            (inv.name if inv.name is not None else 'on line %s' % inv.tok.lineno \
+                             if inv.tok is not None else '',),
                         sys.stdout.flush()
 
                         check_unsat(s, prog, 'new', 'old')
