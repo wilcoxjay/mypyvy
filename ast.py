@@ -33,11 +33,19 @@ class Sort(object):
     def to_z3(self): # type: () -> z3.SortRef
         raise Exception('Unexpected sort %s does not implement to_z3 method' % repr(self))
 
+    def _denote(self): # type: () -> object
+        raise Exception('Unexpected sort %s does not implement _denote method' % repr(self))
+
+    def __hash__(self): # type: () -> int
+        return hash(self._denote())
+
     def __eq__(self, other): # type: (object) -> bool
-        raise Exception('Unexpected sort %s does not implement __eq__ method' % repr(self))
+        if not isinstance(other, Sort):
+            return False
+        return self._denote() == other._denote()
 
     def __ne__(self, other): # type: (object) -> bool
-        raise Exception('Unexpected sort %s does not implement __ne__ method' % repr(self))
+        return not (self == other)
 
 
 
@@ -82,11 +90,19 @@ class Expr(object):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         raise Exception('Unexpected expression %s does not implement to_z3 method' % repr(self))
 
+    def _denote(self): # type: () -> object
+        raise Exception('Unexpected expr %s does not implement _denote method' % repr(self))
+
+    def __hash__(self): # type: () -> int
+        return hash(self._denote())
+
     def __eq__(self, other): # type: (object) -> bool
-        raise Exception('Unexpected expr %s does not implement __eq__ method' % repr(self))
+        if not isinstance(other, Expr):
+            return False
+        return self._denote() == other._denote()
 
     def __ne__(self, other): # type: (object) -> bool
-        raise Exception('Unexpected expr %s does not implement __ne__ method' % repr(self))
+        return not (self == other)
 
     def pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
         needs_parens = not no_parens(self.prec(), prec, side)
@@ -116,8 +132,11 @@ class Bool(Expr):
         self.tok = tok
         self.val = val
 
-    def __repr__(self):
+    def __repr__(self): # type: () -> str
         return 'true' if self.val else 'false'
+
+    def _denote(self): # type: () -> object
+        return self.val
 
     def prec(self): # type: () -> int
         return PREC_BOT
@@ -133,12 +152,6 @@ class Bool(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
 
         return z3.BoolVal(self.val)
-
-    def __eq__(self, other): # type: (object) -> bool
-        return isinstance(other, Bool) and other.val == self.val
-
-    def __ne__(self, other): # type: (object) -> bool
-        return not (self == other)
 
     def free_ids(self): # type: () -> Set[str]
         return set()
@@ -185,6 +198,9 @@ class UnaryExpr(Expr):
             check_constraint(self.tok, sort, BoolSort)
             self.arg.resolve(scope, BoolSort)
             return BoolSort
+
+    def _denote(self): # type: () -> object
+        return (UnaryExpr, self.op, self.arg)
 
     def __repr__(self): # type: () -> str
         return 'UnaryExpr(%s, %s)' % (self.op, repr(self.arg))
@@ -260,6 +276,9 @@ class BinaryExpr(Expr):
 
         return BoolSort
 
+
+    def _denote(self): # type: () -> object
+        return (BinaryExpr, self.op, self.arg1, self.arg2)
 
     def __repr__(self): # type: () -> str
         return 'BinaryExpr(%s, %s, %s)' % (self.op,
@@ -338,7 +357,7 @@ class AppExpr(Expr):
         self.decl = None # type: Optional[RelationDecl]
 
     def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
-        d = scope.get(self.rel)
+        d, _ = scope.get(self.rel)
         if d is None:
             error(self.tok, 'Unresolved relation name %s' % self.rel)
 
@@ -351,6 +370,10 @@ class AppExpr(Expr):
             arg.resolve(scope, s)
 
         return BoolSort
+
+    def _denote(self): # type: () -> object
+        assert self.decl is not None
+        return (AppExpr, self.decl, tuple(self.args))
 
     def __repr__(self): # type: () -> str
         return 'AppExpr(%s, %s)' % (self.rel, self.args)
@@ -465,6 +488,9 @@ class QuantifierExpr(Expr):
     def __repr__(self): # type: () -> str
         return 'QuantifierExpr@%s(%s, %s, %s)' % (id(self), self.quant, self.vs, repr(self.body))
 
+    def _denote(self): # type: () -> object
+        return (QuantifierExpr, self.quant, self.body)
+
     def prec(self): # type: () -> int
         return PREC_QUANT
 
@@ -504,19 +530,26 @@ class Id(Expr):
         self.tok = tok
         self.name = name
         self.decl = None # type: Optional[Binder]
+        self.index = None # type: Optional[Tuple[int, int]]
 
     def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
-        self.decl = scope.get(self.name)
+        self.decl, x = scope.get(self.name)
         if self.decl is None:
             error(self.tok, 'Unresolved variable %s' % (self.name,))
 
         if isinstance(self.decl, QuantifierExpr):
+            assert x is not None
+            self.index = x
+
             for sv in self.decl.vs:
                 if sv.name == self.name:
                     check_constraint(self.tok, sort, sv.sort)
                     return sv.sort
             assert False
         elif isinstance(self.decl, TransitionDecl):
+            assert x is not None
+            self.index = x
+
             for p in self.decl.params:
                 if p.name == self.name:
                     check_constraint(self.tok, sort, p.sort)
@@ -531,6 +564,15 @@ class Id(Expr):
         else:
             assert False
 
+
+    def _denote(self): # type: () -> object
+        if self.index is not None:
+            return (Id, self.index)
+        else:
+            assert self.decl is not None
+            assert isinstance(self.decl, RelationDecl) or \
+                isinstance(self.decl, ConstantDecl)
+            return (Id, self.decl)
 
     def __repr__(self): # type: () -> str
         return 'Id(%s, decl=%s)' % (self.name,
@@ -589,13 +631,8 @@ class UninterpretedSort(Sort):
 
         return self.decl.to_z3()
 
-    def __eq__(self, other): # type: (object) -> bool
-        return isinstance(other, UninterpretedSort) and \
-            other.name == self.name
-
-    def __ne__(self, other): # type: (object) -> bool
-        return not (self == other)
-
+    def _denote(self): # type: () -> object
+        return (UninterpretedSort, self.name)
 
 class _BoolSort(Sort):
     def __repr__(self): # type: () -> str
@@ -610,12 +647,8 @@ class _BoolSort(Sort):
     def to_z3(self): # type: () -> z3.SortRef
         return z3.BoolSort()
 
-    def __eq__(self, other): # type: (object) -> bool
-        return isinstance(other, _BoolSort)
-
-    def __ne__(self, other): # type: (object) -> bool
-        return not (self == other)
-
+    def _denote(self): # type: () -> object
+        return _BoolSort
 
 BoolSort = _BoolSort()
 
@@ -763,7 +796,7 @@ class ModifiesClause(object):
         self.decl = None # type: Optional[Binder]
 
     def resolve(self, scope): # type: (Scope) -> None
-        self.decl = scope.get(self.name)
+        self.decl, _ = scope.get(self.name)
 
         if self.decl is None:
             error(self.tok, 'Unresolved constant or relation %s' % (self.name,))
@@ -912,15 +945,16 @@ class Scope:
     def pop(self): # type: () -> None
         self.stack.pop()
 
-    def get(self, name): # type: (str) -> Optional[Binder]
+    def get(self, name): # type: (str) -> Tuple[Optional[Binder], Optional[Tuple[int, int]]]
         # first, check for bound variables in scope
-        for (vs, binder) in reversed(self.stack):
-            for v in vs:
+        for i, (vs, binder) in enumerate(reversed(self.stack)):
+            for j, v in enumerate(vs):
                 if v.name == name:
-                    return binder
+                    return (binder, (i, j))
 
         # otherwise, check for constants/relations (whose domains are disjoint)
-        return self.constants.get(name) or self.relations.get(name)
+        d = self.constants.get(name) or self.relations.get(name)
+        return (d, None)
 
     def add_constant(self, tok, constant, decl): # type: (Optional[Token], str, ConstantDecl) -> None
         assert len(self.stack) == 0

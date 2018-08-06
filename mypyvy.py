@@ -302,8 +302,9 @@ class Model(object):
                 C = self.const_interps
 
 
-            decl = self.prog.scope.get(name)
-            assert not isinstance(decl, ast.QuantifierExpr)
+            decl, _ = self.prog.scope.get(name)
+            assert not isinstance(decl, ast.QuantifierExpr) and \
+                not isinstance(decl, ast.TransitionDecl)
             if decl is not None:
                 if isinstance(decl, ast.RelationDecl):
                     if len(decl.arity) > 0:
