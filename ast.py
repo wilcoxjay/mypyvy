@@ -3,15 +3,21 @@ import ply.lex
 import ply.yacc
 
 import z3
-from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn
-from typing_extensions import Protocol
+from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn, Set
+import sys
+try:
+    from typing_extensions import Protocol
+except Exception:
+    Protocol = object # type: ignore
+
 from contextlib import contextmanager
 
 Token = ply.lex.LexToken
 
 def error(tok, msg): # type: (Optional[Token], str) -> NoReturn
     raise Exception('%s: %s' %
-                    ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col) if tok is not None else 'None', msg))
+                    ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
+                     if tok is not None else 'None', msg))
 
 class Sort(object):
     def __repr__(self): # type: () -> str
@@ -100,7 +106,7 @@ class Expr(object):
     def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
-    def contains_var(self, name): # type: (str) -> bool
+    def free_vars(self): # type: () -> Set[str]
         raise Exception('Unexpected expr %s does not implement contains_var method' % repr(self))
 
 
@@ -133,8 +139,8 @@ class Bool(Expr):
     def __ne__(self, other): # type: (object) -> bool
         return not (self == other)
 
-    def contains_var(self, name): # type: (str) -> bool
-        return False
+    def free_vars(self): # type: () -> Set[str]
+        return set()
 
 UNOPS = set([
     'NOT',
@@ -209,8 +215,8 @@ class UnaryExpr(Expr):
         else:
             return z3_UNOPS[self.op](self.arg.to_z3(key, key_old, old))
 
-    def contains_var(self, name): # type: (str) -> bool
-        return self.arg.contains_var(name)
+    def free_vars(self): # type: () -> Set[str]
+        return self.arg.free_vars()
 
 def Not(e): # type: (Expr) -> Expr
     return UnaryExpr(None, 'NOT', e)
@@ -303,8 +309,8 @@ class BinaryExpr(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         return z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
 
-    def contains_var(self, name): # type: (str) -> bool
-        return self.arg1.contains_var(name) or self.arg2.contains_var(name)
+    def free_vars(self): # type: () -> Set[str]
+        return self.arg1.free_vars() | self.arg2.free_vars()
 
 
 def And(*args): # type: (*Expr) -> Expr
@@ -375,8 +381,9 @@ class AppExpr(Expr):
         assert isinstance(R, z3.FuncDeclRef)
         return R(*(arg.to_z3(key, key_old, old) for arg in self.args))
 
-    def contains_var(self, name): # type: (str) -> bool
-        return any(arg.contains_var(name) for arg in self.args)
+    def free_vars(self): # type: () -> Set[str]
+        ans = set() # type: Set[str]
+        return ans.union(*[arg.free_vars() for arg in self.args])
 
 class SortedVar(object):
     def __init__(self, tok, name, sort): # type: (Optional[Token], str, Optional[Sort]) -> None
@@ -487,8 +494,8 @@ class QuantifierExpr(Expr):
 
         return q(bs, self.body.to_z3(key, key_old, old))
 
-    def contains_var(self, name): # type: (str) -> bool
-        return not any(v.name == name for v in self.vs) and self.body.contains_var(name)
+    def free_vars(self): # type: () -> Set[str]
+        return self.body.free_vars() - set([v.name for v in self.vs])
 
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a variable)'''
@@ -554,16 +561,14 @@ class Id(Expr):
 
         raise Exception('Unsupported binding declaration %s' % repr(self.decl))
 
-    def contains_var(self, name): # type: (str) -> bool
+    def free_vars(self): # type: () -> Set[str]
         assert self.decl is not None
 
-        return (
-            not isinstance(self.decl, RelationDecl) and
-            not isinstance(self.decl, ConstantDecl) and
-            self.name == name
-        )
-
-
+        if isinstance(self.decl, RelationDecl) or \
+           isinstance(self.decl, ConstantDecl):
+            return set()
+        else:
+            return set([self.name])
 
 Arity = List[Sort]
 
