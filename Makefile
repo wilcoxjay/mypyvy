@@ -1,6 +1,6 @@
 check: mypyvy.py stubs/z3/__init__.pyi
 	$(eval D := $(shell pwd))
-	cd; MYPYPATH=$(D)/stubs mypy --py2 $(D)/mypyvy.py
+	cd; MYPYPATH=$(D)/stubs mypy --py2 --disallow-untyped-defs $(D)/mypyvy.py
 
 run: check
 	python mypyvy.py
