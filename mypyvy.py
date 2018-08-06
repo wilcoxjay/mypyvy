@@ -4,8 +4,9 @@ from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, D
 import copy
 import datetime
 import logging
+import argparse
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 
 z3.Forall = z3.ForAll # type: ignore
 
@@ -497,12 +498,23 @@ def simplify_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> None
                 logging.debug('removed %s' % c)
                 f.remove(c)
 
-def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
+def updr(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) -> Set[ast.Expr]
     assert prog.scope is not None
 
     check_init(s, prog)
 
-    safety = set([inv.expr for inv in prog.invs()]) # type: Set[ast.Expr]
+    if args.safety is not None:
+        the_inv = None # type: Optional[ast.InvariantDecl]
+        for inv in prog.invs():
+            if inv.name == args.safety:
+                the_inv = inv
+        if the_inv is None:
+            raise Exception('No safety invariant named %s' % args.safety)
+        safety = set([the_inv.expr]) # type: Set[ast.Expr]
+    else:
+        safety = set([inv.expr for inv in prog.invs()])
+
+
 
     fs = [set(init.expr for init in prog.inits())] # type: List[Set[ast.Expr]]
     fs.append(set([ast.Bool(None, True)]))
@@ -514,8 +526,8 @@ def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
         if m is None:
             f = check_inductive_frames(s, fs)
             if f is not None:
-                logging.info('frame is safe and inductive. done!')
-                logging.info('\n'.join(str(x) for x in f))
+                print 'frame is safe and inductive. done!'
+                print '\n'.join(str(x) for x in f)
                 return f
 
 
@@ -539,10 +551,6 @@ def updr(s, prog): # type: (z3.Solver, ast.Program) -> Set[ast.Expr]
 
         # find_predecessor(s, prog, fs[-2], d)
 
-
-
-
-
 def debug_tokens(filename):
     with open(filename) as f:
         parser.lexer.input(f.read())
@@ -553,21 +561,33 @@ def debug_tokens(filename):
             break      # No more input
         print(tok)
 
-def verify(s, prog): # type: (z3.Solver, ast.Program) -> None
+def verify(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) -> None
     check_init(s, prog)
     check_transitions(s, prog)
     
     print 'all ok!'
 
+def parse_args(): # type: () -> argparse.Namespace
+    argparser = argparse.ArgumentParser()
+    subparsers = argparser.add_subparsers()
+
+    verify_subparser = subparsers.add_parser('verify')
+    verify_subparser.set_defaults(main=verify)
+
+    updr_subparser = subparsers.add_parser('updr')
+    updr_subparser.add_argument('--safety')
+    updr_subparser.set_defaults(main=updr)
+
+
+    argparser.add_argument('filename')
+
+    return argparser.parse_args()
 
 def main(): # type: () -> None
-    if len(sys.argv) != 2:
-        print 'Expected exactly one argument(filename)'
-        sys.exit(1)
+    args = parse_args()
 
-    filename = sys.argv[1]
-    with open(filename) as f:
-        prog = parser.parser.parse(f.read(), None, False, False, None, filename=filename)
+    with open(args.filename) as f:
+        prog = parser.parser.parse(f.read(), None, False, False, None, filename=args.filename)
 
     prog.resolve()
 
@@ -575,8 +595,7 @@ def main(): # type: () -> None
     for a in prog.axioms():
         s.add(a.expr.to_z3())
 
-    updr(s, prog)
-    # verify(s, prog)
+    args.main(s, prog, args)
 
 if __name__ == '__main__':
     main()
