@@ -338,12 +338,12 @@ class AppExpr(Expr):
         self.decl = None # type: Optional[RelationDecl]
 
     def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
-        x = scope.get(self.rel)
-        assert isinstance(x, RelationDecl)
-        self.decl = x
-
-        if self.decl is None:
+        d = scope.get(self.rel)
+        if d is None:
             error(self.tok, 'Unresolved relation name %s' % self.rel)
+
+        assert isinstance(d, RelationDecl)
+        self.decl = d
 
         check_constraint(self.tok, sort, BoolSort)
 
