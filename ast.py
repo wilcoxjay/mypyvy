@@ -5,6 +5,7 @@ import ply.yacc
 import z3
 from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn, Set
 import sys
+import logging
 try:
     from typing_extensions import Protocol
 except Exception:
@@ -106,7 +107,7 @@ class Expr(object):
     def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
-    def free_vars(self): # type: () -> Set[str]
+    def free_ids(self): # type: () -> Set[str]
         raise Exception('Unexpected expr %s does not implement contains_var method' % repr(self))
 
 
@@ -139,7 +140,7 @@ class Bool(Expr):
     def __ne__(self, other): # type: (object) -> bool
         return not (self == other)
 
-    def free_vars(self): # type: () -> Set[str]
+    def free_ids(self): # type: () -> Set[str]
         return set()
 
 UNOPS = set([
@@ -215,8 +216,8 @@ class UnaryExpr(Expr):
         else:
             return z3_UNOPS[self.op](self.arg.to_z3(key, key_old, old))
 
-    def free_vars(self): # type: () -> Set[str]
-        return self.arg.free_vars()
+    def free_ids(self): # type: () -> Set[str]
+        return self.arg.free_ids()
 
 def Not(e): # type: (Expr) -> Expr
     return UnaryExpr(None, 'NOT', e)
@@ -309,8 +310,8 @@ class BinaryExpr(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         return z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
 
-    def free_vars(self): # type: () -> Set[str]
-        return self.arg1.free_vars() | self.arg2.free_vars()
+    def free_ids(self): # type: () -> Set[str]
+        return self.arg1.free_ids() | self.arg2.free_ids()
 
 
 def And(*args): # type: (*Expr) -> Expr
@@ -381,9 +382,9 @@ class AppExpr(Expr):
         assert isinstance(R, z3.FuncDeclRef)
         return R(*(arg.to_z3(key, key_old, old) for arg in self.args))
 
-    def free_vars(self): # type: () -> Set[str]
+    def free_ids(self): # type: () -> Set[str]
         ans = set() # type: Set[str]
-        return ans.union(*[arg.free_vars() for arg in self.args])
+        return ans.union(*[arg.free_ids() for arg in self.args])
 
 class SortedVar(object):
     def __init__(self, tok, name, sort): # type: (Optional[Token], str, Optional[Sort]) -> None
@@ -494,8 +495,8 @@ class QuantifierExpr(Expr):
 
         return q(bs, self.body.to_z3(key, key_old, old))
 
-    def free_vars(self): # type: () -> Set[str]
-        return self.body.free_vars() - set([v.name for v in self.vs])
+    def free_ids(self): # type: () -> Set[str]
+        return self.body.free_ids() - set([v.name for v in self.vs])
 
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a variable)'''
@@ -561,14 +562,8 @@ class Id(Expr):
 
         raise Exception('Unsupported binding declaration %s' % repr(self.decl))
 
-    def free_vars(self): # type: () -> Set[str]
-        assert self.decl is not None
-
-        if isinstance(self.decl, RelationDecl) or \
-           isinstance(self.decl, ConstantDecl):
-            return set()
-        else:
-            return set([self.name])
+    def free_ids(self): # type: () -> Set[str]
+        return set([self.name])
 
 Arity = List[Sort]
 
@@ -732,6 +727,15 @@ class ConstantDecl(Decl):
 
             return self.immut_z3
 
+def close_free_vars(expr, in_scope=[]): # type: (Expr, List[str]) -> Expr
+    vs = [s for s in (expr.free_ids() - set(in_scope)) if s.isupper()]
+    if vs == []:
+        return expr
+    else:
+        logging.debug('closing expression')
+        logging.debug(str(expr))
+        logging.debug('with free vars %s' % vs)
+        return QuantifierExpr(None, 'FORALL', [SortedVar(None, v, None) for v in vs], expr)
 
 class InitDecl(Decl):
     def __init__(self, tok, name, expr): # type: (Token, Optional[str], Expr) -> None
@@ -740,7 +744,9 @@ class InitDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope): # type: (Scope) -> None
+        self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
+
 
     def __repr__(self): # type: () -> str
         return 'InitDecl(%s, %s)' % (self.name if self.name is not None else 'None',
@@ -796,6 +802,8 @@ class TransitionDecl(Decl):
 
         for mod in self.mods:
             mod.resolve(scope)
+
+        self.expr = close_free_vars(self.expr, in_scope=[p.name for p in self.params])
 
         with scope.in_scope(self.params, self):
             self.expr.resolve(scope, BoolSort)
@@ -857,6 +865,7 @@ class InvariantDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope): # type: (Scope) -> None
+        self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self): # type: () -> str
@@ -878,6 +887,7 @@ class AxiomDecl(Decl):
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self): # type: () -> str
+        self.expr = close_free_vars(self.expr)
         return 'AxiomDecl(%s, %s)' % (self.name if self.name is not None else 'None',
                                       repr(self.expr))
 

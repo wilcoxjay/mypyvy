@@ -6,39 +6,39 @@ mutable relation table(node, key, value)
 mutable relation owner(node, key)
 mutable relation transfer_msg(node, key, value)
 
-init forall N, K, V. !table(N, K, V)
-init forall N, K, V. !transfer_msg(N, K, V)
-init forall N1, N2, K. owner(N1, K) & owner(N2, K) -> N1 = N2
+init !table(N, K, V)
+init !transfer_msg(N, K, V)
+init owner(N1, K) & owner(N2, K) -> N1 = N2
 # init forall K. exists N. owner(N, K)
 
 transition reshard(k: key, v: value, n_old: node, n_new: node)
   modifies table, owner, transfer_msg
   old(table(n_old, k, v)) &
-  (forall N, K, V. table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
-  (forall N, K. owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
-  (forall N, K, V. transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) | (N = n_new & K = k & V = v))
+  (table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
+  (owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
+  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) | (N = n_new & K = k & V = v))
 
 
 transition recv_transfer_msg(n: node, k: key, v: value)
   modifies table, owner, transfer_msg
   old(transfer_msg(n, k, v)) &
-  (forall N, K, V. transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) & !(N = n & K = k & V = v)) &
-  (forall N, K, V. table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
-  (forall N, K. owner(N, K) <-> old(owner(N, K)) | (N = n & K = k))
+  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) & !(N = n & K = k & V = v)) &
+  (table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
+  (owner(N, K) <-> old(owner(N, K)) | (N = n & K = k))
 
 
 transition put(n: node, k: key, v: value)
   modifies table
   old(owner(n, k)) &
-  (forall N, K, V. !(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) & 
-  (forall V. table(n, k, V) <-> V = v)
+  (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) & 
+  (table(n, k, V) <-> V = v)
 
-invariant [keys_unique] forall N1, N2, K, V1, V2. table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
+invariant [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
 
-invariant forall N1, N2, K. owner(N1, K) & owner(N2, K) -> N1 = N2
-invariant forall N, K, V. table(N, K, V) -> owner(N, K)
+invariant owner(N1, K) & owner(N2, K) -> N1 = N2
+invariant table(N, K, V) -> owner(N, K)
 
-invariant forall N1, N2, K, V. !(transfer_msg(N1, K, V) & owner(N2, K))
-invariant forall N1, N2, K, V1, V2. transfer_msg(N1, K, V1) & transfer_msg(N2, K, V2) -> N1 = N2 & V1 = V2
+invariant !(transfer_msg(N1, K, V) & owner(N2, K))
+invariant transfer_msg(N1, K, V1) & transfer_msg(N2, K, V2) -> N1 = N2 & V1 = V2
 
 # invariant forall K. (exists N. owner(N, K)) | (exists N, V. transfer_msg(N, K, V))

@@ -225,7 +225,7 @@ class Diagram(object):
         self._reinit()
 
     def prune_unused_vars(self): # type: () -> None
-        self.vs = [v for v in self.vs if any(v.name in c.free_vars() for c in self.conjuncts)]
+        self.vs = [v for v in self.vs if any(v.name in c.free_ids() for c in self.conjuncts)]
         self._reinit()
 
 class Model(object):
