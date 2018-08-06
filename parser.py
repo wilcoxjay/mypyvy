@@ -293,5 +293,6 @@ def p_empty(p): # type: (Any) -> None
 def p_error(t): # type: (Any) -> None
     print '%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value)
 
-parser = ply.yacc.yacc()
+program_parser = ply.yacc.yacc(start='program')
+expr_parser = ply.yacc.yacc(start='expr')
 

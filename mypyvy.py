@@ -600,7 +600,7 @@ def main(): # type: () -> None
     logging.basicConfig(level=getattr(logging, args.log.upper(), None))
 
     with open(args.filename) as f:
-        prog = parser.parser.parse(f.read(), None, False, False, None, filename=args.filename)
+        prog = parser.program_parser.parse(input=f.read(), filename=args.filename)
 
     prog.resolve()
 
