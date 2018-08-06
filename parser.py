@@ -294,5 +294,5 @@ def p_error(t): # type: (Any) -> None
     print '%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value)
 
 program_parser = ply.yacc.yacc(start='program')
-expr_parser = ply.yacc.yacc(start='expr')
+expr_parser = ply.yacc.yacc(start='expr', errorlog=ply.yacc.NullLogger())
 
