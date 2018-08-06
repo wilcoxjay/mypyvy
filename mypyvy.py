@@ -1,6 +1,6 @@
 import z3
 import sys
-from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, Dict
+from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, Dict, TypeVar, Sequence
 import copy
 import datetime
 import logging
@@ -10,10 +10,10 @@ z3.Forall = z3.ForAll # type: ignore
 
 z3.init('/Users/jrw12/build/z3/build/')
 
-def solver_enter(self):
+def solver_enter(self): # type: ignore
     self.push()
 
-def solver_exit(self, exn_type, exn_value, traceback):
+def solver_exit(self, exn_type, exn_value, traceback): # type: ignore
     self.pop()
 
 z3.Solver.__enter__ = solver_enter # type: ignore
@@ -21,7 +21,9 @@ z3.Solver.__exit__ = solver_exit # type: ignore
 
 import parser, ast
 
-def _product(l, x, i):
+T = TypeVar('T')
+
+def _product(l, x, i): # type: (Sequence[Sequence[T]], List[T], int) -> Iterable[List[T]]
     assert len(l) == len(x)
 
     if i >= len(l):
@@ -32,10 +34,16 @@ def _product(l, x, i):
             for z in _product(l, x, i+1):
                 yield z
 
-def product(l):
-    x = [None for i in range(len(l))]
-    for z in _product(l, x, 0):
-        yield z
+def product(l): # type: (Sequence[Sequence[T]]) -> Iterable[List[T]]
+    if l == []:
+        yield []
+    else:
+        if l[0] == []:
+            pass
+        else:
+            x = [l[0][0] for i in range(len(l))]
+            for z in _product(l, x, 0):
+                yield z
 
 #         print ''
 #         print 'sorts:'
@@ -261,7 +269,7 @@ class Model(object):
         return '\n'.join(l)
 
     def read_out(self): # type: () -> None
-        def rename(s):
+        def rename(s): # type: (str) -> str
             return s.replace('!val!', '')
 
         self.univs = {} # type: Dict[ast.SortDecl, List[str]]
@@ -302,7 +310,8 @@ class Model(object):
                         l = []
                         domains = [self.z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
-                        for row in product(domains):
+                        g = product(domains) # type: Iterable[List[z3.ExprRef]]
+                        for row in g:
                             ans = self.z3model.eval(z3decl(*row))
                             l.append(([rename(str(col)) for col in row], bool(ans)))
                         assert decl not in R
@@ -549,7 +558,7 @@ def updr(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) ->
 
         # find_predecessor(s, prog, fs[-2], d)
 
-def debug_tokens(filename):
+def debug_tokens(filename): # type: (str) -> None
     with open(filename) as f:
         parser.lexer.input(f.read())
 

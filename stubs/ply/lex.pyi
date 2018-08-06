@@ -6,7 +6,16 @@ class LexToken:
     type: str
     filename: str
     col: int
+    lexpos: int
+    lexer: Lexer
 
-class Lexer: ...
+class Lexer:
+    def input(self, s: str) -> None: ...
+    def token(self) -> LexToken: ...
+
+    lineno: int
+    bol: int
+
+
 
 def lex() -> Lexer: ...

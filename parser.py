@@ -42,7 +42,7 @@ tokens = [
 ] + list(reserved.values())
 
 
-def t_ID(t):
+def t_ID(t): # type: (Any) -> Any
     r'[a-zA-Z_][a-zA-Z_0-9]*'
     t.type = reserved.get(t.value,'ID')    # Check for reserved words
     return t
@@ -64,14 +64,14 @@ t_AMPERSAND = r'&'
 t_ignore_COMMENT = r'\#.*'
 
 # Define a rule so we can track line numbers
-def t_newline(t):
+def t_newline(t): # type: (ply.lex.LexToken) -> None
     r'\n+'
     t.lexer.lineno += len(t.value)
     t.lexer.bol = t.lexpos
 
 t_ignore  = ' \t'
 
-def t_error(t):
+def t_error(t): # type: (Any) -> None
     pass
 
 lexer = ply.lex.lex()
@@ -290,7 +290,7 @@ def p_empty(p): # type: (Any) -> None
     'empty :'
     pass
 
-def p_error(t):
+def p_error(t): # type: (Any) -> None
     print '%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value)
 
 parser = ply.yacc.yacc()

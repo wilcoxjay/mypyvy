@@ -413,7 +413,7 @@ class HasSortField(Protocol):
     sort = None # type: InferenceSort
 
 class SortInferencePlaceholder(object):
-    def __init__(self, d=None):
+    def __init__(self, d=None): # type: (HasSortField) -> None
         self.backpatches = [] # type: List[HasSortField]
         if d is not None:
             self.add(d)
