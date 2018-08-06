@@ -2,10 +2,10 @@ check: mypyvy.py stubs/z3/__init__.pyi
 	$(eval D := $(shell pwd))
 	cd; MYPYPATH=$(D)/stubs mypy --py2 --disallow-untyped-defs $(D)/mypyvy.py
 
-run: check
-	python mypyvy.py
+test: check unittest verify updr
 
-test: check verify updr
+unittest: unittest.py
+	python unittest.py
 
 verify: check lockserv.verify consensus.verify sharded-kv.verify
 
@@ -23,4 +23,4 @@ consensus.updr:
 sharded-kv.updr:
 	time python mypyvy.py updr --safety=keys_unique sharded-kv.pyv
 
-.PHONY: check run test verify updr lockserv.updr consensus.updr sharded-kv.updr
+.PHONY: check run unittest test verify updr lockserv.updr consensus.updr sharded-kv.updr
