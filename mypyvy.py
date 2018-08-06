@@ -6,8 +6,6 @@ import datetime
 import logging
 import argparse
 
-logging.basicConfig(level=logging.WARNING)
-
 z3.Forall = z3.ForAll # type: ignore
 
 z3.init('/Users/jrw12/build/z3/build/')
@@ -569,6 +567,9 @@ def verify(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) 
 
 def parse_args(): # type: () -> argparse.Namespace
     argparser = argparse.ArgumentParser()
+
+    argparser.add_argument('--log', default='WARNING')
+
     subparsers = argparser.add_subparsers()
 
     verify_subparser = subparsers.add_parser('verify')
@@ -585,6 +586,8 @@ def parse_args(): # type: () -> argparse.Namespace
 
 def main(): # type: () -> None
     args = parse_args()
+
+    logging.basicConfig(level=getattr(logging, args.log.upper(), None))
 
     with open(args.filename) as f:
         prog = parser.parser.parse(f.read(), None, False, False, None, filename=args.filename)
