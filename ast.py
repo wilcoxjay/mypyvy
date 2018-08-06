@@ -6,6 +6,7 @@ import z3
 from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn, Set
 import sys
 import logging
+import itertools
 try:
     from typing_extensions import Protocol
 except Exception:
@@ -816,19 +817,14 @@ class TransitionDecl(Decl):
         self.mods = mods
         self.expr = expr
 
-        # The whole program containing this transition.
-        # Filled out by resolution.
-        # Useful when converting to z3, because we need to add "doesn't change"
-        # conjuncts for every mutable relation/constant in the program that is
-        # not in the modifies clause.
-        self.prog = None # type: Optional[Program]
+        self.scope = None # type: Optional[Scope]
 
         self.binders = {} # type: Dict[str, z3.ExprRef]
 
     def resolve(self, scope): # type: (Scope) -> None
         assert len(scope.stack) == 0
 
-        self.prog = scope.prog
+        self.scope = scope
 
         for param in self.params:
             param.resolve(scope)
@@ -853,7 +849,7 @@ class TransitionDecl(Decl):
              self.expr)
 
     def to_z3(self, key, key_old): # type: (str, str) -> z3.ExprRef
-        assert self.prog is not None
+        assert self.scope is not None
 
         bs = []
         for p in self.params:
@@ -863,7 +859,9 @@ class TransitionDecl(Decl):
             bs.append(self.binders[n])
 
         mods = []
-        for d in self.prog.relations_and_constants():
+        R = self.scope.relations.itervalues() # type: Iterator[Union[RelationDecl, ConstantDecl]]
+        C = self.scope.constants.itervalues() # type: Iterator[Union[RelationDecl, ConstantDecl]]
+        for d in itertools.chain(R, C):
             if not d.mutable or any(mc.decl == d for mc in self.mods):
                 continue
 
@@ -932,12 +930,11 @@ class AxiomDecl(Decl):
 Binder = Union[RelationDecl, ConstantDecl, TransitionDecl, QuantifierExpr]
 
 class Scope:
-    def __init__(self, prog): # type: (Program) -> None
+    def __init__(self): # type: () -> None
         self.stack = [] # type: List[Tuple[List[SortedVar], Binder]]
         self.sorts = {} # type: Dict[str, SortDecl]
         self.relations = {} # type: Dict[str, RelationDecl]
         self.constants = {} # type: Dict[str, ConstantDecl]
-        self.prog = prog
 
     def push(self, vs, binder): # type: (List[SortedVar], Binder) -> None
         self.stack.append((vs, binder))
@@ -1043,8 +1040,7 @@ class Program(object):
                 yield d
 
     def resolve(self): # type: () -> None
-        scope = Scope(self)
-        self.scope = scope
+        self.scope = scope = Scope()
 
         for s in self.sorts():
             s.resolve(scope)
