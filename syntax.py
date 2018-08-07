@@ -3,7 +3,8 @@ import ply.lex
 import ply.yacc
 
 import z3
-from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn, Set, Protocol
+from typing import List, Union, Tuple, Optional, Dict, Iterator, \
+    Callable, Any, NoReturn, Set, Protocol
 import sys
 import logging
 import itertools
@@ -81,9 +82,11 @@ class Expr(object):
         return ''.join(buf)
 
     def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
-        raise Exception('Unexpected expression %s does not implement resolve method' % repr(self))
+        raise Exception('Unexpected expression %s does not implement resolve method' %
+                        repr(self))
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         raise Exception('Unexpected expression %s does not implement to_z3 method' % repr(self))
 
     def _denote(self) -> object:
@@ -120,7 +123,8 @@ class Expr(object):
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
     def free_ids(self) -> Set[str]:
-        raise Exception('Unexpected expr %s does not implement contains_var method' % repr(self))
+        raise Exception('Unexpected expr %s does not implement contains_var method' %
+                        repr(self))
 
 
 class Bool(Expr):
@@ -144,7 +148,8 @@ class Bool(Expr):
         check_constraint(self.tok, sort, BoolSort)
         return BoolSort
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         return z3.BoolVal(self.val)
 
     def free_ids(self) -> Set[str]:
@@ -217,7 +222,8 @@ class UnaryExpr(Expr):
             assert False
 
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         if self.op == 'OLD':
             assert not old and key_old is not None
             return self.arg.to_z3(key, key_old, True)
@@ -319,7 +325,8 @@ class BinaryExpr(Expr):
         self.arg2.pretty(buf, p, 'RIGHT')
 
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         return z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
 
     def free_ids(self) -> Set[str]:
@@ -385,7 +392,8 @@ class AppExpr(Expr):
             arg.pretty(buf, PREC_TOP, 'NONE')
         buf.append(')')
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         assert self.decl is not None
 
         if not old:
@@ -500,7 +508,8 @@ class QuantifierExpr(Expr):
 
         self.body.pretty(buf, PREC_QUANT, 'NONE')
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         bs = []
         for sv in self.vs:
             n = sv.name
@@ -575,7 +584,8 @@ class Id(Expr):
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(self.name)
 
-    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
+    def to_z3(self, key=None, key_old=None, old=False):
+        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         assert self.decl is not None
 
         if isinstance(self.decl, QuantifierExpr) or \
@@ -1020,7 +1030,8 @@ class Program(object):
                isinstance(d, ConstantDecl):
                 yield d
 
-    def decls_containing_exprs(self) -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl]]:
+    def decls_containing_exprs(self)\
+        -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl]]:
         for d in self.decls:
             if isinstance(d, InitDecl) or \
                isinstance(d, TransitionDecl) or \
