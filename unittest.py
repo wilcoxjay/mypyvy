@@ -22,11 +22,11 @@ any_failed = False
 
 def _fail(msg): # type: (str) -> None
     global any_failed
-    print 'test failed: %s' % msg
+    print('test failed: %s' % msg)
     any_failed = True
 
 def _pass(): # type: () -> None
-    print 'test passed'
+    print('test passed')
 
 def assertEqual(x, y): # type: (object, object) -> None
     if not (x == y):

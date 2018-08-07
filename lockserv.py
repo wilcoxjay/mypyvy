@@ -147,42 +147,42 @@ def recv_unlock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
 
 
 def check_transition(s, t): # type: (z3.Solver, Callable[[Vocab, Vocab], z3.ExprRef]) -> None
-    print 'checking transition %s' % t.__name__
+    print('checking transition %s' % t.__name__)
     with s:
         s.add(*inv(v1))
         s.add(t(v1, v2))
         for c in inv(v2):
             with s:
-                print '  preserves clause %s...' % c,
+                print('  preserves clause %s...' % c, end=' ')
                 s.add(z3.Not(c))
                 if s.check() != z3.unsat:
-                    print ''
-                    print s.model()
+                    print('')
+                    print(s.model())
                     raise Exception('no')
-                print ' ok.'
-    print 'transition %s ok.' % t.__name__
+                print(' ok.')
+    print('transition %s ok.' % t.__name__)
 
 def check_safety(s): # type: (z3.Solver) -> None
     with s:
         s.add(*inv(v1))
         s.add(z3.Not(safety(v1)))
-        print 'checking if inv implies safety...',
+        print('checking if inv implies safety...', end=' ')
         if s.check() != z3.unsat:
-            print ''
-            print s.model()
+            print('')
+            print(s.model())
             raise Exception('no')
-        print ' ok.'
+        print(' ok.')
 
 def check_init(s): # type: (z3.Solver) -> None
     with s:
         s.add(init(v1))
         s.add(z3.Not(z3.And(*inv(v1))))
-        print 'checking if init implies inv...',
+        print('checking if init implies inv...', end=' ')
         if s.check() != z3.unsat:
-            print ''
-            print s.model()
+            print('')
+            print(s.model())
             raise Exception('no')
-        print ' ok.'
+        print(' ok.')
 
 def main(): # type: () -> None
     s = z3.Solver()
@@ -194,4 +194,4 @@ def main(): # type: () -> None
     check_transition(s, unlock)
     check_transition(s, recv_unlock)
 
-    print 'all ok.'
+    print('all ok.')

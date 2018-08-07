@@ -44,7 +44,7 @@ tokens = [
 
 def t_ID(t): # type: (Any) -> Any
     r'[a-zA-Z_][a-zA-Z_0-9]*'
-    t.type = reserved.get(t.value,'ID')    # Check for reserved words
+    t.type = reserved.get(t.value, 'ID')    # Check for reserved words
     return t
 
 t_LPAREN = r'\('
@@ -78,13 +78,13 @@ lexer = ply.lex.lex()
 
 
 precedence = (
-    ('right','DOT'),
-    ('nonassoc','IFF'),
-    ('right','IMPLIES'),
-    ('left','PIPE'),
-    ('left','AMPERSAND'),
+    ('right', 'DOT'),
+    ('nonassoc', 'IFF'),
+    ('right', 'IMPLIES'),
+    ('left', 'PIPE'),
+    ('left', 'AMPERSAND'),
     ('nonassoc', 'EQUAL', 'NOTEQ'),
-    ('right','BANG')
+    ('right', 'BANG')
 )
 
 def p_program(p): # type: (Any) -> None
@@ -291,7 +291,7 @@ def p_empty(p): # type: (Any) -> None
     pass
 
 def p_error(t): # type: (Any) -> None
-    print '%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value)
+    print('%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value))
 
 program_parser = ply.yacc.yacc(start='program')
 expr_parser = ply.yacc.yacc(start='expr', errorlog=ply.yacc.NullLogger())

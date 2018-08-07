@@ -68,13 +68,13 @@ def check_unsat(s, prog, key, key_old=None): # type: (z3.Solver, ast.Program, st
     if res != z3.unsat:
         m = Model(prog, s.model(), key, key_old)
 
-        print ''
-        print m
+        print('')
+        print(m)
         raise Exception('no')
-    print 'ok.'
+    print('ok.')
 
 def check_init(s, prog): # type: (z3.Solver, ast.Program) -> None
-    print 'checking init:'
+    print('checking init:')
 
     with s:
         for init in prog.inits():
@@ -84,9 +84,9 @@ def check_init(s, prog): # type: (z3.Solver, ast.Program) -> None
             with s:
                 s.add(z3.Not(inv.expr.to_z3('one')))
 
-                print '  implies invariant %s...' % \
+                print('  implies invariant %s...' % \
                     (inv.name if inv.name is not None else 'on line %s' % inv.tok.lineno \
-                     if inv.tok is not None else '',),
+                     if inv.tok is not None else '',), end=' ')
 
                 check_unsat(s, prog, 'one')
 
@@ -97,7 +97,7 @@ def check_transitions(s, prog): # type: (z3.Solver, ast.Program) -> None
             s.add(inv.expr.to_z3('old'))
 
         for t in prog.transitions():
-            print 'checking transation %s:' % (t.name,)
+            print('checking transation %s:' % (t.name,))
 
             with s:
                 s.add(t.to_z3('new', 'old'))
@@ -105,9 +105,9 @@ def check_transitions(s, prog): # type: (z3.Solver, ast.Program) -> None
                     with s:
                         s.add(z3.Not(inv.expr.to_z3('new')))
 
-                        print '  preserves invariant %s...' % \
+                        print('  preserves invariant %s...' % \
                             (inv.name if inv.name is not None else 'on line %s' % inv.tok.lineno \
-                             if inv.tok is not None else '',),
+                             if inv.tok is not None else '',), end=' ')
                         sys.stdout.flush()
 
                         check_unsat(s, prog, 'new', 'old')
@@ -149,9 +149,9 @@ def safe_resolve(e, scope, sort): # type: (ast.Expr, ast.Scope, ast.InferenceSor
     try:
         e.resolve(scope, sort)
     except Exception as exn:
-        print 'internal error: tried to construct unresolvable intermediate expression'
-        print e
-        print exn
+        print('internal error: tried to construct unresolvable intermediate expression')
+        print(e)
+        print(exn)
         raise exn
 
 class Diagram(object):
@@ -422,7 +422,7 @@ def block(s, prog, fs, diag, j, trace, safety_goal=True):
     # type: (z3.Solver, ast.Program, List[Set[ast.Expr]], Diagram, int, List[Tuple[ast.TransitionDecl, Diagram]], bool) -> bool
     if j == 0: # or (j == 1 and sat(init and diag)
         if safety_goal:
-            print trace
+            print(trace)
             raise Exception('abstract counterexample')
         else:
             logging.debug('failed to block diagram')
@@ -518,14 +518,14 @@ def updr(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) ->
                 the_inv = inv
         if the_inv is None:
             raise Exception('No safety invariant named %s' % args.safety)
-        safety = set([the_inv.expr]) # type: Set[ast.Expr]
+        safety = {the_inv.expr} # type: Set[ast.Expr]
     else:
-        safety = set([inv.expr for inv in prog.invs()])
+        safety = {inv.expr for inv in prog.invs()}
 
 
 
     fs = [set(init.expr for init in prog.inits())] # type: List[Set[ast.Expr]]
-    fs.append(set([ast.Bool(None, True)]))
+    fs.append({ast.Bool(None, True)})
 
     while True:
         logging.info('considering frame %s' % (len(fs) - 1,))
@@ -534,13 +534,13 @@ def updr(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) ->
         if m is None:
             f = check_inductive_frames(s, fs)
             if f is not None:
-                print 'frame is safe and inductive. done!'
-                print '\n'.join(str(x) for x in f)
+                print('frame is safe and inductive. done!')
+                print('\n'.join(str(x) for x in f))
                 return f
 
 
             logging.info('frame is safe but not inductive. starting new frame')
-            fs.append(set([ast.Bool(None, True)]))
+            fs.append({ast.Bool(None, True)})
 
             push_forward_frames(s, prog, fs)
             simplify_frames(s, fs)
@@ -573,7 +573,7 @@ def verify(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) 
     check_init(s, prog)
     check_transitions(s, prog)
     
-    print 'all ok!'
+    print('all ok!')
 
 def parse_args(): # type: () -> argparse.Namespace
     argparser = argparse.ArgumentParser()

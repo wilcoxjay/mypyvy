@@ -157,10 +157,10 @@ class Bool(Expr):
     def free_ids(self): # type: () -> Set[str]
         return set()
 
-UNOPS = set([
+UNOPS = {
     'NOT',
     'OLD'
-])
+}
 z3_UNOPS = {
     'NOT': z3.Not,
     'OLD': None
@@ -239,14 +239,14 @@ class UnaryExpr(Expr):
 def Not(e): # type: (Expr) -> Expr
     return UnaryExpr(None, 'NOT', e)
 
-BINOPS = set([
+BINOPS = {
     'AND',
     'OR',
     'IMPLIES',
     'IFF',
     'EQUAL',
     'NOTEQ'
-])
+}
 z3_BINOPS = {
     'AND' : z3.And,
     'OR' : z3.Or,
@@ -523,7 +523,7 @@ class QuantifierExpr(Expr):
         return q(bs, self.body.to_z3(key, key_old, old))
 
     def free_ids(self): # type: () -> Set[str]
-        return self.body.free_ids() - set([v.name for v in self.vs])
+        return self.body.free_ids() - {v.name for v in self.vs}
 
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a variable)'''
@@ -606,7 +606,7 @@ class Id(Expr):
         raise Exception('Unsupported binding declaration %s' % repr(self.decl))
 
     def free_ids(self): # type: () -> Set[str]
-        return set([self.name])
+        return {self.name}
 
 Arity = List[Sort]
 
@@ -859,8 +859,8 @@ class TransitionDecl(Decl):
             bs.append(self.binders[n])
 
         mods = []
-        R = self.scope.relations.itervalues() # type: Iterator[Union[RelationDecl, ConstantDecl]]
-        C = self.scope.constants.itervalues() # type: Iterator[Union[RelationDecl, ConstantDecl]]
+        R = iter(self.scope.relations.values()) # type: Iterator[Union[RelationDecl, ConstantDecl]]
+        C = iter(self.scope.constants.values()) # type: Iterator[Union[RelationDecl, ConstantDecl]]
         for d in itertools.chain(R, C):
             if not d.mutable or any(mc.decl == d for mc in self.mods):
                 continue
