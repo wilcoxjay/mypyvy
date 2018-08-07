@@ -18,30 +18,30 @@ def error(tok: Optional[Token], msg: str) -> NoReturn:
                      if tok is not None else 'None', msg))
 
 class Sort(object):
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         raise Exception('Unexpected sort %s does not implement __repr__ method' % type(self))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         raise Exception('Unexpected sort %s does not implement __str__ method' % repr(self))
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         raise Exception('Unexpected sort %s does not implement resolve method' % repr(self))
 
-    def to_z3(self): # type: () -> z3.SortRef
+    def to_z3(self) -> z3.SortRef:
         raise Exception('Unexpected sort %s does not implement to_z3 method' % repr(self))
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         raise Exception('Unexpected sort %s does not implement _denote method' % repr(self))
 
-    def __hash__(self): # type: () -> int
+    def __hash__(self) -> int:
         return hash(self._denote())
 
-    def __eq__(self, other): # type: (object) -> bool
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Sort):
             return False
         return self._denote() == other._denote()
 
-    def __ne__(self, other): # type: (object) -> bool
+    def __ne__(self, other: object) -> bool:
         return not (self == other)
 
 
@@ -68,40 +68,39 @@ PREC_ASSOC = {
     PREC_TOP: 'NONE'
 }
 
-def no_parens(ip, op, side): # type: (int, int, str) -> bool
+def no_parens(ip: int, op: int, side: str) -> bool:
     return ip < op or (ip == op and side == PREC_ASSOC[ip])
 
 class Expr(object):
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
 
-    def __str__(self): # type: () -> str
-        buf = [] # type: List[str]
+    def __str__(self) -> str:
+        buf: List[str] = []
         self.pretty(buf, PREC_TOP, 'NONE')
         return ''.join(buf)
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         raise Exception('Unexpected expression %s does not implement resolve method' % repr(self))
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         raise Exception('Unexpected expression %s does not implement to_z3 method' % repr(self))
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         raise Exception('Unexpected expr %s does not implement _denote method' % repr(self))
 
-    def __hash__(self): # type: () -> int
+    def __hash__(self) -> int:
         return hash(self._denote())
 
-    def __eq__(self, other): # type: (object) -> bool
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Expr):
             return False
         return self._denote() == other._denote()
 
-    def __ne__(self, other): # type: (object) -> bool
+    def __ne__(self, other: object) -> bool:
         return not (self == other)
 
-    def pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def pretty(self, buf: List[str], prec: int, side: str) -> None:
         needs_parens = not no_parens(self.prec(), prec, side)
 
         if needs_parens:
@@ -114,56 +113,53 @@ class Expr(object):
         if needs_parens:
             buf.append(')')
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         raise Exception('Unexpected expr %s does not implement prec method' % repr(self))
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
-    def free_ids(self): # type: () -> Set[str]
+    def free_ids(self) -> Set[str]:
         raise Exception('Unexpected expr %s does not implement contains_var method' % repr(self))
 
 
 class Bool(Expr):
-    def __init__(self, tok, val): # type: (Optional[Token], bool) -> None
+    def __init__(self, tok: Optional[Token], val: bool) -> None:
         self.tok = tok
         self.val = val
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'true' if self.val else 'false'
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         return self.val
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         return PREC_BOT
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(str(self.val))
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
         return BoolSort
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
-
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         return z3.BoolVal(self.val)
 
-    def free_ids(self): # type: () -> Set[str]
+    def free_ids(self) -> Set[str]:
         return set()
 
 UNOPS = {
     'NOT',
     'OLD'
 }
-z3_UNOPS = {
+z3_UNOPS: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]] = {
     'NOT': z3.Not,
     'OLD': None
-} # type: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]]
+}
 
-def check_constraint(tok, expected, actual):
-    # type: (Optional[Token], InferenceSort, InferenceSort) -> None
+def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: InferenceSort) -> None:
     if expected is None:
         pass
     elif isinstance(expected, Sort):
@@ -180,13 +176,13 @@ def check_constraint(tok, expected, actual):
 
 
 class UnaryExpr(Expr):
-    def __init__(self, tok, op, arg): # type: (Optional[Token], str, Expr) -> None
+    def __init__(self, tok: Optional[Token], op: str, arg: Expr) -> None:
         assert op in UNOPS
         self.tok = tok
         self.op = op
         self.arg = arg
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         if self.op == 'OLD':
             return self.arg.resolve(scope, sort)
         else:
@@ -195,13 +191,13 @@ class UnaryExpr(Expr):
             self.arg.resolve(scope, BoolSort)
             return BoolSort
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         return (UnaryExpr, self.op, self.arg)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'UnaryExpr(%s, %s)' % (self.op, repr(self.arg))
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         if self.op == 'NOT':
             return PREC_NOT
         elif self.op == 'OLD':
@@ -209,7 +205,7 @@ class UnaryExpr(Expr):
         else:
             assert False
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         if self.op == 'NOT':
             buf.append('!')
             self.arg.pretty(buf, PREC_NOT, 'NONE')
@@ -220,8 +216,8 @@ class UnaryExpr(Expr):
         else:
             assert False
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
+
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         if self.op == 'OLD':
             assert not old and key_old is not None
             return self.arg.to_z3(key, key_old, True)
@@ -230,10 +226,10 @@ class UnaryExpr(Expr):
             assert f is not None
             return f(self.arg.to_z3(key, key_old, old))
 
-    def free_ids(self): # type: () -> Set[str]
+    def free_ids(self) -> Set[str]:
         return self.arg.free_ids()
 
-def Not(e): # type: (Expr) -> Expr
+def Not(e: Expr) -> Expr:
     return UnaryExpr(None, 'NOT', e)
 
 BINOPS = {
@@ -244,24 +240,24 @@ BINOPS = {
     'EQUAL',
     'NOTEQ'
 }
-z3_BINOPS = {
+z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
     'AND' : z3.And,
     'OR' : z3.Or,
     'IMPLIES' : z3.Implies,
     'IFF' : lambda x, y: x == y,
     'EQUAL' : lambda x, y: x == y,
     'NOTEQ' : lambda x, y: x != y
-} # type: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]]
+}
 
 class BinaryExpr(Expr):
-    def __init__(self, tok, op, arg1, arg2): # type: (Optional[Token], str, Expr, Expr) -> None
+    def __init__(self, tok: Optional[Token], op: str, arg1: Expr, arg2: Expr) -> None:
         assert op in BINOPS
         self.tok = tok
         self.op = op
         self.arg1 = arg1
         self.arg2 = arg2
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
 
         if self.op in ['AND', 'OR', 'IMPLIES', 'IFF']:
@@ -275,15 +271,15 @@ class BinaryExpr(Expr):
         return BoolSort
 
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         return (BinaryExpr, self.op, self.arg1, self.arg2)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'BinaryExpr(%s, %s, %s)' % (self.op,
                                            repr(self.arg1),
                                            repr(self.arg2))
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         if self.op == 'AND':
             return PREC_AND
         elif self.op == 'OR':
@@ -297,7 +293,7 @@ class BinaryExpr(Expr):
         else:
             assert False
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         p = self.prec()
         self.arg1.pretty(buf, p, 'LEFT')
 
@@ -323,15 +319,14 @@ class BinaryExpr(Expr):
         self.arg2.pretty(buf, p, 'RIGHT')
 
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         return z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
 
-    def free_ids(self): # type: () -> Set[str]
+    def free_ids(self) -> Set[str]:
         return self.arg1.free_ids() | self.arg2.free_ids()
 
 
-def And(*args): # type: (*Expr) -> Expr
+def And(*args: Expr) -> Expr:
     if len(args) == 0:
         return Bool(None, True)
 
@@ -341,20 +336,20 @@ def And(*args): # type: (*Expr) -> Expr
 
     return ans
 
-def Eq(arg1, arg2): # type: (Expr, Expr) -> Expr
+def Eq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'EQUAL', arg1, arg2)
 
-def Neq(arg1, arg2): # type: (Expr, Expr) -> Expr
+def Neq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'NOTEQ', arg1, arg2)
 
 class AppExpr(Expr):
-    def __init__(self, tok, rel, args): # type: (Optional[Token], str, List[Expr]) -> None
+    def __init__(self, tok: Optional[Token], rel: str, args: List[Expr]) -> None:
         self.tok = tok
         self.rel = rel
         self.args = args
-        self.decl = None # type: Optional[RelationDecl]
+        self.decl: Optional[RelationDecl] = None
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         d, _ = scope.get(self.rel)
         if d is None:
             error(self.tok, 'Unresolved relation name %s' % self.rel)
@@ -369,17 +364,17 @@ class AppExpr(Expr):
 
         return BoolSort
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         assert self.decl is not None
         return (AppExpr, self.decl, tuple(self.args))
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'AppExpr(%s, %s)' % (self.rel, self.args)
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         return PREC_BOT
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(self.rel)
         buf.append('(')
         started = False
@@ -390,8 +385,7 @@ class AppExpr(Expr):
             arg.pretty(buf, PREC_TOP, 'NONE')
         buf.append(')')
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         assert self.decl is not None
 
         if not old:
@@ -403,17 +397,17 @@ class AppExpr(Expr):
         assert isinstance(R, z3.FuncDeclRef)
         return R(*(arg.to_z3(key, key_old, old) for arg in self.args))
 
-    def free_ids(self): # type: () -> Set[str]
-        ans = set() # type: Set[str]
+    def free_ids(self) -> Set[str]:
+        ans: Set[str] = set()
         return ans.union(*[arg.free_ids() for arg in self.args])
 
 class SortedVar(object):
-    def __init__(self, tok, name, sort): # type: (Optional[Token], str, Optional[Sort]) -> None
+    def __init__(self, tok: Optional[Token], name: str, sort: Optional[Sort]) -> None:
         self.tok = tok
         self.name = name
-        self.sort = sort # type: InferenceSort
+        self.sort: InferenceSort = sort
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         if self.sort is None:
             error(self.tok, 'type annotation required for variable %s' % (self.name,))
 
@@ -421,32 +415,32 @@ class SortedVar(object):
 
         self.sort.resolve(scope)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'SortedVar(%s, %s)' % (self.name, repr(self.sort))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         if self.sort is None:
             return self.name
         else:
             return '%s:%s' % (self.name, self.sort)
 
 class HasSortField(Protocol):
-    sort = None # type: InferenceSort
+    sort: InferenceSort = None
 
 class SortInferencePlaceholder(object):
-    def __init__(self, d=None): # type: (Optional[HasSortField]) -> None
-        self.backpatches = [] # type: List[HasSortField]
+    def __init__(self, d: Optional[HasSortField]=None) -> None:
+        self.backpatches: List[HasSortField] = []
         if d is not None:
             self.add(d)
 
-    def add(self, d): # type: (HasSortField) -> None
+    def add(self, d: HasSortField) -> None:
         self.backpatches.append(d)
 
-    def solve(self, sort): # type: (Sort) -> None
+    def solve(self, sort: Sort) -> None:
         for d in self.backpatches:
             d.sort = sort
 
-    def merge(self, other): # type: (SortInferencePlaceholder) -> None
+    def merge(self, other: SortInferencePlaceholder) -> None:
         for d in other.backpatches:
             assert d.sort is other
             d.sort = self
@@ -455,16 +449,16 @@ class SortInferencePlaceholder(object):
 InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
 class QuantifierExpr(Expr):
-    def __init__(self, tok, quant, vs, body): # type: (Optional[Token], str, List[SortedVar], Expr) -> None
+    def __init__(self, tok: Optional[Token], quant: str, vs: List[SortedVar], body: Expr) -> None:
         assert quant in ['FORALL', 'EXISTS']
         assert len(vs) > 0
         self.tok = tok
         self.quant = quant
         self.vs = vs
         self.body = body
-        self.binders = {} # type: Dict[str, z3.ExprRef]
+        self.binders: Dict[str, z3.ExprRef] = {}
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
 
         for sv in self.vs:
@@ -483,16 +477,16 @@ class QuantifierExpr(Expr):
 
         return BoolSort
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'QuantifierExpr@%s(%s, %s, %s)' % (id(self), self.quant, self.vs, repr(self.body))
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         return (QuantifierExpr, self.quant, self.body)
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         return PREC_QUANT
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(self.quant.lower())
         buf.append(' ')
 
@@ -506,8 +500,7 @@ class QuantifierExpr(Expr):
 
         self.body.pretty(buf, PREC_QUANT, 'NONE')
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         bs = []
         for sv in self.vs:
             n = sv.name
@@ -519,18 +512,18 @@ class QuantifierExpr(Expr):
 
         return q(bs, self.body.to_z3(key, key_old, old))
 
-    def free_ids(self): # type: () -> Set[str]
+    def free_ids(self) -> Set[str]:
         return self.body.free_ids() - {v.name for v in self.vs}
 
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a variable)'''
-    def __init__(self, tok, name): # type: (Optional[Token], str) -> None
+    def __init__(self, tok: Optional[Token], name: str) -> None:
         self.tok = tok
         self.name = name
-        self.decl = None # type: Optional[Binder]
-        self.index = None # type: Optional[Tuple[int, int]]
+        self.decl: Optional[Binder] = None
+        self.index: Optional[Tuple[int, int]] = None
 
-    def resolve(self, scope, sort): # type: (Scope, InferenceSort) -> InferenceSort
+    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
         self.decl, x = scope.get(self.name)
         if self.decl is None:
             error(self.tok, 'Unresolved variable %s' % (self.name,))
@@ -563,7 +556,7 @@ class Id(Expr):
             assert False
 
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         if self.index is not None:
             return (Id, self.index)
         else:
@@ -572,18 +565,17 @@ class Id(Expr):
                 isinstance(self.decl, ConstantDecl)
             return (Id, self.decl)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'Id(%s, decl=%s)' % (self.name,
                                     id(self.decl) if self.decl is not None else 'None')
 
-    def prec(self): # type: () -> int
+    def prec(self) -> int:
         return PREC_BOT
 
-    def _pretty(self, buf, prec, side): # type: (List[str], int, str) -> None
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(self.name)
 
-    def to_z3(self, key=None, key_old=None, old=False):
-        # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
+    def to_z3(self, key: Optional[str]=None, key_old: Optional[str]=None, old: bool=False) -> z3.ExprRef:
         assert self.decl is not None
 
         if isinstance(self.decl, QuantifierExpr) or \
@@ -602,107 +594,107 @@ class Id(Expr):
 
         raise Exception('Unsupported binding declaration %s' % repr(self.decl))
 
-    def free_ids(self): # type: () -> Set[str]
+    def free_ids(self) -> Set[str]:
         return {self.name}
 
 Arity = List[Sort]
 
 class UninterpretedSort(Sort):
-    def __init__(self, tok, name): # type: (Optional[Token], str) -> None
+    def __init__(self, tok: Optional[Token], name: str) -> None:
         self.tok = tok
         self.name = name
-        self.decl = None # type: Optional[SortDecl]
+        self.decl: Optional[SortDecl] = None
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         self.decl = scope.get_sort(self.name)
         if self.decl is None:
             error(self.tok, 'Unresolved sort name %s' % (self.name,))
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'UninterpretedSort(%s)' % (self.name,)
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return self.name
 
-    def to_z3(self): # type: () -> z3.SortRef
+    def to_z3(self) -> z3.SortRef:
         assert self.decl is not None
 
         return self.decl.to_z3()
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         return (UninterpretedSort, self.name)
 
 class _BoolSort(Sort):
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'bool'
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return 'bool'
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         pass
 
-    def to_z3(self): # type: () -> z3.SortRef
+    def to_z3(self) -> z3.SortRef:
         return z3.BoolSort()
 
-    def _denote(self): # type: () -> object
+    def _denote(self) -> object:
         return _BoolSort
 
 BoolSort = _BoolSort()
 
 class Decl(object):
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         raise Exception('Unexpected decl %s does not implement __repr__ method' % type(self))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         raise Exception('Unexpected decl %s does not implement __str__ method' % type(self))
 
 
 class SortDecl(Decl):
-    def __init__(self, tok, name): # type: (Optional[Token], str) -> None
+    def __init__(self, tok: Optional[Token], name: str) -> None:
         self.tok = tok
         self.name = name
-        self.z3 = None # type: Optional[z3.SortRef]
+        self.z3: Optional[z3.SortRef] = None
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         scope.add_sort(self.tok, self.name, self)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'SortDecl(%s)' % self.name
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return 'sort %s' % self.name
 
-    def to_z3(self): # type: () -> z3.SortRef
+    def to_z3(self) -> z3.SortRef:
         if self.z3 is None:
             self.z3 = z3.DeclareSort(self.name)
 
         return self.z3
 
 class RelationDecl(Decl):
-    def __init__(self, tok, name, arity, mutable): # type: (Optional[Token], str, Arity, bool) -> None
+    def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool) -> None:
         self.tok = tok
         self.name = name
         self.arity = arity
         self.mutable = mutable
-        self.mut_z3 = {} # type: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]]
-        self.immut_z3 = None # type: Optional[Union[z3.FuncDeclRef, z3.ExprRef]]
+        self.mut_z3: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]] = {}
+        self.immut_z3: Optional[Union[z3.FuncDeclRef, z3.ExprRef]] = None
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
             sort.resolve(scope)
 
         scope.add_relation(self.tok, self.name, self)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'RelationDecl(%s, %s, mutable=%s)' % (self.name, self.arity, self.mutable)
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return '%s relation %s(%s)' % ('mutable' if self.mutable else 'immutable',
                                        self.name,
                                        ', '.join([str(s) for s in self.arity]))
 
-    def to_z3(self, key): # type: (Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]
+    def to_z3(self, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
         if self.mutable:
             assert key is not None
             if key not in self.mut_z3:
@@ -725,27 +717,27 @@ class RelationDecl(Decl):
 
 
 class ConstantDecl(Decl):
-    def __init__(self, tok, name, sort, mutable): # type: (Optional[Token], str, Sort, bool) -> None
+    def __init__(self, tok: Optional[Token], name: str, sort: Sort, mutable: bool) -> None:
         self.tok = tok
         self.name = name
         self.sort = sort
         self.mutable = mutable
-        self.mut_z3 = {} # type: Dict[str, z3.ExprRef]
-        self.immut_z3 = None # type: Optional[z3.ExprRef]
+        self.mut_z3: Dict[str, z3.ExprRef] = {}
+        self.immut_z3: Optional[z3.ExprRef] = None
 
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'ConstantDecl(%s, %s, mutable=%s)' % (self.name, self.sort, self.mutable)
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return '%s constant %s: %s' % ('mutable' if self.mutable else 'immutable',
                                        self.name, self.sort)
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         self.sort.resolve(scope)
         scope.add_constant(self.tok, self.name, self)
 
-    def to_z3(self, key): # type: (Optional[str]) -> z3.ExprRef
+    def to_z3(self, key: Optional[str]) -> z3.ExprRef:
         if self.mutable:
             assert key is not None
             if key not in self.mut_z3:
@@ -758,7 +750,7 @@ class ConstantDecl(Decl):
 
             return self.immut_z3
 
-def close_free_vars(expr, in_scope=[]): # type: (Expr, List[str]) -> Expr
+def close_free_vars(expr: Expr, in_scope: List[str]=[]) -> Expr:
     vs = [s for s in (expr.free_ids() - set(in_scope)) if s.isupper()]
     if vs == []:
         return expr
@@ -769,56 +761,56 @@ def close_free_vars(expr, in_scope=[]): # type: (Expr, List[str]) -> Expr
         return QuantifierExpr(None, 'FORALL', [SortedVar(None, v, None) for v in vs], expr)
 
 class InitDecl(Decl):
-    def __init__(self, tok, name, expr): # type: (Optional[Token], Optional[str], Expr) -> None
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
         self.tok = tok
         self.name = name
         self.expr = expr
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'InitDecl(%s, %s)' % (self.name if self.name is not None else 'None',
                                      repr(self.expr))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return 'init %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
                               self.expr)
 
 class ModifiesClause(object):
-    def __init__(self, tok, name): # type: (Optional[Token], str) -> None
+    def __init__(self, tok: Optional[Token], name: str) -> None:
         self.tok = tok
         self.name = name
-        self.decl = None # type: Optional[Binder]
+        self.decl: Optional[Binder] = None
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         self.decl, _ = scope.get(self.name)
 
         if self.decl is None:
             error(self.tok, 'Unresolved constant or relation %s' % (self.name,))
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'ModifiesClause(%s, %s)' % (self.name, repr(self.decl))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return self.name
 
 class TransitionDecl(Decl):
-    def __init__(self, tok, name, params, mods, expr):
-        # type: (Optional[Token], str, List[SortedVar], List[ModifiesClause], Expr) -> None
+    def __init__(self, tok: Optional[Token], name: str, params: List[SortedVar],
+                 mods: List[ModifiesClause], expr: Expr) -> None:
         self.tok = tok
         self.name = name
         self.params = params
         self.mods = mods
         self.expr = expr
 
-        self.scope = None # type: Optional[Scope]
+        self.scope: Optional[Scope] = None
 
-        self.binders = {} # type: Dict[str, z3.ExprRef]
+        self.binders: Dict[str, z3.ExprRef] = {}
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         assert len(scope.stack) == 0
 
         self.scope = scope
@@ -834,18 +826,18 @@ class TransitionDecl(Decl):
         with scope.in_scope(self.params, self):
             self.expr.resolve(scope, BoolSort)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'TransitionDecl(%s, %s, %s, %s)' % (self.name, self.params,
                                                    self.mods, repr(self.expr))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return 'transition %s(%s)\n  modifies %s\n  %s' % \
             (self.name,
              ', '.join([str(p) for p in self.params]),
              ', '.join([str(m) for m in self.mods]),
              self.expr)
 
-    def to_z3(self, key, key_old): # type: (str, str) -> z3.ExprRef
+    def to_z3(self, key: str, key_old: str) -> z3.ExprRef:
         assert self.scope is not None
 
         bs = []
@@ -856,8 +848,8 @@ class TransitionDecl(Decl):
             bs.append(self.binders[n])
 
         mods = []
-        R = iter(self.scope.relations.values()) # type: Iterator[Union[RelationDecl, ConstantDecl]]
-        C = iter(self.scope.constants.values()) # type: Iterator[Union[RelationDecl, ConstantDecl]]
+        R: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.relations.values())
+        C: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.constants.values())
         for d in itertools.chain(R, C):
             if not d.mutable or any(mc.decl == d for mc in self.mods):
                 continue
@@ -868,7 +860,7 @@ class TransitionDecl(Decl):
                 assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
                 e = lhs == rhs
             else:
-                cs = [] # type: List[z3.ExprRef]
+                cs: List[z3.ExprRef] = []
                 i = 0
                 for s in d.arity:
                     cs.append(z3.Const('x' + str(i), s.to_z3()))
@@ -887,39 +879,39 @@ class TransitionDecl(Decl):
         return z3.Exists(bs, z3.And(self.expr.to_z3(key, key_old), *mods))
 
 class InvariantDecl(Decl):
-    def __init__(self, tok, name, expr): # type: (Optional[Token], Optional[str], Expr) -> None
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
         self.tok = tok
         self.name = name
         self.expr = expr
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'InvariantDecl(%s, %s)' % (self.name if self.name is not None else 'None',
                                           repr(self.expr))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return 'invariant %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
                                    self.expr)
 
 
 class AxiomDecl(Decl):
-    def __init__(self, tok, name, expr): # type: (Optional[Token], Optional[str], Expr) -> None
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
         self.tok = tok
         self.name = name
         self.expr = expr
 
-    def resolve(self, scope): # type: (Scope) -> None
+    def resolve(self, scope: Scope) -> None:
         self.expr.resolve(scope, BoolSort)
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         self.expr = close_free_vars(self.expr)
         return 'AxiomDecl(%s, %s)' % (self.name if self.name is not None else 'None',
                                       repr(self.expr))
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return 'axiom %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
                                self.expr)
 
@@ -927,19 +919,19 @@ class AxiomDecl(Decl):
 Binder = Union[RelationDecl, ConstantDecl, TransitionDecl, QuantifierExpr]
 
 class Scope:
-    def __init__(self): # type: () -> None
-        self.stack = [] # type: List[Tuple[List[SortedVar], Binder]]
-        self.sorts = {} # type: Dict[str, SortDecl]
-        self.relations = {} # type: Dict[str, RelationDecl]
-        self.constants = {} # type: Dict[str, ConstantDecl]
+    def __init__(self) -> None:
+        self.stack: List[Tuple[List[SortedVar], Binder]] = []
+        self.sorts: Dict[str, SortDecl] = {}
+        self.relations: Dict[str, RelationDecl] = {}
+        self.constants: Dict[str, ConstantDecl] = {}
 
-    def push(self, vs, binder): # type: (List[SortedVar], Binder) -> None
+    def push(self, vs: List[SortedVar], binder: Binder) -> None:
         self.stack.append((vs, binder))
 
-    def pop(self): # type: () -> None
+    def pop(self) -> None:
         self.stack.pop()
 
-    def get(self, name): # type: (str) -> Tuple[Optional[Binder], Optional[Tuple[int, int]]]
+    def get(self, name: str) -> Tuple[Optional[Binder], Optional[Tuple[int, int]]]:
         # first, check for bound variables in scope
         for i, (vs, binder) in enumerate(reversed(self.stack)):
             for j, v in enumerate(vs):
@@ -950,7 +942,7 @@ class Scope:
         d = self.constants.get(name) or self.relations.get(name)
         return (d, None)
 
-    def add_constant(self, tok, constant, decl): # type: (Optional[Token], str, ConstantDecl) -> None
+    def add_constant(self, tok: Optional[Token], constant: str, decl: ConstantDecl) -> None:
         assert len(self.stack) == 0
 
         if constant in self.constants:
@@ -962,7 +954,7 @@ class Scope:
 
         self.constants[constant] = decl
 
-    def add_sort(self, tok, sort, decl): # type: (Optional[Token], str, SortDecl) -> None
+    def add_sort(self, tok: Optional[Token], sort: str, decl: SortDecl) -> None:
         assert len(self.stack) == 0
 
         if sort in self.sorts:
@@ -970,10 +962,10 @@ class Scope:
 
         self.sorts[sort] = decl
 
-    def get_sort(self, sort): # type: (str) -> Optional[SortDecl]
+    def get_sort(self, sort: str) -> Optional[SortDecl]:
         return self.sorts.get(sort)
 
-    def add_relation(self, tok, relation, decl): # type: (Optional[Token], str, RelationDecl) -> None
+    def add_relation(self, tok: Optional[Token], relation: str, decl: RelationDecl) -> None:
         assert len(self.stack) == 0
 
         if relation in self.relations:
@@ -985,7 +977,7 @@ class Scope:
         self.relations[relation] = decl
 
     @contextmanager
-    def in_scope(self, vs, binder): # type: (List[SortedVar], Binder) -> Iterator[None]
+    def in_scope(self, vs: List[SortedVar], binder: Binder) -> Iterator[None]:
         n = len(self.stack)
         self.push(vs, binder)
         yield
@@ -993,42 +985,42 @@ class Scope:
         assert n == len(self.stack)
 
 class Program(object):
-    def __init__(self, decls): # type: (List[Decl]) -> None
+    def __init__(self, decls: List[Decl]) -> None:
         self.decls = decls
-        self.scope = None # type: Optional[Scope]
+        self.scope: Optional[Scope] = None
 
-    def sorts(self): # type: () -> Iterator[SortDecl]
+    def sorts(self) -> Iterator[SortDecl]:
         for d in self.decls:
             if isinstance(d, SortDecl):
                 yield d
 
-    def inits(self): # type: () -> Iterator[InitDecl]
+    def inits(self) -> Iterator[InitDecl]:
         for d in self.decls:
             if isinstance(d, InitDecl):
                 yield d
 
-    def invs(self): # type: () -> Iterator[InvariantDecl]
+    def invs(self) -> Iterator[InvariantDecl]:
         for d in self.decls:
             if isinstance(d, InvariantDecl):
                 yield d
 
-    def transitions(self): # type: () -> Iterator[TransitionDecl]
+    def transitions(self) -> Iterator[TransitionDecl]:
         for d in self.decls:
             if isinstance(d, TransitionDecl):
                 yield d
 
-    def axioms(self): # type: () -> Iterator[AxiomDecl]
+    def axioms(self) -> Iterator[AxiomDecl]:
         for d in self.decls:
             if isinstance(d, AxiomDecl):
                 yield d
 
-    def relations_and_constants(self): # type: () -> Iterator[Union[RelationDecl, ConstantDecl]]
+    def relations_and_constants(self) -> Iterator[Union[RelationDecl, ConstantDecl]]:
         for d in self.decls:
             if isinstance(d, RelationDecl) or \
                isinstance(d, ConstantDecl):
                 yield d
 
-    def decls_containing_exprs(self): # type: () -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl]]
+    def decls_containing_exprs(self) -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl]]:
         for d in self.decls:
             if isinstance(d, InitDecl) or \
                isinstance(d, TransitionDecl) or \
@@ -1036,7 +1028,7 @@ class Program(object):
                isinstance(d, AxiomDecl):
                 yield d
 
-    def resolve(self): # type: () -> None
+    def resolve(self) -> None:
         self.scope = scope = Scope()
 
         for s in self.sorts():
@@ -1050,9 +1042,9 @@ class Program(object):
 
         assert len(scope.stack) == 0
 
-    def __repr__(self): # type: () -> str
+    def __repr__(self) -> str:
         return 'Program(%s)' % (self.decls,)
 
-    def __str__(self): # type: () -> str
+    def __str__(self) -> str:
         return '\n'.join(str(d) for d in self.decls)
             

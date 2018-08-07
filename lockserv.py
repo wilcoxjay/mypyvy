@@ -4,37 +4,34 @@
 import z3
 from typing import List, Callable
 
-def unchanged(rnew,    # type: z3.FuncDeclRef
-              rold     # type: z3.FuncDeclRef
-           ):
-    # type: (...) -> z3.ExprRef
+def unchanged(rnew: z3.FuncDeclRef,
+              rold: z3.FuncDeclRef
+           ) -> z3.ExprRef:
     X = z3.Const('X', rnew.domain(0))
     return z3.Forall(X, rnew(X) == rold(X))
 
-def remove(rnew,    # type: z3.FuncDeclRef
-           rold,    # type: z3.FuncDeclRef
-           x        # type: z3.ExprRef
-           ):
-    # type: (...) -> z3.ExprRef
+def remove(rnew: z3.FuncDeclRef,
+           rold: z3.FuncDeclRef,
+           x: z3.ExprRef
+           ) -> z3.ExprRef:
     X = z3.Const('X', x.sort())
     return z3.Forall(X, rnew(X) == z3.And(rold(X), X != x))
 
-def insert(rnew,    # type: z3.FuncDeclRef
-           rold,    # type: z3.FuncDeclRef
-           x        # type: z3.ExprRef
-           ):
-    # type: (...) -> z3.ExprRef
+def insert(rnew: z3.FuncDeclRef,
+           rold: z3.FuncDeclRef,
+           x: z3.ExprRef
+           ) -> z3.ExprRef:
     X = z3.Const('X', x.sort())
     return z3.Forall(X, rnew(X) == z3.Or(rold(X), X == x))
 
 node = z3.DeclareSort('node')
 
 class Vocab(object):
-    lock_msg = None # type: z3.FuncDeclRef
-    grant_msg = None # type: z3.FuncDeclRef
-    unlock_msg = None # type: z3.FuncDeclRef
-    holds_lock = None # type: z3.FuncDeclRef
-    server_holds_lock = None # type: z3.ExprRef
+    lock_msg: z3.FuncDeclRef
+    grant_msg: z3.FuncDeclRef
+    unlock_msg: z3.FuncDeclRef
+    holds_lock: z3.FuncDeclRef
+    server_holds_lock: z3.ExprRef
 
 v1 = Vocab()
 v1.lock_msg = z3.Function('lock_msg', node, z3.BoolSort())
@@ -50,7 +47,7 @@ v2.unlock_msg = z3.Function('new_unlock_msg', node, z3.BoolSort())
 v2.holds_lock = z3.Function('new_holds_lock', node, z3.BoolSort())
 v2.server_holds_lock = z3.Const('new_server_holds_lock', z3.BoolSort())
 
-def init(v): # type: (Vocab) -> z3.ExprRef
+def init(v: Vocab) -> z3.ExprRef:
     N = z3.Const('N', node)
     return z3.And(
         z3.Forall(N, z3.Not(v.lock_msg(N))),
@@ -60,7 +57,7 @@ def init(v): # type: (Vocab) -> z3.ExprRef
         v.server_holds_lock
     )
 
-def safety(v): # type: (Vocab) -> z3.ExprRef
+def safety(v: Vocab) -> z3.ExprRef:
     N1, N2 = z3.Consts('N1 N2', node)
     return z3.Forall([N1, N2],
                      z3.Implies(
@@ -69,7 +66,7 @@ def safety(v): # type: (Vocab) -> z3.ExprRef
                      )
     )
 
-def inv(v): # type: (Vocab) -> List[z3.ExprRef]
+def inv(v: Vocab) -> List[z3.ExprRef]:
     N, N1, N2 = z3.Consts('N N1 N2', node)
     return [
         safety(v),
@@ -83,7 +80,7 @@ def inv(v): # type: (Vocab) -> List[z3.ExprRef]
         z3.Forall(N, z3.Implies(v.unlock_msg(N), z3.Not(v.server_holds_lock)))
     ]
 
-def send_lock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
+def send_lock(v1: Vocab, v2: Vocab) -> z3.ExprRef:
     n = z3.Const('n', node)
     return z3.Exists(n,
                      z3.And(
@@ -95,7 +92,7 @@ def send_lock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
                      )
     )
 
-def recv_lock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
+def recv_lock(v1: Vocab, v2: Vocab) -> z3.ExprRef:
     n = z3.Const('n', node)
     return z3.Exists(n,
                      z3.And(
@@ -109,7 +106,7 @@ def recv_lock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
                      )
     )
 
-def recv_grant(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
+def recv_grant(v1: Vocab, v2: Vocab) -> z3.ExprRef:
     n = z3.Const('n', node)
     return z3.Exists(n,
                      z3.And(
@@ -122,7 +119,7 @@ def recv_grant(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
                      )
     )
 
-def unlock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
+def unlock(v1: Vocab, v2: Vocab) -> z3.ExprRef:
     n = z3.Const('n', node)
     return z3.Exists(n,
                      z3.And(
@@ -135,7 +132,7 @@ def unlock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
                      )
     )
 
-def recv_unlock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
+def recv_unlock(v1: Vocab, v2: Vocab) -> z3.ExprRef:
     n = z3.Const('n', node)
     return z3.Exists(n,
                      z3.And(
@@ -150,7 +147,7 @@ def recv_unlock(v1, v2): # type: (Vocab, Vocab) -> z3.ExprRef
 
 
 
-def check_transition(s, t): # type: (z3.Solver, Callable[[Vocab, Vocab], z3.ExprRef]) -> None
+def check_transition(s: z3.Solver, t: Callable[[Vocab, Vocab], z3.ExprRef]) -> None:
     print('checking transition %s' % t.__name__)
     with s:
         s.add(*inv(v1))
@@ -166,7 +163,7 @@ def check_transition(s, t): # type: (z3.Solver, Callable[[Vocab, Vocab], z3.Expr
                 print(' ok.')
     print('transition %s ok.' % t.__name__)
 
-def check_safety(s): # type: (z3.Solver) -> None
+def check_safety(s: z3.Solver) -> None:
     with s:
         s.add(*inv(v1))
         s.add(z3.Not(safety(v1)))
@@ -177,7 +174,7 @@ def check_safety(s): # type: (z3.Solver) -> None
             raise Exception('no')
         print(' ok.')
 
-def check_init(s): # type: (z3.Solver) -> None
+def check_init(s: z3.Solver) -> None:
     with s:
         s.add(init(v1))
         s.add(z3.Not(z3.And(*inv(v1))))
@@ -188,7 +185,7 @@ def check_init(s): # type: (z3.Solver) -> None
             raise Exception('no')
         print(' ok.')
 
-def main(): # type: () -> None
+def main() -> None:
     s = z3.Solver()
     check_safety(s)
     check_init(s)

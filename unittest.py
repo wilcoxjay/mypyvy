@@ -20,21 +20,21 @@ e4.resolve(scope, None)
 
 any_failed = False
 
-def _fail(msg): # type: (str) -> None
+def _fail(msg: str) -> None:
     global any_failed
     print('test failed: %s' % msg)
     any_failed = True
 
-def _pass(): # type: () -> None
+def _pass() -> None:
     print('test passed')
 
-def assertEqual(x, y): # type: (object, object) -> None
+def assertEqual(x: object, y: object) -> None:
     if not (x == y):
         _fail('expected %s == %s, but reported not equal' % (repr(x), repr(y)))
     else:
         _pass()
 
-def assertNotEqual(x, y): # type: (object, object) -> None
+def assertNotEqual(x: object, y: object) -> None:
     if not (x != y):
         _fail('expected %s != %s, but reported equal' % (repr(x), repr(y)))
     else:
