@@ -1,4 +1,8 @@
+# this is an old file verifying the verdi lock service example directly on top of the
+# python z3 api.
+
 import z3
+from typing import List, Callable
 
 def unchanged(rnew,    # type: z3.FuncDeclRef
               rold     # type: z3.FuncDeclRef

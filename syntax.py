@@ -3,20 +3,16 @@ import ply.lex
 import ply.yacc
 
 import z3
-from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn, Set
+from typing import List, Union, Tuple, Optional, Dict, Iterator, Callable, Any, NoReturn, Set, Protocol
 import sys
 import logging
 import itertools
-try:
-    from typing_extensions import Protocol
-except Exception:
-    Protocol = object # type: ignore
 
 from contextlib import contextmanager
 
 Token = ply.lex.LexToken
 
-def error(tok, msg): # type: (Optional[Token], str) -> NoReturn
+def error(tok: Optional[Token], msg: str) -> NoReturn:
     raise Exception('%s: %s' %
                     ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
                      if tok is not None else 'None', msg))
@@ -164,8 +160,7 @@ UNOPS = {
 z3_UNOPS = {
     'NOT': z3.Not,
     'OLD': None
-} # type: Any
-# Dict[str, Callable[[z3.ExprRef], z3.ExprRef]]
+} # type: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]]
 
 def check_constraint(tok, expected, actual):
     # type: (Optional[Token], InferenceSort, InferenceSort) -> None
@@ -231,7 +226,9 @@ class UnaryExpr(Expr):
             assert not old and key_old is not None
             return self.arg.to_z3(key, key_old, True)
         else:
-            return z3_UNOPS[self.op](self.arg.to_z3(key, key_old, old))
+            f = z3_UNOPS[self.op]
+            assert f is not None
+            return f(self.arg.to_z3(key, key_old, old))
 
     def free_ids(self): # type: () -> Set[str]
         return self.arg.free_ids()
@@ -437,7 +434,7 @@ class HasSortField(Protocol):
     sort = None # type: InferenceSort
 
 class SortInferencePlaceholder(object):
-    def __init__(self, d=None): # type: (HasSortField) -> None
+    def __init__(self, d=None): # type: (Optional[HasSortField]) -> None
         self.backpatches = [] # type: List[HasSortField]
         if d is not None:
             self.add(d)

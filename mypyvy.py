@@ -6,7 +6,7 @@ import datetime
 import logging
 import argparse
 
-z3.Forall = z3.ForAll # type: ignore
+z3.Forall = z3.ForAll
 
 def solver_enter(self): # type: ignore
     self.push()
@@ -21,7 +21,7 @@ import parser, syntax
 
 T = TypeVar('T')
 
-def _product(l, x, i): # type: (Sequence[Sequence[T]], List[T], int) -> Iterable[List[T]]
+def _product(l, x, i): # type: (Sequence[Iterable[T]], List[T], int) -> Iterable[List[T]]
     assert len(l) == len(x)
 
     if i >= len(l):
