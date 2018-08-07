@@ -8,8 +8,6 @@ import argparse
 
 z3.Forall = z3.ForAll # type: ignore
 
-z3.init('/Users/jrw12/build/z3/build/')
-
 def solver_enter(self): # type: ignore
     self.push()
 
