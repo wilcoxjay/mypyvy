@@ -1,11 +1,11 @@
 import mypyvy
 import parser
-import ast
+import syntax
 
 import sys
 
-scope = ast.Scope()
-scope.add_sort(None, 'T', ast.SortDecl(None, 'T'))
+scope = syntax.Scope()
+scope.add_sort(None, 'T', syntax.SortDecl(None, 'T'))
 scope.get_sort('T')
 
 e1 = parser.expr_parser.parse(input='forall x:T. x = x')

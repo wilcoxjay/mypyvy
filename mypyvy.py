@@ -17,7 +17,7 @@ def solver_exit(self, exn_type, exn_value, traceback): # type: ignore
 z3.Solver.__enter__ = solver_enter # type: ignore
 z3.Solver.__exit__ = solver_exit # type: ignore
 
-import parser, ast
+import parser, syntax
 
 T = TypeVar('T')
 
@@ -60,7 +60,7 @@ def product(l): # type: (Sequence[Sequence[T]]) -> Iterable[List[T]]
 #                 for x in product(domains):
 #                     print '%s(%s) = %s' % (decl, ', '.join(str(y) for y in x), m.eval(decl(x)))
 
-def check_unsat(s, prog, key, key_old=None): # type: (z3.Solver, ast.Program, str, Optional[str]) -> None
+def check_unsat(s, prog, key, key_old=None): # type: (z3.Solver, syntax.Program, str, Optional[str]) -> None
     # print s.to_smt2()
 
     res = s.check()
@@ -73,7 +73,7 @@ def check_unsat(s, prog, key, key_old=None): # type: (z3.Solver, ast.Program, st
         raise Exception('no')
     print('ok.')
 
-def check_init(s, prog): # type: (z3.Solver, ast.Program) -> None
+def check_init(s, prog): # type: (z3.Solver, syntax.Program) -> None
     print('checking init:')
 
     with s:
@@ -91,7 +91,7 @@ def check_init(s, prog): # type: (z3.Solver, ast.Program) -> None
                 check_unsat(s, prog, 'one')
 
 
-def check_transitions(s, prog): # type: (z3.Solver, ast.Program) -> None
+def check_transitions(s, prog): # type: (z3.Solver, syntax.Program) -> None
     with s:
         for inv in prog.invs():
             s.add(inv.expr.to_z3('old'))
@@ -113,7 +113,7 @@ def check_transitions(s, prog): # type: (z3.Solver, ast.Program) -> None
                         check_unsat(s, prog, 'new', 'old')
 
 def check_implication(s, hyps, concs):
-    # type: (z3.Solver, Iterable[ast.Expr], Iterable[ast.Expr]) -> Optional[z3.ModelRef]
+    # type: (z3.Solver, Iterable[syntax.Expr], Iterable[syntax.Expr]) -> Optional[z3.ModelRef]
     with s:
         for e in hyps:
             s.add(e.to_z3('one'))
@@ -128,7 +128,7 @@ def check_implication(s, hyps, concs):
     return None
 
 def check_two_state_implication_all_transitions(s, prog, old_hyps, new_conc):
-    # type: (z3.Solver, ast.Program, Iterable[ast.Expr], ast.Expr) -> Optional[z3.ModelRef]
+    # type: (z3.Solver, syntax.Program, Iterable[syntax.Expr], syntax.Expr) -> Optional[z3.ModelRef]
     with s:
         for h in old_hyps:
             s.add(h.to_z3('old'))
@@ -145,7 +145,7 @@ def check_two_state_implication_all_transitions(s, prog, old_hyps, new_conc):
     return None
 
 
-def safe_resolve(e, scope, sort): # type: (ast.Expr, ast.Scope, ast.InferenceSort) -> None
+def safe_resolve(e, scope, sort): # type: (syntax.Expr, syntax.Scope, syntax.InferenceSort) -> None
     try:
         e.resolve(scope, sort)
     except Exception as exn:
@@ -167,10 +167,10 @@ class Diagram(object):
     # all the conjuncts from the list.  This ast is ignored except for purposes
     # of resolving all the C_i.
 
-    def __init__(self, vs, conjuncts): # type: (List[ast.SortedVar], List[ast.Expr]) -> None
+    def __init__(self, vs, conjuncts): # type: (List[syntax.SortedVar], List[syntax.Expr]) -> None
         self.vs = vs
         self.conjuncts = conjuncts
-        self.q = ast.QuantifierExpr(None, 'EXISTS', vs, ast.And(*self.conjuncts))
+        self.q = syntax.QuantifierExpr(None, 'EXISTS', vs, syntax.And(*self.conjuncts))
         self.trackers = [] # type: List[z3.ExprRef]
 
     def __str__(self): # type: () -> str
@@ -179,14 +179,14 @@ class Diagram(object):
             ' &\n  '.join(str(c) for c in self.conjuncts)
         )
 
-    def resolve(self, scope): # type: (ast.Scope) -> None
-        safe_resolve(self.q, scope, ast.BoolSort)
+    def resolve(self, scope): # type: (syntax.Scope) -> None
+        safe_resolve(self.q, scope, syntax.BoolSort)
 
     def to_z3(self, key): # type: (str) -> z3.ExprRef
         bs = []
         for sv in self.vs:
             n = sv.name
-            assert sv.sort is not None and not isinstance(sv.sort, ast.SortInferencePlaceholder)
+            assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
             self.q.binders[n] = z3.Const(n, sv.sort.to_z3())
             bs.append(self.q.binders[n])
 
@@ -202,9 +202,9 @@ class Diagram(object):
         else:
             return z3.And(*z3conjs)
 
-    def to_ast(self): # type: () -> ast.Expr
+    def to_ast(self): # type: () -> syntax.Expr
         if len(self.conjuncts) == 0:
-            return ast.Bool(None, True)
+            return syntax.Bool(None, True)
         elif len(self.vs) == 0:
             return self.q.body
         else:
@@ -212,7 +212,7 @@ class Diagram(object):
 
     def _reinit(self): # type: () -> None
         self.q.vs = self.vs
-        self.q.body = ast.And(*self.conjuncts)
+        self.q.body = syntax.And(*self.conjuncts)
         self.q.binders = {}
 
     def minimize_from_core(self, core): # type: (Set[int]) -> None
@@ -221,12 +221,12 @@ class Diagram(object):
         self.conjuncts = [self.conjuncts[i] for i in core]
         self.prune_unused_vars()
 
-    def remove_clause(self, i): # type: (int) -> ast.Expr
+    def remove_clause(self, i): # type: (int) -> syntax.Expr
         c = self.conjuncts.pop(i)
         self._reinit()
         return c
 
-    def add_clause(self, i, c): # type: (int, ast.Expr) -> None
+    def add_clause(self, i, c): # type: (int, syntax.Expr) -> None
         self.conjuncts.insert(i, c)
         self._reinit()
 
@@ -236,7 +236,7 @@ class Diagram(object):
 
 class Model(object):
     def __init__(self, prog, m, key, key_old=None):
-        # type: (ast.Program, z3.ModelRef, str, Optional[str]) -> None
+        # type: (syntax.Program, z3.ModelRef, str, Optional[str]) -> None
         self.prog = prog
         self.z3model = m
         self.key = key
@@ -256,7 +256,7 @@ class Model(object):
 
     @staticmethod
     def _state_str(Cs, Rs):
-        # type: (Dict[ast.ConstantDecl, str], Dict[ast.RelationDecl, List[Tuple[List[str], bool]]]) -> str
+        # type: (Dict[syntax.ConstantDecl, str], Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]) -> str
         l = []
         for C in Cs:
             l.append('%s = %s' % (C.name, Cs[C]))
@@ -272,19 +272,19 @@ class Model(object):
         def rename(s): # type: (str) -> str
             return s.replace('!val!', '')
 
-        self.univs = {} # type: Dict[ast.SortDecl, List[str]]
+        self.univs = {} # type: Dict[syntax.SortDecl, List[str]]
         assert self.prog.scope is not None
         for z3sort in self.z3model.sorts():
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
             self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
 
-        self.rel_interps = {} # type: Dict[ast.RelationDecl, List[Tuple[List[str], bool]]]
-        self.const_interps = {} # type: Dict[ast.ConstantDecl, str]
+        self.rel_interps = {} # type: Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]
+        self.const_interps = {} # type: Dict[syntax.ConstantDecl, str]
 
         if self.key_old is not None:
-            self.old_rel_interps = {} # type: Dict[ast.RelationDecl, List[Tuple[List[str], bool]]]
-            self.old_const_interps = {} # type: Dict[ast.ConstantDecl, str]
+            self.old_rel_interps = {} # type: Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]
+            self.old_const_interps = {} # type: Dict[syntax.ConstantDecl, str]
 
         for z3decl in self.z3model.decls():
             z3name = str(z3decl)
@@ -303,10 +303,10 @@ class Model(object):
 
 
             decl, _ = self.prog.scope.get(name)
-            assert not isinstance(decl, ast.QuantifierExpr) and \
-                not isinstance(decl, ast.TransitionDecl)
+            assert not isinstance(decl, syntax.QuantifierExpr) and \
+                not isinstance(decl, syntax.TransitionDecl)
             if decl is not None:
-                if isinstance(decl, ast.RelationDecl):
+                if isinstance(decl, syntax.RelationDecl):
                     if len(decl.arity) > 0:
                         l = []
                         domains = [self.z3model.get_universe(z3decl.domain(i))
@@ -322,7 +322,7 @@ class Model(object):
                         assert decl not in R
                         R[decl] = [([], bool(ans))]
                 else:
-                    assert isinstance(decl, ast.ConstantDecl)
+                    assert isinstance(decl, syntax.ConstantDecl)
                     v = self.z3model.eval(z3decl()).decl().name()
                     assert decl not in C
                     C[decl] = rename(v)
@@ -331,27 +331,27 @@ class Model(object):
         assert self.key_old is None, 'diagram can only be generated from a 1-state model'
         # TODO: remove above assertion by supporting 2-state models
 
-        vs = [] # type: List[ast.SortedVar]
+        vs = [] # type: List[syntax.SortedVar]
         conjs = []
         for sort in self.univs:
-            vs.extend(ast.SortedVar(None, v, ast.UninterpretedSort(None, sort.name))
+            vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
                       for v in self.univs[sort])
 
-            u = [ast.Id(None, s) for s in self.univs[sort]]
+            u = [syntax.Id(None, s) for s in self.univs[sort]]
             for i, a in enumerate(u):
                 for b in u[i+1:]:
-                    conjs.append(ast.Neq(a, b))
+                    conjs.append(syntax.Neq(a, b))
         for R in self.rel_interps:
             for tup, ans in self.rel_interps[R]:
                 if len(tup) > 0:
-                    e = ast.AppExpr(None, R.name, [ast.Id(None, col) for col in tup]) # type: ast.Expr
+                    e = syntax.AppExpr(None, R.name, [syntax.Id(None, col) for col in tup]) # type: syntax.Expr
 
                 else:
-                    e = ast.Id(None, R.name)
-                e = e if ans else ast.Not(e)
+                    e = syntax.Id(None, R.name)
+                e = e if ans else syntax.Not(e)
                 conjs.append(e)
         for C in self.const_interps:
-            e = ast.Eq(ast.Id(None, C.name), ast.Id(None, self.const_interps[C]))
+            e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, self.const_interps[C]))
             conjs.append(e)
 
 
@@ -362,14 +362,14 @@ class Model(object):
         return diag
 
 def generalize_diag(s, prog, diag, f):
-    # type: (z3.Solver, ast.Program, Diagram, Set[ast.Expr]) -> None
+    # type: (z3.Solver, syntax.Program, Diagram, Set[syntax.Expr]) -> None
     logging.debug('generalizing diagram')
     logging.debug(str(diag))
 
     i = 0
     while i < len(diag.conjuncts):
         c = diag.remove_clause(i)
-        if check_two_state_implication_all_transitions(s, prog, f, ast.Not(diag.to_ast())) is not None:
+        if check_two_state_implication_all_transitions(s, prog, f, syntax.Not(diag.to_ast())) is not None:
             diag.add_clause(i, c)
             i += 1
         else:
@@ -381,7 +381,7 @@ def generalize_diag(s, prog, diag, f):
     logging.debug(str(diag))
 
 def find_predecessor(s, prog, pre_frames, diag):
-    # type: (z3.Solver, ast.Program, Set[ast.Expr], Diagram) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[ast.TransitionDecl, Diagram]]]
+    # type: (z3.Solver, syntax.Program, Set[syntax.Expr], Diagram) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[syntax.TransitionDecl, Diagram]]]
 
     core = set() # type: Set[int]
     with s:
@@ -419,7 +419,7 @@ def find_predecessor(s, prog, pre_frames, diag):
 
 
 def block(s, prog, fs, diag, j, trace, safety_goal=True):
-    # type: (z3.Solver, ast.Program, List[Set[ast.Expr]], Diagram, int, List[Tuple[ast.TransitionDecl, Diagram]], bool) -> bool
+    # type: (z3.Solver, syntax.Program, List[Set[syntax.Expr]], Diagram, int, List[Tuple[syntax.TransitionDecl, Diagram]], bool) -> bool
     if j == 0: # or (j == 1 and sat(init and diag)
         if safety_goal:
             print(trace)
@@ -462,7 +462,7 @@ def block(s, prog, fs, diag, j, trace, safety_goal=True):
 
     generalize_diag(s, prog, diag, fs[j-1])
 
-    e = ast.Not(diag.to_ast())
+    e = syntax.Not(diag.to_ast())
 
     logging.debug('minimized negated clause')
     logging.debug(str(e))
@@ -472,7 +472,7 @@ def block(s, prog, fs, diag, j, trace, safety_goal=True):
 
     return True
 
-def check_inductive_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> Optional[Set[ast.Expr]]
+def check_inductive_frames(s, fs): # type: (z3.Solver, List[Set[syntax.Expr]]) -> Optional[Set[syntax.Expr]]
     for i in range(len(fs) - 1):
         if check_implication(s, fs[i+1], fs[i]) is None:
             return fs[i+1]
@@ -480,7 +480,7 @@ def check_inductive_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> O
 
 
 
-def push_forward_frames(s, prog, fs): # type: (z3.Solver, ast.Program, List[Set[ast.Expr]]) -> None
+def push_forward_frames(s, prog, fs): # type: (z3.Solver, syntax.Program, List[Set[syntax.Expr]]) -> None
     for i, f in enumerate(fs[:-1]):
         logging.debug('pushing in frame %d' % i)
 
@@ -496,7 +496,7 @@ def push_forward_frames(s, prog, fs): # type: (z3.Solver, ast.Program, List[Set[
                 block(s, prog, fs, diag, i, [], False)
 
 
-def simplify_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> None
+def simplify_frames(s, fs): # type: (z3.Solver, List[Set[syntax.Expr]]) -> None
     for i, f in enumerate(fs):
         logging.debug('simplifying frame %d' % i)
         to_consider = copy.copy(f)
@@ -506,26 +506,26 @@ def simplify_frames(s, fs): # type: (z3.Solver, List[Set[ast.Expr]]) -> None
                 logging.debug('removed %s' % c)
                 f.remove(c)
 
-def updr(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) -> Set[ast.Expr]
+def updr(s, prog, args): # type: (z3.Solver, syntax.Program, argparse.Namespace) -> Set[syntax.Expr]
     assert prog.scope is not None
 
     check_init(s, prog)
 
     if args.safety is not None:
-        the_inv = None # type: Optional[ast.InvariantDecl]
+        the_inv = None # type: Optional[syntax.InvariantDecl]
         for inv in prog.invs():
             if inv.name == args.safety:
                 the_inv = inv
         if the_inv is None:
             raise Exception('No safety invariant named %s' % args.safety)
-        safety = {the_inv.expr} # type: Set[ast.Expr]
+        safety = {the_inv.expr} # type: Set[syntax.Expr]
     else:
         safety = {inv.expr for inv in prog.invs()}
 
 
 
-    fs = [set(init.expr for init in prog.inits())] # type: List[Set[ast.Expr]]
-    fs.append({ast.Bool(None, True)})
+    fs = [set(init.expr for init in prog.inits())] # type: List[Set[syntax.Expr]]
+    fs.append({syntax.Bool(None, True)})
 
     while True:
         logging.info('considering frame %s' % (len(fs) - 1,))
@@ -540,7 +540,7 @@ def updr(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) ->
 
 
             logging.info('frame is safe but not inductive. starting new frame')
-            fs.append({ast.Bool(None, True)})
+            fs.append({syntax.Bool(None, True)})
 
             push_forward_frames(s, prog, fs)
             simplify_frames(s, fs)
@@ -569,7 +569,7 @@ def debug_tokens(filename): # type: (str) -> None
             break      # No more input
         print(tok)
 
-def verify(s, prog, args): # type: (z3.Solver, ast.Program, argparse.Namespace) -> None
+def verify(s, prog, args): # type: (z3.Solver, syntax.Program, argparse.Namespace) -> None
     check_init(s, prog)
     check_transitions(s, prog)
     

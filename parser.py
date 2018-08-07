@@ -1,7 +1,7 @@
 import ply
 import ply.lex
 import ply.yacc
-import ast
+import syntax
 from typing import Any
 
 reserved = {
@@ -89,7 +89,7 @@ precedence = (
 
 def p_program(p): # type: (Any) -> None
     'program : decls'
-    p[0] = ast.Program(p[1])
+    p[0] = syntax.Program(p[1])
 
 def p_decls_empty(p): # type: (Any) -> None
     'decls : empty'
@@ -105,7 +105,7 @@ def p_id(p): # type: (Any) -> None
 
 def p_decl_sort(p): # type: (Any) -> None
     'decl : SORT id'
-    p[0] = ast.SortDecl(p.slice[1], p[2].value)
+    p[0] = syntax.SortDecl(p.slice[1], p[2].value)
 
 def p_decl_mut(p): # type: (Any) -> None
     '''mut : MUTABLE
@@ -130,27 +130,27 @@ def p_arity_nonempty_more(p): # type: (Any) -> None
 
 def p_sort(p): # type: (Any) -> None
     'sort : id'
-    p[0] = ast.UninterpretedSort(p[1], p[1].value)
+    p[0] = syntax.UninterpretedSort(p[1], p[1].value)
 
 def p_decl_relation(p): # type: (Any) -> None
     'decl : mut RELATION id LPAREN arity RPAREN'
-    p[0] = ast.RelationDecl(p.slice[2], p[3].value, p[5], p[1])
+    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[5], p[1])
 
 def p_decl_constant(p): # type: (Any) -> None
     'decl : mut CONSTANT id COLON sort'
-    p[0] = ast.ConstantDecl(p.slice[2], p[3].value, p[5], p[1])
+    p[0] = syntax.ConstantDecl(p.slice[2], p[3].value, p[5], p[1])
 
 def p_decl_axiom(p): # type: (Any) -> None
     'decl : AXIOM opt_name expr'
-    p[0] = ast.AxiomDecl(p.slice[1], p[2], p[3])
+    p[0] = syntax.AxiomDecl(p.slice[1], p[2], p[3])
 
 def p_decl_init(p): # type: (Any) -> None
     'decl : INIT opt_name expr'
-    p[0] = ast.InitDecl(p.slice[1], p[2], p[3])
+    p[0] = syntax.InitDecl(p.slice[1], p[2], p[3])
 
 def p_decl_invariant(p): # type: (Any) -> None
     'decl : INVARIANT opt_name expr'
-    p[0] = ast.InvariantDecl(p.slice[1], p[2], p[3])
+    p[0] = syntax.InvariantDecl(p.slice[1], p[2], p[3])
 
 def p_opt_name_none(p): # type: (Any) -> None
     'opt_name : empty'
@@ -167,15 +167,15 @@ def p_quant(p): # type: (Any) -> None
 
 def p_expr_quantifier(p): # type: (Any) -> None
     'expr : quant sortedvars DOT expr'
-    p[0] = ast.QuantifierExpr(p[1], p[1].type, p[2], p[4])
+    p[0] = syntax.QuantifierExpr(p[1], p[1].type, p[2], p[4])
 
 def p_sortedvar(p): # type: (Any) -> None
     'sortedvar : id COLON sort'
-    p[0] = ast.SortedVar(p[1], p[1].value, p[3])
+    p[0] = syntax.SortedVar(p[1], p[1].value, p[3])
 
 def p_sortedvar_nosort(p): # type: (Any) -> None
     'sortedvar : id'
-    p[0] = ast.SortedVar(p[1], p[1].value, None)
+    p[0] = syntax.SortedVar(p[1], p[1].value, None)
 
 def p_sortedvars0_one(p): # type: (Any) -> None
     'sortedvars0 : sortedvars'
@@ -195,48 +195,48 @@ def p_sortedvars_more(p): # type: (Any) -> None
 
 def p_expr_true(p): # type: (Any) -> None
     'expr : TRUE'
-    p[0] = ast.Bool(p.slice[1], True)
+    p[0] = syntax.Bool(p.slice[1], True)
 
 def p_expr_false(p): # type: (Any) -> None
     'expr : FALSE'
-    p[0] = ast.Bool(p.slice[1], False)
+    p[0] = syntax.Bool(p.slice[1], False)
 
 def p_expr_not(p): # type: (Any) -> None
     'expr : BANG expr'
-    p[0] = ast.UnaryExpr(p.slice[1], 'NOT', p[2])
+    p[0] = syntax.UnaryExpr(p.slice[1], 'NOT', p[2])
 
 def p_expr_app(p): # type: (Any) -> None
     'expr : id LPAREN args RPAREN'
-    p[0] = ast.AppExpr(p[1], p[1].value, p[3])
+    p[0] = syntax.AppExpr(p[1], p[1].value, p[3])
 
 def p_expr_and(p): # type: (Any) -> None
     'expr : expr AMPERSAND expr'
-    p[0] = ast.BinaryExpr(p.slice[2], 'AND', p[1], p[3])
+    p[0] = syntax.BinaryExpr(p.slice[2], 'AND', p[1], p[3])
 
 def p_expr_or(p): # type: (Any) -> None
     'expr : expr PIPE expr'
-    p[0] = ast.BinaryExpr(p.slice[2], 'OR', p[1], p[3])
+    p[0] = syntax.BinaryExpr(p.slice[2], 'OR', p[1], p[3])
 
 def p_expr_iff(p): # type: (Any) -> None
     'expr : expr IFF expr'
-    p[0] = ast.BinaryExpr(p.slice[2], 'IFF', p[1], p[3])
+    p[0] = syntax.BinaryExpr(p.slice[2], 'IFF', p[1], p[3])
     
 def p_expr_implies(p): # type: (Any) -> None
     'expr : expr IMPLIES expr'
-    p[0] = ast.BinaryExpr(p.slice[2], 'IMPLIES', p[1], p[3])
+    p[0] = syntax.BinaryExpr(p.slice[2], 'IMPLIES', p[1], p[3])
 
 def p_expr_eq(p): # type: (Any) -> None
     'expr : expr EQUAL expr'
-    p[0] = ast.BinaryExpr(p.slice[2], 'EQUAL', p[1], p[3])
+    p[0] = syntax.BinaryExpr(p.slice[2], 'EQUAL', p[1], p[3])
 
 def p_expr_noteq(p): # type: (Any) -> None
     'expr : expr NOTEQ expr'
-    p[0] = ast.BinaryExpr(p.slice[2], 'NOTEQ', p[1], p[3])
+    p[0] = syntax.BinaryExpr(p.slice[2], 'NOTEQ', p[1], p[3])
 
 
 def p_expr_old(p): # type: (Any) -> None
     'expr : OLD LPAREN expr RPAREN'
-    p[0] = ast.UnaryExpr(p.slice[1], 'OLD', p[3])
+    p[0] = syntax.UnaryExpr(p.slice[1], 'OLD', p[3])
 
 def p_args_empty(p): # type: (Any) -> None
     'args : empty'
@@ -256,7 +256,7 @@ def p_args1_more(p): # type: (Any) -> None
 
 def p_expr_id(p): # type: (Any) -> None
     'expr : id'
-    p[0] = ast.Id(p[1], p[1].value)
+    p[0] = syntax.Id(p[1], p[1].value)
 
 def p_expr_paren(p): # type: (Any) -> None
     'expr : LPAREN expr RPAREN'
@@ -268,7 +268,7 @@ def p_params(p): # type: (Any) -> None
 
 def p_mod(p): # type: (Any) -> None
     'mod : id'
-    p[0] = ast.ModifiesClause(p[1], p[1].value)
+    p[0] = syntax.ModifiesClause(p[1], p[1].value)
 
 def p_modlist_one(p): # type: (Any) -> None
     'modlist : mod'
@@ -284,7 +284,7 @@ def p_mods(p): # type: (Any) -> None
 
 def p_decl_transition(p): # type: (Any) -> None
     'decl : TRANSITION id LPAREN params RPAREN mods expr'
-    p[0] = ast.TransitionDecl(p[2], p[2].value, p[4], p[6], p[7])
+    p[0] = syntax.TransitionDecl(p[2], p[2].value, p[4], p[6], p[7])
 
 def p_empty(p): # type: (Any) -> None
     'empty :'
