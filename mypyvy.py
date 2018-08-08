@@ -412,6 +412,7 @@ class Frames(object):
         self.solver = solver
         self.prog = prog
         self.fs: List[Set[Expr]]  = []
+        self.push_cache: List[Set[Expr]] = []
 
     @overload
     def __getitem__(self, i: int) -> Set[Expr]: ...
@@ -428,6 +429,7 @@ class Frames(object):
         if contents is None:
             contents = {syntax.Bool(None, True)}
         self.fs.append(contents)
+        self.push_cache.append(set())
 
     def get_inductive_frame(self) -> Optional[Set[Expr]]:
         for i in range(len(self) - 1):
@@ -440,7 +442,7 @@ class Frames(object):
             logging.debug('pushing in frame %d' % i)
 
             for c in copy.copy(f):
-                if c in self[i+1]:
+                if c in self[i+1] or c in self.push_cache[i]:
                     continue
                 m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
                 if m is None:
@@ -449,13 +451,13 @@ class Frames(object):
                 else:
                     diag = Model(self.prog, m, 'old').as_diagram()
                     self.block(diag, i, [], False)
-
+                self.push_cache[i].add(c)
 
     def block(
             self,
             diag: Diagram,
             j: int,
-            trace: List[Tuple[TransitionDecl,Diagram]],
+            trace: List[Tuple[TransitionDecl,Diagram]]=[],
             safety_goal: bool=True
     ) -> bool:
         if j == 0: # or (j == 1 and sat(init and diag)
