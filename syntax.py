@@ -4,7 +4,8 @@ import ply.yacc
 
 import z3
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, NoReturn, Set, Protocol
+    Callable, Any, NoReturn, Set
+from typing_extensions import Protocol
 import sys
 import logging
 import itertools
@@ -25,7 +26,7 @@ class Sort(object):
     def __str__(self) -> str:
         raise Exception('Unexpected sort %s does not implement __str__ method' % repr(self))
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         raise Exception('Unexpected sort %s does not implement resolve method' % repr(self))
 
     def to_z3(self) -> z3.SortRef:
@@ -45,6 +46,30 @@ class Sort(object):
     def __ne__(self, other: object) -> bool:
         return not (self == other)
 
+
+class HasSortField(Protocol):
+    sort: 'InferenceSort'
+
+class SortInferencePlaceholder(object):
+    def __init__(self, d: Optional[HasSortField]=None) -> None:
+        self.backpatches: List[HasSortField] = []
+        if d is not None:
+            self.add(d)
+
+    def add(self, d: HasSortField) -> None:
+        self.backpatches.append(d)
+
+    def solve(self, sort: Sort) -> None:
+        for d in self.backpatches:
+            d.sort = sort
+
+    def merge(self, other: 'SortInferencePlaceholder') -> None:
+        for d in other.backpatches:
+            assert d.sort is other
+            d.sort = self
+            self.backpatches.append(d)
+
+InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
 
 PREC_BOT = 0
@@ -81,7 +106,7 @@ class Expr(object):
         self.pretty(buf, PREC_TOP, 'NONE')
         return ''.join(buf)
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         raise Exception('Unexpected expression %s does not implement resolve method' %
                         repr(self))
 
@@ -144,7 +169,7 @@ class Bool(Expr):
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(str(self.val))
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
         return BoolSort
 
@@ -165,7 +190,7 @@ z3_UNOPS: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]] = {
 }
 
 def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: InferenceSort) -> None:
-    if expected is None:
+    if expected is None or actual is None:
         pass
     elif isinstance(expected, Sort):
         if isinstance(actual, Sort):
@@ -187,7 +212,7 @@ class UnaryExpr(Expr):
         self.op = op
         self.arg = arg
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         if self.op == 'OLD':
             return self.arg.resolve(scope, sort)
         else:
@@ -263,7 +288,7 @@ class BinaryExpr(Expr):
         self.arg1 = arg1
         self.arg2 = arg2
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
 
         if self.op in ['AND', 'OR', 'IMPLIES', 'IFF']:
@@ -356,7 +381,7 @@ class AppExpr(Expr):
         self.args = args
         self.decl: Optional[RelationDecl] = None
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         d, _ = scope.get(self.rel)
         if d is None:
             error(self.tok, 'Unresolved relation name %s' % self.rel)
@@ -415,7 +440,7 @@ class SortedVar(object):
         self.name = name
         self.sort: InferenceSort = sort
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         if self.sort is None:
             error(self.tok, 'type annotation required for variable %s' % (self.name,))
 
@@ -432,29 +457,6 @@ class SortedVar(object):
         else:
             return '%s:%s' % (self.name, self.sort)
 
-class HasSortField(Protocol):
-    sort: InferenceSort = None
-
-class SortInferencePlaceholder(object):
-    def __init__(self, d: Optional[HasSortField]=None) -> None:
-        self.backpatches: List[HasSortField] = []
-        if d is not None:
-            self.add(d)
-
-    def add(self, d: HasSortField) -> None:
-        self.backpatches.append(d)
-
-    def solve(self, sort: Sort) -> None:
-        for d in self.backpatches:
-            d.sort = sort
-
-    def merge(self, other: SortInferencePlaceholder) -> None:
-        for d in other.backpatches:
-            assert d.sort is other
-            d.sort = self
-            self.backpatches.append(d)
-
-InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
 class QuantifierExpr(Expr):
     def __init__(self, tok: Optional[Token], quant: str, vs: List[SortedVar], body: Expr) -> None:
@@ -466,7 +468,7 @@ class QuantifierExpr(Expr):
         self.body = body
         self.binders: Dict[str, z3.ExprRef] = {}
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
 
         for sv in self.vs:
@@ -532,7 +534,7 @@ class Id(Expr):
         self.decl: Optional[Binder] = None
         self.index: Optional[Tuple[int, int]] = None
 
-    def resolve(self, scope: Scope, sort: InferenceSort) -> InferenceSort:
+    def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         self.decl, x = scope.get(self.name)
         if self.decl is None:
             error(self.tok, 'Unresolved variable %s' % (self.name,))
@@ -615,7 +617,7 @@ class UninterpretedSort(Sort):
         self.name = name
         self.decl: Optional[SortDecl] = None
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         self.decl = scope.get_sort(self.name)
         if self.decl is None:
             error(self.tok, 'Unresolved sort name %s' % (self.name,))
@@ -641,7 +643,7 @@ class _BoolSort(Sort):
     def __str__(self) -> str:
         return 'bool'
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         pass
 
     def to_z3(self) -> z3.SortRef:
@@ -666,7 +668,7 @@ class SortDecl(Decl):
         self.name = name
         self.z3: Optional[z3.SortRef] = None
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         scope.add_sort(self.tok, self.name, self)
 
     def __repr__(self) -> str:
@@ -690,7 +692,7 @@ class RelationDecl(Decl):
         self.mut_z3: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]] = {}
         self.immut_z3: Optional[Union[z3.FuncDeclRef, z3.ExprRef]] = None
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         for sort in self.arity:
             sort.resolve(scope)
 
@@ -743,7 +745,7 @@ class ConstantDecl(Decl):
         return '%s constant %s: %s' % ('mutable' if self.mutable else 'immutable',
                                        self.name, self.sort)
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         self.sort.resolve(scope)
         scope.add_constant(self.tok, self.name, self)
 
@@ -776,7 +778,7 @@ class InitDecl(Decl):
         self.name = name
         self.expr = expr
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
@@ -795,7 +797,7 @@ class ModifiesClause(object):
         self.name = name
         self.decl: Optional[Binder] = None
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         self.decl, _ = scope.get(self.name)
 
         if self.decl is None:
@@ -820,7 +822,7 @@ class TransitionDecl(Decl):
 
         self.binders: Dict[str, z3.ExprRef] = {}
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         assert len(scope.stack) == 0
 
         self.scope = scope
@@ -894,7 +896,7 @@ class InvariantDecl(Decl):
         self.name = name
         self.expr = expr
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
@@ -913,7 +915,7 @@ class AxiomDecl(Decl):
         self.name = name
         self.expr = expr
 
-    def resolve(self, scope: Scope) -> None:
+    def resolve(self, scope: 'Scope') -> None:
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
