@@ -1,7 +1,7 @@
 import z3
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, overload
+    Dict, TypeVar, Sequence, overload, Generic, Iterator
 import copy
 import datetime
 import logging
