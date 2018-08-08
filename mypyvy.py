@@ -314,12 +314,14 @@ class Model(object):
         return '\n'.join(l)
 
     def read_out(self) -> None:
+        logging.info('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
         self.univs: Dict[SortDecl, List[str]] = {}
         assert self.prog.scope is not None
         for z3sort in self.z3model.sorts():
+            logging.info(str(z3sort))
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
             self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
@@ -351,6 +353,7 @@ class Model(object):
             assert not isinstance(decl, syntax.QuantifierExpr) and \
                 not isinstance(decl, TransitionDecl)
             if decl is not None:
+                logging.info(str(z3decl))
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
                         l = []
