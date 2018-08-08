@@ -273,6 +273,8 @@ class OrderedSet(Generic[T], Iterable[T]):
     def __iter__(self) -> Iterator[T]:
         return iter(self.l)
 
+MySet = OrderedSet
+
 class Model(object):
     def __init__(
             self,
@@ -415,15 +417,11 @@ class Frames(object):
     def __init__(self, solver: z3.Solver, prog: Program) -> None:
         self.solver = solver
         self.prog = prog
-        self.fs: List[Set[Expr]]  = []
+        self.fs: List[MySet[Expr]] = []
         self.push_cache: List[Set[Expr]] = []
 
-    @overload
-    def __getitem__(self, i: int) -> Set[Expr]: ...
-    @overload
-    def __getitem__(self, i: slice) -> List[Set[Expr]]: ...
 
-    def __getitem__(self, i: Any) -> Any:
+    def __getitem__(self, i: int) -> MySet[Expr]:
         return self.fs[i]
 
     def __len__(self) -> int:
@@ -431,18 +429,18 @@ class Frames(object):
 
     def new_frame(self, contents: Optional[Iterable[Expr]]=None) -> None:
         if contents is None:
-            contents = {syntax.Bool(None, True)}
-        self.fs.append(contents)
+            contents = [syntax.Bool(None, True)]
+        self.fs.append(MySet(contents))
         self.push_cache.append(set())
 
-    def get_inductive_frame(self) -> Optional[Set[Expr]]:
+    def get_inductive_frame(self) -> Optional[MySet[Expr]]:
         for i in range(len(self) - 1):
             if check_implication(self.solver, self[i+1], self[i]) is None:
                 return self[i+1]
         return None
 
     def push_forward_frames(self) -> None:
-        for i, f in enumerate(self[:-1]):
+        for i, f in enumerate(self.fs[:-1]):
             logging.debug('pushing in frame %d' % i)
 
             for c in copy.copy(f):
@@ -483,8 +481,8 @@ class Frames(object):
             res, x = self.find_predecessor(self[j-1], diag)
             if res == z3.unsat:
                 logging.debug('no predecessor: blocked!')
-                assert isinstance(x, set)
-                core: Set[int] = x
+                assert isinstance(x, MySet)
+                core: MySet[int] = x
                 break
             assert isinstance(x, tuple), (res, x)
             trans, pre_diag = x
@@ -520,9 +518,9 @@ class Frames(object):
             self,
             pre_frame: Iterable[Expr],
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[TransitionDecl, Diagram]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[MySet[int], Tuple[TransitionDecl, Diagram]]]:
 
-        core: Set[int] = set()
+        core: MySet[int] = MySet()
         with self.solver:
             for f in pre_frame:
                 self.solver.add(f.to_z3('old'))
@@ -559,14 +557,18 @@ class Frames(object):
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
             logging.debug('simplifying frame %d' % i)
-            to_consider = copy.copy(f)
-            while to_consider:
-                c = to_consider.pop()
-                if check_implication(self.solver, f - {c}, {c}) is None:
+            l = []
+            for c in f.l:
+                if check_implication(self.solver, f.s - {c}, {c}) is None:
                     logging.debug('removed %s' % c)
-                    f.remove(c)
+                    f.s.remove(c)
+                else:
+                    l.append(c)
+            f.l = l
 
-    def search(self, safety: Set[Expr]) -> Set[Expr]:
+
+
+    def search(self, safety: Set[Expr]) -> MySet[Expr]:
         while True:
             logging.info('considering frame %s' % (len(self) - 1,))
 
@@ -597,7 +599,7 @@ class Frames(object):
 
                 self.block(d, len(self)-1, [])
 
-def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> Set[Expr]:
+def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> MySet[Expr]:
     assert prog.scope is not None
 
     check_init(s, prog)
