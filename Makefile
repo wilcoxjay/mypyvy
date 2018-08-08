@@ -1,7 +1,7 @@
 PYTHON := python3
 
 check:
-	MYPYPATH=stubs mypy --strict --disallow-untyped-defs mypyvy.py lockserv.py unittest.py
+	MYPYPATH=stubs mypy --strict --disallow-untyped-defs mypyvy.py unittest.py
 
 test: check unittest verify updr
 
