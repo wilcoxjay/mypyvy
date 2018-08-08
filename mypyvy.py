@@ -1,7 +1,7 @@
 import z3
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence
+    Dict, TypeVar, Sequence, overload
 import copy
 import datetime
 import logging
@@ -245,6 +245,24 @@ class Diagram(object):
                    if any(v.name in c.free_ids() for c in self.conjuncts)]
         self._reinit()
 
+    def generalize_diag(self, s: z3.Solver, prog: Program, f: Set[Expr]) -> None:
+        logging.debug('generalizing diagram')
+        logging.debug(str(self))
+
+        i = 0
+        while i < len(self.conjuncts):
+            c = self.remove_clause(i)
+            if check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast())) is not None:
+                self.add_clause(i, c)
+                i += 1
+            else:
+                logging.debug('eliminated clause %s' % c)
+
+        self.prune_unused_vars()
+
+        logging.debug('generalized diag')
+        logging.debug(str(self))
+
 class Model(object):
     def __init__(
             self,
@@ -380,160 +398,191 @@ class Model(object):
 
         return diag
 
-def generalize_diag(s: z3.Solver, prog: Program, diag: Diagram, f: Set[Expr]) -> None:
-    logging.debug('generalizing diagram')
-    logging.debug(str(diag))
+class Frames(object):
+    def __init__(self, solver: z3.Solver, prog: Program) -> None:
+        self.solver = solver
+        self.prog = prog
+        self.fs: List[Set[Expr]]  = []
 
-    i = 0
-    while i < len(diag.conjuncts):
-        c = diag.remove_clause(i)
-        if check_two_state_implication_all_transitions(s, prog, f, syntax.Not(diag.to_ast())) is not None:
-            diag.add_clause(i, c)
-            i += 1
-        else:
-            logging.debug('eliminated clause %s' % c)
+    @overload
+    def __getitem__(self, i: int) -> Set[Expr]: ...
+    @overload
+    def __getitem__(self, i: slice) -> List[Set[Expr]]: ...
 
-    diag.prune_unused_vars()
+    def __getitem__(self, i: Any) -> Any:
+        return self.fs[i]
 
-    logging.debug('generalized diag')
-    logging.debug(str(diag))
+    def __len__(self) -> int:
+        return len(self.fs)
 
-def find_predecessor(
-        s: z3.Solver,
-        prog: Program,
-        pre_frames: Set[Expr],
-        diag: Diagram
-) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[TransitionDecl, Diagram]]]:
+    def new_frame(self, contents: Optional[Set[Expr]]=None) -> None:
+        if contents is None:
+            contents = {syntax.Bool(None, True)}
+        self.fs.append(contents)
 
-    core: Set[int] = set()
-    with s:
-        for f in pre_frames:
-            s.add(f.to_z3('old'))
+    def get_inductive_frame(self) -> Optional[Set[Expr]]:
+        for i in range(len(self) - 1):
+            if check_implication(self.solver, self[i+1], self[i]) is None:
+                return self[i+1]
+        return None
 
-        s.add(diag.to_z3('new'))
+    def push_forward_frames(self) -> None:
+        for i, f in enumerate(self[:-1]):
+            logging.debug('pushing in frame %d' % i)
 
-        for t in prog.transitions():
-            logging.debug('checking %s' % t.name)
-            with s:
-                s.add(t.to_z3('new', 'old'))
-                res = s.check(*diag.trackers)
-
-                if res != z3.unsat:
-                    logging.debug('found predecessor via %s' % t.name)
-                    m = Model(prog, s.model(), 'old')
-                    logging.debug(str(m))
-                    return (res, (t, m.as_diagram()))
+            for c in copy.copy(f):
+                if c in self[i+1]:
+                    continue
+                m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
+                if m is None:
+                    logging.debug('managed to push %s' % c)
+                    self[i+1].add(c)
                 else:
-                    uc = s.unsat_core()
-                    # logging.debug('uc')
-                    # logging.debug(str(uc))
-
-                    res = s.check(*[diag.trackers[i] for i in core])
-                    if res == z3.unsat:
-                        logging.debug('but existing core sufficient, skipping')
-                        continue
-
-                    for x in uc:
-                        assert isinstance(x, z3.ExprRef)
-                        core.add(int(x.decl().name()[1:]))
-
-    return (z3.unsat, core)
+                    diag = Model(self.prog, m, 'old').as_diagram()
+                    self.block(diag, i, [], False)
 
 
-def block(
-        s: z3.Solver,
-        prog: Program,
-        fs: List[Set[Expr]],
-        diag: Diagram,
-        j: int,
-        trace: List[Tuple[TransitionDecl,Diagram]],
-        safety_goal: bool=True
-) -> bool:
-    if j == 0: # or (j == 1 and sat(init and diag)
-        if safety_goal:
-            print(trace)
-            raise Exception('abstract counterexample')
-        else:
-            logging.debug('failed to block diagram')
+    def block(
+            self,
+            diag: Diagram,
+            j: int,
+            trace: List[Tuple[TransitionDecl,Diagram]],
+            safety_goal: bool=True
+    ) -> bool:
+        if j == 0: # or (j == 1 and sat(init and diag)
+            if safety_goal:
+                print(trace)
+                raise Exception('abstract counterexample')
+            else:
+                logging.debug('failed to block diagram')
+                logging.debug(str(diag))
+                return False
+
+        # print fs
+        while True:
+            logging.debug('blocking diagram in frame %s' % j)
             logging.debug(str(diag))
-            return False
 
-    # print fs
-    while True:
-        logging.debug('blocking diagram in frame %s' % j)
+            logging.debug('frame %d is' % (j-1))
+            logging.debug('\n'.join(str(x) for x in self[j-1]))
+            res, x = self.find_predecessor(self[j-1], diag)
+            if res == z3.unsat:
+                logging.debug('no predecessor: blocked!')
+                assert isinstance(x, set)
+                core: Set[int] = x
+                break
+            assert isinstance(x, tuple), (res, x)
+            trans, pre_diag = x
+
+            trace.append(x)
+            if not self.block(pre_diag, j-1, trace, safety_goal):
+                return False
+            trace.pop()
+
+        logging.debug('core')
+        logging.debug(str(core))
+
+        # TODO: now use core
+
+        logging.debug('unminimized diag')
         logging.debug(str(diag))
 
-        logging.debug('frame %d is' % (j-1))
-        logging.debug('\n'.join(str(x) for x in fs[j-1]))
-        res, x = find_predecessor(s, prog, fs[j-1], diag)
-        if res == z3.unsat:
-            logging.debug('no predecessor: blocked!')
-            assert isinstance(x, set)
-            core: Set[int] = x
-            break
-        assert isinstance(x, tuple), (res, x)
-        trans, pre_diag = x
+        diag.minimize_from_core(core)
+        diag.generalize_diag(self.solver, self.prog, self[j-1])
 
-        trace.append(x)
-        if not block(s, prog, fs, pre_diag, j-1, trace, safety_goal):
-            return False
-        trace.pop()
+        e = syntax.Not(diag.to_ast())
 
-    logging.debug('core')
-    logging.debug(str(core))
+        logging.debug('minimized negated clause')
+        logging.debug(str(e))
 
-    # TODO: now use core
+        for i in range(j+1):
+            self[i].add(e)
 
-    logging.debug('unminimized diag')
-    logging.debug(str(diag))
-
-    diag.minimize_from_core(core)
-
-    generalize_diag(s, prog, diag, fs[j-1])
-
-    e = syntax.Not(diag.to_ast())
-
-    logging.debug('minimized negated clause')
-    logging.debug(str(e))
-
-    for i in range(j+1):
-        fs[i].add(e)
-
-    return True
-
-def check_inductive_frames(s: z3.Solver, fs: List[Set[Expr]]) -> Optional[Set[Expr]]:
-    for i in range(len(fs) - 1):
-        if check_implication(s, fs[i+1], fs[i]) is None:
-            return fs[i+1]
-    return None
+        return True
 
 
+    def find_predecessor(
+            self,
+            pre_frame: Set[Expr],
+            diag: Diagram
+    ) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[TransitionDecl, Diagram]]]:
 
-def push_forward_frames(s: z3.Solver, prog: Program, fs: List[Set[Expr]]) -> None:
-    for i, f in enumerate(fs[:-1]):
-        logging.debug('pushing in frame %d' % i)
+        core: Set[int] = set()
+        with self.solver:
+            for f in pre_frame:
+                self.solver.add(f.to_z3('old'))
 
-        for c in copy.copy(f):
-            if c in fs[i+1]:
-                continue
-            m = check_two_state_implication_all_transitions(s, prog, f, c)
+            self.solver.add(diag.to_z3('new'))
+
+            for t in self.prog.transitions():
+                logging.debug('checking %s' % t.name)
+                with self.solver:
+                    self.solver.add(t.to_z3('new', 'old'))
+                    res = self.solver.check(*diag.trackers)
+
+                    if res != z3.unsat:
+                        logging.debug('found predecessor via %s' % t.name)
+                        m = Model(self.prog, self.solver.model(), 'old')
+                        logging.debug(str(m))
+                        return (res, (t, m.as_diagram()))
+                    else:
+                        uc = self.solver.unsat_core()
+                        # logging.debug('uc')
+                        # logging.debug(str(uc))
+
+                        res = self.solver.check(*[diag.trackers[i] for i in core])
+                        if res == z3.unsat:
+                            logging.debug('but existing core sufficient, skipping')
+                            continue
+
+                        for x in uc:
+                            assert isinstance(x, z3.ExprRef)
+                            core.add(int(x.decl().name()[1:]))
+
+        return (z3.unsat, core)
+
+
+
+    def simplify(self) -> None:
+        for i, f in enumerate(self.fs):
+            logging.debug('simplifying frame %d' % i)
+            to_consider = copy.copy(f)
+            while to_consider:
+                c = to_consider.pop()
+                if check_implication(self.solver, f - {c}, {c}) is None:
+                    logging.debug('removed %s' % c)
+                    f.remove(c)
+
+    def search(self, safety: Set[Expr]) -> Set[Expr]:
+        while True:
+            logging.info('considering frame %s' % (len(self) - 1,))
+
+            m = check_implication(self.solver, self[-1], safety)
             if m is None:
-                logging.debug('managed to push %s' % c)
-                fs[i+1].add(c)
+                f = self.get_inductive_frame()
+                if f is not None:
+                    print('frame is safe and inductive. done!')
+                    print('\n'.join(str(x) for x in f))
+                    return f
+
+
+                logging.info('frame is safe but not inductive. starting new frame')
+                self.new_frame()
+
+                self.push_forward_frames()
+                self.simplify()
+
+                for i, f in enumerate(self.fs):
+                    logging.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
+                    logging.info('')
+
             else:
-                diag = Model(prog, m, 'old').as_diagram()
-                block(s, prog, fs, diag, i, [], False)
+                logging.info('frame is not safe')
+                mod = Model(self.prog, m, 'one')
+                logging.debug(str(mod))
+                d = mod.as_diagram()
 
-
-def simplify_frames(s: z3.Solver, fs: List[Set[Expr]]) -> None:
-    for i, f in enumerate(fs):
-        logging.debug('simplifying frame %d' % i)
-        to_consider = copy.copy(f)
-        while to_consider:
-            c = to_consider.pop()
-            if check_implication(s, f - {c}, {c}) is None:
-                logging.debug('removed %s' % c)
-                f.remove(c)
+                self.block(d, len(self)-1, [])
 
 def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> Set[Expr]:
     assert prog.scope is not None
@@ -551,42 +600,11 @@ def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> Set[Expr]:
     else:
         safety = {inv.expr for inv in prog.invs()}
 
+    fs = Frames(s, prog)
+    fs.new_frame(set(init.expr for init in prog.inits()))
+    fs.new_frame()
 
-
-    fs: List[Set[Expr]] = [set(init.expr for init in prog.inits())]
-    fs.append({syntax.Bool(None, True)})
-
-    while True:
-        logging.info('considering frame %s' % (len(fs) - 1,))
-
-        m = check_implication(s, fs[-1], safety)
-        if m is None:
-            f = check_inductive_frames(s, fs)
-            if f is not None:
-                print('frame is safe and inductive. done!')
-                print('\n'.join(str(x) for x in f))
-                return f
-
-
-            logging.info('frame is safe but not inductive. starting new frame')
-            fs.append({syntax.Bool(None, True)})
-
-            push_forward_frames(s, prog, fs)
-            simplify_frames(s, fs)
-
-            for i, f in enumerate(fs):
-                logging.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
-                logging.info('')
-
-        else:
-            logging.info('frame is not safe')
-            mod = Model(prog, m, 'one')
-            logging.debug(str(mod))
-            d = mod.as_diagram()
-
-            block(s, prog, fs, d, len(fs)-1, [])
-
-        # find_predecessor(s, prog, fs[-2], d)
+    return fs.search(safety)
 
 def debug_tokens(filename: str) -> None:
     with open(filename) as f:
