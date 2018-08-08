@@ -633,6 +633,7 @@ def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
     argparser.add_argument('--log', default='WARNING')
+    argparser.add_argument('--seed', type=int, default=0)
 
     subparsers = argparser.add_subparsers()
 
@@ -652,6 +653,9 @@ def main() -> None:
     args = parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log.upper(), None))
+    logging.info('setting seed to %d' % args.seed)
+    z3.set_param('smt.random_seed', args.seed)
+
 
     with open(args.filename) as f:
         prog = parser.program_parser.parse(input=f.read(), filename=args.filename)
