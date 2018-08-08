@@ -204,10 +204,11 @@ class Diagram(object):
         self.q.body = syntax.And(*self.conjuncts)
         self.q.binders = {}
 
-    def minimize_from_core(self, core: Set[int]) -> None:
-        assert len(core) > 0
-
+    def minimize_from_core(self, core: Iterable[int]) -> None:
         self.conjuncts = [self.conjuncts[i] for i in core]
+
+        assert len(self.conjuncts) > 0
+
         self.prune_unused_vars()
 
     def remove_clause(self, i: int) -> Expr:
@@ -224,7 +225,7 @@ class Diagram(object):
                    if any(v.name in c.free_ids() for c in self.conjuncts)]
         self._reinit()
 
-    def generalize_diag(self, s: z3.Solver, prog: Program, f: Set[Expr]) -> None:
+    def generalize_diag(self, s: z3.Solver, prog: Program, f: Iterable[Expr]) -> None:
         logging.debug('generalizing diagram')
         logging.debug(str(self))
 
@@ -423,7 +424,7 @@ class Frames(object):
     def __len__(self) -> int:
         return len(self.fs)
 
-    def new_frame(self, contents: Optional[Set[Expr]]=None) -> None:
+    def new_frame(self, contents: Optional[Iterable[Expr]]=None) -> None:
         if contents is None:
             contents = {syntax.Bool(None, True)}
         self.fs.append(contents)
@@ -511,7 +512,7 @@ class Frames(object):
 
     def find_predecessor(
             self,
-            pre_frame: Set[Expr],
+            pre_frame: Iterable[Expr],
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult, Union[Set[int], Tuple[TransitionDecl, Diagram]]]:
 
@@ -548,8 +549,6 @@ class Frames(object):
                             core.add(int(x.decl().name()[1:]))
 
         return (z3.unsat, core)
-
-
 
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
@@ -609,7 +608,7 @@ def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> Set[Expr]:
         safety = {inv.expr for inv in prog.invs()}
 
     fs = Frames(s, prog)
-    fs.new_frame(set(init.expr for init in prog.inits()))
+    fs.new_frame(init.expr for init in prog.inits())
     fs.new_frame()
 
     return fs.search(safety)
