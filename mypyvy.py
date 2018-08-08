@@ -6,6 +6,7 @@ import copy
 import datetime
 import logging
 import argparse
+import itertools
 
 import parser
 import syntax
@@ -25,28 +26,6 @@ z3.Solver.__exit__ = solver_exit # type: ignore
 
 
 T = TypeVar('T')
-
-def _product(l: Sequence[Iterable[T]], x: List[T], i: int) -> Iterable[List[T]]:
-    assert len(l) == len(x)
-
-    if i >= len(l):
-        yield x
-    else:
-        for y in l[i]:
-            x[i] = y
-            for z in _product(l, x, i+1):
-                yield z
-
-def product(l: Sequence[Sequence[T]]) -> Iterable[List[T]]:
-    if l == []:
-        yield []
-    else:
-        if l[0] == []:
-            pass
-        else:
-            x = [l[0][0] for i in range(len(l))]
-            for z in _product(l, x, 0):
-                yield z
 
 def check_unsat(
         s: z3.Solver,
@@ -347,7 +326,7 @@ class Model(object):
                         l = []
                         domains = [self.z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
-                        g: Iterable[List[z3.ExprRef]] = product(domains)
+                        g = itertools.product(*domains)
                         for row in g:
                             ans = self.z3model.eval(z3decl(*row))
                             l.append(([rename(str(col)) for col in row], bool(ans)))
