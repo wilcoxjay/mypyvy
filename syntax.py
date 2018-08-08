@@ -147,7 +147,7 @@ class Expr(object):
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
-    def free_ids(self) -> Set[str]:
+    def free_ids(self) -> List[str]:
         raise Exception('Unexpected expr %s does not implement contains_var method' %
                         repr(self))
 
@@ -177,8 +177,8 @@ class Bool(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         return z3.BoolVal(self.val)
 
-    def free_ids(self) -> Set[str]:
-        return set()
+    def free_ids(self) -> List[str]:
+        return []
 
 UNOPS = {
     'NOT',
@@ -257,7 +257,7 @@ class UnaryExpr(Expr):
             assert f is not None
             return f(self.arg.to_z3(key, key_old, old))
 
-    def free_ids(self) -> Set[str]:
+    def free_ids(self) -> List[str]:
         return self.arg.free_ids()
 
 def Not(e: Expr) -> Expr:
@@ -354,8 +354,10 @@ class BinaryExpr(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         return z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
 
-    def free_ids(self) -> Set[str]:
-        return self.arg1.free_ids() | self.arg2.free_ids()
+    def free_ids(self) -> List[str]:
+        x = self.arg1.free_ids()
+        s = set(x)
+        return x + [y for y in self.arg2.free_ids() if y not in s]
 
 
 def And(*args: Expr) -> Expr:
@@ -430,9 +432,15 @@ class AppExpr(Expr):
         assert isinstance(R, z3.FuncDeclRef)
         return R(*(arg.to_z3(key, key_old, old) for arg in self.args))
 
-    def free_ids(self) -> Set[str]:
-        ans: Set[str] = set()
-        return ans.union(*[arg.free_ids() for arg in self.args])
+    def free_ids(self) -> List[str]:
+        l = []
+        s: Set[str] = set()
+        for arg in self.args:
+            for x in arg.free_ids():
+                if x not in s:
+                    l.append(x)
+                    s.add(x)
+        return l
 
 class SortedVar(object):
     def __init__(self, tok: Optional[Token], name: str, sort: Optional[Sort]) -> None:
@@ -523,8 +531,8 @@ class QuantifierExpr(Expr):
 
         return q(bs, self.body.to_z3(key, key_old, old))
 
-    def free_ids(self) -> Set[str]:
-        return self.body.free_ids() - {v.name for v in self.vs}
+    def free_ids(self) -> List[str]:
+        return [x for x in self.body.free_ids() if not any(v.name == x for v in self.vs)]
 
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a variable)'''
@@ -606,8 +614,8 @@ class Id(Expr):
 
         raise Exception('Unsupported binding declaration %s' % repr(self.decl))
 
-    def free_ids(self) -> Set[str]:
-        return {self.name}
+    def free_ids(self) -> List[str]:
+        return [self.name]
 
 Arity = List[Sort]
 
@@ -763,7 +771,7 @@ class ConstantDecl(Decl):
             return self.immut_z3
 
 def close_free_vars(expr: Expr, in_scope: List[str]=[]) -> Expr:
-    vs = [s for s in (expr.free_ids() - set(in_scope)) if s.isupper()]
+    vs = [s for s in expr.free_ids() if s not in in_scope and s.isupper()]
     if vs == []:
         return expr
     else:
