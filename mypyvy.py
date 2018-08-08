@@ -320,7 +320,7 @@ class Model(object):
 
         self.univs: Dict[SortDecl, List[str]] = {}
         assert self.prog.scope is not None
-        for z3sort in self.z3model.sorts():
+        for z3sort in sorted(self.z3model.sorts(), key=str):
             logging.info(str(z3sort))
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
@@ -333,7 +333,7 @@ class Model(object):
             self.old_rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = {}
             self.old_const_interps: Dict[ConstantDecl, str] = {}
 
-        for z3decl in self.z3model.decls():
+        for z3decl in sorted(self.z3model.decls(), key=str):
             z3name = str(z3decl)
             if z3name.startswith(self.key):
                 name = z3name[len(self.key)+1:]
@@ -549,7 +549,7 @@ class Frames(object):
                             logging.debug('but existing core sufficient, skipping')
                             continue
 
-                        for x in uc:
+                        for x in sorted(uc, key=lambda y: y.decl().name()):
                             assert isinstance(x, z3.ExprRef)
                             core.add(int(x.decl().name()[1:]))
 
