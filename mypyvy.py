@@ -7,6 +7,7 @@ import datetime
 import logging
 import argparse
 import itertools
+from collections import OrderedDict
 
 import parser
 import syntax
@@ -318,7 +319,7 @@ class Model(object):
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
-        self.univs: Dict[SortDecl, List[str]] = {}
+        self.univs: Dict[SortDecl, List[str]] = OrderedDict()
         assert self.prog.scope is not None
         for z3sort in sorted(self.z3model.sorts(), key=str):
             logging.info(str(z3sort))
@@ -326,19 +327,19 @@ class Model(object):
             assert sort is not None
             self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
 
-        self.rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = {}
-        self.const_interps: Dict[ConstantDecl, str] = {}
+        self.rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
+        self.const_interps: Dict[ConstantDecl, str] = OrderedDict()
 
         if self.key_old is not None:
-            self.old_rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = {}
-            self.old_const_interps: Dict[ConstantDecl, str] = {}
+            self.old_rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
+            self.old_const_interps: Dict[ConstantDecl, str] = OrderedDict()
 
         for z3decl in sorted(self.z3model.decls(), key=str):
             z3name = str(z3decl)
             if z3name.startswith(self.key):
                 name = z3name[len(self.key)+1:]
-                R = self.rel_interps
-                C = self.const_interps
+                R: Dict[RelationDecl, List[Tuple[List[str], bool]]] = self.rel_interps
+                C: Dict[ConstantDecl, str] = self.const_interps
             elif self.key_old is not None and z3name.startswith(self.key_old):
                 name = z3name[len(self.key_old)+1:]
                 R = self.old_rel_interps
