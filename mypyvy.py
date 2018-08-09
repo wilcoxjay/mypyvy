@@ -584,7 +584,7 @@ class Frames(object):
             logging.debug('simplifying frame %d' % i)
             l = []
             for c in f.l:
-                if check_implication(self.solver, f.s - {c}, {c}) is None:
+                if check_implication(self.solver, [x for x in f.l if x in f.s and x is not c], [c]) is None:
                     logging.debug('removed %s' % c)
                     f.s.remove(c)
                 else:
@@ -593,7 +593,7 @@ class Frames(object):
 
 
 
-    def search(self, safety: Set[Expr]) -> MySet[Expr]:
+    def search(self, safety: Sequence[Expr]) -> MySet[Expr]:
         while True:
             logging.info('considering frame %s' % (len(self) - 1,))
 
@@ -638,9 +638,9 @@ def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
                 the_inv = inv
         if the_inv is None:
             raise Exception('No safety invariant named %s' % args.safety)
-        safety: Set[Expr] = {the_inv.expr}
+        safety: List[Expr] = [the_inv.expr]
     else:
-        safety = {inv.expr for inv in prog.invs()}
+        safety = [inv.expr for inv in prog.invs()]
 
     fs = Frames(s, prog)
     fs.new_frame(init.expr for init in prog.inits())
