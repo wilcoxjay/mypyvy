@@ -3,7 +3,7 @@ import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator
 import copy
-import datetime
+from datetime import datetime
 import logging
 import argparse
 import itertools
@@ -55,15 +55,16 @@ def check_unsat(
         key: str,
         key_old: Optional[str]=None
 ) -> None:
-    res = s.check()
+    start = datetime.now()
 
-    if res != z3.unsat:
+    if s.check() != z3.unsat:
         m = Model(prog, s.model(), key, key_old)
 
         print('')
         print(m)
         raise Exception('no')
-    print('ok.')
+    print('ok. (%s)' % (datetime.now() - start))
+    sys.stdout.flush()
 
 def check_init(s: Solver, prog: Program) -> None:
     print('checking init:')
@@ -124,9 +125,8 @@ def check_implication(
         for e in concs:
             with s:
                 s.add(z3.Not(e.to_z3('one')))
-                res = s.check()
 
-                if res != z3.unsat:
+                if s.check() != z3.unsat:
                     return s.model()
 
     return None
@@ -626,6 +626,8 @@ class Frames(object):
 
 def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
     assert prog.scope is not None
+    start = datetime.now()
+    logger.info('updr starting at %s' % start)
 
     check_init(s, prog)
 
@@ -646,6 +648,10 @@ def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
 
     fs.search(safety)
 
+    end = datetime.now()
+    logger.info('updr done at %s (%s since start)' % (end, end - start))
+
+
 def debug_tokens(filename: str) -> None:
     with open(filename) as f:
         parser.lexer.input(f.read())
@@ -657,9 +663,15 @@ def debug_tokens(filename: str) -> None:
         print(tok)
 
 def verify(s: Solver, prog: Program, args: argparse.Namespace) -> None:
+    start = datetime.now()
+    logger.info('verifying starting at %s' % start)
+
     check_init(s, prog)
     check_transitions(s, prog)
-    
+
+    end = datetime.now()
+    logger.info('verification done at %s (%s since start)' % (end, end - start))
+
     print('all ok!')
 
 def parse_args() -> argparse.Namespace:
