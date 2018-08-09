@@ -14,6 +14,8 @@ import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
     TransitionDecl, InvariantDecl
 
+logger = logging.getLogger(__file__)
+
 z3.Forall = z3.ForAll
 
 class Solver(object):
@@ -56,6 +58,9 @@ def check_unsat(
         key_old: Optional[str]=None
 ) -> None:
     start = datetime.now()
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug('assertions')
+        logger.debug(str(s.assertions()))
 
     if s.check() != z3.unsat:
         m = Model(prog, s.model(), key, key_old)
@@ -125,6 +130,9 @@ def check_implication(
         for e in concs:
             with s:
                 s.add(z3.Not(e.to_z3('one')))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('assertions')
+                    logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
                     return s.model()
@@ -146,6 +154,10 @@ def check_two_state_implication_all_transitions(
         for t in prog.transitions():
             with s:
                 s.add(t.to_z3('new', 'old'))
+
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('assertions')
+                    logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
                     return s.model()
@@ -247,8 +259,9 @@ class Diagram(object):
         self._reinit()
 
     def generalize_diag(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
-        logging.debug('generalizing diagram')
-        logging.debug(str(self))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('generalizing diagram')
+            logger.debug(str(self))
 
         i = 0
         while i < len(self.conjuncts):
@@ -257,12 +270,14 @@ class Diagram(object):
                 self.add_clause(i, c)
                 i += 1
             else:
-                logging.debug('eliminated clause %s' % c)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('eliminated clause %s' % c)
 
         self.prune_unused_vars()
 
-        logging.debug('generalized diag')
-        logging.debug(str(self))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('generalized diag')
+            logger.debug(str(self))
 
 class OrderedSet(Generic[T], Iterable[T]):
     def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
@@ -337,17 +352,21 @@ class Model(object):
         return '\n'.join(l)
 
     def read_out(self) -> None:
-        logging.debug('read_out')
+        logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
         assert self.prog.scope is not None
         for z3sort in sorted(self.z3model.sorts(), key=str):
-            logging.debug(str(z3sort))
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
             self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(str(z3sort))
+                for x in self.univs[sort]:
+                    logger.debug('  ' + x)
+
 
         self.rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
         self.const_interps: Dict[ConstantDecl, str] = OrderedDict()
@@ -375,8 +394,9 @@ class Model(object):
             decl, _ = self.prog.scope.get(name)
             assert not isinstance(decl, syntax.QuantifierExpr) and \
                 not isinstance(decl, TransitionDecl)
-            logging.debug(str(z3decl))
             if decl is not None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(str(z3decl))
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
                         l = []
@@ -397,6 +417,9 @@ class Model(object):
                     v = self.z3model.eval(z3decl()).decl().name()
                     assert decl not in C
                     C[decl] = rename(v)
+            else:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('extra constant: ' + str(z3decl))
 
     def as_diagram(self) -> Diagram:
         assert self.key_old is None, 'diagram can only be generated from a 1-state model'
@@ -461,14 +484,14 @@ class Frames(object):
 
     def push_forward_frames(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
-            logging.debug('pushing in frame %d' % i)
+            logger.debug('pushing in frame %d' % i)
 
             for c in copy.copy(f):
                 if c in self[i+1] or c in self.push_cache[i]:
                     continue
                 m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
                 if m is None:
-                    logging.debug('managed to push %s' % c)
+                    logger.debug('managed to push %s' % c)
                     self[i+1].add(c)
                 else:
                     diag = Model(self.prog, m, 'old').as_diagram()
@@ -487,20 +510,22 @@ class Frames(object):
                 print(trace)
                 raise Exception('abstract counterexample')
             else:
-                logging.debug('failed to block diagram')
-                logging.debug(str(diag))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('failed to block diagram')
+                    logger.debug(str(diag))
                 return False
 
         # print fs
         while True:
-            logging.debug('blocking diagram in frame %s' % j)
-            logging.debug(str(diag))
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug('blocking diagram in frame %s' % j)
+                logger.debug(str(diag))
 
-            logging.debug('frame %d is' % (j-1))
-            logging.debug('\n'.join(str(x) for x in self[j-1]))
+                logger.debug('frame %d is' % (j-1))
+                logger.debug('\n'.join(str(x) for x in self[j-1]))
             res, x = self.find_predecessor(self[j-1], diag)
             if res == z3.unsat:
-                logging.debug('no predecessor: blocked!')
+                logger.debug('no predecessor: blocked!')
                 assert isinstance(x, MySet)
                 core: MySet[int] = x
                 break
@@ -512,21 +537,21 @@ class Frames(object):
                 return False
             trace.pop()
 
-        logging.debug('core')
-        logging.debug(str(core))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('core')
+            logger.debug(str(core))
 
-        # TODO: now use core
-
-        logging.debug('unminimized diag')
-        logging.debug(str(diag))
+            logger.debug('unminimized diag')
+            logger.debug(str(diag))
 
         diag.minimize_from_core(core)
         diag.generalize_diag(self.solver, self.prog, self[j-1])
 
         e = syntax.Not(diag.to_ast())
 
-        logging.debug('minimized negated clause')
-        logging.debug(str(e))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('minimized negated clause')
+            logger.debug(str(e))
 
         for i in range(j+1):
             self[i].add(e)
@@ -548,29 +573,32 @@ class Frames(object):
             self.solver.add(diag.to_z3('new'))
 
             for t in self.prog.transitions():
-                logging.debug('checking %s' % t.name)
+                logger.debug('checking %s' % t.name)
                 with self.solver:
                     self.solver.add(t.to_z3('new', 'old'))
-                    logging.debug('assertions')
-                    logging.debug(str(self.solver.assertions()))
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug('assertions')
+                        logger.debug(str(self.solver.assertions()))
                     res = self.solver.check(*diag.trackers)
 
                     if res != z3.unsat:
-                        logging.debug('found predecessor via %s' % t.name)
+                        logger.debug('found predecessor via %s' % t.name)
                         m = Model(self.prog, self.solver.model(), 'old')
-                        logging.debug(str(m))
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(str(m))
                         return (res, (t, m.as_diagram()))
                     else:
                         uc = self.solver.unsat_core()
-                        # logging.debug('uc')
-                        # logging.debug(str(uc))
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug('uc')
+                            logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
-                        logging.debug('assertions')
-                        logging.debug(str(self.solver.assertions()))
+                            logger.debug('assertions')
+                            logger.debug(str(self.solver.assertions()))
 
                         res = self.solver.check(*[diag.trackers[i] for i in core])
                         if res == z3.unsat:
-                            logging.debug('but existing core sufficient, skipping')
+                            logger.debug('but existing core sufficient, skipping')
                             continue
 
                         for x in sorted(uc, key=lambda y: y.decl().name()):
@@ -581,7 +609,7 @@ class Frames(object):
 
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
-            logging.debug('simplifying frame %d' % i)
+            logger.debug('simplifying frame %d' % i)
             l = []
             for c in f.l:
                 if check_implication(self.solver, [x for x in f.l if x in f.s and x is not c], [c]) is None:
@@ -595,7 +623,7 @@ class Frames(object):
 
     def search(self, safety: Sequence[Expr]) -> MySet[Expr]:
         while True:
-            logging.info('considering frame %s' % (len(self) - 1,))
+            logger.info('considering frame %s' % (len(self) - 1,))
 
             m = check_implication(self.solver, self[-1], safety)
             if m is None:
@@ -606,20 +634,21 @@ class Frames(object):
                     return f
 
 
-                logging.info('frame is safe but not inductive. starting new frame')
+                logger.info('frame is safe but not inductive. starting new frame')
                 self.new_frame()
 
                 self.push_forward_frames()
                 self.simplify()
 
                 for i, f in enumerate(self.fs):
-                    logging.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
-                    logging.info('')
+                    logger.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
+                    logger.info('')
 
             else:
-                logging.info('frame is not safe')
+                logger.info('frame is not safe')
                 mod = Model(self.prog, m, 'one')
-                logging.debug(str(mod))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(str(mod))
                 d = mod.as_diagram()
 
                 self.block(d, len(self)-1, [])
@@ -697,8 +726,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log.upper(), None))
-    logging.info('setting seed to %d' % args.seed)
+    logging.basicConfig(format='%(levelname)s %(filename)s:%(lineno)d: %(message)s', level=getattr(logging, args.log.upper(), None))
+    logger.info('setting seed to %d' % args.seed)
     z3.set_param('smt.random_seed', args.seed)
 
 
