@@ -16,20 +16,41 @@ from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
 
 z3.Forall = z3.ForAll
 
-def solver_enter(self): # type: ignore
-    self.push()
+class Solver(object):
+    def __init__(self) -> None:
+        self.z3solver = z3.Solver()
 
-def solver_exit(self, exn_type, exn_value, traceback): # type: ignore
-    self.pop()
+    def __enter__(self) -> None:
+        self.z3solver.push()
 
-z3.Solver.__enter__ = solver_enter # type: ignore
-z3.Solver.__exit__ = solver_exit # type: ignore
+    def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
+        self.z3solver.pop()
+
+    def add(self, e: z3.ExprRef) -> None:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('adding %s' % e)
+
+        self.z3solver.add(e)
+
+    def check(self, *assumptions: z3.ExprRef) -> z3.CheckSatResult:
+        logger.debug('solver.check')
+        return self.z3solver.check(*assumptions)
+
+    def model(self) -> z3.ModelRef:
+        return self.z3solver.model()
+
+    def assertions(self) -> Sequence[z3.ExprRef]:
+        l = self.z3solver.assertions()
+        return sorted(l, key=lambda x: str(x))
+
+    def unsat_core(self) -> Sequence[z3.ExprRef]:
+        return self.z3solver.unsat_core()
 
 
 T = TypeVar('T')
 
 def check_unsat(
-        s: z3.Solver,
+        s: Solver,
         prog: Program,
         key: str,
         key_old: Optional[str]=None
@@ -44,7 +65,7 @@ def check_unsat(
         raise Exception('no')
     print('ok.')
 
-def check_init(s: z3.Solver, prog: Program) -> None:
+def check_init(s: Solver, prog: Program) -> None:
     print('checking init:')
 
     with s:
@@ -67,7 +88,7 @@ def check_init(s: z3.Solver, prog: Program) -> None:
                 check_unsat(s, prog, 'one')
 
 
-def check_transitions(s: z3.Solver, prog: Program) -> None:
+def check_transitions(s: Solver, prog: Program) -> None:
     with s:
         for inv in prog.invs():
             s.add(inv.expr.to_z3('old'))
@@ -93,7 +114,7 @@ def check_transitions(s: z3.Solver, prog: Program) -> None:
                         check_unsat(s, prog, 'new', 'old')
 
 def check_implication(
-        s: z3.Solver,
+        s: Solver,
         hyps: Iterable[Expr],
         concs: Iterable[Expr]
 ) -> Optional[z3.ModelRef]:
@@ -111,7 +132,7 @@ def check_implication(
     return None
 
 def check_two_state_implication_all_transitions(
-        s: z3.Solver,
+        s: Solver,
         prog: Program,
         old_hyps: Iterable[Expr],
         new_conc: Expr
@@ -225,7 +246,7 @@ class Diagram(object):
                    if any(v.name in c.free_ids() for c in self.conjuncts)]
         self._reinit()
 
-    def generalize_diag(self, s: z3.Solver, prog: Program, f: Iterable[Expr]) -> None:
+    def generalize_diag(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
         logging.debug('generalizing diagram')
         logging.debug(str(self))
 
@@ -413,7 +434,7 @@ class Model(object):
         return diag
 
 class Frames(object):
-    def __init__(self, solver: z3.Solver, prog: Program) -> None:
+    def __init__(self, solver: Solver, prog: Program) -> None:
         self.solver = solver
         self.prog = prog
         self.fs: List[MySet[Expr]] = []
@@ -603,7 +624,7 @@ class Frames(object):
 
                 self.block(d, len(self)-1, [])
 
-def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> MySet[Expr]:
+def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
     assert prog.scope is not None
 
     check_init(s, prog)
@@ -623,7 +644,7 @@ def updr(s: z3.Solver, prog: Program, args: argparse.Namespace) -> MySet[Expr]:
     fs.new_frame(init.expr for init in prog.inits())
     fs.new_frame()
 
-    return fs.search(safety)
+    fs.search(safety)
 
 def debug_tokens(filename: str) -> None:
     with open(filename) as f:
@@ -635,7 +656,7 @@ def debug_tokens(filename: str) -> None:
             break      # No more input
         print(tok)
 
-def verify(s: z3.Solver, prog: Program, args: argparse.Namespace) -> None:
+def verify(s: Solver, prog: Program, args: argparse.Namespace) -> None:
     check_init(s, prog)
     check_transitions(s, prog)
     
@@ -674,7 +695,7 @@ def main() -> None:
 
     prog.resolve()
 
-    s = z3.Solver()
+    s = Solver()
     for a in prog.axioms():
         s.add(a.expr.to_z3())
 
