@@ -204,6 +204,7 @@ class Diagram(object):
         self.q.vs = self.vs
         self.q.body = syntax.And(*self.conjuncts)
         self.q.binders = {}
+        self.q.z3 = {}
 
     def minimize_from_core(self, core: Iterable[int]) -> None:
         self.conjuncts = [self.conjuncts[i] for i in core]
