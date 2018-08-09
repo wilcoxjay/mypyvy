@@ -34,8 +34,6 @@ def check_unsat(
         key: str,
         key_old: Optional[str]=None
 ) -> None:
-    # print s.to_smt2()
-
     res = s.check()
 
     if res != z3.unsat:
@@ -318,14 +316,14 @@ class Model(object):
         return '\n'.join(l)
 
     def read_out(self) -> None:
-        logging.info('read_out')
+        logging.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
         assert self.prog.scope is not None
         for z3sort in sorted(self.z3model.sorts(), key=str):
-            logging.info(str(z3sort))
+            logging.debug(str(z3sort))
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
             self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
@@ -356,8 +354,8 @@ class Model(object):
             decl, _ = self.prog.scope.get(name)
             assert not isinstance(decl, syntax.QuantifierExpr) and \
                 not isinstance(decl, TransitionDecl)
+            logging.debug(str(z3decl))
             if decl is not None:
-                logging.info(str(z3decl))
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
                         l = []
@@ -532,6 +530,8 @@ class Frames(object):
                 logging.debug('checking %s' % t.name)
                 with self.solver:
                     self.solver.add(t.to_z3('new', 'old'))
+                    logging.debug('assertions')
+                    logging.debug(str(self.solver.assertions()))
                     res = self.solver.check(*diag.trackers)
 
                     if res != z3.unsat:
@@ -543,6 +543,9 @@ class Frames(object):
                         uc = self.solver.unsat_core()
                         # logging.debug('uc')
                         # logging.debug(str(uc))
+
+                        logging.debug('assertions')
+                        logging.debug(str(self.solver.assertions()))
 
                         res = self.solver.check(*[diag.trackers[i] for i in core])
                         if res == z3.unsat:
