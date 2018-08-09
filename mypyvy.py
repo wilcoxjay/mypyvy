@@ -29,13 +29,13 @@ class Solver(object):
         self.z3solver.pop()
 
     def add(self, e: z3.ExprRef) -> None:
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('adding %s' % e)
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     logger.debug('adding %s' % e)
 
         self.z3solver.add(e)
 
     def check(self, *assumptions: z3.ExprRef) -> z3.CheckSatResult:
-        logger.debug('solver.check')
+        # logger.debug('solver.check')
         return self.z3solver.check(*assumptions)
 
     def model(self) -> z3.ModelRef:
@@ -58,9 +58,9 @@ def check_unsat(
         key_old: Optional[str]=None
 ) -> None:
     start = datetime.now()
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug('assertions')
-        logger.debug(str(s.assertions()))
+    # if logger.isEnabledFor(logging.DEBUG):
+    #     logger.debug('assertions')
+    #     logger.debug(str(s.assertions()))
 
     if s.check() != z3.unsat:
         m = Model(prog, s.model(), key, key_old)
@@ -130,9 +130,9 @@ def check_implication(
         for e in concs:
             with s:
                 s.add(z3.Not(e.to_z3('one')))
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('assertions')
-                    logger.debug(str(s.assertions()))
+                # if logger.isEnabledFor(logging.DEBUG):
+                #     logger.debug('assertions')
+                #     logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
                     return s.model()
@@ -155,9 +155,9 @@ def check_two_state_implication_all_transitions(
             with s:
                 s.add(t.to_z3('new', 'old'))
 
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('assertions')
-                    logger.debug(str(s.assertions()))
+                # if logger.isEnabledFor(logging.DEBUG):
+                #     logger.debug('assertions')
+                #     logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
                     return s.model()
@@ -352,7 +352,7 @@ class Model(object):
         return '\n'.join(l)
 
     def read_out(self) -> None:
-        logger.debug('read_out')
+        # logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
@@ -362,10 +362,10 @@ class Model(object):
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
             self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(str(z3sort))
-                for x in self.univs[sort]:
-                    logger.debug('  ' + x)
+#            if logger.isEnabledFor(logging.DEBUG):
+#                logger.debug(str(z3sort))
+#                for x in self.univs[sort]:
+#                    logger.debug('  ' + x)
 
 
         self.rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
@@ -395,8 +395,8 @@ class Model(object):
             assert not isinstance(decl, syntax.QuantifierExpr) and \
                 not isinstance(decl, TransitionDecl)
             if decl is not None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(str(z3decl))
+#                if logger.isEnabledFor(logging.DEBUG):
+#                    logger.debug(str(z3decl))
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
                         l = []
@@ -418,8 +418,9 @@ class Model(object):
                     assert decl not in C
                     C[decl] = rename(v)
             else:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('extra constant: ' + str(z3decl))
+                pass
+#                 if logger.isEnabledFor(logging.DEBUG):
+#                     logger.debug('extra constant: ' + str(z3decl))
 
     def as_diagram(self) -> Diagram:
         assert self.key_old is None, 'diagram can only be generated from a 1-state model'
@@ -576,9 +577,9 @@ class Frames(object):
                 logger.debug('checking %s' % t.name)
                 with self.solver:
                     self.solver.add(t.to_z3('new', 'old'))
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('assertions')
-                        logger.debug(str(self.solver.assertions()))
+                    # if logger.isEnabledFor(logging.DEBUG):
+                    #     logger.debug('assertions')
+                    #     logger.debug(str(self.solver.assertions()))
                     res = self.solver.check(*diag.trackers)
 
                     if res != z3.unsat:
@@ -589,12 +590,12 @@ class Frames(object):
                         return (res, (t, m.as_diagram()))
                     else:
                         uc = self.solver.unsat_core()
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug('uc')
-                            logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+                        # if logger.isEnabledFor(logging.DEBUG):
+                        #     logger.debug('uc')
+                        #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
-                            logger.debug('assertions')
-                            logger.debug(str(self.solver.assertions()))
+                            # logger.debug('assertions')
+                            # logger.debug(str(self.solver.assertions()))
 
                         res = self.solver.check(*[diag.trackers[i] for i in core])
                         if res == z3.unsat:
