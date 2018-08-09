@@ -156,6 +156,7 @@ class Bool(Expr):
     def __init__(self, tok: Optional[Token], val: bool) -> None:
         self.tok = tok
         self.val = val
+        self.z3: Optional[z3.ExprRef] = None
 
     def __repr__(self) -> str:
         return 'true' if self.val else 'false'
@@ -175,7 +176,9 @@ class Bool(Expr):
 
     def to_z3(self, key=None, key_old=None, old=False):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
-        return z3.BoolVal(self.val)
+        if self.z3 is None:
+            self.z3 = z3.BoolVal(self.val)
+        return self.z3
 
     def free_ids(self) -> List[str]:
         return []
@@ -211,6 +214,7 @@ class UnaryExpr(Expr):
         self.tok = tok
         self.op = op
         self.arg = arg
+        self.z3: Dict[Tuple[Optional[str], Optional[str], bool], z3.ExprRef] = {}
 
     def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         if self.op == 'OLD':
@@ -246,16 +250,18 @@ class UnaryExpr(Expr):
         else:
             assert False
 
-
     def to_z3(self, key=None, key_old=None, old=False):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
-        if self.op == 'OLD':
-            assert not old and key_old is not None
-            return self.arg.to_z3(key, key_old, True)
-        else:
-            f = z3_UNOPS[self.op]
-            assert f is not None
-            return f(self.arg.to_z3(key, key_old, old))
+        t = (key, key_old, old)
+        if t not in self.z3:
+            if self.op == 'OLD':
+                assert not old and key_old is not None
+                self.z3[t] = self.arg.to_z3(key, key_old, True)
+            else:
+                f = z3_UNOPS[self.op]
+                assert f is not None
+                self.z3[t] = f(self.arg.to_z3(key, key_old, old))
+        return self.z3[t]
 
     def free_ids(self) -> List[str]:
         return self.arg.free_ids()
@@ -287,6 +293,7 @@ class BinaryExpr(Expr):
         self.op = op
         self.arg1 = arg1
         self.arg2 = arg2
+        self.z3: Dict[Tuple[Optional[str], Optional[str], bool], z3.ExprRef] = {}
 
     def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
@@ -352,7 +359,10 @@ class BinaryExpr(Expr):
 
     def to_z3(self, key=None, key_old=None, old=False):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
-        return z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
+        t = (key, key_old, old)
+        if t not in self.z3:
+            self.z3[t] = z3_BINOPS[self.op](self.arg1.to_z3(key, key_old, old), self.arg2.to_z3(key, key_old, old))
+        return self.z3[t]
 
     def free_ids(self) -> List[str]:
         x = self.arg1.free_ids()
@@ -382,6 +392,7 @@ class AppExpr(Expr):
         self.rel = rel
         self.args = args
         self.decl: Optional[RelationDecl] = None
+        self.z3: Dict[Tuple[Optional[str], Optional[str], bool], z3.ExprRef] = {}
 
     def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         d, _ = scope.get(self.rel)
@@ -423,14 +434,17 @@ class AppExpr(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         assert self.decl is not None
 
-        if not old:
-            k = key
-        else:
-            assert key_old is not None
-            k = key_old
-        R = self.decl.to_z3(k)
-        assert isinstance(R, z3.FuncDeclRef)
-        return R(*(arg.to_z3(key, key_old, old) for arg in self.args))
+        t = (key, key_old, old)
+        if t not in self.z3:
+            if not old:
+                k = key
+            else:
+                assert key_old is not None
+                k = key_old
+            R = self.decl.to_z3(k)
+            assert isinstance(R, z3.FuncDeclRef)
+            self.z3[t] = R(*(arg.to_z3(key, key_old, old) for arg in self.args))
+        return self.z3[t]
 
     def free_ids(self) -> List[str]:
         l = []
@@ -475,6 +489,7 @@ class QuantifierExpr(Expr):
         self.vs = vs
         self.body = body
         self.binders: Dict[str, z3.ExprRef] = {}
+        self.z3: Dict[Tuple[Optional[str], Optional[str], bool], z3.ExprRef] = {}
 
     def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
@@ -520,16 +535,19 @@ class QuantifierExpr(Expr):
 
     def to_z3(self, key=None, key_old=None, old=False):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
-        bs = []
-        for sv in self.vs:
-            n = sv.name
-            assert sv.sort is not None and not isinstance(sv.sort, SortInferencePlaceholder)
-            self.binders[n] = z3.Const(n, sv.sort.to_z3())
-            bs.append(self.binders[n])
+        t = (key, key_old, old)
+        if t not in self.z3:
+            bs = []
+            for sv in self.vs:
+                n = sv.name
+                assert sv.sort is not None and not isinstance(sv.sort, SortInferencePlaceholder)
+                self.binders[n] = z3.Const(n, sv.sort.to_z3())
+                bs.append(self.binders[n])
 
-        q = z3.ForAll if self.quant == 'FORALL' else z3.Exists
+            q = z3.ForAll if self.quant == 'FORALL' else z3.Exists
 
-        return q(bs, self.body.to_z3(key, key_old, old))
+            self.z3[t] = q(bs, self.body.to_z3(key, key_old, old))
+        return self.z3[t]
 
     def free_ids(self) -> List[str]:
         return [x for x in self.body.free_ids() if not any(v.name == x for v in self.vs)]
@@ -541,6 +559,7 @@ class Id(Expr):
         self.name = name
         self.decl: Optional[Binder] = None
         self.index: Optional[Tuple[int, int]] = None
+        self.z3: Dict[Tuple[Optional[str], Optional[str], bool], z3.ExprRef] = {}
 
     def resolve(self, scope: 'Scope', sort: InferenceSort) -> InferenceSort:
         self.decl, x = scope.get(self.name)
@@ -598,21 +617,24 @@ class Id(Expr):
         # type: (Optional[str], Optional[str], bool) -> z3.ExprRef
         assert self.decl is not None
 
-        if isinstance(self.decl, QuantifierExpr) or \
-           isinstance(self.decl, TransitionDecl):
-            return self.decl.binders[self.name]
-        elif isinstance(self.decl, RelationDecl) or \
-             isinstance(self.decl, ConstantDecl):
-            if not old:
-                k = key
+        t = (key, key_old, old)
+        if t not in self.z3:
+            if isinstance(self.decl, QuantifierExpr) or \
+               isinstance(self.decl, TransitionDecl):
+                self.z3[t] = self.decl.binders[self.name]
+            elif isinstance(self.decl, RelationDecl) or \
+                 isinstance(self.decl, ConstantDecl):
+                if not old:
+                    k = key
+                else:
+                    assert not self.decl.mutable or key_old is not None
+                    k = key_old
+                x = self.decl.to_z3(k)
+                assert isinstance(x, z3.ExprRef)
+                self.z3[t] = x
             else:
-                assert not self.decl.mutable or key_old is not None
-                k = key_old
-            x = self.decl.to_z3(k)
-            assert isinstance(x, z3.ExprRef)
-            return x
-
-        raise Exception('Unsupported binding declaration %s' % repr(self.decl))
+                raise Exception('Unsupported binding declaration %s' % repr(self.decl))
+        return self.z3[t]
 
     def free_ids(self) -> List[str]:
         return [self.name]
@@ -829,6 +851,7 @@ class TransitionDecl(Decl):
         self.scope: Optional[Scope] = None
 
         self.binders: Dict[str, z3.ExprRef] = {}
+        self.z3: Dict[Tuple[str, str], z3.ExprRef] = {}
 
     def resolve(self, scope: 'Scope') -> None:
         assert len(scope.stack) == 0
@@ -860,43 +883,48 @@ class TransitionDecl(Decl):
     def to_z3(self, key: str, key_old: str) -> z3.ExprRef:
         assert self.scope is not None
 
-        bs = []
-        for p in self.params:
-            n = p.name
-            assert p.sort is not None and not isinstance(p.sort, SortInferencePlaceholder)
-            self.binders[n] = z3.Const(n, p.sort.to_z3())
-            bs.append(self.binders[n])
+        t = (key, key_old)
+        if t not in self.z3:
 
-        mods = []
-        R: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.relations.values())
-        C: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.constants.values())
-        for d in itertools.chain(R, C):
-            if not d.mutable or any(mc.decl == d for mc in self.mods):
-                continue
+            bs = []
+            for p in self.params:
+                n = p.name
+                assert p.sort is not None and not isinstance(p.sort, SortInferencePlaceholder)
+                self.binders[n] = z3.Const(n, p.sort.to_z3())
+                bs.append(self.binders[n])
 
-            if isinstance(d, ConstantDecl) or len(d.arity) == 0:
-                lhs = d.to_z3(key)
-                rhs = d.to_z3(key_old)
-                assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
-                e = lhs == rhs
-            else:
-                cs: List[z3.ExprRef] = []
-                i = 0
-                for s in d.arity:
-                    cs.append(z3.Const('x' + str(i), s.to_z3()))
-                    i += 1
+            mods = []
+            R: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.relations.values())
+            C: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.constants.values())
+            for d in itertools.chain(R, C):
+                if not d.mutable or any(mc.decl == d for mc in self.mods):
+                    continue
 
-                lhs = d.to_z3(key)
-                rhs = d.to_z3(key_old)
-                assert isinstance(lhs, z3.FuncDeclRef) and isinstance(rhs, z3.FuncDeclRef)
+                if isinstance(d, ConstantDecl) or len(d.arity) == 0:
+                    lhs = d.to_z3(key)
+                    rhs = d.to_z3(key_old)
+                    assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
+                    e = lhs == rhs
+                else:
+                    cs: List[z3.ExprRef] = []
+                    i = 0
+                    for s in d.arity:
+                        cs.append(z3.Const('x' + str(i), s.to_z3()))
+                        i += 1
+
+                    lhs = d.to_z3(key)
+                    rhs = d.to_z3(key_old)
+                    assert isinstance(lhs, z3.FuncDeclRef) and isinstance(rhs, z3.FuncDeclRef)
 
 
-                e = z3.Forall(cs, lhs(*cs) == rhs(*cs))
+                    e = z3.Forall(cs, lhs(*cs) == rhs(*cs))
 
 
-            mods.append(e)
+                mods.append(e)
 
-        return z3.Exists(bs, z3.And(self.expr.to_z3(key, key_old), *mods))
+            self.z3[t] = z3.Exists(bs, z3.And(self.expr.to_z3(key, key_old), *mods))
+
+        return self.z3[t]
 
 class InvariantDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
