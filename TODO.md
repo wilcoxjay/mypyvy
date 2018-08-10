@@ -3,3 +3,4 @@
 - inductive generalization
 - model minimization?
 - phase automata
+- support functions
