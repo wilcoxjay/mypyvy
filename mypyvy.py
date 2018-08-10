@@ -325,8 +325,17 @@ class Model(object):
 
         self.read_out()
 
+    def univ_str(self) -> List[str]:
+        l = []
+        for s in sorted(self.univs.keys(), key=str):
+            l.append(str(s))
+            for x in self.univs[s]:
+                l.append('  %s' % x)
+        return l
+
     def __str__(self) -> str:
         l = []
+        l.extend(self.univ_str())
         if self.key_old is not None:
             l.append('old state:')
             l.append(Model._state_str(self.old_const_interps, self.old_rel_interps))
@@ -458,11 +467,21 @@ class Model(object):
         return diag
 
 class Frames(object):
-    def __init__(self, solver: Solver, prog: Program) -> None:
+    def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr]) -> None:
         self.solver = solver
         self.prog = prog
+        self.safety = safety
         self.fs: List[MySet[Expr]] = []
         self.push_cache: List[Set[Expr]] = []
+
+        self.new_frame(init.expr for init in prog.inits())
+
+        # safety of initial state is checked before instantiating Frames
+        for c in safety:
+            self[-1].add(c)
+
+        self.new_frame()
+
 
 
     def __getitem__(self, i: int) -> MySet[Expr]:
@@ -477,6 +496,9 @@ class Frames(object):
         self.fs.append(MySet(contents))
         self.push_cache.append(set())
 
+        self.push_forward_frames()
+        self.simplify()
+
     def get_inductive_frame(self) -> Optional[MySet[Expr]]:
         for i in range(len(self) - 1):
             if check_implication(self.solver, self[i+1], self[i]) is None:
@@ -487,17 +509,35 @@ class Frames(object):
         for i, f in enumerate(self.fs[:-1]):
             logger.debug('pushing in frame %d' % i)
 
-            for c in copy.copy(f):
+            j = 0
+            while j < len(f):
+                c = f.l[j]
                 if c in self[i+1] or c in self.push_cache[i]:
+                    j += 1
                     continue
-                m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
-                if m is None:
-                    logger.debug('managed to push %s' % c)
-                    self[i+1].add(c)
-                else:
-                    diag = Model(self.prog, m, 'old').as_diagram()
-                    self.block(diag, i, [], False)
+
+                while True:
+                    logger.debug('attempting to push %s' % c)
+                    m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
+                    if m is None:
+                        logger.debug('managed to push %s' % c)
+                        self[i+1].add(c)
+                        break
+                    else:
+                        mod = Model(self.prog, m, 'old')
+                        diag = mod.as_diagram()
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug('failed to immediately push %s' % c)
+                            logger.debug(str(mod))
+                        if c in self.safety:
+                            logger.debug('note: current clause is safety condition')
+                            self.block(diag, i, [], True)
+                        else:
+                            if not self.block(diag, i, [], False):
+                                break
+
                 self.push_cache[i].add(c)
+                j += 1
 
     def block(
             self,
@@ -551,13 +591,19 @@ class Frames(object):
         e = syntax.Not(diag.to_ast())
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('minimized negated clause')
+            logger.debug('adding new clause to frames 0 through %d' % j)
             logger.debug(str(e))
 
-        for i in range(j+1):
-            self[i].add(e)
+        self.add(e, j)
 
         return True
+
+
+    def add(self, e: Expr, j: Optional[int]=None) -> None:
+        if j is None:
+            j = len(self)
+        for i in range(j+1):
+            self[i].add(e)
 
 
     def find_predecessor(
@@ -612,8 +658,10 @@ class Frames(object):
         for i, f in enumerate(self.fs):
             logger.debug('simplifying frame %d' % i)
             l = []
-            for c in f.l:
-                if check_implication(self.solver, [x for x in f.l if x in f.s and x is not c], [c]) is None:
+            for c in reversed(f.l):
+                f_minus_c = [x for x in f.l if x in f.s and x is not c]
+                if c not in self.safety and \
+                   check_implication(self.solver, f_minus_c, [c]) is None:
                     logging.debug('removed %s' % c)
                     f.s.remove(c)
                 else:
@@ -622,11 +670,17 @@ class Frames(object):
 
 
 
-    def search(self, safety: Sequence[Expr]) -> MySet[Expr]:
+    def search(self) -> MySet[Expr]:
         while True:
+            f: Optional[OrderedSet[Expr]]
+            for i, f in enumerate(self.fs):
+                logger.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
+                logger.info('')
+
             logger.info('considering frame %s' % (len(self) - 1,))
 
-            m = check_implication(self.solver, self[-1], safety)
+
+            m = check_implication(self.solver, self[-1], self.safety)
             if m is None:
                 f = self.get_inductive_frame()
                 if f is not None:
@@ -635,21 +689,15 @@ class Frames(object):
                     return f
 
 
+                for c in self.safety:
+                    self[-1].add(c)
                 logger.info('frame is safe but not inductive. starting new frame')
                 self.new_frame()
-
-                self.push_forward_frames()
-                self.simplify()
-
-                for i, f in enumerate(self.fs):
-                    logger.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
-                    logger.info('')
-
             else:
                 logger.info('frame is not safe')
                 mod = Model(self.prog, m, 'one')
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(str(mod))
+                    logger.debug('\n' + str(mod))
                 d = mod.as_diagram()
 
                 self.block(d, len(self)-1, [])
@@ -672,14 +720,11 @@ def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
     else:
         safety = [inv.expr for inv in prog.invs()]
 
-    fs = Frames(s, prog)
-    fs.new_frame(init.expr for init in prog.inits())
-    fs.new_frame()
-
-    fs.search(safety)
+    fs = Frames(s, prog, safety)
+    fs.search()
 
     end = datetime.now()
-    logger.info('updr done at %s (%s since start)' % (end, end - start))
+    logger.info('updr done at %s (%s since start)' % (end, repr(end - start)))
 
 
 def debug_tokens(filename: str) -> None:
@@ -700,7 +745,7 @@ def verify(s: Solver, prog: Program, args: argparse.Namespace) -> None:
     check_transitions(s, prog)
 
     end = datetime.now()
-    logger.info('verification done at %s (%s since start)' % (end, end - start))
+    logger.info('verification done at %s (%s since start)' % (end, repr(end - start)))
 
     print('all ok!')
 
