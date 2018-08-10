@@ -612,7 +612,7 @@ class Frames(object):
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult, Union[MySet[int], Tuple[TransitionDecl, Diagram]]]:
 
-        core: MySet[int] = MySet()
+        #core core: MySet[int] = MySet()
         with self.solver:
             for f in pre_frame:
                 self.solver.add(f.to_z3('old'))
@@ -635,7 +635,7 @@ class Frames(object):
                             logger.debug(str(m))
                         return (res, (t, m.as_diagram()))
                     else:
-                        uc = self.solver.unsat_core()
+                        #core uc = self.solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug('uc')
                         #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
@@ -643,16 +643,17 @@ class Frames(object):
                             # logger.debug('assertions')
                             # logger.debug(str(self.solver.assertions()))
 
-                        res = self.solver.check(*[diag.trackers[i] for i in core])
-                        if res == z3.unsat:
-                            logger.debug('but existing core sufficient, skipping')
-                            continue
+                        #core res = self.solver.check(*[diag.trackers[i] for i in core])
+                        #core if res == z3.unsat:
+                        #core     logger.debug('but existing core sufficient, skipping')
+                        #core     continue
+                        pass
+                        #core for x in sorted(uc, key=lambda y: y.decl().name()):
+                        #core     assert isinstance(x, z3.ExprRef)
+                        #core     core.add(int(x.decl().name()[1:]))
 
-                        for x in sorted(uc, key=lambda y: y.decl().name()):
-                            assert isinstance(x, z3.ExprRef)
-                            core.add(int(x.decl().name()[1:]))
-
-        return (z3.unsat, core)
+        #core return (z3.unsat, core)
+        return (z3.unsat, MySet([i for i in range(len(diag.trackers))]))
 
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
