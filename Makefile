@@ -1,5 +1,5 @@
 PYTHON := python3
-MYPYVY_OPTS := --seed=0 --log=info
+MYPYVY_OPTS := --seed=0 --log=warning
 
 check:
 	MYPYPATH=stubs mypy --strict --disallow-untyped-defs mypyvy.py unittest.py
