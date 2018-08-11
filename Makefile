@@ -13,6 +13,9 @@ verify: check lockserv.verify consensus.verify sharded-kv.verify
 
 updr: lockserv.updr consensus.updr sharded-kv.updr
 
+bench:
+	$(PYTHON) benchmark.py
+
 %.verify: %.pyv
 	time $(PYTHON) mypyvy.py $(MYPYVY_OPTS) verify $<
 
@@ -25,4 +28,4 @@ consensus.updr:
 sharded-kv.updr:
 	time $(PYTHON) mypyvy.py $(MYPYVY_OPTS) updr --safety=keys_unique sharded-kv.pyv
 
-.PHONY: check run unittest test verify updr lockserv.updr consensus.updr sharded-kv.updr
+.PHONY: check run unittest test verify updr bench lockserv.updr consensus.updr sharded-kv.updr
