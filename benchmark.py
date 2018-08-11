@@ -29,6 +29,7 @@ class Benchmark(object):
         if self.safety is not None:
             cmd.append('--safety=%s' % self.safety)
 
+        # cmd.append('--use-z3-unsat-cores')
         cmd.append(self.name)
 
         print(' '.join(cmd))
@@ -38,8 +39,8 @@ class Benchmark(object):
         # print(proc.stdout)
 
         for line in proc.stderr.splitlines():
-            if 'updr done' in line:
-                m = re.search('\((?P<dt>.*) since start\)', line)
+            if 'updr ended' in line:
+                m = re.search('\(took (?P<dt>.*)\)', line)
                 assert m is not None
                 dt_string = m.group('dt')
                 dt: datetime.timedelta = eval(dt_string)
@@ -57,7 +58,8 @@ benchmarks = [
 N = 10
 
 def main() -> None:
-    seeds = [random.randint(0, 2**32-1) for i in range(N)]
+    # seeds = [random.randint(0, 2**32-1) for i in range(N)]
+    seeds = list(range(N))
     data = []
     for b in benchmarks:
         l = []

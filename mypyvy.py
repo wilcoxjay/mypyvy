@@ -1,13 +1,14 @@
-import z3
-import sys
-from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, overload, Generic, Iterator
+import argparse
+from collections import OrderedDict
 import copy
 from datetime import datetime
-import logging
-import argparse
+import functools
 import itertools
-from collections import OrderedDict
+import logging
+import sys
+from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
+    Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
+import z3
 
 import parser
 import syntax
@@ -17,6 +18,8 @@ from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
 logger = logging.getLogger(__file__)
 
 z3.Forall = z3.ForAll
+
+args: Optional[argparse.Namespace] = None
 
 class Solver(object):
     def __init__(self) -> None:
@@ -174,6 +177,21 @@ def safe_resolve(e: Expr, scope: Scope, sort: syntax.InferenceSort) -> None:
         print(exn)
         raise exn
 
+FuncType = Callable[..., Any]
+F = TypeVar('F', bound=FuncType)
+def log_start_end_time(lvl: int=logging.DEBUG) -> Callable[[F], F]:
+    def dec(func: F) -> F:
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs): # type: ignore
+            start = datetime.now()
+            logger.log(lvl, '%s started at %s' % (func.__name__, start))
+            ans = func(*args, **kwargs)
+            end = datetime.now()
+            logger.log(lvl, '%s ended at %s (took %s)' % (func.__name__, end, repr(end - start)))
+            return ans
+        return cast(F, wrapped)
+    return dec
+
 class Diagram(object):
     # This class represents a formula of the form
     #
@@ -258,6 +276,7 @@ class Diagram(object):
                    if any(v.name in c.free_ids() for c in self.conjuncts)]
         self._reinit()
 
+    @log_start_end_time()
     def generalize_diag(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
@@ -612,7 +631,10 @@ class Frames(object):
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult, Union[MySet[int], Tuple[TransitionDecl, Diagram]]]:
 
-        #core core: MySet[int] = MySet()
+        assert args is not None
+        if args.use_z3_unsat_cores:
+            core: MySet[int] = MySet()
+
         with self.solver:
             for f in pre_frame:
                 self.solver.add(f.to_z3('old'))
@@ -634,8 +656,8 @@ class Frames(object):
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(str(m))
                         return (res, (t, m.as_diagram()))
-                    else:
-                        #core uc = self.solver.unsat_core()
+                    elif args.use_z3_unsat_cores:
+                        uc = self.solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug('uc')
                         #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
@@ -643,17 +665,19 @@ class Frames(object):
                             # logger.debug('assertions')
                             # logger.debug(str(self.solver.assertions()))
 
-                        #core res = self.solver.check(*[diag.trackers[i] for i in core])
-                        #core if res == z3.unsat:
-                        #core     logger.debug('but existing core sufficient, skipping')
-                        #core     continue
-                        pass
-                        #core for x in sorted(uc, key=lambda y: y.decl().name()):
-                        #core     assert isinstance(x, z3.ExprRef)
-                        #core     core.add(int(x.decl().name()[1:]))
+                        res = self.solver.check(*[diag.trackers[i] for i in core])
+                        if res == z3.unsat:
+                            logger.debug('but existing core sufficient, skipping')
+                            continue
+                        
+                        for x in sorted(uc, key=lambda y: y.decl().name()):
+                            assert isinstance(x, z3.ExprRef)
+                            core.add(int(x.decl().name()[1:]))
 
-        #core return (z3.unsat, core)
-        return (z3.unsat, MySet([i for i in range(len(diag.trackers))]))
+        if not args.use_z3_unsat_cores:
+            core = MySet([i for i in range(len(diag.trackers))])
+
+        return (z3.unsat, core)
 
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
@@ -703,13 +727,13 @@ class Frames(object):
 
                 self.block(d, len(self)-1, [])
 
-def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
+@log_start_end_time(logging.INFO)
+def updr(s: Solver, prog: Program) -> None:
     assert prog.scope is not None
-    start = datetime.now()
-    logger.info('updr starting at %s' % start)
 
     check_init(s, prog)
 
+    assert args is not None
     if args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
         for inv in prog.invs():
@@ -724,10 +748,6 @@ def updr(s: Solver, prog: Program, args: argparse.Namespace) -> None:
     fs = Frames(s, prog, safety)
     fs.search()
 
-    end = datetime.now()
-    logger.info('updr done at %s (%s since start)' % (end, repr(end - start)))
-
-
 def debug_tokens(filename: str) -> None:
     with open(filename) as f:
         parser.lexer.input(f.read())
@@ -738,7 +758,8 @@ def debug_tokens(filename: str) -> None:
             break      # No more input
         print(tok)
 
-def verify(s: Solver, prog: Program, args: argparse.Namespace) -> None:
+@log_start_end_time(logging.INFO)
+def verify(s: Solver, prog: Program) -> None:
     start = datetime.now()
     logger.info('verifying starting at %s' % start)
 
@@ -755,6 +776,7 @@ def parse_args() -> argparse.Namespace:
 
     argparser.add_argument('--log', default='WARNING')
     argparser.add_argument('--seed', type=int, default=0)
+    argparser.add_argument('--log-time', action='store_true')
 
     subparsers = argparser.add_subparsers()
 
@@ -763,6 +785,7 @@ def parse_args() -> argparse.Namespace:
 
     updr_subparser = subparsers.add_parser('updr')
     updr_subparser.add_argument('--safety')
+    updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true')
     updr_subparser.set_defaults(main=updr)
 
 
@@ -771,12 +794,18 @@ def parse_args() -> argparse.Namespace:
     return argparser.parse_args()
 
 def main() -> None:
+    global args
     args = parse_args()
 
-    logging.basicConfig(format='%(levelname)s %(filename)s:%(lineno)d: %(message)s', level=getattr(logging, args.log.upper(), None))
+    if args.log_time:
+        fmt = '%(levelname)s %(asctime)s %(filename)s:%(lineno)d: %(message)s'
+    else:
+        fmt = '%(levelname)s %(filename)s:%(lineno)d: %(message)s'
+
+    logging.basicConfig(format=fmt, level=getattr(logging, args.log.upper(), None))
+
     logger.info('setting seed to %d' % args.seed)
     z3.set_param('smt.random_seed', args.seed)
-
 
     with open(args.filename) as f:
         prog = parser.program_parser.parse(input=f.read(), filename=args.filename)
@@ -787,7 +816,7 @@ def main() -> None:
     for a in prog.axioms():
         s.add(a.expr.to_z3())
 
-    args.main(s, prog, args)
+    args.main(s, prog)
 
 if __name__ == '__main__':
     main()
