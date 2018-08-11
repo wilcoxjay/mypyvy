@@ -1,16 +1,12 @@
-import ply
-import ply.lex
-import ply.yacc
-
-import z3
+from contextlib import contextmanager
+import itertools
+import logging
+import ply, ply.lex, ply.yacc
+import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
     Callable, Any, NoReturn, Set
 from typing_extensions import Protocol
-import sys
-import logging
-import itertools
-
-from contextlib import contextmanager
+import z3
 
 Token = ply.lex.LexToken
 
