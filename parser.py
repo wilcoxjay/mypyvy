@@ -4,6 +4,8 @@ import ply.yacc
 import syntax
 from typing import Any
 
+import sys
+
 reserved = {
     'modifies': 'MODIFIES',
     'sort': 'SORT',
@@ -292,6 +294,7 @@ def p_empty(p: Any) -> None:
 
 def p_error(t: Any) -> None:
     print('%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value))
+    sys.exit(1)
 
 program_parser = ply.yacc.yacc(start='program', debug=False)
 expr_parser = ply.yacc.yacc(start='expr', errorlog=ply.yacc.NullLogger(), debug=False)
