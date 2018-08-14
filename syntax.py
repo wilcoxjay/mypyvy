@@ -912,10 +912,10 @@ class AxiomDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope: Scope) -> None:
+        self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        self.expr = close_free_vars(self.expr)
         return 'AxiomDecl(%s, %s)' % (self.name if self.name is not None else 'None',
                                       repr(self.expr))
 
