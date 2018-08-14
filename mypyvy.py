@@ -753,21 +753,21 @@ def verify(s: Solver, prog: Program) -> None:
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
-    argparser.add_argument('--log', default='WARNING')
-    argparser.add_argument('--seed', type=int, default=0)
-    argparser.add_argument('--log-time', action='store_true')
-    # argparser.add_argument('--cache-z3', action='store_true')
-
     subparsers = argparser.add_subparsers()
 
     verify_subparser = subparsers.add_parser('verify')
     verify_subparser.set_defaults(main=verify)
 
     updr_subparser = subparsers.add_parser('updr')
-    updr_subparser.add_argument('--safety')
-    updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true')
     updr_subparser.set_defaults(main=updr)
 
+    for s in [verify_subparser, updr_subparser]:
+        s.add_argument('--log', default='WARNING')
+        s.add_argument('--log-time', action='store_true')
+        s.add_argument('--seed', type=int, default=0)
+
+    updr_subparser.add_argument('--safety')
+    updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true')
 
     argparser.add_argument('filename')
 

@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import random
 import re
@@ -19,17 +20,15 @@ class Benchmark(object):
         return 'Benchmark(%s)' % ','.join(l)
 
     def run(self, seed: Optional[int]=None) -> datetime.timedelta:
-        cmd = ['python3', 'mypyvy.py', '--log=info']
+        cmd = ['python3', 'mypyvy.py', 'updr', '--log=info']
 
         if seed is not None:
             cmd.append('--seed=%s' % seed)
 
-        cmd.append('updr')
-
         if self.safety is not None:
             cmd.append('--safety=%s' % self.safety)
 
-        # cmd.append('--use-z3-unsat-cores')
+        cmd.append('--use-z3-unsat-cores')
         cmd.append(self.name)
 
         print(' '.join(cmd))
@@ -55,15 +54,22 @@ benchmarks = [
     Benchmark('sharded-kv.pyv', safety='keys_unique')
 ]
 
-N = 10
-
 def main() -> None:
-    # seeds = [random.randint(0, 2**32-1) for i in range(N)]
-    seeds = list(range(N))
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('-n', type=int, default=10)
+    argparser.add_argument('--random-seeds', action='store_true')
+
+    args = argparser.parse_args()
+
+    if args.random_seeds:
+        seeds = [random.randint(0, 2**32-1) for i in range(args.n)]
+    else:
+        seeds = list(range(args.n))
+
     data = []
     for b in benchmarks:
         l = []
-        for i in range(N):
+        for i in range(args.n):
             l.append(b.run(seed=seeds[i]))
         floats = [x.total_seconds() for x in l]
         avg = datetime.timedelta(seconds=statistics.mean(floats))
