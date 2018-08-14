@@ -22,8 +22,17 @@ z3.Forall = z3.ForAll
 args: Optional[argparse.Namespace] = None
 
 class Solver(object):
-    def __init__(self) -> None:
+    def __init__(self, scope: Scope[z3.ExprRef]) -> None:
         self.z3solver = z3.Solver()
+        self.scope = scope
+        self.translators: Dict[Tuple[Optional[str], Optional[str]], syntax.Z3Translator] = {}
+
+    def get_translator(self, key: Optional[str]=None, key_old: Optional[str]=None) \
+        -> syntax.Z3Translator:
+        t = (key, key_old)
+        if t not in self.translators:
+            self.translators[t] = syntax.Z3Translator(self.scope, key, key_old)
+        return self.translators[t]
 
     def __enter__(self) -> None:
         self.z3solver.push()
@@ -77,13 +86,15 @@ def check_unsat(
 def check_init(s: Solver, prog: Program) -> None:
     print('checking init:')
 
+    t = s.get_translator('one')
+
     with s:
         for init in prog.inits():
-            s.add(init.expr.to_z3('one'))
+            s.add(t.translate_expr(init.expr))
 
         for inv in prog.invs():
             with s:
-                s.add(z3.Not(inv.expr.to_z3('one')))
+                s.add(z3.Not(t.translate_expr(inv.expr)))
 
                 if inv.name is not None:
                     msg = ' ' + inv.name
@@ -98,18 +109,20 @@ def check_init(s: Solver, prog: Program) -> None:
 
 
 def check_transitions(s: Solver, prog: Program) -> None:
+    t = s.get_translator('new', 'old')
+
     with s:
         for inv in prog.invs():
-            s.add(inv.expr.to_z3('old'))
+            s.add(t.translate_expr(inv.expr, old=True))
 
-        for t in prog.transitions():
-            print('checking transation %s:' % (t.name,))
+        for trans in prog.transitions():
+            print('checking transation %s:' % (trans.name,))
 
             with s:
-                s.add(t.to_z3('new', 'old'))
+                s.add(t.translate_transition(trans))
                 for inv in prog.invs():
                     with s:
-                        s.add(z3.Not(inv.expr.to_z3('new')))
+                        s.add(z3.Not(t.translate_expr(inv.expr)))
 
                         if inv.name is not None:
                             msg = ' ' + inv.name
@@ -127,12 +140,13 @@ def check_implication(
         hyps: Iterable[Expr],
         concs: Iterable[Expr]
 ) -> Optional[z3.ModelRef]:
+    t = s.get_translator('one')
     with s:
         for e in hyps:
-            s.add(e.to_z3('one'))
+            s.add(t.translate_expr(e))
         for e in concs:
             with s:
-                s.add(z3.Not(e.to_z3('one')))
+                s.add(z3.Not(t.translate_expr(e)))
                 # if logger.isEnabledFor(logging.DEBUG):
                 #     logger.debug('assertions')
                 #     logger.debug(str(s.assertions()))
@@ -148,15 +162,16 @@ def check_two_state_implication_all_transitions(
         old_hyps: Iterable[Expr],
         new_conc: Expr
 ) -> Optional[z3.ModelRef]:
+    t = s.get_translator('new', 'old')
     with s:
         for h in old_hyps:
-            s.add(h.to_z3('old'))
+            s.add(t.translate_expr(h, old=True))
 
-        s.add(z3.Not(new_conc.to_z3('new')))
+        s.add(z3.Not(t.translate_expr(new_conc)))
 
-        for t in prog.transitions():
+        for trans in prog.transitions():
             with s:
-                s.add(t.to_z3('new', 'old'))
+                s.add(t.translate_transition(trans))
 
                 # if logger.isEnabledFor(logging.DEBUG):
                 #     logger.debug('assertions')
@@ -166,16 +181,6 @@ def check_two_state_implication_all_transitions(
                     return s.model()
 
     return None
-
-
-def safe_resolve(e: Expr, scope: Scope, sort: syntax.InferenceSort) -> None:
-    try:
-        e.resolve(scope, sort)
-    except Exception as exn:
-        print('internal error: tried to construct unresolvable intermediate expression')
-        print(e)
-        print(exn)
-        raise exn
 
 FuncType = Callable[..., Any]
 F = TypeVar('F', bound=FuncType)
@@ -206,35 +211,34 @@ class Diagram(object):
     # of resolving all the C_i.
 
     def __init__(self, vs: List[syntax.SortedVar], conjuncts: List[Expr]) -> None:
-        self.vs = vs
+        self.binder = syntax.Binder(vs)
         self.conjuncts = conjuncts
-        self.q = syntax.QuantifierExpr(None, 'EXISTS', vs, syntax.And(*self.conjuncts))
         self.trackers: List[z3.ExprRef] = []
 
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
-            ', '.join(v.name for v in self.vs),
+            ', '.join(v.name for v in self.binder.vs),
             ' &\n  '.join(str(c) for c in self.conjuncts)
         )
 
     def resolve(self, scope: Scope) -> None:
-        safe_resolve(self.q, scope, syntax.BoolSort)
+        self.binder.pre_resolve(scope)
 
-    def to_z3(self, key: str) -> z3.ExprRef:
-        bs = []
-        for sv in self.vs:
-            n = sv.name
-            assert sv.sort is not None and \
-                not isinstance(sv.sort, syntax.SortInferencePlaceholder)
-            self.q.binders[n] = z3.Const(n, sv.sort.to_z3())
-            bs.append(self.q.binders[n])
+        with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
+            for c in self.conjuncts:
+                c.resolve(scope, syntax.BoolSort)
 
-        z3conjs = []
-        self.trackers = []
-        for i, c in enumerate(self.conjuncts):
-            p = z3.Bool('p%d' % i)
-            self.trackers.append(p)
-            z3conjs.append(p == c.to_z3(key))
+        self.binder.post_resolve()
+
+    def to_z3(self, t: syntax.Z3Translator) -> z3.ExprRef:
+        bs = t.bind(self.binder)
+        with t.scope.in_scope(list(zip(self.binder.vs, bs))):
+            z3conjs = []
+            self.trackers = []
+            for i, c in enumerate(self.conjuncts):
+                p = z3.Bool('p%d' % i)
+                self.trackers.append(p)
+                z3conjs.append(p == t.translate_expr(c))
 
         if len(bs) > 0:
             return z3.Exists(bs, z3.And(*z3conjs))
@@ -242,18 +246,11 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        if len(self.conjuncts) == 0:
-            return syntax.Bool(None, True)
-        elif len(self.vs) == 0:
-            return self.q.body
+        e = syntax.And(*self.conjuncts)
+        if len(self.binder.vs) == 0:
+            return e
         else:
-            return self.q
-
-    def _reinit(self) -> None:
-        self.q.vs = self.vs
-        self.q.body = syntax.And(*self.conjuncts)
-        self.q.binders = {}
-        self.q.z3 = {}
+            return syntax.Exists(self.binder.vs, e)
 
     def minimize_from_core(self, core: Iterable[int]) -> None:
         self.conjuncts = [self.conjuncts[i] for i in core]
@@ -264,17 +261,14 @@ class Diagram(object):
 
     def remove_clause(self, i: int) -> Expr:
         c = self.conjuncts.pop(i)
-        self._reinit()
         return c
 
     def add_clause(self, i: int, c: Expr) -> None:
         self.conjuncts.insert(i, c)
-        self._reinit()
 
     def prune_unused_vars(self) -> None:
-        self.vs = [v for v in self.vs
-                   if any(v.name in c.free_ids() for c in self.conjuncts)]
-        self._reinit()
+        self.binder.vs = [v for v in self.binder.vs
+                          if any(v.name in c.free_ids() for c in self.conjuncts)]
 
     @log_start_end_time()
     def generalize_diag(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
@@ -419,9 +413,9 @@ class Model(object):
                 C = self.const_interps
 
 
-            decl, _ = self.prog.scope.get(name)
-            assert not isinstance(decl, syntax.QuantifierExpr) and \
-                not isinstance(decl, TransitionDecl)
+            decl = self.prog.scope.get(name)
+            assert not isinstance(decl, syntax.Sort) and \
+                not isinstance(decl, syntax.SortInferencePlaceholder)
             if decl is not None:
 #                if logger.isEnabledFor(logging.DEBUG):
 #                    logger.debug(str(z3decl))
@@ -635,27 +629,29 @@ class Frames(object):
         if args.use_z3_unsat_cores:
             core: MySet[int] = MySet()
 
+        t = self.solver.get_translator('new', 'old')
+
         with self.solver:
             for f in pre_frame:
-                self.solver.add(f.to_z3('old'))
+                self.solver.add(t.translate_expr(f, old=True))
 
-            self.solver.add(diag.to_z3('new'))
+            self.solver.add(diag.to_z3(t))
 
-            for t in self.prog.transitions():
-                logger.debug('checking %s' % t.name)
+            for trans in self.prog.transitions():
+                logger.debug('checking %s' % trans.name)
                 with self.solver:
-                    self.solver.add(t.to_z3('new', 'old'))
+                    self.solver.add(t.translate_transition(trans))
                     # if logger.isEnabledFor(logging.DEBUG):
                     #     logger.debug('assertions')
                     #     logger.debug(str(self.solver.assertions()))
                     res = self.solver.check(*diag.trackers)
 
                     if res != z3.unsat:
-                        logger.debug('found predecessor via %s' % t.name)
+                        logger.debug('found predecessor via %s' % trans.name)
                         m = Model(self.prog, self.solver.model(), 'old')
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(str(m))
-                        return (res, (t, m.as_diagram()))
+                        return (res, (trans, m.as_diagram()))
                     elif args.use_z3_unsat_cores:
                         uc = self.solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
@@ -704,28 +700,17 @@ class Frames(object):
 
             logger.info('considering frame %s' % (len(self) - 1,))
 
+            f = self.get_inductive_frame()
+            if f is not None:
+                print('frame is safe and inductive. done!')
+                print('\n'.join(str(x) for x in f))
+                return f
 
-            m = check_implication(self.solver, self[-1], self.safety)
-            if m is None:
-                f = self.get_inductive_frame()
-                if f is not None:
-                    print('frame is safe and inductive. done!')
-                    print('\n'.join(str(x) for x in f))
-                    return f
-
-
-                for c in self.safety:
-                    self[-1].add(c)
-                logger.info('frame is safe but not inductive. starting new frame')
-                self.new_frame()
-            else:
-                logger.info('frame is not safe')
-                mod = Model(self.prog, m, 'one')
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('\n' + str(mod))
-                d = mod.as_diagram()
-
-                self.block(d, len(self)-1, [])
+            for c in self.safety:
+                assert c in self[-1]
+                # self[-1].add(c)
+            logger.info('frame is safe but not inductive. starting new frame')
+            self.new_frame()
 
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
@@ -760,14 +745,8 @@ def debug_tokens(filename: str) -> None:
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
-    start = datetime.now()
-    logger.info('verifying starting at %s' % start)
-
     check_init(s, prog)
     check_transitions(s, prog)
-
-    end = datetime.now()
-    logger.info('verification done at %s (%s since start)' % (end, repr(end - start)))
 
     print('all ok!')
 
@@ -777,6 +756,7 @@ def parse_args() -> argparse.Namespace:
     argparser.add_argument('--log', default='WARNING')
     argparser.add_argument('--seed', type=int, default=0)
     argparser.add_argument('--log-time', action='store_true')
+    # argparser.add_argument('--cache-z3', action='store_true')
 
     subparsers = argparser.add_subparsers()
 
@@ -808,13 +788,18 @@ def main() -> None:
     z3.set_param('smt.random_seed', args.seed)
 
     with open(args.filename) as f:
-        prog = parser.program_parser.parse(input=f.read(), filename=args.filename)
+        prog: syntax.Program = parser.program_parser.parse(input=f.read(), filename=args.filename)
 
     prog.resolve()
 
-    s = Solver()
+    scope = prog.scope
+    assert scope is not None
+    assert len(scope.stack) == 0
+
+    s = Solver(cast(Scope[z3.ExprRef], scope))
+    t = s.get_translator()
     for a in prog.axioms():
-        s.add(a.expr.to_z3())
+        s.add(t.translate_expr(a.expr))
 
     args.main(s, prog)
 
