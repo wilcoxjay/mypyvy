@@ -309,6 +309,9 @@ class OrderedSet(Generic[T], Iterable[T]):
     def __str__(self) -> str:
         return '{%s}' % ','.join(str(x) for x in self.l)
 
+    def __contains__(self, item: T) -> bool:
+        return item in self.s
+
     def add(self, x: T) -> None:
         if x not in self.s:
             self.l.append(x)
@@ -706,9 +709,6 @@ class Frames(object):
                 print('\n'.join(str(x) for x in f))
                 return f
 
-            for c in self.safety:
-                assert c in self[-1]
-                # self[-1].add(c)
             logger.info('frame is safe but not inductive. starting new frame')
             self.new_frame()
 
