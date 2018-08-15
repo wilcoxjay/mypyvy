@@ -1,9 +1,12 @@
+import ascii_graph
 import argparse
 import datetime
+import numpy
 import random
 import re
 import statistics
 import subprocess
+import sys
 
 from typing import Optional
 
@@ -21,7 +24,7 @@ class Benchmark(object):
             l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
 
-    def run(self, seed: Optional[int]=None) -> datetime.timedelta:
+    def run(self, seed: Optional[int]=None) -> float:
         assert args is not None
         cmd = ['python3', 'mypyvy.py', 'updr', '--log=info']
 
@@ -44,7 +47,7 @@ class Benchmark(object):
                 assert m is not None
                 dt_string = m.group('dt')
                 dt: datetime.timedelta = eval(dt_string)
-                return dt
+                return dt.total_seconds()
 
         assert False
 
@@ -60,11 +63,18 @@ def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument('-n', type=int, default=10)
     argparser.add_argument('--random-seeds', action='store_true')
+    argparser.add_argument('--list-benchmarks', action='store_true')
+    argparser.add_argument('--graph', action='store_true')
     argparser.add_argument('--benchmark', nargs='*', default=[])
     argparser.add_argument('--options', nargs=argparse.REMAINDER)
 
     global args
     args = argparser.parse_args()
+
+    if args.list_benchmarks:
+        print(' '.join(b.name for b in benchmarks))
+        sys.exit(0)
+
 
     if args.benchmark == []:
         args.benchmark = benchmarks
@@ -92,17 +102,26 @@ def main() -> None:
         for i in range(args.n):
             l.append(b.run(seed=seeds[i]))
         print()
-        floats = [x.total_seconds() for x in l]
-        avg = datetime.timedelta(seconds=statistics.mean(floats))
+        avg = statistics.mean(l)
         if args.n > 1:
-            stdev = datetime.timedelta(seconds=statistics.stdev(floats))
+            stdev = statistics.stdev(l)
         else:
-            stdev = datetime.timedelta(seconds=0)
-        data.append((repr(b), str(l), 'avg: %s' % avg, 'stdev: %s' % stdev))
+            stdev = 0.0
+        data.append((b, l, avg, stdev))
+
+    if args.graph:
+        g = ascii_graph.Pyasciigraph()
 
     print('seeds: %s' % seeds)
-    for t in data:
-        print('\n'.join(t))
+    for b, l, avg, stdev in data:
+        print('\n'.join([repr(b), str(l), 'avg: %s' % avg, 'stdev: %s' % stdev]))
+
+        if args.graph:
+            h, bins = numpy.histogram(l)
+            for line in g.graph('title', zip([str(x) for x in bins], [0] + list(h))):
+                print(line)
+
+
 
 if __name__ == '__main__':
     main()
