@@ -31,7 +31,8 @@ class Benchmark(object):
         cmd.append('--use-z3-unsat-cores')
         cmd.append(self.name)
 
-        print(' '.join(cmd))
+        print('\r', end='')
+        print(' '.join(cmd), end='', flush=True)
         proc = subprocess.run(cmd, capture_output=True, text=True) # type: ignore
 
         # print(proc.stderr)
@@ -88,6 +89,7 @@ def main() -> None:
         l = []
         for i in range(args.n):
             l.append(b.run(seed=seeds[i]))
+        print()
         floats = [x.total_seconds() for x in l]
         avg = datetime.timedelta(seconds=statistics.mean(floats))
         if args.n > 1:
