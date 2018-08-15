@@ -6,3 +6,6 @@
 - support functions
 - somehow use heuristic "first frame that contains no initial condition"
 - implement smarter unsat core minimization using binary search
+- generalization heuristic: eliminate mutable conjuncts first
+- generalization optimization: conjecture that an entire relation is irrelevant
+- refactor diagram to remember more structure in conjuncts -- group by decl
