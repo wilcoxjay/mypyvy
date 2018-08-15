@@ -809,7 +809,7 @@ def main() -> None:
     else:
         fmt = '%(levelname)s %(filename)s:%(lineno)d: %(message)s'
 
-    logging.basicConfig(format=fmt, level=getattr(logging, args.log.upper(), None))
+    logging.basicConfig(format=fmt, level=getattr(logging, args.log.upper(), None), stream=sys.stdout)
 
     logger.info('setting seed to %d' % args.seed)
     z3.set_param('smt.random_seed', args.seed)

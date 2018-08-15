@@ -38,10 +38,7 @@ class Benchmark(object):
         print(' '.join(cmd), end='', flush=True)
         proc = subprocess.run(cmd, capture_output=True, text=True) # type: ignore
 
-        # print(proc.stderr)
-        # print(proc.stdout)
-
-        for line in proc.stderr.splitlines():
+        for line in proc.stdout.splitlines():
             if 'updr ended' in line:
                 m = re.search('\(took (?P<dt>.*)\)', line)
                 assert m is not None
