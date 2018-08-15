@@ -4,3 +4,5 @@
 - model minimization?
 - phase automata
 - support functions
+- somehow use heuristic "first frame that contains no initial condition"
+- implement smarter unsat core minimization using binary search
