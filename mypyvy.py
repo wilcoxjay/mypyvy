@@ -523,9 +523,12 @@ class Frames(object):
         return None
 
     def push_forward_frames(self) -> None:
+        assert args is not None
+
         for i, f in enumerate(self.fs[:-1]):
             logger.debug('pushing in frame %d' % i)
 
+            frame_old_count = self.counter
             j = 0
             while j < len(f):
                 c = f.l[j]
@@ -534,7 +537,16 @@ class Frames(object):
                     continue
 
                 is_safety = c in self.safety
+                conjunct_old_count = self.counter
+
                 while True:
+                    if not is_safety and args.convergence_hacks and (
+                            self.counter >= conjunct_old_count + 3 or
+                            self.counter >= frame_old_count + 10
+                        ): # total hack
+                        logging.info('decided to give up pushing conjunct %s' % c)
+                        break
+
                     logger.debug('attempting to push %s' % c)
                     m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
                     if m is None:
@@ -564,6 +576,8 @@ class Frames(object):
             trace: List[Tuple[TransitionDecl,Diagram]]=[],
             safety_goal: bool=True
     ) -> bool:
+        assert args is not None
+
         if j == 0: # or (j == 1 and sat(init and diag)
             if safety_goal:
                 print(trace)
@@ -574,8 +588,16 @@ class Frames(object):
                     logger.debug(str(diag))
                 return False
 
+        old_count = self.counter
+
         # print fs
         while True:
+            if not safety_goal and args.convergence_hacks and self.counter >= old_count + 3:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('decide to give up blocking diagram in frame %s' % j)
+                    logger.debug(str(diag))
+                    return False
+
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
                 logger.debug(str(diag))
@@ -772,6 +794,7 @@ def parse_args() -> argparse.Namespace:
 
     updr_subparser.add_argument('--safety')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true')
+    updr_subparser.add_argument('--convergence-hacks', action='store_true')
 
     argparser.add_argument('filename')
 
