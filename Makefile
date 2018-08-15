@@ -2,12 +2,9 @@ PYTHON := python3
 MYPYVY_OPTS := --seed=0 --log=warning
 
 check:
-	MYPYPATH=stubs mypy --strict --disallow-untyped-defs mypyvy.py unittest.py
+	MYPYPATH=stubs mypy --strict --disallow-untyped-defs mypyvy.py
 
-test: check unittest verify updr
-
-unittest:
-	$(PYTHON) unittest.py
+test: check verify updr
 
 verify: check lockserv.verify consensus.verify sharded-kv.verify
 
@@ -28,4 +25,4 @@ consensus.updr:
 sharded-kv.updr:
 	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) --safety=keys_unique sharded-kv.pyv
 
-.PHONY: check run unittest test verify updr bench lockserv.updr consensus.updr sharded-kv.updr
+.PHONY: check run test verify updr bench lockserv.updr consensus.updr sharded-kv.updr
