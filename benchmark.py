@@ -7,6 +7,8 @@ import subprocess
 
 from typing import Optional
 
+args: Optional[argparse.Namespace] = None
+
 class Benchmark(object):
     def __init__(self, name: str, safety: Optional[str]=None) -> None:
         self.name = name
@@ -20,6 +22,7 @@ class Benchmark(object):
         return 'Benchmark(%s)' % ','.join(l)
 
     def run(self, seed: Optional[int]=None) -> datetime.timedelta:
+        assert args is not None
         cmd = ['python3', 'mypyvy.py', 'updr', '--log=info']
 
         if seed is not None:
@@ -28,7 +31,7 @@ class Benchmark(object):
         if self.safety is not None:
             cmd.append('--safety=%s' % self.safety)
 
-        cmd.append('--use-z3-unsat-cores')
+        cmd.extend(args.options)
         cmd.append(self.name)
 
         print('\r', end='')
@@ -60,8 +63,10 @@ def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument('-n', type=int, default=10)
     argparser.add_argument('--random-seeds', action='store_true')
-    argparser.add_argument('benchmark', nargs='*')
+    argparser.add_argument('--benchmark', nargs='*', default=[])
+    argparser.add_argument('--options', nargs=argparse.REMAINDER)
 
+    global args
     args = argparser.parse_args()
 
     if args.benchmark == []:
