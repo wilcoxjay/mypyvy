@@ -51,15 +51,32 @@ class Benchmark(object):
 benchmarks = [
     Benchmark('lockserv.pyv', safety='mutex'),
     Benchmark('consensus.pyv', safety='one_leader'),
-    Benchmark('sharded-kv.pyv', safety='keys_unique')
+    Benchmark('sharded-kv.pyv', safety='keys_unique'),
+    Benchmark('ring.pyv', safety='safety')
 ]
 
 def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument('-n', type=int, default=10)
     argparser.add_argument('--random-seeds', action='store_true')
+    argparser.add_argument('benchmark', nargs='*')
 
     args = argparser.parse_args()
+
+    if args.benchmark == []:
+        args.benchmark = benchmarks
+    else:
+        bs = []
+        for name in args.benchmark:
+            found = False
+            for b in benchmarks:
+                if b.name == name:
+                    bs.append(b)
+                    found = True
+                    break
+            if not found:
+                print('unknown benchmark file %s' % name)
+        args.benchmark = bs
 
     if args.random_seeds:
         seeds = [random.randint(0, 2**32-1) for i in range(args.n)]
@@ -67,13 +84,16 @@ def main() -> None:
         seeds = list(range(args.n))
 
     data = []
-    for b in benchmarks:
+    for b in args.benchmark:
         l = []
         for i in range(args.n):
             l.append(b.run(seed=seeds[i]))
         floats = [x.total_seconds() for x in l]
         avg = datetime.timedelta(seconds=statistics.mean(floats))
-        stdev = datetime.timedelta(seconds=statistics.stdev(floats))
+        if args.n > 1:
+            stdev = datetime.timedelta(seconds=statistics.stdev(floats))
+        else:
+            stdev = datetime.timedelta(seconds=0)
         data.append((repr(b), str(l), 'avg: %s' % avg, 'stdev: %s' % stdev))
 
     print('seeds: %s' % seeds)
