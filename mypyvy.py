@@ -489,6 +489,7 @@ class Frames(object):
         self.safety = safety
         self.fs: List[MySet[Expr]] = []
         self.push_cache: List[Set[Expr]] = []
+        self.counter = 0
 
         self.new_frame(init.expr for init in prog.inits())
 
@@ -532,6 +533,7 @@ class Frames(object):
                     j += 1
                     continue
 
+                is_safety = c in self.safety
                 while True:
                     logger.debug('attempting to push %s' % c)
                     m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
@@ -545,7 +547,7 @@ class Frames(object):
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug('failed to immediately push %s' % c)
                             logger.debug(str(mod))
-                        if c in self.safety:
+                        if is_safety:
                             logger.debug('note: current clause is safety condition')
                             self.block(diag, i, [], True)
                         else:
@@ -616,6 +618,8 @@ class Frames(object):
 
 
     def add(self, e: Expr, j: Optional[int]=None) -> None:
+        self.counter += 1
+
         if j is None:
             j = len(self)
         for i in range(j+1):
