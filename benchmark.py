@@ -66,7 +66,7 @@ def main() -> None:
     argparser.add_argument('--list-benchmarks', action='store_true')
     argparser.add_argument('--graph', action='store_true')
     argparser.add_argument('--benchmark', nargs='*', default=[])
-    argparser.add_argument('--options', nargs=argparse.REMAINDER)
+    argparser.add_argument('--options', nargs=argparse.REMAINDER, default=[])
 
     global args
     args = argparser.parse_args()
