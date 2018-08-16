@@ -1,5 +1,6 @@
 import argparse
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
+from contextlib import contextmanager
 import copy
 from datetime import datetime
 import functools
@@ -210,22 +211,46 @@ class Diagram(object):
     # all the conjuncts from the list.  This ast is ignored except for purposes
     # of resolving all the C_i.
 
-    def __init__(self, vs: List[syntax.SortedVar], conjuncts: List[Expr]) -> None:
+
+    def __init__(
+            self,
+            vs: List[syntax.SortedVar],
+            ineqs: Dict[SortDecl, List[Expr]],
+            rels: Dict[RelationDecl, List[Expr]],
+            consts: Dict[ConstantDecl, Expr]
+    ) -> None:
         self.binder = syntax.Binder(vs)
-        self.conjuncts = conjuncts
+        self.ineqs = ineqs
+        self.rels = rels
+        self.consts = consts
         self.trackers: List[z3.ExprRef] = []
+        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl], Set[int]] = \
+            defaultdict(lambda: set())
+
+    def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl], int, Expr]]:
+        for s, l in self.ineqs.items():
+            for i, e in enumerate(l):
+                if i not in self.tombstones[s]:
+                    yield s, i, e
+        for r, l in self.rels.items():
+            for i, e in enumerate(l):
+                if i not in self.tombstones[r]:
+                    yield r, i, e
+        for c, e in self.consts.items():
+            if 0 not in self.tombstones[c]:
+                yield c, 0, e
 
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
             ', '.join(v.name for v in self.binder.vs),
-            ' &\n  '.join(str(c) for c in self.conjuncts)
+            ' &\n  '.join(str(c) for _, _, c in self.conjuncts())
         )
 
     def resolve(self, scope: Scope) -> None:
         self.binder.pre_resolve(scope)
 
         with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
-            for c in self.conjuncts:
+            for _, _, c in self.conjuncts():
                 c.resolve(scope, syntax.BoolSort)
 
         self.binder.post_resolve()
@@ -235,10 +260,14 @@ class Diagram(object):
         with t.scope.in_scope(list(zip(self.binder.vs, bs))):
             z3conjs = []
             self.trackers = []
-            for i, c in enumerate(self.conjuncts):
+            self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl], int]] = []
+            i = 0
+            for (d, j, c) in self.conjuncts():
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
+                self.reverse_map.append((d, j))
                 z3conjs.append(p == t.translate_expr(c))
+                i += 1
 
         if len(bs) > 0:
             return z3.Exists(bs, z3.And(*z3conjs))
@@ -246,29 +275,55 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        e = syntax.And(*self.conjuncts)
+        e = syntax.And(*(c for _, _, c in self.conjuncts()))
         if len(self.binder.vs) == 0:
             return e
         else:
             return syntax.Exists(self.binder.vs, e)
 
     def minimize_from_core(self, core: Iterable[int]) -> None:
-        self.conjuncts = [self.conjuncts[i] for i in core]
+        I: Dict[SortDecl, List[Expr]] = {}
+        R: Dict[RelationDecl, List[Expr]] = {}
+        C: Dict[ConstantDecl, Expr] = {}
 
-        assert len(self.conjuncts) > 0
+        started = False
+
+        for i in core:
+            started = True
+            d, j = self.reverse_map[i]
+            if isinstance(d, SortDecl):
+                if d not in I:
+                    I[d] = []
+                I[d].append(self.ineqs[d][j])
+            elif isinstance(d, RelationDecl):
+                if d not in R:
+                    R[d] = []
+                R[d].append(self.rels[d][j])
+            else:
+                assert isinstance(d, ConstantDecl)
+                assert d not in C
+                C[d] = self.consts[d]
+
+        assert started
 
         self.prune_unused_vars()
 
-    def remove_clause(self, i: int) -> Expr:
-        c = self.conjuncts.pop(i)
-        return c
-
-    def add_clause(self, i: int, c: Expr) -> None:
-        self.conjuncts.insert(i, c)
+    def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl], i: int) -> None:
+        assert i not in self.tombstones[d]
+        self.tombstones[d].add(i)
 
     def prune_unused_vars(self) -> None:
         self.binder.vs = [v for v in self.binder.vs
-                          if any(v.name in c.free_ids() for c in self.conjuncts)]
+                          if any(v.name in c.free_ids() for _, _, c in self.conjuncts())]
+
+
+    @contextmanager
+    def without(self, d: Union[SortDecl, RelationDecl, ConstantDecl], j: int) -> Iterator[None]:
+        assert j not in self.tombstones[d]
+        self.tombstones[d].add(j)
+        yield
+        self.tombstones[d].remove(j)
+
 
     @log_start_end_time()
     def generalize_diag(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
@@ -277,14 +332,14 @@ class Diagram(object):
             logger.debug(str(self))
 
         i = 0
-        while i < len(self.conjuncts):
-            c = self.remove_clause(i)
-            if check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast())) is not None:
-                self.add_clause(i, c)
-                i += 1
-            else:
+        for d, j, c in self.conjuncts():
+            with self.without(d, j):
+                m = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+            if m is None:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('eliminated clause %s' % c)
+                self.remove_clause(d, j)
+
 
         self.prune_unused_vars()
 
@@ -452,16 +507,20 @@ class Model(object):
         # TODO: remove above assertion by supporting 2-state models
 
         vs: List[syntax.SortedVar] = []
-        conjs = []
+        ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
+        rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
+        consts: Dict[ConstantDecl, Expr] = OrderedDict()
         for sort in self.univs:
             vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
                       for v in self.univs[sort])
 
+            ineqs[sort] = []
             u = [syntax.Id(None, s) for s in self.univs[sort]]
             for i, a in enumerate(u):
                 for b in u[i+1:]:
-                    conjs.append(syntax.Neq(a, b))
+                    ineqs[sort].append(syntax.Neq(a, b))
         for R in self.rel_interps:
+            rels[R] = []
             for tup, ans in self.rel_interps[R]:
                 e: Expr
                 if len(tup) > 0:
@@ -470,13 +529,12 @@ class Model(object):
                 else:
                     e = syntax.Id(None, R.name)
                 e = e if ans else syntax.Not(e)
-                conjs.append(e)
+                rels[R].append(e)
         for C in self.const_interps:
             e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, self.const_interps[C]))
-            conjs.append(e)
+            consts[C] = e
 
-
-        diag = Diagram(vs, conjs)
+        diag = Diagram(vs, ineqs, rels, consts)
         assert self.prog.scope is not None
         diag.resolve(self.prog.scope)
 
@@ -701,6 +759,8 @@ class Frames(object):
 
         if not args.use_z3_unsat_cores:
             core = MySet([i for i in range(len(diag.trackers))])
+        else:
+            core = MySet(sorted(core))
 
         return (z3.unsat, core)
 
