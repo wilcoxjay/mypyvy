@@ -193,7 +193,7 @@ def log_start_end_time(lvl: int=logging.DEBUG) -> Callable[[F], F]:
             logger.log(lvl, '%s started at %s' % (func.__name__, start))
             ans = func(*args, **kwargs)
             end = datetime.now()
-            logger.log(lvl, '%s ended at %s (took %s)' % (func.__name__, end, repr(end - start)))
+            logger.log(lvl, '%s ended at %s (took %s seconds)' % (func.__name__, end, (end - start).total_seconds()))
             return ans
         return cast(F, wrapped)
     return dec

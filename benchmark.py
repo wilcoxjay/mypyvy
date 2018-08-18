@@ -43,11 +43,10 @@ class Benchmark(object):
 
         for line in proc.stdout.splitlines():
             if 'updr ended' in line:
-                m = re.search('\(took (?P<dt>.*)\)', line)
+                m = re.search('\(took (?P<time>.*) seconds\)', line)
                 assert m is not None
-                dt_string = m.group('dt')
-                dt: datetime.timedelta = eval(dt_string)
-                return dt.total_seconds()
+                t = float(m.group('time'))
+                return t
 
         assert False
 
