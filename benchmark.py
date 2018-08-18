@@ -53,10 +53,10 @@ class Benchmark(object):
 
 
 benchmarks = [
-    Benchmark('lockserv.pyv', safety='mutex'),
-    Benchmark('consensus.pyv', safety='one_leader'),
-    Benchmark('sharded-kv.pyv', safety='keys_unique'),
-    Benchmark('ring.pyv', safety='safety')
+    Benchmark('test/lockserv.pyv', safety='mutex'),
+    Benchmark('test/consensus.pyv', safety='one_leader'),
+    Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
+    Benchmark('test/ring.pyv', safety='safety')
 ]
 
 def main() -> None:
