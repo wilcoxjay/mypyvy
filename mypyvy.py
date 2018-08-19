@@ -1,3 +1,4 @@
+from __future__ import annotations
 import argparse
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
@@ -162,7 +163,7 @@ def check_two_state_implication_all_transitions(
         prog: Program,
         old_hyps: Iterable[Expr],
         new_conc: Expr
-) -> Optional[z3.ModelRef]:
+) -> Optional[Tuple[z3.ModelRef, TransitionDecl]]:
     t = s.get_translator('new', 'old')
     with s:
         for h in old_hyps:
@@ -179,7 +180,7 @@ def check_two_state_implication_all_transitions(
                 #     logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
-                    return s.model()
+                    return s.model(), trans
 
     return None
 
@@ -224,21 +225,38 @@ class Diagram(object):
         self.rels = rels
         self.consts = consts
         self.trackers: List[z3.ExprRef] = []
-        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl], Set[int]] = \
+        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl], Union[Set[int], None]] = \
             defaultdict(lambda: set())
 
-    def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl], int, Expr]]:
+    def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
         for s, l in self.ineqs.items():
-            for i, e in enumerate(l):
-                if i not in self.tombstones[s]:
-                    yield s, i, e
+            S = self.tombstones[s]
+            if S is not None:
+                for i, e in enumerate(l):
+                    if i not in S:
+                        yield s, i, e
+
+    def rel_conjuncts(self) -> Iterable[Tuple[RelationDecl, int, Expr]]:
         for r, l in self.rels.items():
-            for i, e in enumerate(l):
-                if i not in self.tombstones[r]:
-                    yield r, i, e
+            S = self.tombstones[r]
+            if S is not None:
+                for i, e in enumerate(l):
+                    if i not in S:
+                        yield r, i, e
+
+    def const_conjuncts(self) -> Iterable[Tuple[ConstantDecl, int, Expr]]:
         for c, e in self.consts.items():
-            if 0 not in self.tombstones[c]:
+            S = self.tombstones[c]
+            if S is not None and 0 not in S:
                 yield c, 0, e
+
+    def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl], int, Expr]]:
+        for t1 in self.ineq_conjuncts():
+            yield t1
+        for t2 in self.rel_conjuncts():
+            yield t2
+        for t3 in self.const_conjuncts():
+            yield t3
 
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
@@ -281,7 +299,10 @@ class Diagram(object):
         else:
             return syntax.Exists(self.binder.vs, e)
 
-    def minimize_from_core(self, core: Iterable[int]) -> None:
+    def minimize_from_core(self, core: Optional[Iterable[int]]) -> None:
+        if core is None:
+            return
+
         I: Dict[SortDecl, List[Expr]] = {}
         R: Dict[RelationDecl, List[Expr]] = {}
         C: Dict[ConstantDecl, Expr] = {}
@@ -312,9 +333,19 @@ class Diagram(object):
         self.rels = R
         self.consts = C
 
-    def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl], i: int) -> None:
-        assert i not in self.tombstones[d]
-        self.tombstones[d].add(i)
+    def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl], i: Union[int, Set[int], None]=None) -> None:
+        if i is None:
+            self.tombstones[d] = None
+        elif isinstance(i, int):
+            S = self.tombstones[d]
+            assert S is not None
+            assert i not in S
+            S.add(i)
+        else:
+            S = self.tombstones[d]
+            assert S is not None
+            assert i & S == set()
+            S |= i
 
     def prune_unused_vars(self) -> None:
         self.binder.vs = [v for v in self.binder.vs
@@ -322,27 +353,76 @@ class Diagram(object):
 
 
     @contextmanager
-    def without(self, d: Union[SortDecl, RelationDecl, ConstantDecl], j: int) -> Iterator[None]:
-        assert j not in self.tombstones[d]
-        self.tombstones[d].add(j)
-        yield
-        self.tombstones[d].remove(j)
+    def without(self, d: Union[SortDecl, RelationDecl, ConstantDecl], j: Union[int, Set[int], None]=None) -> Iterator[None]:
+        S = self.tombstones[d]
+        if j is None:
+            self.tombstones[d] = None
+            yield
+            self.tombstones[d] = S
+        elif isinstance(j, int):
+            assert S is not None
+            assert j not in S
+            S.add(j)
+            yield
+            S.remove(j)
+        else:
+            assert S is not None
+            assert S & j == set()
+            S |= j
+            yield
+            S -= j
 
 
     @log_start_end_time()
-    def generalize_diag(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
+    def generalize(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
             logger.debug(str(self))
+            logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
 
-        i = 0
+        d: Union[SortDecl, RelationDecl, ConstantDecl]
+        I: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.ineqs
+        R: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.rels
+        C: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.consts
+
+        for d in itertools.chain(I, R, C):
+            if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
+                continue
+            with self.without(d):
+                res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+            if res is None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('eliminated all conjuncts from declaration %s' % d)
+                self.remove_clause(d)
+                continue
+            if isinstance(d, RelationDecl):
+                l = self.rels[d]
+                cs = set()
+                S = self.tombstones[d]
+                assert S is not None
+                for j, x in enumerate(l):
+                    if j not in S and isinstance(x, syntax.UnaryExpr):
+                        cs.add(j)
+                with self.without(d, cs):
+                    res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+                if res is None:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug('eliminated all negative conjuncts from declaration %s' % d)
+                    self.remove_clause(d, cs)
+
         for d, j, c in self.conjuncts():
             with self.without(d, j):
-                m = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
-            if m is None:
+                res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+            if res is None:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('eliminated clause %s' % c)
                 self.remove_clause(d, j)
+            # else:
+                # m, t = res
+                # logger.debug('failed to eliminate clause %s' % c)
+                # logger.debug('from diagram %s' % self)
+                # logger.debug('because of transition %s' % t.name)
+                # logger.debug('and model %s' % Model(prog, m, 'new', 'old'))
 
 
         self.prune_unused_vars()
@@ -380,6 +460,11 @@ class OrderedSet(Generic[T], Iterable[T]):
         if x not in self.s:
             raise
 
+    def __isub__(self, other: Set[T]) -> OrderedSet[T]:
+        self.s -= other
+        self.l = [x for x in self.l if x in self.s]
+        return self
+
     def __iter__(self) -> Iterator[T]:
         return iter(self.l)
 
@@ -411,10 +496,13 @@ class Model(object):
     def __str__(self) -> str:
         l = []
         l.extend(self.univ_str())
+        l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps))
         if self.key_old is not None:
-            l.append('old state:')
+            l.append('\nold state:')
             l.append(Model._state_str(self.old_const_interps, self.old_rel_interps))
             l.append('\nnew state:')
+        else:
+            l.append('')
         l.append(Model._state_str(self.const_interps, self.rel_interps))
 
         return '\n'.join(l)
@@ -452,6 +540,9 @@ class Model(object):
 #                    logger.debug('  ' + x)
 
 
+        self.immut_rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
+        self.immut_const_interps: Dict[ConstantDecl, str] = OrderedDict()
+
         self.rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
         self.const_interps: Dict[ConstantDecl, str] = OrderedDict()
 
@@ -471,8 +562,8 @@ class Model(object):
                 C = self.old_const_interps
             else:
                 name = z3name
-                R = self.rel_interps
-                C = self.const_interps
+                R = self.immut_rel_interps
+                C = self.immut_const_interps
 
 
             decl = self.prog.scope.get(name)
@@ -523,9 +614,9 @@ class Model(object):
             for i, a in enumerate(u):
                 for b in u[i+1:]:
                     ineqs[sort].append(syntax.Neq(a, b))
-        for R in self.rel_interps:
+        for R, l in itertools.chain(self.rel_interps.items(), self.immut_rel_interps.items()):
             rels[R] = []
-            for tup, ans in self.rel_interps[R]:
+            for tup, ans in l:
                 e: Expr
                 if len(tup) > 0:
                     e = syntax.AppExpr(None, R.name, [syntax.Id(None, col) for col in tup])
@@ -534,8 +625,8 @@ class Model(object):
                     e = syntax.Id(None, R.name)
                 e = e if ans else syntax.Not(e)
                 rels[R].append(e)
-        for C in self.const_interps:
-            e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, self.const_interps[C]))
+        for C, c in itertools.chain(self.const_interps.items(), self.immut_const_interps.items()):
+            e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, c))
             consts[C] = e
 
         diag = Diagram(vs, ineqs, rels, consts)
@@ -543,6 +634,13 @@ class Model(object):
         diag.resolve(self.prog.scope)
 
         return diag
+
+class Blocked(object):
+    pass
+class CexFound(object):
+    pass
+class GaveUp(object):
+    pass
 
 class Frames(object):
     def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr]) -> None:
@@ -552,6 +650,7 @@ class Frames(object):
         self.fs: List[MySet[Expr]] = []
         self.push_cache: List[Set[Expr]] = []
         self.counter = 0
+        self.uncommitted: Set[Expr] = set()
 
         self.new_frame(init.expr for init in prog.inits())
 
@@ -565,6 +664,9 @@ class Frames(object):
 
     def __getitem__(self, i: int) -> MySet[Expr]:
         return self.fs[i]
+
+    def __setitem__(self, i: int, e: MySet[Expr]) -> None:
+        assert e is self.fs[i]
 
     def __len__(self) -> int:
         return len(self.fs)
@@ -593,6 +695,7 @@ class Frames(object):
             frame_old_count = self.counter
             j = 0
             while j < len(f):
+                assert self.uncommitted == set()
                 c = f.l[j]
                 if c in self[i+1] or c in self.push_cache[i]:
                     j += 1
@@ -603,19 +706,27 @@ class Frames(object):
 
                 while True:
                     if not is_safety and args.convergence_hacks and (
-                            self.counter >= conjunct_old_count + 3 or
-                            self.counter >= frame_old_count + 10
+                            self.counter > conjunct_old_count + 3 or
+                            self.counter > frame_old_count + 10
                         ): # total hack
-                        logging.info('decided to give up pushing conjunct %s' % c)
+                        logger.warning('decided to give up pushing conjunct %s in frame %d' % (c, i))
+                        if self.counter > conjunct_old_count + 3:
+                            logger.warning("because I've tried to push this conjunct 3 times")
+                        else:
+                            assert self.counter > frame_old_count + 10
+                            logger.warning("because I've spent too long in this frame")
+                        self.abort()
                         break
 
                     logger.debug('attempting to push %s' % c)
-                    m = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
-                    if m is None:
+                    res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
+                    if res is None:
                         logger.debug('managed to push %s' % c)
                         self[i+1].add(c)
+                        self.commit()
                         break
                     else:
+                        m, t = res
                         mod = Model(self.prog, m, 'old')
                         diag = mod.as_diagram()
                         if logger.isEnabledFor(logging.DEBUG):
@@ -625,7 +736,14 @@ class Frames(object):
                             logger.debug('note: current clause is safety condition')
                             self.block(diag, i, [], True)
                         else:
-                            if not self.block(diag, i, [], False):
+                            ans = self.block(diag, i, [], False)
+                            if isinstance(ans, GaveUp):
+                                logger.warning('decided to give up pushing conjunct %s in frame %d' % (c, i))
+                                logger.warning('because a call to block gave up')
+                                self.abort()
+                                break
+                            elif isinstance(ans, CexFound):
+                                self.commit()
                                 break
 
                 self.push_cache[i].add(c)
@@ -637,7 +755,7 @@ class Frames(object):
             j: int,
             trace: List[Tuple[TransitionDecl,Diagram]]=[],
             safety_goal: bool=True
-    ) -> bool:
+    ) -> Union[Blocked, CexFound, GaveUp]:
         assert args is not None
 
         if j == 0: # or (j == 1 and sat(init and diag)
@@ -648,7 +766,7 @@ class Frames(object):
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('failed to block diagram')
                     logger.debug(str(diag))
-                return False
+                return CexFound()
 
         old_count = self.counter
 
@@ -656,9 +774,9 @@ class Frames(object):
         while True:
             if not safety_goal and args.convergence_hacks and self.counter >= old_count + 3:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('decide to give up blocking diagram in frame %s' % j)
+                    logger.warning('decided to give up blocking diagram after 3 tries in frame %s' % j)
                     logger.debug(str(diag))
-                    return False
+                    return GaveUp()
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
@@ -669,26 +787,24 @@ class Frames(object):
             res, x = self.find_predecessor(self[j-1], diag)
             if res == z3.unsat:
                 logger.debug('no predecessor: blocked!')
-                assert isinstance(x, MySet)
-                core: MySet[int] = x
+                assert x is None or isinstance(x, MySet)
+                core: Optional[MySet[int]] = x
                 break
             assert isinstance(x, tuple), (res, x)
             trans, pre_diag = x
 
             trace.append(x)
-            if not self.block(pre_diag, j-1, trace, safety_goal):
-                return False
+            ans = self.block(pre_diag, j-1, trace, safety_goal)
+            if not isinstance(ans, Blocked):
+                return ans
             trace.pop()
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('core')
-            logger.debug(str(core))
-
-            logger.debug('unminimized diag')
-            logger.debug(str(diag))
+            logger.debug('core %s' % core)
+            logger.debug('unminimized diag\n%s' % diag)
 
         diag.minimize_from_core(core)
-        diag.generalize_diag(self.solver, self.prog, self[j-1])
+        diag.generalize(self.solver, self.prog, self[j-1])
 
         e = syntax.Not(diag.to_ast())
 
@@ -698,11 +814,23 @@ class Frames(object):
 
         self.add(e, j)
 
-        return True
+        return Blocked()
 
+
+    def commit(self) -> None:
+        self.uncommitted = set()
+
+    def abort(self) -> None:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('aborting')
+            logger.debug('\n'.join(str(x) for x in self.uncommitted))
+        for i in range(len(self)):
+            self[i] -= self.uncommitted
+        self.uncommitted = set()
 
     def add(self, e: Expr, j: Optional[int]=None) -> None:
         self.counter += 1
+        self.uncommitted.add(e)
 
         if j is None:
             j = len(self)
@@ -714,7 +842,7 @@ class Frames(object):
             self,
             pre_frame: Iterable[Expr],
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[MySet[int], Tuple[TransitionDecl, Diagram]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Diagram]]]:
 
         assert args is not None
         if args.use_z3_unsat_cores:
@@ -760,13 +888,16 @@ class Frames(object):
                         for x in sorted(uc, key=lambda y: y.decl().name()):
                             assert isinstance(x, z3.ExprRef)
                             core.add(int(x.decl().name()[1:]))
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug('new core')
+                            logger.debug(str(sorted(core)))
 
         if not args.use_z3_unsat_cores:
-            core = MySet([i for i in range(len(diag.trackers))])
+            ret_core: Optional[MySet[int]] = None
         else:
-            core = MySet(sorted(core))
+            ret_core = MySet(sorted(core))
 
-        return (z3.unsat, core)
+        return (z3.unsat, ret_core)
 
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
@@ -864,6 +995,14 @@ def parse_args() -> argparse.Namespace:
 
     return argparser.parse_args()
 
+class MyFormatter(logging.Formatter):
+    def __init__(self, fmt: str) -> None:
+        super().__init__(fmt=fmt)
+        self.start = datetime.now()
+
+    def formatTime(self, record: Any, datefmt: Optional[str]=None) -> str:
+        return str((datetime.now() - self.start).total_seconds())
+
 def main() -> None:
     global args
     args = parse_args()
@@ -873,7 +1012,12 @@ def main() -> None:
     else:
         fmt = '%(levelname)s %(filename)s:%(lineno)d: %(message)s'
 
-    logging.basicConfig(format=fmt, level=getattr(logging, args.log.upper(), None), stream=sys.stdout)
+    logger.setLevel(getattr(logging, args.log.upper(), None))
+    handler = logging.StreamHandler(stream=sys.stdout)
+    handler.setFormatter(MyFormatter(fmt))
+    logging.root.addHandler(handler)
+    # logger.addHandler(handler)
+
 
     logger.info('setting seed to %d' % args.seed)
     z3.set_param('smt.random_seed', args.seed)

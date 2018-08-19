@@ -7,8 +7,6 @@
 - somehow use heuristic "first frame that contains no initial condition"
 - implement smarter unsat core minimization using binary search
 - generalization heuristic: eliminate mutable conjuncts first
-- generalization optimization: conjecture that an entire relation is irrelevant
-- refactor diagram to remember more structure in conjuncts -- group by decl
 - refactor remaining AST methods to pattern-matching style
     - resolve
     - pretty printer
@@ -45,4 +43,4 @@
         instantiation?
 
 
-- implement derived relations (aka definitions) as z3-time macros
+- implement derived relations (aka definitions) as z3-translation-time macros
