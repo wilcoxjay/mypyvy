@@ -308,6 +308,10 @@ class Diagram(object):
 
         self.prune_unused_vars()
 
+        self.ineqs = I
+        self.rels = R
+        self.consts = C
+
     def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl], i: int) -> None:
         assert i not in self.tombstones[d]
         self.tombstones[d].add(i)
