@@ -44,3 +44,5 @@
 
 
 - implement derived relations (aka definitions) as z3-translation-time macros
+- collect several counterexamples before blocking
+    - ask hypothetical questions "if I blocked this diagram, would the conjunct push?"
