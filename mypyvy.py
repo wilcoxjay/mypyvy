@@ -533,7 +533,7 @@ class Model(object):
         for z3sort in sorted(self.z3model.sorts(), key=str):
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
-            self.univs[sort] = [rename(str(x)) for x in self.z3model.get_universe(z3sort)]
+            self.univs[sort] = list(sorted(rename(str(x)) for x in self.z3model.get_universe(z3sort)))
 #            if logger.isEnabledFor(logging.DEBUG):
 #                logger.debug(str(z3sort))
 #                for x in self.univs[sort]:
