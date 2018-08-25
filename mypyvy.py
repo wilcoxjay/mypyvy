@@ -776,7 +776,7 @@ class Frames(object):
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.warning('decided to give up blocking diagram after 3 tries in frame %s' % j)
                     logger.debug(str(diag))
-                    return GaveUp()
+                return GaveUp()
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
