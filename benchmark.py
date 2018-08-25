@@ -62,6 +62,7 @@ def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument('-n', type=int, default=10)
     argparser.add_argument('--random-seeds', action='store_true')
+    argparser.add_argument('--seeds', nargs='*')
     argparser.add_argument('--list-benchmarks', action='store_true')
     argparser.add_argument('--graph', action='store_true')
     argparser.add_argument('--benchmark', nargs='*', default=[])
@@ -90,8 +91,12 @@ def main() -> None:
                 print('unknown benchmark file %s' % name)
         args.benchmark = bs
 
+    assert not (args.random_seeds and arg.seeds is not None)
     if args.random_seeds:
         seeds = [random.randint(0, 2**32-1) for i in range(args.n)]
+    elif args.seeds is not None:
+        seeds = [int(x) for x in args.seeds]
+        args.n = len(seeds)
     else:
         seeds = list(range(args.n))
 
