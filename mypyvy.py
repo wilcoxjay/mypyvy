@@ -725,10 +725,10 @@ class Frames(object):
                         self.abort()
                         break
 
-                    logger.debug('attempting to push %s' % c)
+                    logger.debug('frame %s attempting to push %s' % (i, c))
                     res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
                     if res is None:
-                        logger.debug('managed to push %s' % c)
+                        logger.debug('frame %s managed to push %s' % (i, c))
                         self[i+1].add(c)
                         self.commit()
                         break
@@ -737,7 +737,7 @@ class Frames(object):
                         mod = Model(self.prog, m, 'new', 'old')
                         diag = mod.as_diagram(old=True)
                         if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug('failed to immediately push %s' % c)
+                            logger.debug('frame %s failed to immediately push %s' % (i, c))
                             logger.debug(str(mod))
                         if is_safety:
                             logger.debug('note: current clause is safety condition')
@@ -745,7 +745,7 @@ class Frames(object):
                         else:
                             ans = self.block(diag, i, [], False)
                             if isinstance(ans, GaveUp):
-                                logger.warning('decided to give up pushing conjunct %s in frame %d' % (c, i))
+                                logger.warning('frame %d decided to give up pushing conjunct %s' % (i, c))
                                 logger.warning('because a call to block gave up')
                                 self.abort()
                                 break
