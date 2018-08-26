@@ -2,6 +2,8 @@ import ascii_graph
 import argparse
 import datetime
 import numpy
+import os
+import os.path
 import random
 import re
 import statistics
@@ -24,9 +26,9 @@ class Benchmark(object):
             l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
 
-    def run(self, seed: Optional[int]=None) -> float:
+    def run(self, uid: Optional[int]=None, seed: Optional[int]=None) -> float:
         assert args is not None
-        cmd = ['python3', 'mypyvy.py', 'updr', '--log=info']
+        cmd = ['python3', 'mypyvy.py', 'updr', '--log=%s' % args.log]
 
         if seed is not None:
             cmd.append('--seed=%s' % seed)
@@ -40,6 +42,13 @@ class Benchmark(object):
         print('\r', end='')
         print(' '.join(cmd), end='', flush=True)
         proc = subprocess.run(cmd, capture_output=True, text=True) # type: ignore
+
+        if args.keep_logs:
+            assert uid is not None
+            name = os.path.basename(self.name)
+            name = os.path.splitext(name)[0]
+            with open('log-%s-%s' % (name, uid), 'w') as f:
+                print(proc.stdout, end='', file=f)
 
         for line in proc.stdout.splitlines():
             if 'updr ended' in line:
@@ -65,6 +74,8 @@ def main() -> None:
     argparser.add_argument('--seeds', nargs='*')
     argparser.add_argument('--list-benchmarks', action='store_true')
     argparser.add_argument('--graph', action='store_true')
+    argparser.add_argument('--log', default='info')
+    argparser.add_argument('--keep-logs', action='store_true')
     argparser.add_argument('--benchmark', nargs='*', default=[])
     argparser.add_argument('--options', nargs=argparse.REMAINDER, default=[])
 
@@ -91,7 +102,7 @@ def main() -> None:
                 print('unknown benchmark file %s' % name)
         args.benchmark = bs
 
-    assert not (args.random_seeds and arg.seeds is not None)
+    assert not (args.random_seeds and args.seeds is not None)
     if args.random_seeds:
         seeds = [random.randint(0, 2**32-1) for i in range(args.n)]
     elif args.seeds is not None:
@@ -104,7 +115,7 @@ def main() -> None:
     for b in args.benchmark:
         l = []
         for i in range(args.n):
-            l.append(b.run(seed=seeds[i]))
+            l.append(b.run(seed=seeds[i], uid=i))
         print()
         avg = statistics.mean(l)
         if args.n > 1:
