@@ -26,7 +26,7 @@ class Benchmark(object):
             l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
 
-    def run(self, uid: Optional[int]=None, seed: Optional[int]=None) -> float:
+    def run(self, uid: Optional[int]=None, seed: Optional[int]=None) -> Optional[float]:
         assert args is not None
         cmd = ['python3', 'mypyvy.py', 'updr', '--log=%s' % args.log]
 
@@ -57,7 +57,8 @@ class Benchmark(object):
                 t = float(m.group('time'))
                 return t
 
-        assert False
+        # probably the child job was killed or terminated abnormally
+        return None
 
 
 benchmarks = [
@@ -117,22 +118,30 @@ def main() -> None:
         for i in range(args.n):
             l.append(b.run(seed=seeds[i], uid=i))
         print()
-        avg = statistics.mean(l)
+        without_timeouts = [x for x in l if x is not None]
+        n_timeouts = sum(1 for x in l if x is None)
+        avg = statistics.mean(without_timeouts)
         if args.n > 1:
-            stdev = statistics.stdev(l)
+            stdev = statistics.stdev(without_timeouts)
         else:
             stdev = 0.0
-        data.append((b, l, avg, stdev))
+        data.append((b, l, avg, stdev, n_timeouts))
 
     if args.graph:
         g = ascii_graph.Pyasciigraph()
 
     print('seeds: %s' % seeds)
-    for b, l, avg, stdev in data:
-        print('\n'.join([repr(b), str(l), 'avg: %s' % avg, 'stdev: %s' % stdev]))
+    for b, l, avg, stdev, n_timeouts in data:
+        print('\n'.join([repr(b),
+                         str(l),
+                         'avg: %s' % avg,
+                         'stdev: %s' % stdev,
+                         '# timeouts: %s' % n_timeouts
+        ]))
 
         if args.graph:
-            h, bins = numpy.histogram(l)
+            without_timeouts = [x for x in l if x is not None]
+            h, bins = numpy.histogram(without_timeouts)
             for line in g.graph('title', zip([str(x) for x in bins], [0] + list(h))):
                 print(line)
 
