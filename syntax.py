@@ -462,6 +462,16 @@ def And(*args: Expr) -> Expr:
 
     return ans
 
+def Or(*args: Expr) -> Expr:
+    if len(args) == 0:
+        return Bool(None, False)
+
+    ans = args[0]
+    for e in args[1:]:
+        ans = BinaryExpr(None, 'OR', ans, e)
+
+    return ans
+
 def Eq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'EQUAL', arg1, arg2)
 

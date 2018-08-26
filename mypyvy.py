@@ -940,12 +940,7 @@ class Frames(object):
             logger.info('frame is safe but not inductive. starting new frame')
             self.new_frame()
 
-@log_start_end_time(logging.INFO)
-def updr(s: Solver, prog: Program) -> None:
-    assert prog.scope is not None
-
-    check_init(s, prog)
-
+def get_safety(prog: Program) -> List[Expr]:
     assert args is not None
     if args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
@@ -958,7 +953,16 @@ def updr(s: Solver, prog: Program) -> None:
     else:
         safety = [inv.expr for inv in prog.invs()]
 
-    fs = Frames(s, prog, safety)
+    return safety
+
+
+@log_start_end_time(logging.INFO)
+def updr(s: Solver, prog: Program) -> None:
+    assert prog.scope is not None
+
+    check_init(s, prog)
+
+    fs = Frames(s, prog, get_safety(prog))
     fs.search()
 
 def debug_tokens(filename: str) -> None:
@@ -978,6 +982,50 @@ def verify(s: Solver, prog: Program) -> None:
 
     print('all ok!')
 
+@log_start_end_time()
+def bmc(s: Solver, prog: Program) -> None:
+    assert args is not None
+    safety = syntax.And(*get_safety(prog))
+
+    n = args.depth
+
+    print('bmc checking the following property to depth %d' % n)
+    print('  ' + str(safety))
+
+    keys = ['state%d' % i for i in range(n+1)]
+
+    start = datetime.now()
+    with s:
+        t = s.get_translator(keys[0])
+        for init in prog.inits():
+            s.add(t.translate_expr(init.expr))
+
+        t = s.get_translator(keys[-1])
+        s.add(t.translate_expr(syntax.Not(safety)))
+
+        for i in range(n):
+            t = s.get_translator(keys[i+1], keys[i])
+            l = [t.translate_transition(transition) for transition in prog.transitions()]
+            l.append(z3.And(*t.frame([])))
+            s.add(z3.Or(*l))
+
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     logger.debug('assertions')
+        #     logger.debug(str(s.assertions()))
+
+        if s.check() != z3.unsat:
+            m = s.model()
+
+            print('')
+            print(m)
+            print('no! (%s)' % (datetime.now() - start))
+            sys.stdout.flush()
+            return
+
+        print('ok. (%s)' % (datetime.now() - start))
+        sys.stdout.flush()
+
+
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
@@ -989,7 +1037,10 @@ def parse_args() -> argparse.Namespace:
     updr_subparser = subparsers.add_parser('updr')
     updr_subparser.set_defaults(main=updr)
 
-    for s in [verify_subparser, updr_subparser]:
+    bmc_subparser = subparsers.add_parser('bmc')
+    bmc_subparser.set_defaults(main=bmc)
+
+    for s in [verify_subparser, updr_subparser, bmc_subparser]:
         s.add_argument('--log', default='WARNING')
         s.add_argument('--log-time', action='store_true')
         s.add_argument('--seed', type=int, default=0)
@@ -997,6 +1048,9 @@ def parse_args() -> argparse.Namespace:
     updr_subparser.add_argument('--safety')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true')
     updr_subparser.add_argument('--convergence-hacks', action='store_true')
+
+    bmc_subparser.add_argument('--safety')
+    bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N')
 
     argparser.add_argument('filename')
 
