@@ -75,3 +75,5 @@
       so if we have a generalized ("partial") prestate model thing, we want to say
       that in *every* completion of the model, there is a transition that violates safety.
 
+- think about hierarchical logging, so that diffs will be more accurate
+    - find good tree diff algorithm (json?)
