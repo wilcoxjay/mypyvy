@@ -1065,7 +1065,7 @@ class MyFormatter(logging.Formatter):
         return str((datetime.now() - self.start).total_seconds())
 
 def main() -> None:
-    print(sys.argv)
+    print(' '.join(['python3'] + sys.argv))
 
     global args
     args = parse_args()
