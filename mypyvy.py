@@ -597,9 +597,16 @@ class Model(object):
 #                 if logger.isEnabledFor(logging.DEBUG):
 #                     logger.debug('extra constant: ' + str(z3decl))
 
-    def as_diagram(self) -> Diagram:
-        assert self.key_old is None, 'diagram can only be generated from a 1-state model'
-        # TODO: remove above assertion by supporting 2-state models
+    def as_diagram(self, old: Optional[bool]=None) -> Diagram:
+        assert self.key_old is None or old is not None, 'to generate a diagram from a 2-state model, you must specify whether you want the pre-diagram or the post-diagram'
+        assert old is None or self.key_old is not None, 'specifying pre- or post- diagram makes no sense in a 1-state model'
+
+        if old:
+            mut_rel_interps = self.old_rel_interps
+            mut_const_interps = self.old_const_interps
+        else:
+            mut_rel_interps = self.rel_interps
+            mut_const_interps = self.const_interps
 
         vs: List[syntax.SortedVar] = []
         ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
@@ -614,7 +621,7 @@ class Model(object):
             for i, a in enumerate(u):
                 for b in u[i+1:]:
                     ineqs[sort].append(syntax.Neq(a, b))
-        for R, l in itertools.chain(self.rel_interps.items(), self.immut_rel_interps.items()):
+        for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
             rels[R] = []
             for tup, ans in l:
                 e: Expr
@@ -625,7 +632,7 @@ class Model(object):
                     e = syntax.Id(None, R.name)
                 e = e if ans else syntax.Not(e)
                 rels[R].append(e)
-        for C, c in itertools.chain(self.const_interps.items(), self.immut_const_interps.items()):
+        for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
             e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, c))
             consts[C] = e
 
@@ -727,8 +734,8 @@ class Frames(object):
                         break
                     else:
                         m, t = res
-                        mod = Model(self.prog, m, 'old')
-                        diag = mod.as_diagram()
+                        mod = Model(self.prog, m, 'new', 'old')
+                        diag = mod.as_diagram(old=True)
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug('failed to immediately push %s' % c)
                             logger.debug(str(mod))
@@ -867,10 +874,10 @@ class Frames(object):
 
                     if res != z3.unsat:
                         logger.debug('found predecessor via %s' % trans.name)
-                        m = Model(self.prog, self.solver.model(), 'old')
+                        m = Model(self.prog, self.solver.model(), 'new', 'old')
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(str(m))
-                        return (res, (trans, m.as_diagram()))
+                        return (res, (trans, m.as_diagram(old=True)))
                     elif args.use_z3_unsat_cores:
                         uc = self.solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
