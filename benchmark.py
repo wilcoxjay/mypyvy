@@ -47,7 +47,11 @@ class Benchmark(object):
             assert uid is not None
             name = os.path.basename(self.name)
             name = os.path.splitext(name)[0]
-            with open('log-%s-%s' % (name, uid), 'w') as f:
+            if args.log_file_tag is not None:
+                tag = '%s-' % args.log_file_tag
+            else:
+                tag = ''
+            with open('log-%s%s-%s' % (tag, name, uid), 'w') as f:
                 print(proc.stdout, end='', file=f)
 
         for line in proc.stdout.splitlines():
@@ -82,6 +86,8 @@ def main() -> None:
                            help='show a histogram summarizing the results')
     argparser.add_argument('--log', default='info', choices=['info', 'debug'],
                            help='logging level to pass to mypyvy')
+    argparser.add_argument('--log-file-tag',
+                           help='additional string to use in log file names')
     argparser.add_argument('--keep-logs', action='store_true',
                            help='save logs to disk')
     argparser.add_argument('--benchmark', nargs='*', default=[], metavar='B',
