@@ -36,7 +36,7 @@ class Benchmark(object):
         if self.safety is not None:
             cmd.append('--safety=%s' % self.safety)
 
-        cmd.extend(args.options)
+        cmd.extend(args.args)
         cmd.append(self.name)
 
         print('\r', end='')
@@ -70,15 +70,24 @@ benchmarks = [
 
 def main() -> None:
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('-n', type=int, default=10)
-    argparser.add_argument('--random-seeds', action='store_true')
-    argparser.add_argument('--seeds', nargs='*')
-    argparser.add_argument('--list-benchmarks', action='store_true')
-    argparser.add_argument('--graph', action='store_true')
-    argparser.add_argument('--log', default='info')
-    argparser.add_argument('--keep-logs', action='store_true')
-    argparser.add_argument('--benchmark', nargs='*', default=[])
-    argparser.add_argument('--options', nargs=argparse.REMAINDER, default=[])
+    argparser.add_argument('-n', type=int, default=10,
+                           help='number of times to run the benchmark')
+    argparser.add_argument('--random-seeds', action='store_true',
+                           help='use a randomly generated seed for each run')
+    argparser.add_argument('--seeds', nargs='*', metavar='N',
+                           help='list of seeds to run')
+    argparser.add_argument('--list-benchmarks', action='store_true',
+                           help='print known benchmark names and exit')
+    argparser.add_argument('--graph', action='store_true',
+                           help='show a histogram summarizing the results')
+    argparser.add_argument('--log', default='info', choices=['info', 'debug'],
+                           help='logging level to pass to mypyvy')
+    argparser.add_argument('--keep-logs', action='store_true',
+                           help='save logs to disk')
+    argparser.add_argument('--benchmark', nargs='*', default=[], metavar='B',
+                           help='list of benchmarks to run; default runs all benchmarks')
+    argparser.add_argument('--args', nargs=argparse.REMAINDER, default=[],
+                           help='additional arguments to pass to mypyvy')
 
     global args
     args = argparser.parse_args()
