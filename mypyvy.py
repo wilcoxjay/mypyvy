@@ -1041,16 +1041,21 @@ def parse_args() -> argparse.Namespace:
     bmc_subparser.set_defaults(main=bmc)
 
     for s in [verify_subparser, updr_subparser, bmc_subparser]:
-        s.add_argument('--log', default='WARNING')
-        s.add_argument('--log-time', action='store_true')
-        s.add_argument('--seed', type=int, default=0)
+        s.add_argument('--log', default='warning', choices=['error', 'warning', 'info', 'debug'],
+                       help='logging level')
+        s.add_argument('--log-time', action='store_true',
+                       help='make each log message include current time')
+        s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
 
-    updr_subparser.add_argument('--safety')
-    updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true')
-    updr_subparser.add_argument('--convergence-hacks', action='store_true')
+    updr_subparser.add_argument('--safety', help='name of invariant to use as safety property')
+    updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
+                                help='generalize diagrams using unsat cores instead of brute force')
+    updr_subparser.add_argument('--convergence-hacks', action='store_true',
+                                help='when some steps seem to be taking too long, just give up')
 
-    bmc_subparser.add_argument('--safety')
-    bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N')
+    bmc_subparser.add_argument('--safety', help='property to check')
+    bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
+                               help='number of steps to check')
 
     argparser.add_argument('filename')
 
