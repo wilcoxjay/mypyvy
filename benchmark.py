@@ -67,6 +67,7 @@ class Benchmark(object):
 
 benchmarks = [
     Benchmark('test/lockserv.pyv', safety='mutex'),
+    Benchmark('test/lockserv_multi.pyv', safety='mutex'),
     Benchmark('test/consensus.pyv', safety='one_leader'),
     Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
     Benchmark('test/ring.pyv', safety='safety')
