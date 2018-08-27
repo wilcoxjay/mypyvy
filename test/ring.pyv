@@ -74,6 +74,6 @@ transition recv(sender: node, n: node, next: node)
 invariant [safety] leader(X) & leader(Y) -> X = Y
 
 invariant pending(S, D) & btw(S, N, D) -> le(N, S)
-invariant leader(L) -> le(N, L)
+invariant [leader_max] leader(L) -> le(N, L)
 invariant pending(L, L) -> le(N, L)
 
