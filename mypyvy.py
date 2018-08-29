@@ -378,8 +378,8 @@ class Diagram(object):
     def generalize(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
-            logger.debug(str(self))
-            logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
+            # logger.debug(str(self))
+            # logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
 
         d: Union[SortDecl, RelationDecl, ConstantDecl]
         I: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.ineqs
@@ -392,8 +392,8 @@ class Diagram(object):
             with self.without(d):
                 res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
             if res is None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('eliminated all conjuncts from declaration %s' % d)
+                # if logger.isEnabledFor(logging.DEBUG):
+                #     logger.debug('eliminated all conjuncts from declaration %s' % d)
                 self.remove_clause(d)
                 continue
             if isinstance(d, RelationDecl):
@@ -407,16 +407,16 @@ class Diagram(object):
                 with self.without(d, cs):
                     res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
                 if res is None:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('eliminated all negative conjuncts from declaration %s' % d)
+                    # if logger.isEnabledFor(logging.DEBUG):
+                    #     logger.debug('eliminated all negative conjuncts from declaration %s' % d)
                     self.remove_clause(d, cs)
 
         for d, j, c in self.conjuncts():
             with self.without(d, j):
                 res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
             if res is None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('eliminated clause %s' % c)
+                # if logger.isEnabledFor(logging.DEBUG):
+                #     logger.debug('eliminated clause %s' % c)
                 self.remove_clause(d, j)
             # else:
                 # m, t = res
@@ -428,9 +428,9 @@ class Diagram(object):
 
         self.prune_unused_vars()
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('generalized diag')
-            logger.debug(str(self))
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     logger.debug('generalized diag')
+        #     logger.debug(str(self))
 
 class OrderedSet(Generic[T], Iterable[T]):
     def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
@@ -713,6 +713,8 @@ class Frames(object):
                 conjunct_old_count = self.counter
 
                 while True:
+                    logger.debug('frame %s attempting to push %s' % (i, c))
+
                     if not is_safety and args.convergence_hacks and (
                             self.counter > conjunct_old_count + 3 or
                             self.counter > frame_old_count + 10
@@ -726,7 +728,7 @@ class Frames(object):
                         self.abort()
                         break
 
-                    logger.debug('frame %s attempting to push %s' % (i, c))
+
                     res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
                     if res is None:
                         logger.debug('frame %s managed to push %s' % (i, c))
@@ -738,8 +740,8 @@ class Frames(object):
                         mod = Model(self.prog, m, 'new', 'old')
                         diag = mod.as_diagram(old=True)
                         if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug('frame %s failed to immediately push %s' % (i, c))
-                            logger.debug(str(mod))
+                            logger.debug('frame %s failed to immediately push %s due to transition %s' % (i, c, t.name))
+                            # logger.debug(str(mod))
                         if is_safety:
                             logger.debug('note: current clause is safety condition')
                             self.block(diag, i, [], True)
@@ -773,7 +775,7 @@ class Frames(object):
             else:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('failed to block diagram')
-                    logger.debug(str(diag))
+                    # logger.debug(str(diag))
                 return CexFound()
 
         old_count = self.counter
@@ -788,10 +790,10 @@ class Frames(object):
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
-                logger.debug(str(diag))
+                # logger.debug(str(diag))
 
-                logger.debug('frame %d is' % (j-1))
-                logger.debug('\n'.join(str(x) for x in self[j-1]))
+                # logger.debug('frame %d is' % (j-1))
+                # logger.debug('\n'.join(str(x) for x in self[j-1]))
             res, x = self.find_predecessor(self[j-1], diag)
             if res == z3.unsat:
                 logger.debug('no predecessor: blocked!')
@@ -807,7 +809,7 @@ class Frames(object):
                 return ans
             trace.pop()
 
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(logging.DEBUG) and core is not None:
             logger.debug('core %s' % core)
             logger.debug('unminimized diag\n%s' % diag)
 
@@ -876,8 +878,8 @@ class Frames(object):
                     if res != z3.unsat:
                         logger.debug('found predecessor via %s' % trans.name)
                         m = Model(self.prog, self.solver.model(), 'new', 'old')
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug(str(m))
+                        # if logger.isEnabledFor(logging.DEBUG):
+                        #     logger.debug(str(m))
                         return (res, (trans, m.as_diagram(old=True)))
                     elif args.use_z3_unsat_cores:
                         uc = self.solver.unsat_core()
