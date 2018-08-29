@@ -1032,10 +1032,10 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
 
             print('')
             out = io.StringIO()
-            f = z3.Formatter()
+            f = z3.Formatter() # type: ignore
             f.max_args = 10000
             print(f.max_args)
-            pp = z3.PP()
+            pp = z3.PP() # type: ignore
             pp.max_lines = 10000
             pp(out, f(m))
             print(out.getvalue())
