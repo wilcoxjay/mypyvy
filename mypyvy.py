@@ -921,14 +921,15 @@ class Frames(object):
             f.l = l
 
 
+    def print_frames(self) -> None:
+        for i, f in enumerate(self.fs):
+            logger.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
+            logger.info('')
 
     def search(self) -> MySet[Expr]:
         while True:
             f: Optional[OrderedSet[Expr]]
-            for i, f in enumerate(self.fs):
-                logger.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
-                logger.info('')
-
+            self.print_frames()
             logger.info('considering frame %s' % (len(self) - 1,))
 
             f = self.get_inductive_frame()
