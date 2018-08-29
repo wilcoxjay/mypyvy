@@ -77,3 +77,20 @@
 
 - think about hierarchical logging, so that diffs will be more accurate
     - find good tree diff algorithm (json?)
+
+- make and/or operators support arbitrarily many children
+
+- paper story:
+    - most examples are easy, phases don't add much
+    - in ring election, variability is high for updr
+      (maybe we can show a graph of variance or something, since the mean is pretty good)
+      two ways of fixing:
+        - give key conjunct leader_max to updr
+        - add phase structure (which also "gives away" the importance of the le relation)
+    - in sharded kv with retransmission, both mean and variance are really bad,
+        - but no single conjunct given to updr is enough (maybe we can show this empirically)
+        - yet phase structure solves it!
+
+- max's idea for interactivity: dump state to file; block for signal; reload from file
+
+- in interactive stepping, would be nice to have a way to decide not to try to push a conjunct at all
