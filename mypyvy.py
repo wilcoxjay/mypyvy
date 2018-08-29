@@ -983,17 +983,8 @@ def verify(s: Solver, prog: Program) -> None:
 
     print('all ok!')
 
-@log_start_end_time()
-def bmc(s: Solver, prog: Program) -> None:
-    assert args is not None
-    safety = syntax.And(*get_safety(prog))
-
-    n = args.depth
-
-    print('bmc checking the following property to depth %d' % n)
-    print('  ' + str(safety))
-
-    keys = ['state%d' % i for i in range(n+1)]
+def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
+    keys = ['state%d' % i for i in range(depth+1)]
 
     start = datetime.now()
     with s:
@@ -1004,10 +995,16 @@ def bmc(s: Solver, prog: Program) -> None:
         t = s.get_translator(keys[-1])
         s.add(t.translate_expr(syntax.Not(safety)))
 
-        for i in range(n):
+        for i in range(depth):
             t = s.get_translator(keys[i+1], keys[i])
-            l = [t.translate_transition(transition) for transition in prog.transitions()]
-            l.append(z3.And(*t.frame([])))
+            l = []
+            for transition in prog.transitions():
+                p = z3.Bool('p_%s_%s' % (i, transition.name))
+                l.append(p)
+                s.add(p == t.translate_transition(transition))
+            p = z3.Bool('p_%s_%s' % (i, 'stutter'))
+            l.append(p)
+            s.add(p == z3.And(*t.frame([])))
             s.add(z3.Or(*l))
 
         # if logger.isEnabledFor(logging.DEBUG):
@@ -1025,6 +1022,18 @@ def bmc(s: Solver, prog: Program) -> None:
 
         print('ok. (%s)' % (datetime.now() - start))
         sys.stdout.flush()
+
+@log_start_end_time()
+def bmc(s: Solver, prog: Program) -> None:
+    assert args is not None
+    safety = syntax.And(*get_safety(prog))
+
+    n = args.depth
+
+    print('bmc checking the following property to depth %d' % n)
+    print('  ' + str(safety))
+
+    check_bmc(s, prog, safety, n)
 
 
 def parse_args() -> argparse.Namespace:
