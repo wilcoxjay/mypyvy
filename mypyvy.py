@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import copy
 from datetime import datetime
 import functools
+import io
 import itertools
 import logging
 import sys
@@ -1015,7 +1016,15 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
             m = s.model()
 
             print('')
-            print(m)
+            out = io.StringIO()
+            f = z3.Formatter()
+            f.max_args = 10000
+            print(f.max_args)
+            pp = z3.PP()
+            pp.max_lines = 10000
+            pp(out, f(m))
+            print(out.getvalue())
+            # print(m)
             print('no! (%s)' % (datetime.now() - start))
             sys.stdout.flush()
             return
