@@ -8,6 +8,7 @@ import functools
 import io
 import itertools
 import logging
+import pdb
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
@@ -742,6 +743,11 @@ class Frames(object):
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug('frame %s failed to immediately push %s due to transition %s' % (i, c, t.name))
                             # logger.debug(str(mod))
+                        flag = False
+                        if flag:
+                            flag = False
+                            self.abort()
+                            break
                         if is_safety:
                             logger.debug('note: current clause is safety condition')
                             self.block(diag, i, [], True)
@@ -968,6 +974,8 @@ def get_safety(prog: Program) -> List[Expr]:
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
     assert prog.scope is not None
+
+    pdb.set_trace()
 
     check_init(s, prog)
 
