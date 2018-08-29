@@ -907,19 +907,24 @@ class Frames(object):
 
         return (z3.unsat, ret_core)
 
+    def _simplify_frame(self, f: MySet[Expr]) -> None:
+        l = []
+        for c in reversed(f.l):
+            f_minus_c = [x for x in f.l if x in f.s and x is not c]
+            if c not in self.safety and \
+               check_implication(self.solver, f_minus_c, [c]) is None:
+                logger.debug('removed %s' % c)
+                f.s.remove(c)
+            else:
+                l.append(c)
+        l.reverse()
+        f.l = l
+
+
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
             logger.debug('simplifying frame %d' % i)
-            l = []
-            for c in reversed(f.l):
-                f_minus_c = [x for x in f.l if x in f.s and x is not c]
-                if c not in self.safety and \
-                   check_implication(self.solver, f_minus_c, [c]) is None:
-                    logging.debug('removed %s' % c)
-                    f.s.remove(c)
-                else:
-                    l.append(c)
-            f.l = l
+            self._simplify_frame(f)
 
 
     def print_frames(self) -> None:
