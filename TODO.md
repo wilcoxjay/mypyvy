@@ -94,3 +94,9 @@
 - max's idea for interactivity: dump state to file; block for signal; reload from file
 
 - in interactive stepping, would be nice to have a way to decide not to try to push a conjunct at all
+
+- ivy takes disjunction of transition relation and asks for unsat core
+
+  try randomly changing names
+
+- port paxos
