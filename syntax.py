@@ -131,6 +131,9 @@ class Z3Translator(object):
             elif isinstance(expr, BinaryExpr):
                 binop = z3_BINOPS[expr.op]
                 self.expr_cache[t] = binop(self.translate_expr(expr.arg1, old), self.translate_expr(expr.arg2, old))
+            elif isinstance(expr, NaryExpr):
+                nop = z3_NOPS[expr.op]
+                self.expr_cache[t] = nop([self.translate_expr(arg, old) for arg in expr.args])
             elif isinstance(expr, AppExpr):
                 if not old:
                     k = self.key
@@ -331,7 +334,7 @@ class UnaryExpr(Expr):
         return (UnaryExpr, self.op, self.arg)
 
     def __repr__(self) -> str:
-        return 'UnaryExpr(%s, %s)' % (self.op, repr(self.arg))
+        return 'UnaryExpr(%s, %s)' % (repr(self.op), repr(self.arg))
 
     def prec(self) -> int:
         if self.op == 'NOT':
@@ -359,16 +362,12 @@ def Not(e: Expr) -> Expr:
     return UnaryExpr(None, 'NOT', e)
 
 BINOPS = {
-    'AND',
-    'OR',
     'IMPLIES',
     'IFF',
     'EQUAL',
     'NOTEQ'
 }
 z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
-    'AND' : z3.And,
-    'OR' : z3.Or,
     'IMPLIES' : z3.Implies,
     'IFF' : lambda x, y: x == y,
     'EQUAL' : lambda x, y: x == y,
@@ -401,16 +400,12 @@ class BinaryExpr(Expr):
         return (BinaryExpr, self.op, self.arg1, self.arg2)
 
     def __repr__(self) -> str:
-        return 'BinaryExpr(%s, %s, %s)' % (self.op,
+        return 'BinaryExpr(%s, %s, %s)' % (repr(self.op),
                                            repr(self.arg1),
                                            repr(self.arg2))
 
     def prec(self) -> int:
-        if self.op == 'AND':
-            return PREC_AND
-        elif self.op == 'OR':
-            return PREC_OR
-        elif self.op == 'IMPLIES':
+        if self.op == 'IMPLIES':
             return PREC_IMPLIES
         elif self.op == 'IFF':
             return PREC_IFF
@@ -423,11 +418,7 @@ class BinaryExpr(Expr):
         p = self.prec()
         self.arg1.pretty(buf, p, 'LEFT')
 
-        if self.op == 'AND':
-            s = '&'
-        elif self.op == 'OR':
-            s = '|'
-        elif self.op == 'IMPLIES':
+        if self.op == 'IMPLIES':
             s = '->'
         elif self.op == 'IFF':
             s = '<->'
@@ -438,9 +429,7 @@ class BinaryExpr(Expr):
         else:
             assert False
 
-        buf.append(' ')
-        buf.append(s)
-        buf.append(' ')
+        buf.append(' %s ' % s)
 
         self.arg2.pretty(buf, p, 'RIGHT')
 
@@ -449,28 +438,99 @@ class BinaryExpr(Expr):
         s = set(x)
         return x + [y for y in self.arg2.free_ids() if y not in s]
 
+NOPS = {
+    'AND',
+    'OR',
+}
+
+z3_NOPS: Any = {
+    'AND' : z3.And,
+    'OR' : z3.Or
+}
+
+class NaryExpr(Expr):
+    def __init__(self, tok: Optional[Token], op: str, args: List[Expr]) -> None:
+        assert op in NOPS
+        assert len(args) >= 2, (args, tok)
+
+        self.tok = tok
+        self.op = op
+        self.args = args
+
+    def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
+        check_constraint(self.tok, sort, BoolSort)
+
+        for arg in self.args:
+            arg.resolve(scope, BoolSort)
+
+        return BoolSort
+
+    def _denote(self) -> object:
+        return (NaryExpr, self.op, tuple(self.args))
+
+    def __repr__(self) -> str:
+        return 'NaryExpr(%s, [%s])' % (repr(self.op), ', '.join(repr(arg) for arg in self.args))
+
+    def prec(self) -> int:
+        if self.op == 'AND':
+            return PREC_AND
+        elif self.op == 'OR':
+            return PREC_OR
+        else:
+            assert False
+
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
+        assert len(self.args) >= 2
+
+        p = self.prec()
+
+        if self.op == 'AND':
+            s = '&'
+        elif self.op == 'OR':
+            s = '|'
+        else:
+            assert False
+
+        self.args[0].pretty(buf, p, 'LEFT')
+
+        for arg in self.args[1:-1]:
+            buf.append(' %s ' % s)
+            arg.pretty(buf, p, 'LEFT')
+
+        buf.append(' %s ' % s)
+
+        self.args[-1].pretty(buf, p, 'RIGHT')
+
+    def free_ids(self) -> List[str]:
+        l = []
+        s: Set[str] = set()
+
+        for arg in self.args:
+            for x in arg.free_ids():
+                if x not in s:
+                    s.add(x)
+                    l.append(x)
+
+        return l
+
 def Exists(vs: List[SortedVar], body: Expr) -> Expr:
     return QuantifierExpr(None, 'EXISTS', vs, body)
 
 def And(*args: Expr) -> Expr:
     if len(args) == 0:
         return Bool(None, True)
-
-    ans = args[0]
-    for e in args[1:]:
-        ans = BinaryExpr(None, 'AND', ans, e)
-
-    return ans
+    elif len(args) == 1:
+        return args[0]
+    else:
+        return NaryExpr(None, 'AND', list(args))
 
 def Or(*args: Expr) -> Expr:
     if len(args) == 0:
         return Bool(None, False)
-
-    ans = args[0]
-    for e in args[1:]:
-        ans = BinaryExpr(None, 'OR', ans, e)
-
-    return ans
+    elif len(args) == 1:
+        return args[0]
+    else:
+        return NaryExpr(None, 'OR', list(args))
 
 def Eq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'EQUAL', arg1, arg2)

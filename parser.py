@@ -213,11 +213,21 @@ def p_expr_app(p: Any) -> None:
 
 def p_expr_and(p: Any) -> None:
     'expr : expr AMPERSAND expr'
-    p[0] = syntax.BinaryExpr(p.slice[2], 'AND', p[1], p[3])
+    l = p[1]
+    if isinstance(l, syntax.NaryExpr) and l.op == 'AND':
+        l.args.append(p[3])
+        p[0] = l
+    else:
+        p[0] = syntax.NaryExpr(p.slice[2], 'AND', [l, p[3]])
 
 def p_expr_or(p: Any) -> None:
     'expr : expr PIPE expr'
-    p[0] = syntax.BinaryExpr(p.slice[2], 'OR', p[1], p[3])
+    l = p[1]
+    if isinstance(l, syntax.NaryExpr) and l.op == 'OR':
+        l.args.append(p[3])
+        p[0] = l
+    else:
+        p[0] = syntax.NaryExpr(p.slice[2], 'OR', [l, p[3]])
 
 def p_expr_iff(p: Any) -> None:
     'expr : expr IFF expr'
