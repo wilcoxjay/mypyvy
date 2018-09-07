@@ -22,7 +22,10 @@ reserved = {
     'forall': 'FORALL',
     'exists': 'EXISTS',
     'true': 'TRUE',
-    'false': 'FALSE'
+    'false': 'FALSE',
+    'onestate': 'ONESTATE',
+    'twostate': 'TWOSTATE',
+    'theorem': 'THEOREM'
 }
 
 tokens = [
@@ -297,6 +300,16 @@ def p_mods(p: Any) -> None:
 def p_decl_transition(p: Any) -> None:
     'decl : TRANSITION id LPAREN params RPAREN mods expr'
     p[0] = syntax.TransitionDecl(p[2], p[2].value, p[4], p[6], p[7])
+
+def p_onetwostate(p: Any) -> None:
+    '''onetwostate : ONESTATE
+                   | TWOSTATE
+                   | empty'''
+    p[0] = p[1] == 'twostate'
+
+def p_decl_theorem(p: Any) -> None:
+    'decl : onetwostate THEOREM opt_name expr'
+    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], p[1])
 
 def p_empty(p: Any) -> None:
     'empty :'

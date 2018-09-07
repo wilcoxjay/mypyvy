@@ -999,7 +999,30 @@ class AxiomDecl(Decl):
         return 'axiom %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
                                self.expr)
 
+class TheoremDecl(Decl):
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, twostate: bool) -> None:
+        self.tok = tok
+        self.name = name
+        self.expr = expr
+        self.twostate = twostate
 
+    def resolve(self, scope: Scope) -> None:
+        self.expr = close_free_vars(self.expr)
+        self.expr.resolve(scope, BoolSort)
+
+    def __repr__(self) -> str:
+        return 'TheoremDecl(tok=None, name=%s, expr=%s, twostate=%s' % (
+            repr(self.name) if self.name is not None else 'None',
+            repr(self.expr),
+            self.twostate
+        )
+
+    def __str__(self) -> str:
+        return '%stheorem %s%s' % (
+            'twostate ' if self.twostate else '',
+            ('[%s] ' % self.name) if self.name is not None else '',
+            self.expr
+        )
 
 
 class Scope(Generic[B]):
@@ -1098,6 +1121,11 @@ class Program(object):
             if isinstance(d, AxiomDecl):
                 yield d
 
+    def theorems(self) -> Iterator[TheoremDecl]:
+        for d in self.decls:
+            if isinstance(d, TheoremDecl):
+                yield d
+
     def relations_and_constants(self) -> Iterator[Union[RelationDecl, ConstantDecl]]:
         for d in self.decls:
             if isinstance(d, RelationDecl) or \
@@ -1105,12 +1133,13 @@ class Program(object):
                 yield d
 
     def decls_containing_exprs(self)\
-        -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl]]:
+        -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl, TheoremDecl]]:
         for d in self.decls:
             if isinstance(d, InitDecl) or \
                isinstance(d, TransitionDecl) or \
                isinstance(d, InvariantDecl) or \
-               isinstance(d, AxiomDecl):
+               isinstance(d, AxiomDecl) or \
+               isinstance(d, TheoremDecl):
                 yield d
 
     def resolve(self) -> None:

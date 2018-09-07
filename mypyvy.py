@@ -1016,6 +1016,9 @@ def get_safety(prog: Program) -> List[Expr]:
 def updr(s: Solver, prog: Program) -> None:
     assert prog.scope is not None
 
+    if args.find_predecessor_via_transition_disjunction:
+        args.use_z3_unsat_cores = True
+
     check_init(s, prog)
 
     fs = Frames(s, prog, get_safety(prog))
@@ -1099,6 +1102,36 @@ def bmc(s: Solver, prog: Program) -> None:
     check_bmc(s, prog, safety, n)
 
 
+@log_start_end_time()
+def theorem(s: Solver, prog: Program) -> None:
+    assert args is not None
+
+    print('checking theorems:')
+
+    for th in prog.theorems():
+        if th.twostate:
+            keys = ['new', 'old']
+        else:
+            keys = ['one']
+
+        t = s.get_translator(*keys)
+
+        if th.name is not None:
+            msg = ' ' + th.name
+        elif th.tok is not None:
+            msg = ' on line %d' % th.tok.lineno
+        else:
+            msg = ''
+
+        print(' theorem%s...' % msg)
+        sys.stdout.flush()
+
+        with s:
+            s.add(z3.Not(t.translate_expr(th.expr)))
+
+            check_unsat(s, prog, *keys)
+
+
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
@@ -1113,7 +1146,10 @@ def parse_args() -> argparse.Namespace:
     bmc_subparser = subparsers.add_parser('bmc')
     bmc_subparser.set_defaults(main=bmc)
 
-    for s in [verify_subparser, updr_subparser, bmc_subparser]:
+    theorem_subparser = subparsers.add_parser('theorem')
+    theorem_subparser.set_defaults(main=theorem)
+
+    for s in [verify_subparser, updr_subparser, bmc_subparser, theorem_subparser]:
         s.add_argument('--log', default='warning', choices=['error', 'warning', 'info', 'debug'],
                        help='logging level')
         s.add_argument('--log-time', action='store_true',
@@ -1156,9 +1192,6 @@ def main() -> None:
         fmt = '%(levelname)s %(asctime)s %(filename)s:%(lineno)d: %(message)s'
     else:
         fmt = '%(levelname)s %(filename)s:%(lineno)d: %(message)s'
-
-    if args.find_predecessor_via_transition_disjunction:
-        args.use_z3_unsat_cores = True
 
     logger.setLevel(getattr(logging, args.log.upper(), None))
     handler = logging.StreamHandler(stream=sys.stdout)
