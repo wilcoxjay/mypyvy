@@ -8,7 +8,6 @@ import functools
 import io
 import itertools
 import logging
-import pdb
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
@@ -1016,8 +1015,6 @@ def get_safety(prog: Program) -> List[Expr]:
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
     assert prog.scope is not None
-
-    pdb.set_trace()
 
     check_init(s, prog)
 
