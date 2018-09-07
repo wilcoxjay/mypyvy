@@ -8,7 +8,7 @@
 - implement smarter unsat core minimization using binary search
 - generalization heuristic: eliminate mutable conjuncts first
 - refactor remaining AST methods to pattern-matching style
-    - resolve
+    - resolve (while we're at it, check for one-state vs two-state contexts)
     - pretty printer
 - restore alpha-equivalence in __eq__ and __hash__ by introducing auxilliary
   method uses a scope to track binding of local variables only, and treats free
