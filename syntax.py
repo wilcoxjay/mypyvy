@@ -271,7 +271,7 @@ class Bool(Expr):
         self.val = val
 
     def __repr__(self) -> str:
-        return 'true' if self.val else 'false'
+        return str(self.val)
 
     def _denote(self) -> object:
         return self.val
@@ -280,7 +280,7 @@ class Bool(Expr):
         return PREC_BOT
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append(str(self.val))
+        buf.append('true' if self.val else 'false')
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
@@ -334,7 +334,7 @@ class UnaryExpr(Expr):
         return (UnaryExpr, self.op, self.arg)
 
     def __repr__(self) -> str:
-        return 'UnaryExpr(%s, %s)' % (repr(self.op), repr(self.arg))
+        return 'UnaryExpr(tok=None, op=%s, arg=%s)' % (repr(self.op), repr(self.arg))
 
     def prec(self) -> int:
         if self.op == 'NOT':
@@ -400,9 +400,10 @@ class BinaryExpr(Expr):
         return (BinaryExpr, self.op, self.arg1, self.arg2)
 
     def __repr__(self) -> str:
-        return 'BinaryExpr(%s, %s, %s)' % (repr(self.op),
-                                           repr(self.arg1),
-                                           repr(self.arg2))
+        return 'BinaryExpr(tok=None, op=%s, arg1=%s, arg2=%s)' % (
+            repr(self.op),
+            repr(self.arg1),
+            repr(self.arg2))
 
     def prec(self) -> int:
         if self.op == 'IMPLIES':
@@ -469,7 +470,7 @@ class NaryExpr(Expr):
         return (NaryExpr, self.op, tuple(self.args))
 
     def __repr__(self) -> str:
-        return 'NaryExpr(%s, [%s])' % (repr(self.op), ', '.join(repr(arg) for arg in self.args))
+        return 'NaryExpr(tok=None, op=%s, args=%s)' % (repr(self.op), self.args)
 
     def prec(self) -> int:
         if self.op == 'AND':
@@ -565,7 +566,7 @@ class AppExpr(Expr):
         return (AppExpr, self.rel, tuple(self.args))
 
     def __repr__(self) -> str:
-        return 'AppExpr(%s, %s)' % (self.rel, self.args)
+        return 'AppExpr(tok=None, rel=%s, args=%s)' % (repr(self.rel), self.args)
 
     def prec(self) -> int:
         return PREC_BOT
@@ -606,7 +607,7 @@ class SortedVar(object):
         self.sort.resolve(scope)
 
     def __repr__(self) -> str:
-        return 'SortedVar(%s, %s)' % (self.name, repr(self.sort))
+        return 'SortedVar(tok=None, name=%s, sort=%s)' % (repr(self.name), repr(self.sort))
 
     def __str__(self) -> str:
         if self.sort is None:
@@ -658,7 +659,7 @@ class QuantifierExpr(Expr):
         return BoolSort
 
     def __repr__(self) -> str:
-        return 'QuantifierExpr(%s, %s, %s)' % (self.quant, self.binder, repr(self.body))
+        return 'QuantifierExpr(tok=None, quant=%s, vs=%s, body=%s)' % (repr(self.quant), self.binder.vs, repr(self.body))
 
     def _denote(self) -> object:
         return (QuantifierExpr, self.quant, self.body)
@@ -711,7 +712,7 @@ class Id(Expr):
         return (Id, self.name)
 
     def __repr__(self) -> str:
-        return 'Id(%s)' % (self.name,)
+        return 'Id(tok=None, name=%s)' % (repr(self.name),)
 
     def prec(self) -> int:
         return PREC_BOT
@@ -736,7 +737,7 @@ class UninterpretedSort(Sort):
             error(self.tok, 'Unresolved sort name %s' % (self.name,))
 
     def __repr__(self) -> str:
-        return 'UninterpretedSort(%s)' % (self.name,)
+        return 'UninterpretedSort(tok=None, name=%s)' % (repr(self.name),)
 
     def __str__(self) -> str:
         return self.name
@@ -785,7 +786,7 @@ class SortDecl(Decl):
         scope.add_sort(self.tok, self.name, self)
 
     def __repr__(self) -> str:
-        return 'SortDecl(%s)' % self.name
+        return 'SortDecl(tok=None, name=%s)' % (repr(self.name), )
 
     def __str__(self) -> str:
         return 'sort %s' % self.name
@@ -812,7 +813,7 @@ class RelationDecl(Decl):
         scope.add_relation(self.tok, self.name, self)
 
     def __repr__(self) -> str:
-        return 'RelationDecl(%s, %s, mutable=%s)' % (self.name, self.arity, self.mutable)
+        return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s)' % (repr(self.name), self.arity, self.mutable)
 
     def __str__(self) -> str:
         return '%s relation %s(%s)' % ('mutable' if self.mutable else 'immutable',
@@ -852,7 +853,7 @@ class ConstantDecl(Decl):
 
 
     def __repr__(self) -> str:
-        return 'ConstantDecl(%s, %s, mutable=%s)' % (self.name, self.sort, self.mutable)
+        return 'ConstantDecl(tok=None, name=%s, sort=%s, mutable=%s)' % (repr(self.name), self.sort, self.mutable)
 
     def __str__(self) -> str:
         return '%s constant %s: %s' % ('mutable' if self.mutable else 'immutable',
@@ -897,8 +898,9 @@ class InitDecl(Decl):
 
 
     def __repr__(self) -> str:
-        return 'InitDecl(%s, %s)' % (self.name if self.name is not None else 'None',
-                                     repr(self.expr))
+        return 'InitDecl(tok=None, name=%s, expr=%s)' % (
+            repr(self.name) if self.name is not None else 'None',
+            repr(self.expr))
 
     def __str__(self) -> str:
         return 'init %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
@@ -916,7 +918,7 @@ class ModifiesClause(object):
             error(self.tok, 'Unresolved constant or relation %s' % (self.name,))
 
     def __repr__(self) -> str:
-        return 'ModifiesClause(%s)' % (self.name,)
+        return 'ModifiesClause(tok=None, name=%s)' % (repr(self.name),)
 
     def __str__(self) -> str:
         return self.name
@@ -946,8 +948,10 @@ class TransitionDecl(Decl):
         self.binder.post_resolve()
 
     def __repr__(self) -> str:
-        return 'TransitionDecl(%s, %s, %s, %s)' % (self.name, self.binder,
-                                                   self.mods, repr(self.expr))
+        return 'TransitionDecl(tok=None, name=%s, params=%s, mods=%s, expr=%s)' % (
+            repr(self.name),
+            self.binder.vs,
+            self.mods, repr(self.expr))
 
     def __str__(self) -> str:
         return 'transition %s(%s)\n  modifies %s\n  %s' % \
@@ -967,8 +971,9 @@ class InvariantDecl(Decl):
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        return 'InvariantDecl(%s, %s)' % (self.name if self.name is not None else 'None',
-                                          repr(self.expr))
+        return 'InvariantDecl(tok=None, name=%s, expr=%s)' % (
+            repr(self.name) if self.name is not None else 'None',
+            repr(self.expr))
 
     def __str__(self) -> str:
         return 'invariant %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
@@ -986,8 +991,9 @@ class AxiomDecl(Decl):
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        return 'AxiomDecl(%s, %s)' % (self.name if self.name is not None else 'None',
-                                      repr(self.expr))
+        return 'AxiomDecl(tok=None, name=%s, expr=%s)' % (
+            repr(self.name) if self.name is not None else 'None',
+            repr(self.expr))
 
     def __str__(self) -> str:
         return 'axiom %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
@@ -1122,7 +1128,7 @@ class Program(object):
         assert len(scope.stack) == 0
 
     def __repr__(self) -> str:
-        return 'Program(%s)' % (self.decls,)
+        return 'Program(decls=%s)' % (self.decls,)
 
     def __str__(self) -> str:
         return '\n'.join(str(d) for d in self.decls)
