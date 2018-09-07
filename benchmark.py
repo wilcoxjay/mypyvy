@@ -41,7 +41,10 @@ class Benchmark(object):
 
         print('\r', end='')
         print(' '.join(cmd), end='', flush=True)
-        proc = subprocess.run(cmd, capture_output=True, text=True) # type: ignore
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout) # type: ignore
+        except subprocess.TimeoutExpired:
+            return None
 
         if args.keep_logs:
             assert uid is not None
@@ -91,6 +94,8 @@ def main() -> None:
                            help='additional string to use in log file names')
     argparser.add_argument('--keep-logs', action='store_true',
                            help='save logs to disk')
+    argparser.add_argument('--timeout', type=int,
+                           help='timeout for each child job')
     argparser.add_argument('--benchmark', nargs='*', default=[], metavar='B',
                            help='list of benchmarks to run; default runs all benchmarks')
     argparser.add_argument('--args', nargs=argparse.REMAINDER, default=[],
