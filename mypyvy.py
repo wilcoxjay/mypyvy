@@ -871,43 +871,43 @@ class Frames(object):
 
             self.solver.add(diag.to_z3(t))
 
-            if not args.find_predecessor_via_transition_disjunction:
-                for trans in self.prog.transitions():
-                    logger.debug('checking %s' % trans.name)
-                    with self.solver:
-                        self.solver.add(t.translate_transition(trans))
+            for trans in self.prog.transitions():
+                logger.debug('checking %s' % trans.name)
+                with self.solver:
+                    self.solver.add(t.translate_transition(trans))
+                    # if logger.isEnabledFor(logging.DEBUG):
+                    #     logger.debug('assertions')
+                    #     logger.debug(str(self.solver.assertions()))
+                    res = self.solver.check(*diag.trackers)
+
+                    if res != z3.unsat:
+                        logger.debug('found predecessor via %s' % trans.name)
+                        m = Model(self.prog, self.solver.model(), 'new', 'old')
                         # if logger.isEnabledFor(logging.DEBUG):
-                        #     logger.debug('assertions')
-                        #     logger.debug(str(self.solver.assertions()))
-                        res = self.solver.check(*diag.trackers)
+                        #     logger.debug(str(m))
+                        return (res, (trans, m.as_diagram(old=True)))
+                    elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
+                        uc = self.solver.unsat_core()
+                        # if logger.isEnabledFor(logging.DEBUG):
+                        #     logger.debug('uc')
+                        #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
-                        if res != z3.unsat:
-                            logger.debug('found predecessor via %s' % trans.name)
-                            m = Model(self.prog, self.solver.model(), 'new', 'old')
-                            # if logger.isEnabledFor(logging.DEBUG):
-                            #     logger.debug(str(m))
-                            return (res, (trans, m.as_diagram(old=True)))
-                        elif args.use_z3_unsat_cores:
-                            uc = self.solver.unsat_core()
-                            # if logger.isEnabledFor(logging.DEBUG):
-                            #     logger.debug('uc')
-                            #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+                            # logger.debug('assertions')
+                            # logger.debug(str(self.solver.assertions()))
 
-                                # logger.debug('assertions')
-                                # logger.debug(str(self.solver.assertions()))
+                        res = self.solver.check(*[diag.trackers[i] for i in core])
+                        if res == z3.unsat:
+                            logger.debug('but existing core sufficient, skipping')
+                            continue
 
-                            res = self.solver.check(*[diag.trackers[i] for i in core])
-                            if res == z3.unsat:
-                                logger.debug('but existing core sufficient, skipping')
-                                continue
+                        for x in sorted(uc, key=lambda y: y.decl().name()):
+                            assert isinstance(x, z3.ExprRef)
+                            core.add(int(x.decl().name()[1:]))
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug('new core')
+                            logger.debug(str(sorted(core)))
 
-                            for x in sorted(uc, key=lambda y: y.decl().name()):
-                                assert isinstance(x, z3.ExprRef)
-                                core.add(int(x.decl().name()[1:]))
-                            if logger.isEnabledFor(logging.DEBUG):
-                                logger.debug('new core')
-                                logger.debug(str(sorted(core)))
-            else:
+            if args.find_predecessor_via_transition_disjunction:
                 ts = []
                 revmap = []
                 for k, trans in enumerate(self.prog.transitions()):
@@ -917,20 +917,22 @@ class Frames(object):
                     revmap.append(trans)
                 self.solver.add(z3.Or(*ts))
                 res = self.solver.check(*diag.trackers)
-                if res != z3.unsat:
-                    z3mod = self.solver.model()
-                    the_trans: Optional[TransitionDecl] = None
-                    for k, tx in enumerate(ts):
-                        if z3mod.eval(tx):
-                            the_trans = revmap[k]
-                            break
-                    else:
-                        assert False
-
-                    logger.debug('found predecessor via %s' % the_trans.name)
-                    m = Model(self.prog, z3mod, 'new', 'old')
-                    return (res, (trans, m.as_diagram(old=True)))
-                else:
+                assert res == z3.unsat
+                # if res != z3.unsat:
+                #     z3mod = self.solver.model()
+                #     the_trans: Optional[TransitionDecl] = None
+                #     for k, tx in enumerate(ts):
+                #         if z3mod.eval(tx):
+                #             the_trans = revmap[k]
+                #             break
+                #     else:
+                #         assert False
+                #
+                #     logger.debug('found predecessor via %s' % the_trans.name)
+                #     m = Model(self.prog, z3mod, 'new', 'old')
+                #     return (res, (trans, m.as_diagram(old=True)))
+                # else:
+                if True:
                     assert args.use_z3_unsat_cores
 
                     uc = self.solver.unsat_core()
