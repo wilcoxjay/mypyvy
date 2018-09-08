@@ -1075,6 +1075,7 @@ def get_safety(prog: Program) -> List[Expr]:
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
     assert prog.scope is not None
+    assert args is not None
 
     if args.find_predecessor_via_transition_disjunction:
         args.use_z3_unsat_cores = True
@@ -1215,6 +1216,10 @@ def parse_args() -> argparse.Namespace:
         s.add_argument('--log-time', action='store_true',
                        help='make each log message include current time')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
+        s.add_argument('--print-program-repr', action='store_true',
+                       help='print a machine-readable representation of the program after parsing')
+        s.add_argument('--print-program', action='store_true',
+                       help='print the program after parsing')
 
     updr_subparser.add_argument('--safety', help='name of invariant to use as safety property')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
@@ -1265,6 +1270,11 @@ def main() -> None:
 
     with open(args.filename) as f:
         prog: syntax.Program = parser.program_parser.parse(input=f.read(), filename=args.filename)
+
+    if args.print_program_repr:
+        print(repr(prog))
+    if args.print_program:
+        print(prog)
 
     prog.resolve()
 
