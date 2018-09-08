@@ -24,6 +24,10 @@ z3.Forall = z3.ForAll
 
 args: Optional[argparse.Namespace] = None
 
+KEY_ONE = 'one'
+KEY_NEW = 'new'
+KEY_OLD = 'old'
+
 class Solver(object):
     def __init__(self, scope: Scope[z3.ExprRef]) -> None:
         self.z3solver = z3.Solver()
@@ -89,7 +93,7 @@ def check_unsat(
 def check_init(s: Solver, prog: Program) -> None:
     print('checking init:')
 
-    t = s.get_translator('one')
+    t = s.get_translator(KEY_ONE)
 
     with s:
         for init in prog.inits():
@@ -108,11 +112,11 @@ def check_init(s: Solver, prog: Program) -> None:
                 print('  implies invariant%s...' % msg, end='')
                 sys.stdout.flush()
 
-                check_unsat(s, prog, 'one')
+                check_unsat(s, prog, KEY_ONE)
 
 
 def check_transitions(s: Solver, prog: Program) -> None:
-    t = s.get_translator('new', 'old')
+    t = s.get_translator(KEY_NEW, KEY_OLD)
 
     with s:
         for inv in prog.invs():
@@ -136,14 +140,14 @@ def check_transitions(s: Solver, prog: Program) -> None:
                         print('  preserves invariant%s...' % msg, end='')
                         sys.stdout.flush()
 
-                        check_unsat(s, prog, 'new', 'old')
+                        check_unsat(s, prog, KEY_NEW, KEY_OLD)
 
 def check_implication(
         s: Solver,
         hyps: Iterable[Expr],
         concs: Iterable[Expr]
 ) -> Optional[z3.ModelRef]:
-    t = s.get_translator('one')
+    t = s.get_translator(KEY_ONE)
     with s:
         for e in hyps:
             s.add(t.translate_expr(e))
@@ -165,7 +169,7 @@ def check_two_state_implication_all_transitions(
         old_hyps: Iterable[Expr],
         new_conc: Expr
 ) -> Optional[Tuple[z3.ModelRef, TransitionDecl]]:
-    t = s.get_translator('new', 'old')
+    t = s.get_translator(KEY_NEW, KEY_OLD)
     with s:
         for h in old_hyps:
             s.add(t.translate_expr(h, old=True))
@@ -445,7 +449,7 @@ class Diagram(object):
                 # logger.debug('failed to eliminate clause %s' % c)
                 # logger.debug('from diagram %s' % self)
                 # logger.debug('because of transition %s' % t.name)
-                # logger.debug('and model %s' % Model(prog, m, 'new', 'old'))
+                # logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
 
 
         self.prune_unused_vars()
@@ -795,7 +799,7 @@ class Frames(object):
                         break
                     else:
                         m, t = res
-                        mod = Model(self.prog, m, 'new', 'old')
+                        mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
                         diag = mod.as_diagram(old=True)
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug('frame %s failed to immediately push %s due to transition %s' % (i, c, t.name))
@@ -921,7 +925,7 @@ class Frames(object):
         if args.use_z3_unsat_cores:
             core: MySet[int] = MySet()
 
-        t = self.solver.get_translator('new', 'old')
+        t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
         with self.solver:
             for f in pre_frame:
@@ -940,7 +944,7 @@ class Frames(object):
 
                     if res != z3.unsat:
                         logger.debug('found predecessor via %s' % trans.name)
-                        m = Model(self.prog, self.solver.model(), 'new', 'old')
+                        m = Model(self.prog, self.solver.model(), KEY_NEW, KEY_OLD)
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug(str(m))
                         return (res, (trans, m.as_diagram(old=True)))
@@ -987,7 +991,7 @@ class Frames(object):
                 #         assert False
                 #
                 #     logger.debug('found predecessor via %s' % the_trans.name)
-                #     m = Model(self.prog, z3mod, 'new', 'old')
+                #     m = Model(self.prog, z3mod, KEY_NEW, KEY_OLD)
                 #     return (res, (trans, m.as_diagram(old=True)))
                 # else:
                 if True:
@@ -1171,9 +1175,9 @@ def theorem(s: Solver, prog: Program) -> None:
 
     for th in prog.theorems():
         if th.twostate:
-            keys = ['new', 'old']
+            keys = [KEY_NEW, KEY_OLD]
         else:
-            keys = ['one']
+            keys = [KEY_ONE]
 
         t = s.get_translator(*keys)
 
