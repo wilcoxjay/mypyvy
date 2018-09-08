@@ -3,7 +3,6 @@
 - inductive generalization
 - model minimization?
 - phase automata
-- support functions
 - somehow use heuristic "first frame that contains no initial condition"
 - implement smarter unsat core minimization using binary search
 - generalization heuristic: eliminate mutable conjuncts first
@@ -78,8 +77,6 @@
 - think about hierarchical logging, so that diffs will be more accurate
     - find good tree diff algorithm (json?)
 
-- make and/or operators support arbitrarily many children
-
 - paper story:
     - most examples are easy, phases don't add much
     - in ring election, variability is high for updr
@@ -95,7 +92,5 @@
 
 - in interactive stepping, would be nice to have a way to decide not to try to push a conjunct at all
 
-- ivy takes disjunction of transition relation and asks for unsat core
-
-  try randomly changing names
+- try randomly changing names
 
