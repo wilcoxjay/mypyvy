@@ -140,9 +140,9 @@ class Z3Translator(object):
                 else:
                     assert self.key_old is not None
                     k = self.key_old
-                d = self.scope.get(expr.rel)
+                d = self.scope.get(expr.callee)
                 assert d is not None
-                assert isinstance(d, RelationDecl)
+                assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
                 R = d.to_z3(k)
                 assert isinstance(R, z3.FuncDeclRef)
                 self.expr_cache[t] = R(*(self.translate_expr(arg, old) for arg in expr.args))
@@ -156,7 +156,8 @@ class Z3Translator(object):
                 d = self.scope.get(expr.name)
                 assert d is not None
                 if isinstance(d, RelationDecl) or \
-                   isinstance(d, ConstantDecl):
+                   isinstance(d, ConstantDecl) or \
+                   isinstance(d, FunctionDecl):
                     if not old:
                         k = self.key
                     else:
@@ -175,9 +176,11 @@ class Z3Translator(object):
 
     def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
         frame = []
-        R: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.relations.values())
-        C: Iterator[Union[RelationDecl, ConstantDecl]] = iter(self.scope.constants.values())
-        for d in itertools.chain(R, C):
+        T = Iterator[Union[RelationDecl, ConstantDecl, FunctionDecl]]
+        R: T = iter(self.scope.relations.values())
+        C: T = iter(self.scope.constants.values())
+        F: T = iter(self.scope.functions.values())
+        for d in itertools.chain(R, C, F):
             if not d.mutable or any(mc.name == d.name for mc in mods):
                 continue
 
@@ -540,39 +543,42 @@ def Neq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'NOTEQ', arg1, arg2)
 
 class AppExpr(Expr):
-    def __init__(self, tok: Optional[Token], rel: str, args: List[Expr]) -> None:
+    def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
         assert len(args) > 0
         self.tok = tok
-        self.rel = rel
+        self.callee = callee
         self.args = args
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
-        d = scope.get(self.rel)
+        d = scope.get(self.callee)
         if d is None:
-            error(self.tok, 'Unresolved relation name %s' % self.rel)
+            error(self.tok, 'Unresolved relation or function name %s' % self.callee)
 
-        assert isinstance(d, RelationDecl)
-
-        check_constraint(self.tok, sort, BoolSort)
+        assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
 
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
-            error(self.tok, 'Relation applied to wrong number of arguments')
+            error(self.tok, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(self.args, d.arity):
             arg.resolve(scope, s)
 
-        return BoolSort
+        if isinstance(d, RelationDecl):
+            check_constraint(self.tok, sort, BoolSort)
+            return BoolSort
+        else:
+            check_constraint(self.tok, sort, d.sort)
+            return d.sort
 
     def _denote(self) -> object:
-        return (AppExpr, self.rel, tuple(self.args))
+        return (AppExpr, self.callee, tuple(self.args))
 
     def __repr__(self) -> str:
-        return 'AppExpr(tok=None, rel=%s, args=%s)' % (repr(self.rel), self.args)
+        return 'AppExpr(tok=None, rel=%s, args=%s)' % (repr(self.callee), self.args)
 
     def prec(self) -> int:
         return PREC_BOT
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append(self.rel)
+        buf.append(self.callee)
         buf.append('(')
         started = False
         for arg in self.args:
@@ -696,6 +702,9 @@ class Id(Expr):
         if d is None:
             error(self.tok, 'Unresolved variable %s' % (self.name,))
 
+        if isinstance(d, FunctionDecl):
+            error(self.tok, 'Function %s must be applied to arguments' % (self.name,))
+
         if isinstance(d, RelationDecl):
             assert len(d.arity) == 0
             check_constraint(self.tok, sort, BoolSort)
@@ -783,7 +792,7 @@ class SortDecl(Decl):
         self.z3: Optional[z3.SortRef] = None
 
     def resolve(self, scope: Scope) -> None:
-        scope.add_sort(self.tok, self.name, self)
+        scope.add_sort(self)
 
     def __repr__(self) -> str:
         return 'SortDecl(tok=None, name=%s)' % (repr(self.name), )
@@ -796,6 +805,54 @@ class SortDecl(Decl):
             self.z3 = z3.DeclareSort(self.name)
 
         return self.z3
+
+class FunctionDecl(Decl):
+    def __init__(self, tok: Optional[Token], name: str, arity: Arity, sort: Sort, mutable: bool) -> None:
+        self.tok = tok
+        self.name = name
+        self.arity = arity
+        self.sort = sort
+        self.mutable = mutable
+        self.mut_z3: Dict[str, z3.FuncDeclRef] = {}
+        self.immut_z3: Optional[z3.FuncDeclRef] = None
+
+        assert len(self.arity) > 0
+
+    def resolve(self, scope: Scope) -> None:
+        for sort in self.arity:
+            sort.resolve(scope)
+
+        self.sort.resolve(scope)
+
+        scope.add_function(self)
+
+    def __repr__(self) -> str:
+        return 'FunctionDecl(tok=None, name=%s, arity=%s, sort=%s, mutable=%s)' % (
+            repr(self.name), self.arity, self.sort, self.mutable
+        )
+
+    def __str__(self) -> str:
+        return '%s function %s(%s): %s' % (
+            'mutable' if self.mutable else 'immutable',
+            self.name,
+            ', '.join([str(s) for s in self.arity]),
+            self.sort
+        )
+
+    def to_z3(self, key: Optional[str]) -> z3.FuncDeclRef:
+        if self.mutable:
+            assert key is not None
+            if key not in self.mut_z3:
+                a = [s.to_z3() for s in self.arity] + [self.sort.to_z3()]
+                self.mut_z3[key] = z3.Function(key + '_' + self.name, *a)
+
+            return self.mut_z3[key]
+        else:
+            if self.immut_z3 is None:
+                a = [s.to_z3() for s in self.arity] + [self.sort.to_z3()]
+                self.immut_z3 = z3.Function(self.name, *a)
+
+            return self.immut_z3
 
 class RelationDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool) -> None:
@@ -810,7 +867,7 @@ class RelationDecl(Decl):
         for sort in self.arity:
             sort.resolve(scope)
 
-        scope.add_relation(self.tok, self.name, self)
+        scope.add_relation(self)
 
     def __repr__(self) -> str:
         return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s)' % (repr(self.name), self.arity, self.mutable)
@@ -861,7 +918,7 @@ class ConstantDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         self.sort.resolve(scope)
-        scope.add_constant(self.tok, self.name, self)
+        scope.add_constant(self)
 
     def to_z3(self, key: Optional[str]) -> z3.ExprRef:
         if self.mutable:
@@ -913,9 +970,10 @@ class ModifiesClause(object):
 
     def resolve(self, scope: Scope[InferenceSort]) -> None:
         d = scope.get(self.name)
-        assert d is None or isinstance(d, RelationDecl) or isinstance(d, ConstantDecl)
+        assert d is None or isinstance(d, RelationDecl) or \
+            isinstance(d, ConstantDecl) or isinstance(d, FunctionDecl)
         if d is None:
-            error(self.tok, 'Unresolved constant or relation %s' % (self.name,))
+            error(self.tok, 'Unresolved constant, relation, or function %s' % (self.name,))
 
     def __repr__(self) -> str:
         return 'ModifiesClause(tok=None, name=%s)' % (repr(self.name),)
@@ -1031,6 +1089,7 @@ class Scope(Generic[B]):
         self.sorts: Dict[str, SortDecl] = {}
         self.relations: Dict[str, RelationDecl] = {}
         self.constants: Dict[str, ConstantDecl] = {}
+        self.functions: Dict[str, FunctionDecl] = {}
 
     def push(self, l: List[Tuple[SortedVar, B]]) -> None:
         self.stack.append(l)
@@ -1038,31 +1097,36 @@ class Scope(Generic[B]):
     def pop(self) -> None:
         self.stack.pop()
 
-    def get(self, name: str) -> Union[RelationDecl, ConstantDecl, Tuple[SortedVar, B], None]:
+    def get(self, name: str) -> Union[RelationDecl, ConstantDecl, FunctionDecl, Tuple[SortedVar, B], None]:
         # first, check for bound variables in scope
         for l in reversed(self.stack):
             for v, b in l:
                 if v.name == name:
                     return (v, b)
 
-        # otherwise, check for constants/relations (whose domains are disjoint)
-        d = self.constants.get(name) or self.relations.get(name)
+        # otherwise, check for constants/relations/functions (whose domains are disjoint)
+        d = self.constants.get(name) or self.relations.get(name) or self.functions.get(name)
         return d
 
-    def add_constant(self, tok: Optional[Token], constant: str, decl: ConstantDecl) -> None:
+    def _check_duplicate_name(self, tok: Optional[Token], name: str) -> None:
+        if name in self.constants:
+            error(tok, 'Name %s is already declared as a constant' %
+                  (name,))
+
+        if name in self.relations:
+            error(tok, 'Name %s is already declared as a relation' %
+                  (name,))
+
+        if name in self.functions:
+            error(tok, 'Name %s is already declared as a function' %
+                  (name,))
+
+
+    def add_sort(self, decl: SortDecl) -> None:
         assert len(self.stack) == 0
 
-        if constant in self.constants:
-            error(tok, 'Duplicate constant name %s' % (constant,))
-
-        if constant in self.relations:
-            error(tok, 'Constant name %s is already declared as a relation' %
-                  (constant,))
-
-        self.constants[constant] = decl
-
-    def add_sort(self, tok: Optional[Token], sort: str, decl: SortDecl) -> None:
-        assert len(self.stack) == 0
+        tok = decl.tok
+        sort = decl.name
 
         if sort in self.sorts:
             error(tok, 'Duplicate sort name %s' % (sort,))
@@ -1072,16 +1136,23 @@ class Scope(Generic[B]):
     def get_sort(self, sort: str) -> Optional[SortDecl]:
         return self.sorts.get(sort)
 
-    def add_relation(self, tok: Optional[Token], relation: str, decl: RelationDecl) -> None:
+    def add_constant(self, decl: ConstantDecl) -> None:
         assert len(self.stack) == 0
 
-        if relation in self.relations:
-            error(tok, 'Duplicate relation name %s' % (relation,))
+        self._check_duplicate_name(decl.tok, decl.name)
+        self.constants[decl.name] = decl
 
-        if relation in self.constants:
-            error(tok, 'Relation name %s is already declared as a constant' % (relation,))
+    def add_relation(self, decl: RelationDecl) -> None:
+        assert len(self.stack) == 0
 
-        self.relations[relation] = decl
+        self._check_duplicate_name(decl.tok, decl.name)
+        self.relations[decl.name] = decl
+
+    def add_function(self, decl: FunctionDecl) -> None:
+        assert len(self.stack) == 0
+
+        self._check_duplicate_name(decl.tok, decl.name)
+        self.functions[decl.name] = decl
 
     @contextmanager
     def in_scope(self, l: List[Tuple[SortedVar, B]]) -> Iterator[None]:
@@ -1126,10 +1197,11 @@ class Program(object):
             if isinstance(d, TheoremDecl):
                 yield d
 
-    def relations_and_constants(self) -> Iterator[Union[RelationDecl, ConstantDecl]]:
+    def relations_constants_and_functions(self) -> Iterator[Union[RelationDecl, ConstantDecl, FunctionDecl]]:
         for d in self.decls:
             if isinstance(d, RelationDecl) or \
-               isinstance(d, ConstantDecl):
+               isinstance(d, ConstantDecl) or \
+               isinstance(d, FunctionDecl):
                 yield d
 
     def decls_containing_exprs(self)\
@@ -1148,8 +1220,8 @@ class Program(object):
         for s in self.sorts():
             s.resolve(scope)
 
-        for rc in self.relations_and_constants():
-            rc.resolve(scope)
+        for rcf in self.relations_constants_and_functions():
+            rcf.resolve(scope)
 
         for d in self.decls_containing_exprs():
             d.resolve(scope)

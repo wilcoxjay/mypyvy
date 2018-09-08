@@ -13,6 +13,7 @@ reserved = {
     'immutable': 'IMMUTABLE',
     'relation': 'RELATION',
     'constant': 'CONSTANT',
+    'function': 'FUNCTION',
     'init': 'INIT',
     'transition': 'TRANSITION',
     'invariant': 'INVARIANT',
@@ -144,6 +145,10 @@ def p_decl_relation(p: Any) -> None:
 def p_decl_constant(p: Any) -> None:
     'decl : mut CONSTANT id COLON sort'
     p[0] = syntax.ConstantDecl(p.slice[2], p[3].value, p[5], p[1])
+
+def p_decl_function(p: Any) -> None:
+    'decl : mut FUNCTION id LPAREN arity RPAREN COLON sort'
+    p[0] = syntax.FunctionDecl(p.slice[2], p[3].value, p[5], p[8], p[1])
 
 def p_decl_axiom(p: Any) -> None:
     'decl : AXIOM opt_name expr'

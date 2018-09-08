@@ -16,7 +16,7 @@ import z3
 import parser
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    TransitionDecl, InvariantDecl
+    FunctionDecl, TransitionDecl, InvariantDecl
 
 logger = logging.getLogger(__file__)
 
@@ -219,14 +219,16 @@ class Diagram(object):
             vs: List[syntax.SortedVar],
             ineqs: Dict[SortDecl, List[Expr]],
             rels: Dict[RelationDecl, List[Expr]],
-            consts: Dict[ConstantDecl, Expr]
+            consts: Dict[ConstantDecl, Expr],
+            funcs: Dict[FunctionDecl, List[Expr]]
     ) -> None:
         self.binder = syntax.Binder(vs)
         self.ineqs = ineqs
         self.rels = rels
         self.consts = consts
+        self.funcs = funcs
         self.trackers: List[z3.ExprRef] = []
-        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl], Union[Set[int], None]] = \
+        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], Union[Set[int], None]] = \
             defaultdict(lambda: set())
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
@@ -245,19 +247,30 @@ class Diagram(object):
                     if i not in S:
                         yield r, i, e
 
+    def func_conjuncts(self) -> Iterable[Tuple[FunctionDecl, int, Expr]]:
+        for f, l in self.funcs.items():
+            S = self.tombstones[f]
+            if S is not None:
+                for i, e in enumerate(l):
+                    if i not in S:
+                        yield f, i, e
+
     def const_conjuncts(self) -> Iterable[Tuple[ConstantDecl, int, Expr]]:
         for c, e in self.consts.items():
             S = self.tombstones[c]
             if S is not None and 0 not in S:
                 yield c, 0, e
 
-    def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl], int, Expr]]:
+    def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
         for t1 in self.ineq_conjuncts():
             yield t1
         for t2 in self.rel_conjuncts():
             yield t2
         for t3 in self.const_conjuncts():
             yield t3
+        for t4 in self.func_conjuncts():
+            yield t4
+
 
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
@@ -279,7 +292,7 @@ class Diagram(object):
         with t.scope.in_scope(list(zip(self.binder.vs, bs))):
             z3conjs = []
             self.trackers = []
-            self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl], int]] = []
+            self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int]] = []
             i = 0
             for (d, j, c) in self.conjuncts():
                 p = z3.Bool('p%d' % i)
@@ -307,6 +320,7 @@ class Diagram(object):
         I: Dict[SortDecl, List[Expr]] = {}
         R: Dict[RelationDecl, List[Expr]] = {}
         C: Dict[ConstantDecl, Expr] = {}
+        F: Dict[FunctionDecl, List[Expr]] = {}
 
         started = False
 
@@ -321,6 +335,11 @@ class Diagram(object):
                 if d not in R:
                     R[d] = []
                 R[d].append(self.rels[d][j])
+            elif isinstance(d, FunctionDecl):
+                if d not in F:
+                    F[d] = []
+                F[d].append(self.funcs[d][j])
+
             else:
                 assert isinstance(d, ConstantDecl)
                 assert d not in C
@@ -333,8 +352,9 @@ class Diagram(object):
         self.ineqs = I
         self.rels = R
         self.consts = C
+        self.funcs = F
 
-    def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl], i: Union[int, Set[int], None]=None) -> None:
+    def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], i: Union[int, Set[int], None]=None) -> None:
         if i is None:
             self.tombstones[d] = None
         elif isinstance(i, int):
@@ -354,7 +374,7 @@ class Diagram(object):
 
 
     @contextmanager
-    def without(self, d: Union[SortDecl, RelationDecl, ConstantDecl], j: Union[int, Set[int], None]=None) -> Iterator[None]:
+    def without(self, d: Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], j: Union[int, Set[int], None]=None) -> Iterator[None]:
         S = self.tombstones[d]
         if j is None:
             self.tombstones[d] = None
@@ -381,12 +401,14 @@ class Diagram(object):
             # logger.debug(str(self))
             # logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
 
-        d: Union[SortDecl, RelationDecl, ConstantDecl]
-        I: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.ineqs
-        R: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.rels
-        C: Iterable[Union[SortDecl, RelationDecl, ConstantDecl]] = self.consts
+        T = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
+        d: T
+        I: Iterable[T] = self.ineqs
+        R: Iterable[T] = self.rels
+        C: Iterable[T] = self.consts
+        F: Iterable[T] = self.funcs
 
-        for d in itertools.chain(I, R, C):
+        for d in itertools.chain(I, R, C, F):
             if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                 continue
             with self.without(d):
@@ -497,30 +519,35 @@ class Model(object):
     def __str__(self) -> str:
         l = []
         l.extend(self.univ_str())
-        l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps))
+        l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
         if self.key_old is not None:
             l.append('\nold state:')
-            l.append(Model._state_str(self.old_const_interps, self.old_rel_interps))
+            l.append(Model._state_str(self.old_const_interps, self.old_rel_interps, self.old_func_interps))
             l.append('\nnew state:')
         else:
             l.append('')
-        l.append(Model._state_str(self.const_interps, self.rel_interps))
+        l.append(Model._state_str(self.const_interps, self.rel_interps, self.func_interps))
 
         return '\n'.join(l)
 
     @staticmethod
     def _state_str(
             Cs: Dict[ConstantDecl,str],
-            Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]]
+            Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]],
+            Fs: Dict[FunctionDecl, List[Tuple[List[str], str]]]
     ) -> str:
         l = []
         for C in Cs:
             l.append('%s = %s' % (C.name, Cs[C]))
 
         for R in Rs:
-
             for tup, b in sorted(Rs[R]):
                 l.append('%s%s(%s)' % ('' if b else '!', R.name, ','.join(tup)))
+
+        for F in Fs:
+            for tup, res in sorted(Fs[F]):
+                l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
+
 
         return '\n'.join(l)
 
@@ -535,36 +562,46 @@ class Model(object):
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
             self.univs[sort] = list(sorted(rename(str(x)) for x in self.z3model.get_universe(z3sort)))
-#            if logger.isEnabledFor(logging.DEBUG):
-#                logger.debug(str(z3sort))
-#                for x in self.univs[sort]:
-#                    logger.debug('  ' + x)
+            # if logger.isEnabledFor(logging.DEBUG):
+            #     logger.debug(str(z3sort))
+            #     for x in self.univs[sort]:
+            #         logger.debug('  ' + x)
 
 
-        self.immut_rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
-        self.immut_const_interps: Dict[ConstantDecl, str] = OrderedDict()
+        RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
+        CT = Dict[ConstantDecl, str]
+        FT = Dict[FunctionDecl, List[Tuple[List[str], str]]]
 
-        self.rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
-        self.const_interps: Dict[ConstantDecl, str] = OrderedDict()
+        self.immut_rel_interps: RT = OrderedDict()
+        self.immut_const_interps: CT = OrderedDict()
+        self.immut_func_interps: FT = OrderedDict()
+
+        self.rel_interps: RT = OrderedDict()
+        self.const_interps: CT = OrderedDict()
+        self.func_interps: FT = OrderedDict()
 
         if self.key_old is not None:
-            self.old_rel_interps: Dict[RelationDecl, List[Tuple[List[str], bool]]] = OrderedDict()
-            self.old_const_interps: Dict[ConstantDecl, str] = OrderedDict()
+            self.old_rel_interps: RT = OrderedDict()
+            self.old_const_interps: CT = OrderedDict()
+            self.old_func_interps: FT = OrderedDict()
 
         for z3decl in sorted(self.z3model.decls(), key=str):
             z3name = str(z3decl)
             if z3name.startswith(self.key):
                 name = z3name[len(self.key)+1:]
-                R: Dict[RelationDecl, List[Tuple[List[str], bool]]] = self.rel_interps
-                C: Dict[ConstantDecl, str] = self.const_interps
+                R: RT = self.rel_interps
+                C: CT = self.const_interps
+                F: FT = self.func_interps
             elif self.key_old is not None and z3name.startswith(self.key_old):
                 name = z3name[len(self.key_old)+1:]
                 R = self.old_rel_interps
                 C = self.old_const_interps
+                F = self.old_func_interps
             else:
                 name = z3name
                 R = self.immut_rel_interps
                 C = self.immut_const_interps
+                F = self.immut_func_interps
 
 
             decl = self.prog.scope.get(name)
@@ -575,19 +612,30 @@ class Model(object):
 #                    logger.debug(str(z3decl))
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
-                        l = []
+                        rl = []
                         domains = [self.z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
                         g = itertools.product(*domains)
                         for row in g:
                             ans = self.z3model.eval(z3decl(*row))
-                            l.append(([rename(str(col)) for col in row], bool(ans)))
+                            rl.append(([rename(str(col)) for col in row], bool(ans)))
                         assert decl not in R
-                        R[decl] = l
+                        R[decl] = rl
                     else:
                         ans = self.z3model.eval(z3decl())
                         assert decl not in R
                         R[decl] = [([], bool(ans))]
+                elif isinstance(decl, FunctionDecl):
+                    fl = []
+                    domains = [self.z3model.get_universe(z3decl.domain(i))
+                               for i in range(z3decl.arity())]
+                    g = itertools.product(*domains)
+                    for row in g:
+                        ans = self.z3model.eval(z3decl(*row))
+                        fl.append(([rename(str(col)) for col in row], rename(ans.decl().name())))
+                    assert decl not in F
+                    F[decl] = fl
+
                 else:
                     assert isinstance(decl, ConstantDecl)
                     v = self.z3model.eval(z3decl()).decl().name()
@@ -605,14 +653,17 @@ class Model(object):
         if old:
             mut_rel_interps = self.old_rel_interps
             mut_const_interps = self.old_const_interps
+            mut_func_interps = self.old_func_interps
         else:
             mut_rel_interps = self.rel_interps
             mut_const_interps = self.const_interps
+            mut_func_interps = self.func_interps
 
         vs: List[syntax.SortedVar] = []
         ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
         rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
         consts: Dict[ConstantDecl, Expr] = OrderedDict()
+        funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
         for sort in self.univs:
             vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
                       for v in self.univs[sort])
@@ -636,8 +687,15 @@ class Model(object):
         for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
             e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, c))
             consts[C] = e
+        for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
+            funcs[F] = []
+            for tup, res in fl:
+                e = syntax.AppExpr(None, F.name, [syntax.Id(None, col) for col in tup])
+                e = syntax.Eq(e, syntax.Id(None, res))
+                funcs[F].append(e)
 
-        diag = Diagram(vs, ineqs, rels, consts)
+
+        diag = Diagram(vs, ineqs, rels, consts, funcs)
         assert self.prog.scope is not None
         diag.resolve(self.prog.scope)
 
