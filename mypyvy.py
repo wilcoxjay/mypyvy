@@ -1224,6 +1224,8 @@ def parse_args() -> argparse.Namespace:
                        help='print a machine-readable representation of the program after parsing')
         s.add_argument('--print-program', action='store_true',
                        help='print the program after parsing')
+        s.add_argument('--key-prefix',
+                       help='additional string to use in front of names sent to z3')
 
     updr_subparser.add_argument('--safety', help='name of invariant to use as safety property')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
@@ -1267,6 +1269,16 @@ def main() -> None:
     handler.setFormatter(MyFormatter(fmt))
     logging.root.addHandler(handler)
     # logger.addHandler(handler)
+
+    if args.key_prefix is not None:
+        global KEY_ONE
+        global KEY_NEW
+        global KEY_OLD
+
+        KEY_ONE = args.key_prefix + '_' + KEY_ONE
+        KEY_NEW = args.key_prefix + '_' + KEY_NEW
+        KEY_OLD = args.key_prefix + '_' + KEY_OLD
+
 
 
     logger.info('setting seed to %d' % args.seed)
