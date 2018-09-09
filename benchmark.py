@@ -142,7 +142,7 @@ def main() -> None:
         without_timeouts = [x for x in l if x is not None]
         n_timeouts = sum(1 for x in l if x is None)
         avg = statistics.mean(without_timeouts)
-        if args.n > 1:
+        if len(without_timeouts) > 1:
             stdev = statistics.stdev(without_timeouts)
         else:
             stdev = 0.0
@@ -151,10 +151,10 @@ def main() -> None:
     if args.graph:
         g = ascii_graph.Pyasciigraph()
 
-    print('seeds: %s' % seeds)
+    # print('seeds: %s' % seeds)
     for b, l, avg, stdev, n_timeouts in data:
         print('\n'.join([repr(b),
-                         str(l),
+                         # str(l),
                          'avg: %s' % avg,
                          'stdev: %s' % stdev,
                          '# timeouts: %s' % n_timeouts
