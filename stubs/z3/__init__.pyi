@@ -30,7 +30,8 @@ class Solver(Z3PPObject):
 
 
 class AstRef(Z3PPObject): ...
-class SortRef(AstRef): ...
+class SortRef(AstRef):
+    def name(self) -> str: ...
 class ExprRef(AstRef):
       def __eq__(self, other: ExprRef) -> ExprRef: ... # type: ignore
       def __ne__(self, other: ExprRef) -> ExprRef: ... # type: ignore

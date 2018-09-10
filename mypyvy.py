@@ -57,8 +57,47 @@ class Solver(object):
         # logger.debug('solver.check')
         return self.z3solver.check(*assumptions)
 
-    def model(self) -> z3.ModelRef:
-        return self.z3solver.model()
+    def model(self, *assumptions: z3.ExprRef) -> z3.ModelRef:
+        if args.minimize_models:
+            return self._minimal_model(*assumptions)
+        else:
+            return self.z3solver.model()
+
+    def _cardinality_constraint(self, s: z3.SortRef, n: int) -> z3.ExprRef:
+        x = z3.Const('x', s)
+        disjs = []
+        for i in range(n):
+            c = z3.Const('card_%s_%s' % (s.name(), i), s)
+            disjs.append(x == c)
+
+        return z3.Forall(x, z3.Or(*disjs))
+
+    def _minimal_model(self, *assumptions: z3.ExprRef) -> z3.ModelRef:
+        m = self.z3solver.model()
+        # logger.debug('computing minimal model from initial model')
+        # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
+        # logger.debug('assertions')
+        # logger.debug(str(self.assertions()))
+
+        with self:
+            for s in m.sorts():
+                u = m.get_universe(s)
+                n = len(u)
+                while n > 1:
+                    next = n - 1
+                    with self:
+                        self.add(self._cardinality_constraint(s, next))
+                        res = self.check(*assumptions)
+                        if res == z3.unsat:
+                            break
+                    n = next
+                if n < len(u):
+                    self.add(self._cardinality_constraint(s, n))
+            assert self.check(*assumptions) == z3.sat
+            m = self.z3solver.model()
+            # logger.debug('finished with minimal model')
+            # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
+            return m
 
     def assertions(self) -> Sequence[z3.ExprRef]:
         l = self.z3solver.assertions()
@@ -938,7 +977,7 @@ class Frames(object):
 
                     if res != z3.unsat:
                         logger.debug('found predecessor via %s' % trans.name)
-                        m = Model(self.prog, self.solver.model(), KEY_NEW, KEY_OLD)
+                        m = Model(self.prog, self.solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug(str(m))
                         return (res, (trans, m.as_diagram(old=True)))
@@ -1215,6 +1254,8 @@ def parse_args() -> argparse.Namespace:
                        help='print the program after parsing')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
+        s.add_argument('--minimize-models', action='store_true',
+                       help='find models with minimal cardinality')
 
     updr_subparser.add_argument('--safety', help='name of invariant to use as safety property')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
@@ -1267,8 +1308,6 @@ def main() -> None:
         KEY_ONE = args.key_prefix + '_' + KEY_ONE
         KEY_NEW = args.key_prefix + '_' + KEY_NEW
         KEY_OLD = args.key_prefix + '_' + KEY_OLD
-
-
 
     logger.info('setting seed to %d' % args.seed)
     z3.set_param('smt.random_seed', args.seed)
