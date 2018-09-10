@@ -848,9 +848,9 @@ class Frames(object):
                             break
                         if is_safety:
                             logger.debug('note: current clause is safety condition')
-                            self.block(diag, i, [], True)
+                            self.block(diag, i, [(None, c), (t, diag)], True)
                         else:
-                            ans = self.block(diag, i, [], False)
+                            ans = self.block(diag, i, [(None, c), (t, diag)], False)
                             if isinstance(ans, GaveUp):
                                 logger.warning('frame %d decided to give up pushing conjunct %s' % (i, c))
                                 logger.warning('because a call to block gave up')
@@ -867,12 +867,12 @@ class Frames(object):
             self,
             diag: Diagram,
             j: int,
-            trace: List[Tuple[TransitionDecl,Diagram]]=[],
+            trace: List[Tuple[Optional[TransitionDecl],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
         if j == 0: # or (j == 1 and sat(init and diag)
             if safety_goal:
-                print(trace)
+                print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
             else:
                 if logger.isEnabledFor(logging.DEBUG):
