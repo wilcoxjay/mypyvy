@@ -22,7 +22,7 @@ logger = logging.getLogger(__file__)
 
 z3.Forall = z3.ForAll
 
-args: Optional[argparse.Namespace] = None
+args: argparse.Namespace
 
 KEY_ONE = 'one'
 KEY_NEW = 'new'
@@ -757,8 +757,6 @@ class Frames(object):
         return None
 
     def push_forward_frames(self) -> None:
-        assert args is not None
-
         for i, f in enumerate(self.fs[:-1]):
             logger.debug('pushing in frame %d' % i)
 
@@ -833,8 +831,6 @@ class Frames(object):
             trace: List[Tuple[TransitionDecl,Diagram]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
-        assert args is not None
-
         if j == 0: # or (j == 1 and sat(init and diag)
             if safety_goal:
                 print(trace)
@@ -920,8 +916,6 @@ class Frames(object):
             pre_frame: Iterable[Expr],
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Diagram]]]:
-
-        assert args is not None
         if args.use_z3_unsat_cores:
             core: MySet[int] = MySet()
 
@@ -1061,7 +1055,6 @@ class Frames(object):
             self.new_frame()
 
 def get_safety(prog: Program) -> List[Expr]:
-    assert args is not None
     if args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
         for inv in prog.invs():
@@ -1079,7 +1072,6 @@ def get_safety(prog: Program) -> List[Expr]:
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
     assert prog.scope is not None
-    assert args is not None
 
     if args.find_predecessor_via_transition_disjunction:
         args.use_z3_unsat_cores = True
@@ -1156,7 +1148,6 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
 
 @log_start_end_time()
 def bmc(s: Solver, prog: Program) -> None:
-    assert args is not None
     safety = syntax.And(*get_safety(prog))
 
     n = args.depth
@@ -1169,8 +1160,6 @@ def bmc(s: Solver, prog: Program) -> None:
 
 @log_start_end_time()
 def theorem(s: Solver, prog: Program) -> None:
-    assert args is not None
-
     print('checking theorems:')
 
     for th in prog.theorems():
