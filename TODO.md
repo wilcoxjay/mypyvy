@@ -93,4 +93,7 @@
 - in interactive stepping, would be nice to have a way to decide not to try to push a conjunct at all
 
 - try randomly changing names
+  this is a known issue in z3, which is not considered an issue, I guess.
+  (see https://stackoverflow.com/questions/15619592/z3-timing-variation)
 
+  by running on 500 random seeds, I get fairly reproducible results across name changes.
