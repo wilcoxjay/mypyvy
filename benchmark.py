@@ -1,7 +1,5 @@
-import ascii_graph
 import argparse
 import datetime
-import numpy
 import os
 import os.path
 import random
@@ -10,9 +8,9 @@ import statistics
 import subprocess
 import sys
 
-from typing import Optional
+from typing import Optional, TextIO
 
-args: Optional[argparse.Namespace] = None
+args: argparse.Namespace
 
 class Benchmark(object):
     def __init__(self, name: str, safety: Optional[str]=None) -> None:
@@ -21,7 +19,7 @@ class Benchmark(object):
 
     def __repr__(self) -> str:
         l = []
-        l.append(self.name)
+        l.append(repr(self.name))
         if self.safety is not None:
             l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
@@ -54,7 +52,11 @@ class Benchmark(object):
                 tag = '%s-' % args.log_file_tag
             else:
                 tag = ''
-            with open('log-%s%s-%s' % (tag, name, uid), 'w') as f:
+            if args.experiment is not None:
+                dir = args.experiment + os.path.sep
+            else:
+                dir = ''
+            with open('%s%s%s-%s.log' % (dir, tag, name, uid), 'x') as f:
                 print(proc.stdout, end='', file=f)
 
         for line in proc.stdout.splitlines():
@@ -96,6 +98,8 @@ def main() -> None:
                            help='save logs to disk')
     argparser.add_argument('--timeout', type=int,
                            help='timeout for each child job')
+    argparser.add_argument('experiment', nargs='?',
+                           help='directory name to store all logs (if kept) and measurements')
     argparser.add_argument('--benchmark', nargs='*', default=[], metavar='B',
                            help='list of benchmarks to run; default runs all benchmarks')
     argparser.add_argument('--args', nargs=argparse.REMAINDER, default=[],
@@ -107,7 +111,6 @@ def main() -> None:
     if args.list_benchmarks:
         print(' '.join(b.name for b in benchmarks))
         sys.exit(0)
-
 
     if args.benchmark == []:
         args.benchmark = benchmarks
@@ -122,16 +125,29 @@ def main() -> None:
                     break
             if not found:
                 print('unknown benchmark file %s' % name)
+                sys.exit(1)
         args.benchmark = bs
 
     assert not (args.random_seeds and args.seeds is not None)
     if args.random_seeds:
         seeds = [random.randint(0, 2**32-1) for i in range(args.n)]
+        print_seeds = True
     elif args.seeds is not None:
         seeds = [int(x) for x in args.seeds]
         args.n = len(seeds)
+        print_seeds = True
     else:
         seeds = list(range(args.n))
+        print_seeds = False
+
+
+    if args.experiment is not None:
+        os.makedirs(args.experiment, exist_ok=False)
+        results_file = open(os.path.join(args.experiment, 'results'), 'x')
+    else:
+        results_file = sys.stdout
+
+    print(' '.join(['python3'] + sys.argv), file=results_file)
 
     data = []
     for b in args.benchmark:
@@ -141,7 +157,10 @@ def main() -> None:
         print()
         without_timeouts = [x for x in l if x is not None]
         n_timeouts = sum(1 for x in l if x is None)
-        avg = statistics.mean(without_timeouts)
+        if len(without_timeouts) > 0:
+            avg = statistics.mean(without_timeouts)
+        else:
+            avg = 0.0
         if len(without_timeouts) > 1:
             stdev = statistics.stdev(without_timeouts)
         else:
@@ -149,22 +168,26 @@ def main() -> None:
         data.append((b, l, avg, stdev, n_timeouts))
 
     if args.graph:
+        import ascii_graph # type: ignore
+        import numpy # type: ignore
         g = ascii_graph.Pyasciigraph()
 
-    # print('seeds: %s' % seeds)
+    if print_seeds:
+        print('seeds: %s' % seeds, file=results_file)
     for b, l, avg, stdev, n_timeouts in data:
-        print('\n'.join([repr(b),
-                         # str(l),
-                         'avg: %s' % avg,
-                         'stdev: %s' % stdev,
-                         '# timeouts: %s' % n_timeouts
-        ]))
+        lines = [repr(b),
+                 str(l),
+                 'avg: %s' % avg,
+                 'stdev: %s' % stdev,
+                 '# timeouts: %s' % n_timeouts
+        ]
+        print('\n'.join(lines), file=results_file)
 
         if args.graph:
             without_timeouts = [x for x in l if x is not None]
             h, bins = numpy.histogram(without_timeouts)
             for line in g.graph('title', zip([str(x) for x in bins], [0] + list(h))):
-                print(line)
+                print(line, file=results_file)
 
 
 
