@@ -1,7 +1,6 @@
 - check epr graph
 - switch to POD representation of expressions -- i hate oop
 - inductive generalization
-- model minimization?
 - phase automata
 - somehow use heuristic "first frame that contains no initial condition"
 - implement smarter unsat core minimization using binary search
@@ -97,3 +96,5 @@
   (see https://stackoverflow.com/questions/15619592/z3-timing-variation)
 
   by running on 500 random seeds, I get fairly reproducible results across name changes.
+
+- instead of model minimization, find a minimal submodel, maybe using assert-soft
