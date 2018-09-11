@@ -82,15 +82,14 @@ class Solver(object):
         with self:
             for s in m.sorts():
                 u = m.get_universe(s)
-                n = len(u)
-                while n > 1:
-                    next = n - 1
+                n = 1
+                while n < len(u):
                     with self:
-                        self.add(self._cardinality_constraint(s, next))
+                        self.add(self._cardinality_constraint(s, n))
                         res = self.check(*assumptions)
-                        if res == z3.unsat:
+                        if res == z3.sat:
                             break
-                    n = next
+                    n += 1
                 if n < len(u):
                     self.add(self._cardinality_constraint(s, n))
             assert self.check(*assumptions) == z3.sat
