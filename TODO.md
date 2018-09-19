@@ -98,3 +98,32 @@
   by running on 500 random seeds, I get fairly reproducible results across name changes.
 
 - instead of model minimization, find a minimal submodel, maybe using assert-soft
+  going to need to explicitly introduce z3 constants for universe elements,
+  and then constrain not only cardinality, but also which tuples are in the relations,
+  so that we can guarantee that the constants are talking about (isomorphic images of)
+  the universe elements we intend.
+  then, we can introduce, for each sort s, an uninterpreted predicate p_s that selects the
+  submodel's structure for s, and replace each quantifier
+      forall x:s. e(x)
+  in the assertions with
+      forall x:s. p_s(x) -> e(x)
+  and similarly 
+      exists x:s. e(x)
+  becomes
+      exists x:s. p_s(x) /\ e(x).
+  Finally, we give soft constraints !p_s(c) for each constant c, which encourage
+  Z3 to pick the smallest submodel.
+
+  One hard thing about all this is that if we try to implement it in the Solver class,
+  we will have already translated everything to Z3 expressions, and we won't have access
+  to high-level information. But it will be annoying to implement elsewhere /shrug.
+
+- in any case, during minimization, we should check that the original model is ruled out!
+
+- derived relations like choosable in paxos can be given as "twostate axioms" that are issued in both vocabularies
+
+  or could mediate between z3 and mypyvy by having choosable only in the mypyvy vocabulary, reconstructing
+  its interpretation from z3 models and substituting its definition in expressions
+
+  try implementing derived relations by issuing twostate bi-implication axioms
+
