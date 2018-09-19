@@ -599,7 +599,6 @@ class Model(object):
             return s.replace('!val!', '')
 
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
-        assert self.prog.scope is not None
         for z3sort in sorted(self.z3model.sorts(), key=str):
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
@@ -1109,8 +1108,6 @@ def get_safety(prog: Program) -> List[Expr]:
 
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
-    assert prog.scope is not None
-
     if args.find_predecessor_via_transition_disjunction:
         args.use_z3_unsat_cores = True
 

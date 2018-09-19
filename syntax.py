@@ -1165,7 +1165,7 @@ class Scope(Generic[B]):
 class Program(object):
     def __init__(self, decls: List[Decl]) -> None:
         self.decls = decls
-        self.scope: Optional[Scope[InferenceSort]] = None
+        self.scope: Scope[InferenceSort]
 
     def sorts(self) -> Iterator[SortDecl]:
         for d in self.decls:
