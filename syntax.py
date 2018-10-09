@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import itertools
 import logging
-import ply, ply.lex, ply.yacc
+import ply.lex
 import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
     Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable
