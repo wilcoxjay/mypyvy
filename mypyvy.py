@@ -1111,6 +1111,9 @@ def updr(s: Solver, prog: Program) -> None:
     if args.find_predecessor_via_transition_disjunction:
         args.use_z3_unsat_cores = True
 
+    if args.use_z3_unsat_cores:
+        z3.set_param('smt.core.minimize', True)
+
     check_init(s, prog)
 
     fs = Frames(s, prog, get_safety(prog))
