@@ -1133,10 +1133,13 @@ def verify(s: Solver, prog: Program) -> None:
 
     print('all ok!')
 
-def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
+def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
     keys = ['state%d' % i for i in range(depth+1)]
 
-    start = datetime.now()
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug('check_bmc property: %s' % safety)
+        logger.debug('check_bmc depth: %s' % depth)
+
     with s:
         t = s.get_translator(keys[0])
         for init in prog.inits():
@@ -1162,24 +1165,8 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
         #     logger.debug(str(s.assertions()))
 
         if s.check() != z3.unsat:
-            m = s.model()
-
-            print('')
-            out = io.StringIO()
-            f = z3.Formatter() # type: ignore
-            f.max_args = 10000
-            print(f.max_args)
-            pp = z3.PP() # type: ignore
-            pp.max_lines = 10000
-            pp(out, f(m))
-            print(out.getvalue())
-            # print(m)
-            print('no! (%s)' % (datetime.now() - start))
-            sys.stdout.flush()
-            return
-
-        print('ok. (%s)' % (datetime.now() - start))
-        sys.stdout.flush()
+            return s.model()
+        return None
 
 @log_start_end_time()
 def bmc(s: Solver, prog: Program) -> None:
@@ -1190,7 +1177,28 @@ def bmc(s: Solver, prog: Program) -> None:
     print('bmc checking the following property to depth %d' % n)
     print('  ' + str(safety))
 
-    check_bmc(s, prog, safety, n)
+    start = datetime.now()
+
+    res = check_bmc(s, prog, safety, n)
+
+    if res is None:
+        print('ok. (%s)' % (datetime.now() - start))
+        sys.stdout.flush()
+    else:
+        m = res
+        print('')
+        out = io.StringIO()
+        f = z3.Formatter() # type: ignore
+        f.max_args = 10000
+        print(f.max_args)
+        pp = z3.PP() # type: ignore
+        pp.max_lines = 10000
+        pp(out, f(m))
+        print(out.getvalue())
+        # print(m)
+        print('no! (%s)' % (datetime.now() - start))
+        sys.stdout.flush()
+
 
 
 @log_start_end_time()
