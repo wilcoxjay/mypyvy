@@ -436,8 +436,30 @@ class Diagram(object):
             S -= j
 
 
+    def smoke(self, s: Solver, prog: Program, depth: Optional[int]) -> None:
+        if args.smoke_test and depth is not None:
+            depth = depth + 1
+            logger.debug('smoke testing at depth %s...' % (depth,))
+            logger.debug(str(self))
+            res = check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
+            if res is not None:
+                logger.debug('no!')
+                m = res
+                print('')
+                out = io.StringIO()
+                f = z3.Formatter() # type: ignore
+                f.max_args = 10000
+                print(f.max_args)
+                pp = z3.PP() # type: ignore
+                pp.max_lines = 10000
+                pp(out, f(m))
+                print(out.getvalue())
+                assert False
+            logger.debug('ok.')
+
+
     @log_start_end_time()
-    def generalize(self, s: Solver, prog: Program, f: Iterable[Expr]) -> None:
+    def generalize(self, s: Solver, prog: Program, f: Iterable[Expr], depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
             # logger.debug(str(self))
@@ -450,6 +472,9 @@ class Diagram(object):
         C: Iterable[T] = self.consts
         F: Iterable[T] = self.funcs
 
+
+        self.smoke(s, prog, depth)
+
         for d in itertools.chain(I, R, C, F):
             if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                 continue
@@ -459,6 +484,7 @@ class Diagram(object):
                 # if logger.isEnabledFor(logging.DEBUG):
                 #     logger.debug('eliminated all conjuncts from declaration %s' % d)
                 self.remove_clause(d)
+                self.smoke(s, prog, depth)
                 continue
             if isinstance(d, RelationDecl):
                 l = self.rels[d]
@@ -474,6 +500,7 @@ class Diagram(object):
                     # if logger.isEnabledFor(logging.DEBUG):
                     #     logger.debug('eliminated all negative conjuncts from declaration %s' % d)
                     self.remove_clause(d, cs)
+                    self.smoke(s, prog, depth)
 
         for d, j, c in self.conjuncts():
             with self.without(d, j):
@@ -829,6 +856,25 @@ class Frames(object):
                     res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
                     if res is None:
                         logger.debug('frame %s managed to push %s' % (i, c))
+
+                        if args.smoke_test:
+                            logger.debug('jrw smoke testing...')
+                            om = check_bmc(self.solver, self.prog, c, i+1)
+                            if om is not None:
+                                logger.debug('no!')
+                                m = om
+                                print('')
+                                out = io.StringIO()
+                                fmt = z3.Formatter() # type: ignore
+                                fmt.max_args = 10000
+                                print(fmt.max_args)
+                                pp = z3.PP() # type: ignore
+                                pp.max_lines = 10000
+                                pp(out, fmt(m))
+                                print(out.getvalue())
+                                assert False
+                            logger.debug('ok.')
+
                         self[i+1].add(c)
                         self.commit()
                         break
@@ -914,7 +960,7 @@ class Frames(object):
             logger.debug('unminimized diag\n%s' % diag)
 
         diag.minimize_from_core(core)
-        diag.generalize(self.solver, self.prog, self[j-1])
+        diag.generalize(self.solver, self.prog, self[j-1], j)
 
         e = syntax.Not(diag.to_ast())
 
@@ -938,13 +984,34 @@ class Frames(object):
             self[i] -= self.uncommitted
         self.uncommitted = set()
 
-    def add(self, e: Expr, j: Optional[int]=None) -> None:
+    def add(self, e: Expr, depth: Optional[int]=None) -> None:
         self.counter += 1
         self.uncommitted.add(e)
 
-        if j is None:
-            j = len(self)
-        for i in range(j+1):
+        if depth is None:
+            depth = len(self)
+
+        depth += 1
+
+        if args.smoke_test:
+            logger.debug('smoke testing at depth %s...' % (depth,))
+            res = check_bmc(self.solver, self.prog, e, depth)
+            if res is not None:
+                logger.debug('no!')
+                m = res
+                print('')
+                out = io.StringIO()
+                f = z3.Formatter() # type: ignore
+                f.max_args = 10000
+                print(f.max_args)
+                pp = z3.PP() # type: ignore
+                pp.max_lines = 10000
+                pp(out, f(m))
+                print(out.getvalue())
+                assert False
+            logger.debug('ok.')
+
+        for i in range(depth):
             self[i].add(e)
 
 
@@ -1270,6 +1337,8 @@ def parse_args() -> argparse.Namespace:
     updr_subparser.add_argument('--find-predecessor-via-transition-disjunction', action='store_true',
                                 help='when searching for diagram predecessors, use a big disjunction ' +
                                 'of all transitions rather than enumerating them one by one')
+    updr_subparser.add_argument('--smoke-test', action='store_true',
+                                help='run bmc to confirm every conjunct added to a frame')
 
     updr_subparser.add_argument('--convergence-hacks', action='store_true',
                                 help='when some steps seem to be taking too long, just give up')
