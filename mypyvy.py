@@ -462,8 +462,8 @@ class Diagram(object):
     def generalize(self, s: Solver, prog: Program, f: Iterable[Expr], depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
-            # logger.debug(str(self))
-            # logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
+            logger.debug(str(self))
+            logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
 
         T = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
         d: T
@@ -472,6 +472,14 @@ class Diagram(object):
         C: Iterable[T] = self.consts
         F: Iterable[T] = self.funcs
 
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('checking that transition relation itself is SAT from previous frame...')
+            res = check_two_state_implication_all_transitions(s, prog, f, syntax.Bool(None, False))
+            if res is None:
+                assert False
+            m, t = res
+            print(m)
+            print(t.name)
 
         self.smoke(s, prog, depth)
 
@@ -481,8 +489,8 @@ class Diagram(object):
             with self.without(d):
                 res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
             if res is None:
-                # if logger.isEnabledFor(logging.DEBUG):
-                #     logger.debug('eliminated all conjuncts from declaration %s' % d)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('eliminated all conjuncts from declaration %s' % d)
                 self.remove_clause(d)
                 self.smoke(s, prog, depth)
                 continue
@@ -497,8 +505,8 @@ class Diagram(object):
                 with self.without(d, cs):
                     res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
                 if res is None:
-                    # if logger.isEnabledFor(logging.DEBUG):
-                    #     logger.debug('eliminated all negative conjuncts from declaration %s' % d)
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug('eliminated all negative conjuncts from declaration %s' % d)
                     self.remove_clause(d, cs)
                     self.smoke(s, prog, depth)
 
@@ -506,22 +514,23 @@ class Diagram(object):
             with self.without(d, j):
                 res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
             if res is None:
-                # if logger.isEnabledFor(logging.DEBUG):
-                #     logger.debug('eliminated clause %s' % c)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('eliminated clause %s' % c)
                 self.remove_clause(d, j)
-            # else:
-                # m, t = res
-                # logger.debug('failed to eliminate clause %s' % c)
-                # logger.debug('from diagram %s' % self)
-                # logger.debug('because of transition %s' % t.name)
-                # logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
+                self.smoke(s, prog, depth)
+            elif logger.isEnabledFor(logging.DEBUG):
+                m, t = res
+                logger.debug('failed to eliminate clause %s' % c)
+                logger.debug('from diagram %s' % self)
+                logger.debug('because of transition %s' % t.name)
+                logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
 
 
         self.prune_unused_vars()
 
-        # if logger.isEnabledFor(logging.DEBUG):
-        #     logger.debug('generalized diag')
-        #     logger.debug(str(self))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('generalized diag')
+            logger.debug(str(self))
 
 class OrderedSet(Generic[T], Iterable[T]):
     def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
@@ -936,10 +945,10 @@ class Frames(object):
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
-                # logger.debug(str(diag))
+                logger.debug(str(diag))
 
-                # logger.debug('frame %d is' % (j-1))
-                # logger.debug('\n'.join(str(x) for x in self[j-1]))
+                logger.debug('frame %d is' % (j-1))
+                logger.debug('\n'.join(str(x) for x in self[j-1]))
             res, x = self.find_predecessor(self[j-1], diag)
             if res == z3.unsat:
                 logger.debug('no predecessor: blocked!')
