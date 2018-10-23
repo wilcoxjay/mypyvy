@@ -3,3 +3,4 @@
 .z3-trace
 parser.out
 parsetab.py
+lextab.py

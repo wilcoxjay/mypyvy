@@ -871,7 +871,8 @@ class LexerReflect(object):
 # Build all of the regular expression rules from definitions in the supplied module
 # -----------------------------------------------------------------------------
 def lex(module=None, object=None, debug=False, optimize=False, lextab='lextab',
-        reflags=int(re.VERBOSE), nowarn=False, outputdir=None, debuglog=None, errorlog=None):
+        reflags=int(re.VERBOSE), nowarn=False, outputdir=None, debuglog=None, errorlog=None,
+        forbid_rebuild=False):
 
     if lextab is None:
         lextab = 'lextab'
@@ -929,6 +930,9 @@ def lex(module=None, object=None, debug=False, optimize=False, lextab='lextab',
 
         except ImportError:
             pass
+
+    if forbid_rebuild:
+        raise SyntaxError('forbidden from rebuilding lexer')
 
     # Dump some basic debugging information
     if debug:

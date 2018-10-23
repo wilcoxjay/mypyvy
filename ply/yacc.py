@@ -3215,7 +3215,7 @@ class ParserReflect(object):
 
 def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, start=None,
          check_recursion=True, optimize=False, write_tables=True, debugfile=debug_file,
-         outputdir=None, debuglog=None, errorlog=None, picklefile=None):
+         outputdir=None, debuglog=None, errorlog=None, picklefile=None, forbid_rebuild=False):
 
     if tabmodule is None:
         tabmodule = tab_module
@@ -3303,6 +3303,9 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
         errorlog.warning(str(e))
     except ImportError:
         pass
+
+    if forbid_rebuild:
+        raise YaccError('forbidden from rebuilding parser')
 
     if debuglog is None:
         if debug:

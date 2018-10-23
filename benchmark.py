@@ -2,15 +2,21 @@ import argparse
 import datetime
 import os
 import os.path
+import queue
 import random
 import re
 import statistics
 import subprocess
 import sys
+import threading
 
-from typing import Optional, TextIO
+from typing import Optional, TextIO, List, Tuple
 
 args: argparse.Namespace
+
+def generate_parser() -> None:
+    cmd = ['python3', 'mypyvy.py', 'generate-parser', 'test/lockserv.pyv']
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) # type: ignore
 
 class Benchmark(object):
     def __init__(self, name: str, safety: Optional[str]=None) -> None:
@@ -26,7 +32,7 @@ class Benchmark(object):
 
     def run(self, uid: Optional[int]=None, seed: Optional[int]=None) -> Optional[float]:
         assert args is not None
-        cmd = ['python3', 'mypyvy.py', 'updr', '--log=%s' % args.log]
+        cmd = ['python3', 'mypyvy.py', 'updr', '--forbid-parser-rebuild', '--log=%s' % args.log]
 
         if seed is not None:
             cmd.append('--seed=%s' % seed)
@@ -37,12 +43,16 @@ class Benchmark(object):
         cmd.extend(args.args)
         cmd.append(self.name)
 
-        print('\r', end='')
-        print(' '.join(cmd), end='', flush=True)
+        timed_out = False
+        timed_out_stdout = None
+        timed_out_stderr = None
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout) # type: ignore
-        except subprocess.TimeoutExpired:
-            return None
+        except subprocess.TimeoutExpired as e:
+            print('timeout uid %s' % uid)
+            timed_out = True
+            timed_out_stdout = e.stdout
+            timed_out_stderr = e.stderr
 
         if args.keep_logs:
             assert uid is not None
@@ -57,16 +67,29 @@ class Benchmark(object):
             else:
                 dir = ''
             with open('%s%s%s-%s.log' % (dir, tag, name, uid), 'x') as f:
-                print(proc.stdout, end='', file=f)
+                if not timed_out:
+                    print(proc.stdout, end='', file=f)
+                else:
+                    print(timed_out_stdout, end='', file=f)
 
-        for line in proc.stdout.splitlines():
-            if 'updr ended' in line:
-                m = re.search('\(took (?P<time>.*) seconds\)', line)
-                assert m is not None
-                t = float(m.group('time'))
-                return t
+        if not timed_out:
+            for line in proc.stdout.splitlines():
+                if 'updr ended' in line:
+                    m = re.search('\(took (?P<time>.*) seconds\)', line)
+                    assert m is not None
+                    t = float(m.group('time'))
+                    return t
 
         # probably the child job was killed or terminated abnormally
+        print('could not find "updr ended" in job %s' % uid)
+        print('timed_out = %s' % timed_out)
+        if not timed_out:
+            print(proc.stdout)
+            print(proc.stderr)
+        else:
+            print(timed_out_stdout)
+            print(timed_out_stderr)
+
         return None
 
 
@@ -77,6 +100,8 @@ benchmarks = [
     Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
     Benchmark('test/ring.pyv', safety='safety')
 ]
+
+seeds: List[int] = []
 
 def main() -> None:
     argparser = argparse.ArgumentParser()
@@ -102,6 +127,8 @@ def main() -> None:
                            help='directory name to store all logs (if kept) and measurements')
     argparser.add_argument('--benchmark', nargs='*', default=[], metavar='B',
                            help='list of benchmarks to run; default runs all benchmarks')
+    argparser.add_argument('-j', '--threads', type=int, metavar='N', default=1,
+                           help='number of threads to use')
     argparser.add_argument('--args', nargs=argparse.REMAINDER, default=[],
                            help='additional arguments to pass to mypyvy')
 
@@ -128,6 +155,7 @@ def main() -> None:
                 sys.exit(1)
         args.benchmark = bs
 
+    global seeds
     assert not (args.random_seeds and args.seeds is not None)
     if args.random_seeds:
         seeds = [random.randint(0, 2**32-1) for i in range(args.n)]
@@ -149,14 +177,77 @@ def main() -> None:
 
     print(' '.join(['python3'] + sys.argv), file=results_file)
 
+    generate_parser()
+
+    q: queue.Queue[Optional[Tuple[Benchmark, int]]] = queue.Queue()
+    threads: List[threading.Thread] = []
+    results: List[List[Tuple[int, Optional[float]]]] = []
+    cv = threading.Condition()
+
+    work_done = threading.Event()
+    the_bench: Benchmark
+
+    def ui_worker() -> None:
+        # print('ui worker starting')
+        while True:
+            with cv:
+                cv.wait()
+
+            if work_done.is_set():
+                break
+
+            n = q.unfinished_tasks # type: ignore
+            print('\r', end='')
+            print('benchmark %s has %s jobs remaining' % (the_bench.name, n), end='', flush=True)
+
+        # print('ui worker exiting')
+
+    def worker(id: int) -> None:
+        # print('worker %d starting' % id)
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            (b, i) = item
+            try:
+                ans = b.run(seed=seeds[i], uid=i)
+            except Exception as e:
+                print('worker %s observed exception %s' % (id, e))
+                break
+            results[id].append((i, ans))
+            q.task_done()
+            with cv:
+                cv.notify()
+        # print('worker %d exiting' % id)
+
+    for tid in range(args.threads):
+        t = threading.Thread(target=worker, args=(tid,))
+        t.start()
+        threads.append(t)
+
+    ui_thread = threading.Thread(target=ui_worker)
+    ui_thread.start()
+
     data = []
     for b in args.benchmark:
+        the_bench = b
+        results = [[] for _ in threads]
         l = []
         for i in range(args.n):
-            l.append(b.run(seed=seeds[i], uid=i))
+            q.put((b, i))
+        with cv:
+            cv.notify()
+        q.join()
         print()
-        without_timeouts = [x for x in l if x is not None]
-        n_timeouts = sum(1 for x in l if x is None)
+
+        for lr in results:
+            l.extend(lr)
+
+        l.sort(key=lambda p: p[0])
+        times = [p[1] for p in l]
+
+        without_timeouts = [x for x in times if x is not None]
+        n_timeouts = sum(1 for x in times if x is None)
         if len(without_timeouts) > 0:
             avg = statistics.mean(without_timeouts)
         else:
@@ -165,7 +256,9 @@ def main() -> None:
             stdev = statistics.stdev(without_timeouts)
         else:
             stdev = 0.0
-        data.append((b, l, avg, stdev, n_timeouts))
+        data.append((b, times, avg, stdev, n_timeouts))
+
+    print()
 
     if args.graph:
         import ascii_graph # type: ignore
@@ -174,9 +267,9 @@ def main() -> None:
 
     if print_seeds:
         print('seeds: %s' % seeds, file=results_file)
-    for b, l, avg, stdev, n_timeouts in data:
+    for b, times, avg, stdev, n_timeouts in data:
         lines = [repr(b),
-                 str(l),
+                 str(times),
                  'avg: %s' % avg,
                  'stdev: %s' % stdev,
                  '# timeouts: %s' % n_timeouts
@@ -184,11 +277,23 @@ def main() -> None:
         print('\n'.join(lines), file=results_file)
 
         if args.graph:
-            without_timeouts = [x for x in l if x is not None]
+            without_timeouts = [x for x in times if x is not None]
             h, bins = numpy.histogram(without_timeouts)
             for line in g.graph('title', zip([str(x) for x in bins], [0] + list(h))):
                 print(line, file=results_file)
 
+    for _ in threads:
+        q.put(None)
+
+    work_done.set()
+
+    while ui_thread.is_alive():
+        with cv:
+            cv.notify()
+        ui_thread.join(timeout=1)
+
+    for t in threads:
+        t.join()
 
 
 if __name__ == '__main__':

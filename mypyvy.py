@@ -1196,11 +1196,13 @@ def updr(s: Solver, prog: Program) -> None:
     fs.search()
 
 def debug_tokens(filename: str) -> None:
+    l = parser.get_lexer()
+
     with open(filename) as f:
-        parser.lexer.input(f.read())
+        l.input(f.read())
 
     while True:
-        tok = parser.lexer.token()
+        tok = l.token()
         if not tok: 
             break      # No more input
         print(tok)
@@ -1307,25 +1309,38 @@ def theorem(s: Solver, prog: Program) -> None:
 
             check_unsat(s, prog, *keys)
 
+def generate_parser(s: Solver, prog: Program) -> None:
+    pass  # parser is generated implicitly by main when it parses the program
 
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
     subparsers = argparser.add_subparsers()
+    all_subparsers = []
 
     verify_subparser = subparsers.add_parser('verify')
     verify_subparser.set_defaults(main=verify)
+    all_subparsers.append(verify_subparser)
 
     updr_subparser = subparsers.add_parser('updr')
     updr_subparser.set_defaults(main=updr)
+    all_subparsers.append(updr_subparser)
 
     bmc_subparser = subparsers.add_parser('bmc')
     bmc_subparser.set_defaults(main=bmc)
+    all_subparsers.append(bmc_subparser)
 
     theorem_subparser = subparsers.add_parser('theorem')
     theorem_subparser.set_defaults(main=theorem)
+    all_subparsers.append(theorem_subparser)
 
-    for s in [verify_subparser, updr_subparser, bmc_subparser, theorem_subparser]:
+    generate_parser_subparser = subparsers.add_parser('generate-parser')
+    generate_parser_subparser.set_defaults(main=generate_parser)
+    all_subparsers.append(generate_parser_subparser)
+
+    for s in all_subparsers:
+        s.add_argument('--forbid-parser-rebuild', action='store_true',
+                       help='force loading parser from disk (helps when running mypyvy from multiple processes)')
         s.add_argument('--log', default='warning', choices=['error', 'warning', 'info', 'debug'],
                        help='logging level')
         s.add_argument('--log-time', action='store_true',
@@ -1398,7 +1413,9 @@ def main() -> None:
     z3.set_param('smt.random_seed', args.seed)
 
     with open(args.filename) as f:
-        prog: syntax.Program = parser.program_parser.parse(input=f.read(), filename=args.filename)
+        l = parser.get_lexer(forbid_rebuild=args.forbid_parser_rebuild)
+        p = parser.get_parser(forbid_rebuild=args.forbid_parser_rebuild)
+        prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=args.filename)
 
     if args.print_program_repr:
         print(repr(prog))

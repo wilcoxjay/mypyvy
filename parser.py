@@ -80,8 +80,12 @@ t_ignore  = ' \t'
 def t_error(t: Any) -> None:
     pass
 
-lexer = ply.lex.lex()
-
+lexer = None
+def get_lexer(forbid_rebuild: bool=False) -> ply.lex.Lexer:
+    global lexer
+    if not lexer:
+        lexer = ply.lex.lex(debug=False, optimize=True, forbid_rebuild=forbid_rebuild)
+    return lexer
 
 precedence = (
     ('right', 'DOT'),
@@ -324,6 +328,15 @@ def p_error(t: Any) -> None:
     print('%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value))
     sys.exit(1)
 
-program_parser = ply.yacc.yacc(start='program', debug=False)
-expr_parser = ply.yacc.yacc(start='expr', errorlog=ply.yacc.NullLogger(), debug=False)
+program_parser = None
+def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:
+    global program_parser
+    if not program_parser:
+        # intentionally don's pass optimize=True here, because that disables the signature check
+        program_parser = ply.yacc.yacc(start='program', debug=False, forbid_rebuild=forbid_rebuild)
+
+    return program_parser
+
+
+# expr_parser = ply.yacc.yacc(start='expr', errorlog=ply.yacc.NullLogger(), debug=False, optimize=True)
 
