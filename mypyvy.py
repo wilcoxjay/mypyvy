@@ -438,7 +438,6 @@ class Diagram(object):
 
     def smoke(self, s: Solver, prog: Program, depth: Optional[int]) -> None:
         if args.smoke_test and depth is not None:
-            depth = depth + 1
             logger.debug('smoke testing at depth %s...' % (depth,))
             logger.debug(str(self))
             res = check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
@@ -1017,8 +1016,6 @@ class Frames(object):
         if depth is None:
             depth = len(self)
 
-        depth += 1
-
         if args.smoke_test:
             logger.debug('smoke testing at depth %s...' % (depth,))
             res = check_bmc(self.solver, self.prog, e, depth)
@@ -1037,7 +1034,7 @@ class Frames(object):
                 assert False
             logger.debug('ok.')
 
-        for i in range(depth):
+        for i in range(depth+1):
             self[i].add(e)
 
 
