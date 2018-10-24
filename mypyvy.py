@@ -916,6 +916,23 @@ class Frames(object):
                 self.push_cache[i].add(c)
                 j += 1
 
+    def sat_in_init(self, diag: Diagram) -> bool:
+        t = self.solver.get_translator(KEY_ONE)
+
+        with self.solver:
+            for init in self.prog.inits():
+                self.solver.add(t.translate_expr(init.expr))
+
+            self.solver.add(diag.to_z3(t))
+
+            res = self.solver.check(*diag.trackers)
+
+        # if res == z3.sat:
+        #     m = Model(self.prog, self.solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
+        #     print(str(m))
+
+        return res == z3.sat
+
     def block(
             self,
             diag: Diagram,
@@ -923,7 +940,7 @@ class Frames(object):
             trace: List[Tuple[Optional[TransitionDecl],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
-        if j == 0: # or (j == 1 and sat(init and diag)
+        if j == 0 or (j == 1 and self.sat_in_init(diag)):
             if safety_goal:
                 print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
