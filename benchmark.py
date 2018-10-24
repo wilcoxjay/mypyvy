@@ -96,13 +96,19 @@ class Benchmark(object):
         return None
 
 
-benchmarks = [
+convergant_benchmarks = [
     Benchmark('test/lockserv.pyv', safety='mutex'),
     Benchmark('test/lockserv_multi.pyv', safety='mutex'),
     Benchmark('test/consensus.pyv', safety='one_leader'),
     Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
     Benchmark('test/ring.pyv', safety='safety')
 ]
+
+other_benchmarks: List[Benchmark] = [
+    # Benchmark('test/sll-reverse.pyv')
+]
+
+all_benchmarks = convergant_benchmarks + other_benchmarks
 
 seeds: List[int] = []
 
@@ -128,8 +134,10 @@ def main() -> None:
                            help='timeout for each child job')
     argparser.add_argument('experiment', nargs='?',
                            help='directory name to store all logs (if kept) and measurements')
+    argparser.add_argument('--all-benchmarks', action='store_true',
+                           help='run all benchmarks, even potentially nonconvergent ones')
     argparser.add_argument('--benchmark', nargs='*', default=[], metavar='B',
-                           help='list of benchmarks to run; default runs all benchmarks')
+                           help='list of benchmarks to run; default runs all convergent benchmarks')
     argparser.add_argument('-j', '--threads', type=int, metavar='N', default=1,
                            help='number of threads to use')
     argparser.add_argument('--pin-cores', action='store_true',
@@ -141,16 +149,23 @@ def main() -> None:
     args = argparser.parse_args()
 
     if args.list_benchmarks:
-        print(' '.join(b.name for b in benchmarks))
+        print(' '.join(b.name for b in all_benchmarks))
         sys.exit(0)
 
+    if args.benchmark != [] and args.all_benchmarks:
+        print('cannot pass both --all-benchmarks and --benchmark')
+        sys.exit(1)
+
     if args.benchmark == []:
-        args.benchmark = benchmarks
+        if not args.all_benchmarks:
+            args.benchmark = convergant_benchmarks
+        else:
+            args.benchmark = all_benchmarks
     else:
         bs = []
         for name in args.benchmark:
             found = False
-            for b in benchmarks:
+            for b in all_benchmarks:
                 if b.name == name:
                     bs.append(b)
                     found = True
