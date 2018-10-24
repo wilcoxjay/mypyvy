@@ -355,6 +355,9 @@ class Diagram(object):
         else:
             return syntax.Exists(self.binder.vs, e)
 
+    def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:
+        return check_implication(s, (init.expr for init in prog.inits()), [syntax.Not(self.to_ast())])
+
     def minimize_from_core(self, core: Optional[Iterable[int]]) -> None:
         if core is None:
             return
@@ -456,6 +459,12 @@ class Diagram(object):
                 assert False
             logger.debug('ok.')
 
+    def check_valid(self, s: Solver, prog: Program, f: Iterable[Expr]) \
+    -> Union[None, Tuple[z3.ModelRef, TransitionDecl], z3.ModelRef]:
+        ans = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+        if ans is not None:
+            return ans
+        return self.valid_in_init(s, prog)
 
     @log_start_end_time()
     def generalize(self, s: Solver, prog: Program, f: Iterable[Expr], depth: Optional[int]=None) -> None:
@@ -473,10 +482,10 @@ class Diagram(object):
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('checking that transition relation itself is SAT from previous frame...')
-            res = check_two_state_implication_all_transitions(s, prog, f, syntax.Bool(None, False))
-            if res is None:
+            res1 = check_two_state_implication_all_transitions(s, prog, f, syntax.Bool(None, False))
+            if res1 is None:
                 assert False
-            m, t = res
+            m, t = res1
             print(m)
             print(t.name)
 
@@ -486,7 +495,7 @@ class Diagram(object):
             if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                 continue
             with self.without(d):
-                res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+                res = self.check_valid(s, prog, f)
             if res is None:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('eliminated all conjuncts from declaration %s' % d)
@@ -502,7 +511,7 @@ class Diagram(object):
                     if j not in S and isinstance(x, syntax.UnaryExpr):
                         cs.add(j)
                 with self.without(d, cs):
-                    res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+                    res = self.check_valid(s, prog, f)
                 if res is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug('eliminated all negative conjuncts from declaration %s' % d)
@@ -511,18 +520,25 @@ class Diagram(object):
 
         for d, j, c in self.conjuncts():
             with self.without(d, j):
-                res = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
+                res = self.check_valid(s, prog, f)
             if res is None:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('eliminated clause %s' % c)
                 self.remove_clause(d, j)
                 self.smoke(s, prog, depth)
             elif logger.isEnabledFor(logging.DEBUG):
-                m, t = res
+
                 logger.debug('failed to eliminate clause %s' % c)
                 logger.debug('from diagram %s' % self)
-                logger.debug('because of transition %s' % t.name)
-                logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
+
+                if isinstance(res, tuple):
+                    m, t = res
+                    logger.debug('because of transition %s' % t.name)
+                    logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
+                else:
+                    logger.debug('because the diagram is satisfiable in the initial state')
+                    logger.debug('and model %s' % Model(prog, m, KEY_ONE))
+
 
 
         self.prune_unused_vars()
@@ -915,23 +931,6 @@ class Frames(object):
                 self.push_cache[i].add(c)
                 j += 1
 
-    def sat_in_init(self, diag: Diagram) -> bool:
-        t = self.solver.get_translator(KEY_ONE)
-
-        with self.solver:
-            for init in self.prog.inits():
-                self.solver.add(t.translate_expr(init.expr))
-
-            self.solver.add(diag.to_z3(t))
-
-            res = self.solver.check(*diag.trackers)
-
-        # if res == z3.sat:
-        #     m = Model(self.prog, self.solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
-        #     print(str(m))
-
-        return res == z3.sat
-
     def block(
             self,
             diag: Diagram,
@@ -939,7 +938,7 @@ class Frames(object):
             trace: List[Tuple[Optional[TransitionDecl],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
-        if j == 0 or (j == 1 and self.sat_in_init(diag)):
+        if j == 0 or (j == 1 and diag.valid_in_init(self.solver, self.prog) is not None):
             if safety_goal:
                 print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
