@@ -171,8 +171,11 @@ def main() -> None:
                     found = True
                     break
             if not found:
-                print('unknown benchmark file %s' % name)
-                sys.exit(1)
+                if os.path.exists(name):
+                    bs.append(Benchmark(name))
+                else:
+                    print('unknown benchmark file %s' % name)
+                    sys.exit(1)
         args.benchmark = bs
 
     global seeds
