@@ -30,9 +30,12 @@ class Benchmark(object):
             l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
 
-    def run(self, uid: Optional[int]=None, seed: Optional[int]=None) -> Optional[float]:
+    def run(self, uid: Optional[int]=None, seed: Optional[int]=None, worker_id: Optional[int]=None) -> Optional[float]:
         assert args is not None
         cmd = ['python3', 'mypyvy.py', 'updr', '--forbid-parser-rebuild', '--log=%s' % args.log]
+
+        if args.pin_cores and worker_id is not None:
+            cmd = ['taskset', hex(1 << worker_id), ] + cmd
 
         if seed is not None:
             cmd.append('--seed=%s' % seed)
@@ -129,6 +132,8 @@ def main() -> None:
                            help='list of benchmarks to run; default runs all benchmarks')
     argparser.add_argument('-j', '--threads', type=int, metavar='N', default=1,
                            help='number of threads to use')
+    argparser.add_argument('--pin-cores', action='store_true',
+                           help='use taskset command to set processor affinity of each run')
     argparser.add_argument('--args', nargs=argparse.REMAINDER, default=[],
                            help='additional arguments to pass to mypyvy')
 
@@ -210,7 +215,7 @@ def main() -> None:
                 break
             (b, i) = item
             try:
-                ans = b.run(seed=seeds[i], uid=i)
+                ans = b.run(seed=seeds[i], uid=i, worker_id=id)
             except Exception as e:
                 print('worker %s observed exception %s' % (id, e))
                 break
