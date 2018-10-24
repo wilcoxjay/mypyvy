@@ -211,8 +211,12 @@ class Z3Translator(object):
 
             bs = self.bind(t.binder)
             with self.scope.in_scope(list(zip(t.binder.vs, bs))):
-                self.transition_cache[t] = \
-                    z3.Exists(bs, z3.And(self.translate_expr(t.expr), *self.frame(t.mods)))
+                body = z3.And(self.translate_expr(t.expr), *self.frame(t.mods))
+
+                if len(bs) > 0:
+                    self.transition_cache[t] = z3.Exists(bs, body)
+                else:
+                    self.transition_cache[t] = body
 
         return self.transition_cache[t]
 
