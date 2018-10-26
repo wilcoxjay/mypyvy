@@ -111,6 +111,8 @@ class Solver(object):
 T = TypeVar('T')
 
 def check_unsat(
+        toks: List[Optional[syntax.Token]],
+        errmsgs: List[str],
         s: Solver,
         prog: Program,
         key: str,
@@ -126,7 +128,8 @@ def check_unsat(
 
         print('')
         print(m)
-        raise Exception('no')
+        for tok, msg in zip(toks, errmsgs):
+            syntax.error(tok, msg)
     print('ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
 
@@ -152,7 +155,7 @@ def check_init(s: Solver, prog: Program) -> None:
                 print('  implies invariant%s...' % msg, end='')
                 sys.stdout.flush()
 
-                check_unsat(s, prog, KEY_ONE)
+                check_unsat([inv.tok], ['invariant%s may not hold in initial state' % msg], s, prog, KEY_ONE)
 
 
 def check_transitions(s: Solver, prog: Program) -> None:
@@ -180,7 +183,11 @@ def check_transitions(s: Solver, prog: Program) -> None:
                         print('  preserves invariant%s...' % msg, end='')
                         sys.stdout.flush()
 
-                        check_unsat(s, prog, KEY_NEW, KEY_OLD)
+                        check_unsat([inv.tok, trans.tok],
+                                    ['invariant%s may not be preserved by transition %s' %
+                                     (msg, trans.name),
+                                     'this transition may not preserve invariant%s' % (msg,)],
+                                    s, prog, KEY_NEW, KEY_OLD)
 
 def check_implication(
         s: Solver,
@@ -1322,7 +1329,7 @@ def theorem(s: Solver, prog: Program) -> None:
         with s:
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            check_unsat(s, prog, *keys)
+            check_unsat([th.tok], ['theorem%s may not hold' % msg], s, prog, *keys)
 
 def generate_parser(s: Solver, prog: Program) -> None:
     pass  # parser is generated implicitly by main when it parses the program
