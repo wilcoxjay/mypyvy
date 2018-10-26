@@ -15,7 +15,7 @@
 
 (defvar mypyvy-mode-map
   (let ((map (make-sparse-keymap)))
-    ; (define-key map (kbd "C-c C-c") 'foobar)
+    (define-key map (kbd "C-c i") 'mypyvy-infer-invariant)
     map)
   "Keymap for Mypyvy major mode")
 
@@ -45,5 +45,26 @@
   :syntax-table mypyvy-mode-syntax-table
   (set (make-local-variable 'font-lock-defaults) '(mypyvy-font-lock-keywords))
   (font-lock-fontify-buffer))
+
+(defun mypyvy-infer-invariant ()
+  (interactive)
+  (let ((b (generate-new-buffer "*mypyvy-output*")))
+    (call-process "mypyvy" nil b t "updr" (buffer-file-name))
+    (with-current-buffer b
+      (goto-char (point-min))
+      (if (search-forward "frame is safe and inductive. done!")
+          (progn
+            (forward-line)
+            (delete-region (point-min) (point)))
+        (error "could not infer invariant!")))
+    (let ((start (point)))
+      (insert-buffer-substring-no-properties b)
+      (let ((end-marker (point-marker)))
+        (goto-char start)
+        (cl-loop until (>= (point) (marker-position end-marker))
+                 do (insert "invariant ") (forward-line))
+        (set-marker end-marker nil)))))
+
+
 
 (provide 'mypyvy-mode)
