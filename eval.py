@@ -22,10 +22,7 @@ def get_all_matching_data(buf: TextIO, pattern: str) -> List[Tuple[str, List[Opt
 
 
 
-def main(filename: str, benchmark: Optional[str]) -> None:
-    with open(filename) as f:
-        all_data = get_all_matching_data(f, benchmark or "Benchmark")
-
+def hist(all_data: List[Tuple[str, List[Optional[float]]]]) -> None:
     length = len(all_data)
     ncols = math.ceil(math.sqrt(length))
     nrows = math.ceil(length / ncols)
@@ -43,6 +40,32 @@ def main(filename: str, benchmark: Optional[str]) -> None:
         axs[i][j].set_title(bname)
 
     plt.show()
+
+
+def violin(all_data: List[Tuple[str, List[Optional[float]]]]) -> None:
+    fig, axs = plt.subplots()
+    plot_data = []
+    names = []
+    for (name, data) in all_data:
+        tdata = [(x if x is not None else -1.0) for x in data]
+        r = max(tdata) - min(tdata)
+        ndata = [(x - min(tdata)) / r for x in tdata]
+        plot_data.append(ndata)
+        names.append(name)
+    axs.violinplot(plot_data)
+    axs.set_xticks(list(range(1, len(names)+1)))
+    axs.set_xticklabels(names)
+    plt.show()
+    
+
+def main(filename: str, benchmark: Optional[str]) -> None:
+    with open(filename) as f:
+        all_data = get_all_matching_data(f, benchmark or "Benchmark")
+
+    hist(all_data)
+
+    # violin(all_data)
+
 
 
 if __name__ == '__main__':
