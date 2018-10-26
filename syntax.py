@@ -15,9 +15,11 @@ import z3
 Token = ply.lex.LexToken
 
 def error(tok: Optional[Token], msg: str) -> NoReturn:
-    raise Exception('%s: %s' %
-                    ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
-                     if tok is not None else 'None', msg))
+    print('error: %s: %s' %
+          ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
+           if tok is not None else 'None', msg))
+
+    sys.exit(1)
 
 B = TypeVar('B')
 
@@ -548,7 +550,8 @@ def Neq(arg1: Expr, arg2: Expr) -> Expr:
 
 class AppExpr(Expr):
     def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
-        assert len(args) > 0
+        if not (len(args) > 0):
+            error(tok, "must be applied to at least one argument")
         self.tok = tok
         self.callee = callee
         self.args = args
@@ -558,7 +561,8 @@ class AppExpr(Expr):
         if d is None:
             error(self.tok, 'Unresolved relation or function name %s' % self.callee)
 
-        assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
+        if not (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)):
+            error(self.tok, 'Only relations or functions can be applied, not %s' % self.callee)
 
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
             error(self.tok, 'Callee applied to wrong number of arguments')

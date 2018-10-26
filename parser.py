@@ -19,7 +19,6 @@ reserved = {
     'invariant': 'INVARIANT',
     'axiom': 'AXIOM',
     'old': 'OLD',
-    'modifies': 'MODIFIES',
     'forall': 'FORALL',
     'exists': 'EXISTS',
     'true': 'TRUE',
@@ -325,7 +324,17 @@ def p_empty(p: Any) -> None:
     pass
 
 def p_error(t: Any) -> None:
-    print('%s:%s syntax error at %s' % (t.lineno, t.lexpos - t.lexer.bol, t.value))
+    if t is not None:
+        print('error: %s: syntax error near %s' %
+              ('%s:%s:%s' % (t.filename, t.lineno, t.col), t.value))
+    else:
+        l = get_lexer(forbid_rebuild=True)
+        print('lexer is None? %s' % l is None)
+        if l is None:
+            raise Exception
+        print('error: %s: syntax error near EOF' %
+              ('%s:%s:%s' % (l.filename, l.lineno, l.lexpos - l.bol), ))
+
     sys.exit(1)
 
 program_parser = None

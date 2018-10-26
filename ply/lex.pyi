@@ -15,6 +15,8 @@ class Lexer:
 
     lineno: int
     bol: int
+    filename: str
+    lexpos: int
 
 
 
