@@ -404,6 +404,9 @@ class UnaryExpr(Expr):
 def Not(e: Expr) -> Expr:
     return UnaryExpr(None, 'NOT', e)
 
+def Old(e: Expr) -> Expr:
+    return UnaryExpr(None, 'OLD', e)
+
 BINOPS = {
     'IMPLIES',
     'IFF',
@@ -557,6 +560,9 @@ class NaryExpr(Expr):
 
         return l
 
+def Forall(vs: List[SortedVar], body: Expr) -> Expr:
+    return QuantifierExpr(None, 'FORALL', vs, body)
+
 def Exists(vs: List[SortedVar], body: Expr) -> Expr:
     return QuantifierExpr(None, 'EXISTS', vs, body)
 
@@ -581,6 +587,12 @@ def Eq(arg1: Expr, arg2: Expr) -> Expr:
 
 def Neq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'NOTEQ', arg1, arg2)
+
+def Iff(arg1: Expr, arg2: Expr) -> Expr:
+    return BinaryExpr(None, 'IFF', arg1, arg2)
+
+def Apply(callee: str, args: List[Expr]) -> Expr:
+    return AppExpr(None, callee, args)
 
 class AppExpr(Expr):
     def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
@@ -733,7 +745,7 @@ class QuantifierExpr(Expr):
         return [x for x in self.body.free_ids() if not any(v.name == x for v in self.binder.vs)]
 
 class Id(Expr):
-    '''Unresolved symbol (might represent a constant or a variable)'''
+    '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     def __init__(self, tok: Optional[Token], name: str) -> None:
         self.tok = tok
         self.name = name
@@ -818,6 +830,62 @@ class _BoolSort(Sort):
         return _BoolSort
 
 BoolSort = _BoolSort()
+
+class AssumeStatement(object):
+    def __init__(self, tok: Optional[Token], expr: Expr) -> None:
+        self.tok = tok
+        self.expr = expr
+
+    def __repr__(self) -> str:
+        return 'AssumeStatement(tok=None, expr=%s)' % self.expr
+
+class AssignmentStatement(object):
+    def __init__(self, tok: Optional[Token], assignee: str, args: List[Expr], rhs: Expr) -> None:
+        self.tok = tok
+        self.assignee = assignee
+        self.args = args
+        self.rhs = rhs
+
+    def __repr__(self) -> str:
+        return 'AssignmentStatement(tok=None, assignee=%s, args=%s, rhs=%s)' % (self.assignee, self.args, self.rhs)
+
+Statement = Union[AssumeStatement, AssignmentStatement]
+
+class BlockStatement(object):
+    def __init__(self, tok: Optional[Token], stmts: List[Statement]) -> None:
+        self.tok = tok
+        self.stmts = stmts
+
+    def __repr__(self) -> str:
+        return 'BlockStatement(tok=None, stmts=%s)' % self.stmts
+
+def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
+    mods_str_list: List[str] = []
+    conjuncts = []
+    for stmt in block.stmts:
+        if isinstance(stmt, AssumeStatement):
+            conjuncts.append(Old(stmt.expr))
+        elif isinstance(stmt, AssignmentStatement):
+            assert stmt.assignee not in mods_str_list
+            mods_str_list.append(stmt.assignee)
+            if len(stmt.args) == 0:
+                conjuncts.append(Eq(Id(None, stmt.assignee), stmt.rhs))
+            else:
+                assert isinstance(stmt.rhs, Bool)
+                if stmt.rhs.val:
+                    f = lambda x, y: Or(x, y)
+                else:
+                    f = lambda x, y: And(x, Not(y))
+                vs = ['X%s' % i for i, _ in enumerate(stmt.args)]
+                c = And(*(Eq(Id(None, X), arg) for X, arg in zip(vs, stmt.args)))
+
+                conjuncts.append(Forall([SortedVar(None, v, None) for v in vs],
+                                        Iff(Apply(stmt.assignee, [Id(None, v) for v in vs]),
+                                            f(Old(Apply(stmt.assignee, [Id(None, v) for v in vs])), c))))
+        else:
+            reveal_type(stmt)
+            assert False
+    return ([ModifiesClause(None, name) for name in mods_str_list], And(*conjuncts))
 
 class Decl(object):
     def __repr__(self) -> str:
@@ -1025,17 +1093,26 @@ class ModifiesClause(object):
 
 class TransitionDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, params: List[SortedVar],
-                 mods: List[ModifiesClause], expr: Expr) -> None:
+                 body: Union[BlockStatement, Tuple[List[ModifiesClause], Expr]]) -> None:
         self.tok = tok
         self.name = name
         self.binder = Binder(params)
-        self.mods = mods
-        self.expr = expr
+        self.body = body
 
     def resolve(self, scope: Scope) -> None:
         assert len(scope.stack) == 0
 
         self.binder.pre_resolve(scope)
+
+        if isinstance(self.body, BlockStatement):
+            print('got body')
+            print(repr(self.body))
+            self.mods, self.expr = translate_block(self.body)
+            print('translated to')
+            print(repr(self.mods))
+            print(repr(self.expr))
+        else:
+            self.mods, self.expr = self.body
 
         for mod in self.mods:
             mod.resolve(scope)

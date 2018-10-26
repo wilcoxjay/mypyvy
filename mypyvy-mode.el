@@ -26,7 +26,7 @@
   (save-excursion (search-forward s (line-end-position) 't)))
 
 (defconst mypyvy-keyword-regex
-  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|\\|onestate\\|twostate\\|theorem\\)\\>")
+  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|\\|onestate\\|twostate\\|theorem\\|assume\\)\\>")
 
 (defconst mypyvy-font-lock-keywords
   `((,mypyvy-keyword-regex . font-lock-keyword-face)))
@@ -52,7 +52,7 @@
     (call-process "mypyvy" nil b t "updr" (buffer-file-name))
     (with-current-buffer b
       (goto-char (point-min))
-      (if (search-forward "frame is safe and inductive. done!")
+      (if (search-forward "frame is safe and inductive. done!" nil t)
           (progn
             (forward-line)
             (delete-region (point-min) (point)))

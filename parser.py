@@ -25,7 +25,8 @@ reserved = {
     'false': 'FALSE',
     'onestate': 'ONESTATE',
     'twostate': 'TWOSTATE',
-    'theorem': 'THEOREM'
+    'theorem': 'THEOREM',
+    'assume': 'ASSUME',
 }
 
 tokens = [
@@ -33,8 +34,12 @@ tokens = [
     'RPAREN',
     'LBRACKET',
     'RBRACKET',
+    'LBRACE',
+    'RBRACE',
     'DOT',
     'COLON',
+    'COLONEQUALS',
+    'SEMI',
     'BANG',
     'IFF',
     'IMPLIES',
@@ -56,8 +61,12 @@ t_LPAREN = r'\('
 t_RPAREN = r'\)'
 t_LBRACKET = r'\['
 t_RBRACKET = r'\]'
+t_LBRACE = r'{'
+t_RBRACE = r'}'
 t_DOT = r'\.'
 t_COLON = r':'
+t_COLONEQUALS = r':='
+t_SEMI = r';'
 t_BANG = r'\!'
 t_IMPLIES = r'->'
 t_IFF = r'<->'
@@ -83,7 +92,7 @@ lexer = None
 def get_lexer(forbid_rebuild: bool=False) -> ply.lex.Lexer:
     global lexer
     if not lexer:
-        lexer = ply.lex.lex(debug=False, optimize=True, forbid_rebuild=forbid_rebuild)
+        lexer = ply.lex.lex(debug=False, forbid_rebuild=forbid_rebuild)
     return lexer
 
 precedence = (
@@ -306,8 +315,44 @@ def p_mods(p: Any) -> None:
     p[0] = p[2]
 
 def p_decl_transition(p: Any) -> None:
-    'decl : TRANSITION id LPAREN params RPAREN mods expr'
-    p[0] = syntax.TransitionDecl(p[2], p[2].value, p[4], p[6], p[7])
+    'decl : TRANSITION id LPAREN params RPAREN transition_body'
+    p[0] = syntax.TransitionDecl(p[2], p[2].value, p[4], p[6])
+
+def p_decl_transition_body_mods_expr(p: Any) -> None:
+    'transition_body : mods expr'
+    p[0] = (p[1], p[2])
+
+def p_decl_transition_body_block(p: Any) -> None:
+    'transition_body : blockstmt'
+    p[0] = p[1]
+
+def p_blockstmt(p: Any) -> None:
+    'blockstmt : LBRACE stmts RBRACE'
+    p[0] = syntax.BlockStatement(p.slice[1], p[2])
+
+def p_stmts_empty(p: Any) -> None:
+    'stmts : empty'
+    p[0] = []
+
+def p_stmts_more(p: Any) -> None:
+    'stmts : stmts stmt'
+    p[0] = p[1] + [p[2]]
+
+def p_stmt_assume(p: Any) -> None:
+    'stmt : ASSUME expr SEMI'
+    p[0] = syntax.AssumeStatement(p.slice[1], p[2])
+
+def p_assignment_lhs_empty(p: Any) -> None:
+    'assignment_lhs : empty'
+    p[0] = []
+
+def p_assignment_lhs_nonempty(p: Any) -> None:
+    'assignment_lhs : LPAREN args RPAREN'
+    p[0] = p[2]
+
+def p_stmt_assignment(p: Any) -> None:
+    'stmt : id assignment_lhs COLONEQUALS expr SEMI'
+    p[0] = syntax.AssignmentStatement(p[1], p[1].value, p[2], p[4])
 
 def p_onetwostate(p: Any) -> None:
     '''onetwostate : ONESTATE
