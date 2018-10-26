@@ -11,7 +11,7 @@ executable."
   :command ("mypyvy"
             "verify"
             (eval flycheck-mypyvy-args)
-            source-original)
+            source)
   :error-patterns
   ((error line-start "error: " (file-name) ":" line ":" column ": " (message) line-end))
   :modes mypyvy-mode)
