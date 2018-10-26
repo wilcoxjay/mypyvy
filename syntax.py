@@ -241,16 +241,20 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
     elif isinstance(expr, AppExpr):
         d = scope.get(expr.callee)
         assert d is not None and not isinstance(d, tuple)
-        return {(old, expr.tok, expr.callee)}
+        if d.mutable:
+            return {(old, expr.tok, expr.callee)}
+        else:
+            return set()
     elif isinstance(expr, QuantifierExpr):
         with scope.in_scope(list(zip(expr.binder.vs, [None for i in range(len(expr.binder.vs))]))):
             return symbols_used(scope, expr.body, old)
     elif isinstance(expr, Id):
         d = scope.get(expr.name)
         assert d is not None, expr.name
-        if isinstance(d, RelationDecl) or \
-           isinstance(d, ConstantDecl) or \
-           isinstance(d, FunctionDecl):
+        if (isinstance(d, RelationDecl) or \
+            isinstance(d, ConstantDecl) or \
+            isinstance(d, FunctionDecl)) and \
+            d.mutable:
             return {(old, expr.tok, expr.name)}
         else:
             return set()
