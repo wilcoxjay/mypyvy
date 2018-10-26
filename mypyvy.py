@@ -1435,7 +1435,7 @@ def main() -> None:
     z3.set_param('smt.random_seed', args.seed)
 
     with open(args.filename) as f:
-        l = parser.get_lexer(forbid_rebuild=args.forbid_parser_rebuild)
+        l = parser.get_lexer()
         p = parser.get_parser(forbid_rebuild=args.forbid_parser_rebuild)
         prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=args.filename)
 
