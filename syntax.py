@@ -222,6 +222,40 @@ class Z3Translator(object):
 
         return self.transition_cache[t]
 
+def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, Optional[Token], str]]:
+    if isinstance(expr, Bool):
+        return set()
+    elif isinstance(expr, UnaryExpr):
+        if expr.op == 'OLD':
+            assert not old
+            return symbols_used(scope, expr.arg, old=True)
+        else:
+            return symbols_used(scope, expr.arg, old)
+    elif isinstance(expr, BinaryExpr):
+        return symbols_used(scope, expr.arg1, old) | symbols_used(scope, expr.arg2,old)
+    elif isinstance(expr, NaryExpr):
+        ans: Set[Tuple[bool, Optional[Token], str]] = set()
+        for arg in expr.args:
+            ans |= symbols_used(scope, arg, old)
+        return ans
+    elif isinstance(expr, AppExpr):
+        d = scope.get(expr.callee)
+        assert d is not None and not isinstance(d, tuple)
+        return {(old, expr.tok, expr.callee)}
+    elif isinstance(expr, QuantifierExpr):
+        with scope.in_scope(list(zip(expr.binder.vs, [None for i in range(len(expr.binder.vs))]))):
+            return symbols_used(scope, expr.body, old)
+    elif isinstance(expr, Id):
+        d = scope.get(expr.name)
+        assert d is not None, expr.name
+        if isinstance(d, RelationDecl) or \
+           isinstance(d, ConstantDecl) or \
+           isinstance(d, FunctionDecl):
+            return {(old, expr.tok, expr.name)}
+        else:
+            return set()
+    else:
+        assert False
 
 
 class Expr(object):
@@ -1012,6 +1046,19 @@ class TransitionDecl(Decl):
             self.expr.resolve(scope, BoolSort)
 
         self.binder.post_resolve()
+
+        with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
+            syms = symbols_used(scope, self.expr)
+            for is_old, tok, sym in syms:
+                if not is_old:
+                    found = False
+                    for mod in self.mods:
+                        if mod.name == sym:
+                            found = True
+                            break
+
+                    if not found:
+                        error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
 
     def __repr__(self) -> str:
         return 'TransitionDecl(tok=None, name=%s, params=%s, mods=%s, expr=%s)' % (
