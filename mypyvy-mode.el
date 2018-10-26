@@ -29,12 +29,13 @@
   "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|\\|onestate\\|twostate\\|theorem\\)\\>")
 
 (defconst mypyvy-font-lock-keywords
-  `((,mypyvy-keyword-regex . font-lock-keyword-face)
-    ("#.*" . font-lock-comment-face)))
+  `((,mypyvy-keyword-regex . font-lock-keyword-face)))
 
 (defvar mypyvy-mode-syntax-table
   (let ((st (make-syntax-table)))
     (modify-syntax-entry ?_ "w" st)
+    (modify-syntax-entry ?# "<" st)
+    (modify-syntax-entry ?\n ">" st)
     ; (modify-syntax-entry ?' "w" st)
     st)
   "Syntax table for Mypyvy major mode")
