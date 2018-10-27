@@ -1112,12 +1112,7 @@ class TransitionDecl(Decl):
         self.binder.pre_resolve(scope)
 
         if isinstance(self.body, BlockStatement):
-            print('got body')
-            print(repr(self.body))
             self.mods, self.expr = translate_block(self.body)
-            print('translated to')
-            print(repr(self.mods))
-            print(repr(self.expr))
         else:
             self.mods, self.expr = self.body
 
