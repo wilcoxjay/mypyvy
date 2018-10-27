@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt  # type: ignore
 import math
 import numpy as np  # type: ignore
 
-from typing import List, Optional, Tuple, TextIO
+from typing import List, Optional, Tuple, TextIO, Union, Sequence
 
-def get_all_matching_data(buf: TextIO, pattern: str) -> List[Tuple[str, List[Optional[float]]]]:
+def get_all_matching_data(buf: TextIO, pattern: str) -> Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]:
     matched = False
     benchmark_name = ''
     data = []
@@ -22,7 +22,7 @@ def get_all_matching_data(buf: TextIO, pattern: str) -> List[Tuple[str, List[Opt
 
 
 
-def hist(all_data: List[Tuple[str, List[Optional[float]]]]) -> None:
+def hist(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]) -> None:
     length = len(all_data)
     ncols = math.ceil(math.sqrt(length))
     nrows = math.ceil(length / ncols)
@@ -42,7 +42,7 @@ def hist(all_data: List[Tuple[str, List[Optional[float]]]]) -> None:
     plt.show()
 
 
-def violin(all_data: List[Tuple[str, List[Optional[float]]]]) -> None:
+def violin(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]) -> None:
     fig, axs = plt.subplots()
     plot_data = []
     names = []
@@ -58,11 +58,18 @@ def violin(all_data: List[Tuple[str, List[Optional[float]]]]) -> None:
     plt.show()
     
 
+def times(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Optional[float]]:
+    return [x[0] if x is not None and isinstance(x, tuple) else x for x in l]
+
+
+def nqueries(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Optional[int]]:
+    return [x[1] if x is not None and isinstance(x, tuple) else None for x in l]
+
 def main(filename: str, benchmark: Optional[str]) -> None:
     with open(filename) as f:
         all_data = get_all_matching_data(f, benchmark or "Benchmark")
 
-    hist(all_data)
+    hist([(b, nqueries(l)) for b, l in all_data])
 
     # violin(all_data)
 
