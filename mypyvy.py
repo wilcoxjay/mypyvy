@@ -129,7 +129,7 @@ def check_unsat(
         print('')
         print(m)
         for tok, msg in zip(toks, errmsgs):
-            syntax.error(tok, msg)
+            syntax.print_error(tok, msg)
     print('ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
 

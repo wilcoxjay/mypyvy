@@ -14,11 +14,14 @@ import z3
 
 Token = ply.lex.LexToken
 
-def error(tok: Optional[Token], msg: str) -> NoReturn:
+def print_error(tok: Optional[Token], msg: str) -> None:
     print('error: %s: %s' %
-          ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
-           if tok is not None else 'None', msg))
+      ('%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
+       if tok is not None else 'None', msg))
 
+
+def error(tok: Optional[Token], msg: str) -> NoReturn:
+    print_error(tok, msg)
     sys.exit(1)
 
 B = TypeVar('B')
