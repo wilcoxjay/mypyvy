@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 
-from typing import Optional, TextIO, List, Tuple
+from typing import Optional, TextIO, List, Tuple, Union
 
 args: argparse.Namespace
 
@@ -30,7 +30,7 @@ class Benchmark(object):
             l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
 
-    def run(self, uid: Optional[int]=None, seed: Optional[int]=None, worker_id: Optional[int]=None) -> Optional[float]:
+    def run(self, uid: Optional[int]=None, seed: Optional[int]=None, worker_id: Optional[int]=None) -> Optional[Tuple[float, int]]:
         assert args is not None
         cmd = ['python3', 'mypyvy.py', 'updr', '--forbid-parser-rebuild', '--log=%s' % args.log]
 
@@ -76,12 +76,21 @@ class Benchmark(object):
                     print(timed_out_stdout, end='', file=f)
 
         if not timed_out:
+            nqueries: Optional[int] = None
             for line in proc.stdout.splitlines():
                 if 'updr ended' in line:
                     m = re.search('\(took (?P<time>.*) seconds\)', line)
                     assert m is not None
-                    t = float(m.group('time'))
-                    return t
+                    time = float(m.group('time'))
+                    found = True
+                if 'total number of queries' in line:
+                    m = re.search('total number of queries: (?P<nqueries>.*)', line)
+                    assert m is not None
+                    nqueries = int(m.group('nqueries'))
+
+            if found:
+                assert nqueries is not None
+                return time, nqueries
 
         # probably the child job was killed or terminated abnormally
         print('could not find "updr ended" in job %s' % uid)
@@ -204,7 +213,7 @@ def main() -> None:
 
     q: queue.Queue[Optional[Tuple[Benchmark, int]]] = queue.Queue()
     threads: List[threading.Thread] = []
-    results: List[List[Tuple[int, Optional[float]]]] = []
+    results: List[List[Tuple[int, Optional[Tuple[float,int]]]]] = []
     cv = threading.Condition()
 
     work_done = threading.Event()
@@ -235,7 +244,7 @@ def main() -> None:
             try:
                 ans = b.run(seed=seeds[i], uid=i, worker_id=id)
             except Exception as e:
-                print('worker %s observed exception %s' % (id, e))
+                print('worker %s observed exception %s' % (id, repr(e)))
                 break
             results[id].append((i, ans))
             q.task_done()
@@ -271,15 +280,23 @@ def main() -> None:
 
         without_timeouts = [x for x in times if x is not None]
         n_timeouts = sum(1 for x in times if x is None)
-        if len(without_timeouts) > 0:
-            avg = statistics.mean(without_timeouts)
-        else:
-            avg = 0.0
-        if len(without_timeouts) > 1:
-            stdev = statistics.stdev(without_timeouts)
-        else:
-            stdev = 0.0
-        data.append((b, times, avg, stdev, n_timeouts))
+
+        def safe_summary_stats(l: List[Union[float,int]]) -> Tuple[float, float]:
+            if len(l) > 0:
+                avg = statistics.mean(l)
+            else:
+                avg = 0.0
+            if len(l) > 1:
+                stdev = statistics.stdev(l)
+            else:
+                stdev = 0.0
+
+            return avg, stdev
+
+        avg_time, stdev_time = safe_summary_stats([t[0] for t in without_timeouts])
+        avg_queries, stdev_queries = safe_summary_stats([t[1] for t in without_timeouts])
+
+        data.append((b, times, avg_time, stdev_time, avg_queries, stdev_queries, n_timeouts))
 
     print()
 
@@ -290,11 +307,13 @@ def main() -> None:
 
     if print_seeds:
         print('seeds: %s' % seeds, file=results_file)
-    for b, times, avg, stdev, n_timeouts in data:
+    for b, times, avg_time, stdev_time, avg_queries, stdev_queries, n_timeouts in data:
         lines = [repr(b),
                  str(times),
-                 'avg: %s' % avg,
-                 'stdev: %s' % stdev,
+                 'avg_time: %s' % avg_time,
+                 'stdev_time: %s' % stdev_time,
+                 'avg_nqueries: %s' % avg_queries,
+                 'stdev_nqueries: %s' % stdev_queries,
                  '# timeouts: %s' % n_timeouts
         ]
         print('\n'.join(lines), file=results_file)

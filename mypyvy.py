@@ -35,6 +35,7 @@ class Solver(object):
         self.z3solver = z3.Solver()
         self.scope = scope
         self.translators: Dict[Tuple[Optional[str], Optional[str]], syntax.Z3Translator] = {}
+        self.nqueries = 0
 
     def get_translator(self, key: Optional[str]=None, key_old: Optional[str]=None) \
         -> syntax.Z3Translator:
@@ -57,6 +58,7 @@ class Solver(object):
 
     def check(self, *assumptions: z3.ExprRef) -> z3.CheckSatResult:
         # logger.debug('solver.check')
+        self.nqueries += 1
         return self.z3solver.check(*assumptions)
 
     def model(self, *assumptions: z3.ExprRef) -> z3.ModelRef:
@@ -1456,6 +1458,8 @@ def main() -> None:
         s.add(t.translate_expr(a.expr))
 
     args.main(s, prog)
+
+    logger.info('total number of queries: %s' % s.nqueries)
 
 if __name__ == '__main__':
     main()
