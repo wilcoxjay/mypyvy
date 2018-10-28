@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt  # type: ignore
 import math
 import numpy as np  # type: ignore
 
-from typing import List, Optional, Tuple, TextIO, Union, Sequence
+from typing import List, Optional, Tuple, TextIO, Union, Sequence, Any
 
 def get_all_matching_data(buf: TextIO, pattern: str) -> Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]:
     matched = False
@@ -22,6 +22,22 @@ def get_all_matching_data(buf: TextIO, pattern: str) -> Sequence[Tuple[str, Sequ
 
 
 
+def index(axs: Any, nrows: int, ncols: int, i: int, j: int) -> Any:
+    if nrows == 1:
+        assert i == 0
+        if ncols == 1:
+            assert j == 0
+            return axs
+        else:
+            return axs[j]
+    else:
+        if ncols == 1:
+            assert j == 0
+            return axs[i]
+        else:
+            return axs[i][j]
+
+
 def hist(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]) -> None:
     length = len(all_data)
     ncols = math.ceil(math.sqrt(length))
@@ -36,8 +52,9 @@ def hist(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]) -
 
         i, j = dims[k]
 
-        axs[i][j].hist(tdata, bins=80)
-        axs[i][j].set_title(bname)
+        a = index(axs, nrows, ncols, i, j)
+        a.hist(tdata, bins=80)
+        a.set_title(bname)
 
     plt.show()
 
@@ -69,7 +86,8 @@ def main(filename: str, benchmark: Optional[str]) -> None:
     with open(filename) as f:
         all_data = get_all_matching_data(f, benchmark or "Benchmark")
 
-    hist([(b, nqueries(l)) for b, l in all_data])
+    nq = [(b, nqueries(l)) for b, l in all_data]
+    hist(nq)
 
     # violin(all_data)
 
