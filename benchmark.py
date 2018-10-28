@@ -115,6 +115,7 @@ convergant_benchmarks = [
 
 other_benchmarks: List[Benchmark] = [
     # Benchmark('test/sll-reverse.pyv')
+    Benchmark('test/cache.pyv', safety='safety')
 ]
 
 all_benchmarks = convergant_benchmarks + other_benchmarks
