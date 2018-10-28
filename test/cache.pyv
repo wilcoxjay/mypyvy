@@ -52,7 +52,7 @@ transition do_bus_read_valid(c: core, a: address, v: value)
   modifies bus_read, modified, exclusive, shared, bus_transfer, memory
   old(bus_read(c, a)) &
   old(!invalid(c, a)) &
-  cache(c, a) = v & 
+  old(cache(c, a)) = v &
   (forall C, A. bus_read(C, A) <-> old(bus_read(C, A)) & !(C = c & A = a)) &
   (forall C, A. shared(C, A) <-> old(shared(C, A)) | C = c & A = a) &
   (forall C, A. modified(C, A) <-> old(modified(C, A)) & !(C = c & A = a)) &
@@ -117,7 +117,7 @@ transition do_bus_read_for_ownership_valid(c: core, a: address, v: value)
   modifies bus_read_for_ownership, modified, exclusive, shared, invalid, bus_transfer, memory
   old(bus_read_for_ownership(c, a)) &
   old(!invalid(c, a)) &
-  cache(c, a) = v &
+  old(cache(c, a)) = v &
   (forall C, A. bus_read_for_ownership(C, A) <-> old(bus_read_for_ownership(C, A)) & !(C = c & A = a)) &
   (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a) &
   (forall C, A. shared(C, A) <-> old(shared(C, A)) & !(C = c & A = a)) &
@@ -194,7 +194,7 @@ transition evict_modified(c: core, a: address)
   (forall A.
     (A != a -> 
      (memory(A) = old(memory(A))))) &
-  memory(a) = cache(c, a) &  # write back
+  memory(a) = old(cache(c, a)) &  # write back
   (forall C, A. modified(C, A) <-> old(modified(C, A)) & !(C = c & A = a)) &
   (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a)
 
