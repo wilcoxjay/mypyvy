@@ -1236,10 +1236,12 @@ class Frames(object):
         f.l = l
 
 
+    @log_start_end_xml()
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
-            logger.debug('simplifying frame %d' % i)
-            self._simplify_frame(f)
+            with LogTag('simplify', frame=str(i)):
+                logger.debug('simplifying frame %d' % i)
+                self._simplify_frame(f)
 
 
     def print_frame(self, i: int, lvl: int=logging.INFO) -> None:
@@ -1256,7 +1258,8 @@ class Frames(object):
             f: Optional[OrderedSet[Expr]]
             n = len(self) - 1
             with LogTag('frame', lvl=logging.INFO, n=str(n)):
-                self.print_frames()
+                with LogTag('current-frames', lvl=logging.INFO):
+                    self.print_frames()
 
                 logger.info('considering frame %s' % (len(self) - 1,))
 
