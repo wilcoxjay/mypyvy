@@ -1,9 +1,11 @@
-import sys
+from __future__ import annotations
+import argparse
 import matplotlib.pyplot as plt  # type: ignore
 import math
 import numpy as np  # type: ignore
-
-from typing import List, Optional, Tuple, TextIO, Union, Sequence, Any
+import pdb
+import sys
+from typing import List, Optional, Tuple, TextIO, Union, Sequence, Any, Callable
 
 def get_all_matching_data(buf: TextIO, pattern: str) -> Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]:
     matched = False
@@ -73,7 +75,7 @@ def violin(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]])
     axs.set_xticks(list(range(1, len(names)+1)))
     axs.set_xticklabels(names)
     plt.show()
-    
+
 
 def times(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Optional[float]]:
     return [x[0] if x is not None and isinstance(x, tuple) else x for x in l]
@@ -82,28 +84,47 @@ def times(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Op
 def nqueries(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Optional[int]]:
     return [x[1] if x is not None and isinstance(x, tuple) else None for x in l]
 
-def main(filename: str, benchmark: Optional[str]) -> None:
-    with open(filename) as f:
-        all_data = get_all_matching_data(f, benchmark or "Benchmark")
+def main() -> None:
+    with open(args.filename) as f:
+        all_data = get_all_matching_data(f, args.benchmark or "Benchmark")
 
-    nq = [(b, nqueries(l)) for b, l in all_data]
-    hist(nq)
+    transform: Callable[[Sequence[Union[float, Tuple[float, int], None]]], Sequence[Optional[Union[float,int]]]]
+    if args.column == 'nqueries':
+        transform = nqueries
+    else:
+        assert args.column == 'time'
+        transform = times
 
-    # violin(all_data)
+    td = [(b, transform(l)) for b, l in all_data]
 
+    if args.action == 'plot':
+        hist(td)
+    elif args.action == 'pdb':
+        pdb.set_trace()
+    elif args.action == 'extract':
+        for b, d in td:
+            print(b)
+            print(d)
+    else:
+        assert args.action == 'argmax'
+        for b, d in td:
+            d = [x or np.NINF for x in d]
+            print(b)
+            i = np.argmax(d)
+            print(i, d[i])
 
+args: argparse.Namespace
 
 if __name__ == '__main__':
-    print(sys.argv)
+    print(' '.join(['python3'] + sys.argv))
 
-    if len(sys.argv) < 2:
-        print('expected at least one argument (filename)')
-        sys.exit(1)
+    argparser = argparse.ArgumentParser()
 
-    benchmark: Optional[str]
-    if len(sys.argv) >= 3:
-        benchmark = sys.argv[2]
-    else:
-        benchmark = None
+    argparser.add_argument('--benchmark')
+    argparser.add_argument('--column', default='nqueries', choices=['nqueries', 'time'])
+    argparser.add_argument('--action', default='plot', choices=['plot', 'argmax', 'pdb', 'extract'])
+    argparser.add_argument('filename')
 
-    main(sys.argv[1], benchmark)
+    args = argparser.parse_args()
+
+    main()
