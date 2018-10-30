@@ -558,14 +558,14 @@ class Diagram(object):
         C: Iterable[T] = self.consts
         F: Iterable[T] = self.funcs
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('checking that transition relation itself is SAT from previous frame...')
-            res1 = check_two_state_implication_all_transitions(s, prog, f, syntax.Bool(None, False))
-            if res1 is None:
-                assert False
-            m, t = res1
-            logger.always_print(str(m))
-            logger.always_print(t.name)
+#         if logger.isEnabledFor(logging.DEBUG):
+#             logger.debug('checking that transition relation itself is SAT from previous frame...')
+#             res1 = check_two_state_implication_all_transitions(s, prog, f, syntax.Bool(None, False))
+#             if res1 is None:
+#                 assert False
+#             m, t = res1
+#             logger.always_print(str(m))
+#             logger.always_print(t.name)
 
         self.smoke(s, prog, depth)
 
