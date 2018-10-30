@@ -913,8 +913,6 @@ class Frames(object):
 
         self.new_frame()
 
-
-
     def __getitem__(self, i: int) -> MySet[Expr]:
         return self.fs[i]
 
@@ -939,97 +937,93 @@ class Frames(object):
                 return self[i+1]
         return None
 
-    # with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
-    # with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
-    # with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
+    def push_conjunct(self, frame_no: int, c: Expr, frame_old_count: Optional[int]=None) -> None:
+        is_safety = c in self.safety
+        conjunct_old_count = self.counter
+
+        f = self.fs[frame_no]
+        while True:
+            with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
+                logger.debug('frame %s attempting to push %s' % (frame_no, c))
+
+                if not is_safety and args.convergence_hacks and (
+                        self.counter > conjunct_old_count + 3 or
+                        (frame_old_count is not None and self.counter > frame_old_count + 10)
+                    ): # total hack
+                    logger.warning('decided to give up pushing conjunct %s in frame %d' % (c, frame_no))
+                    if self.counter > conjunct_old_count + 3:
+                        logger.warning("because I've tried to push this conjunct 3 times")
+                    else:
+                        assert frame_old_count is not None and self.counter > frame_old_count + 10
+                        logger.warning("because I've spent too long in this frame")
+                    self.abort()
+                    break
+
+                res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
+                if res is None:
+                    logger.debug('frame %s managed to push %s' % (frame_no, c))
+
+                    if args.smoke_test:
+                        logger.debug('jrw smoke testing...')
+                        om = check_bmc(self.solver, self.prog, c, frame_no+1)
+                        if om is not None:
+                            logger.debug('no!')
+                            verbose_print_z3_model(om)
+                        logger.debug('ok.')
+
+                    self[frame_no+1].add(c)
+                    self.commit()
+                    break
+                else:
+                    m, t = res
+                    mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
+                    diag = mod.as_diagram(old=True)
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.name))
+                        # logger.debug(str(mod))
+                    if is_safety:
+                        logger.debug('note: current clause is safety condition')
+                        self.block(diag, frame_no, [(None, c), (t, diag)], True)
+                    else:
+                        ans = self.block(diag, frame_no, [(None, c), (t, diag)], False)
+                        if isinstance(ans, GaveUp):
+                            logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
+                            logger.warning('because a call to block gave up')
+                            self.abort()
+                            break
+                        elif isinstance(ans, CexFound):
+                            self.commit()
+                            break
+
     @log_start_end_xml(logging.DEBUG)
     def push_forward_frames(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
-            logger.debug('pushing in frame %d' % i)
+            with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
+                logger.debug('pushing in frame %d' % i)
 
-            frame_old_count = self.counter
-            j = 0
-            while j < len(f):
-                assert self.uncommitted == set()
-                c = f.l[j]
-                if c in self[i+1] or c in self.push_cache[i]:
+                frame_old_count = self.counter
+                j = 0
+                while j < len(f):
+                    assert self.uncommitted == set()
+                    c = f.l[j]
+                    if c in self[i+1] or c in self.push_cache[i]:
+                        j += 1
+                        continue
+
+                    with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
+                        self.push_conjunct(i, c, frame_old_count)
+
+                    self.push_cache[i].add(c)
                     j += 1
-                    continue
 
-                is_safety = c in self.safety
-                conjunct_old_count = self.counter
-
-                while True:
-                    logger.debug('frame %s attempting to push %s' % (i, c))
-
-                    if not is_safety and args.convergence_hacks and (
-                            self.counter > conjunct_old_count + 3 or
-                            self.counter > frame_old_count + 10
-                        ): # total hack
-                        logger.warning('decided to give up pushing conjunct %s in frame %d' % (c, i))
-                        if self.counter > conjunct_old_count + 3:
-                            logger.warning("because I've tried to push this conjunct 3 times")
-                        else:
-                            assert self.counter > frame_old_count + 10
-                            logger.warning("because I've spent too long in this frame")
-                        self.abort()
-                        break
-
-
-                    res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
-                    if res is None:
-                        logger.debug('frame %s managed to push %s' % (i, c))
-
-                        if args.smoke_test:
-                            logger.debug('jrw smoke testing...')
-                            om = check_bmc(self.solver, self.prog, c, i+1)
-                            if om is not None:
-                                logger.debug('no!')
-                                m = om
-                                logger.always_print('')
-                                out = io.StringIO()
-                                fmt = z3.Formatter() # type: ignore
-                                fmt.max_args = 10000
-                                logger.always_print(str(fmt.max_args))
-                                pp = z3.PP() # type: ignore
-                                pp.max_lines = 10000
-                                pp(out, fmt(m))
-                                logger.always_print(out.getvalue())
-                                assert False
-                            logger.debug('ok.')
-
-                        self[i+1].add(c)
-                        self.commit()
-                        break
-                    else:
-                        m, t = res
-                        mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
-                        diag = mod.as_diagram(old=True)
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug('frame %s failed to immediately push %s due to transition %s' % (i, c, t.name))
-                            # logger.debug(str(mod))
-                        flag = False
-                        if flag:
-                            flag = False
-                            self.abort()
-                            break
-                        if is_safety:
-                            logger.debug('note: current clause is safety condition')
-                            self.block(diag, i, [(None, c), (t, diag)], True)
-                        else:
-                            ans = self.block(diag, i, [(None, c), (t, diag)], False)
-                            if isinstance(ans, GaveUp):
-                                logger.warning('frame %d decided to give up pushing conjunct %s' % (i, c))
-                                logger.warning('because a call to block gave up')
-                                self.abort()
-                                break
-                            elif isinstance(ans, CexFound):
-                                self.commit()
-                                break
-
-                self.push_cache[i].add(c)
-                j += 1
-
+    # Block the diagram in the given frame.
+    # If safety_goal is True, the only possible outcomes are returning Blocked() on success
+    # or throwing an exception describing an abstract counterexample on failure.
+    # If safety_goal is False, then no abstract counterexample is ever reported to user,
+    # instead, CexFound() is returned to indicate the diagram could not be blocked.
+    # Also, if safety_goal is False and args.convergence_hacks is True, block() will
+    # sometimes decide to give up blocking and return GaveUp(), which the caller
+    # can handle in whatever way makes sense (typically, it is treated as a failure to block).
     def block(
             self,
             diag: Diagram,
