@@ -604,18 +604,18 @@ class Diagram(object):
                     logger.debug('eliminated clause %s' % c)
                 self.remove_clause(d, j)
                 self.smoke(s, prog, depth)
-            elif logger.isEnabledFor(logging.DEBUG):
-
-                logger.debug('failed to eliminate clause %s' % c)
-                logger.debug('from diagram %s' % self)
-
-                if isinstance(res, tuple):
-                    m, t = res
-                    logger.debug('because of transition %s' % t.name)
-                    logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
-                else:
-                    logger.debug('because the diagram is satisfiable in the initial state')
-                    logger.debug('and model %s' % Model(prog, m, KEY_ONE))
+#            elif logger.isEnabledFor(logging.DEBUG):
+#
+#                logger.debug('failed to eliminate clause %s' % c)
+#                logger.debug('from diagram %s' % self)
+#
+#                if isinstance(res, tuple):
+#                    m, t = res
+#                    logger.debug('because of transition %s' % t.name)
+#                    logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
+#                else:
+#                    logger.debug('because the diagram is satisfiable in the initial state')
+#                    logger.debug('and model %s' % Model(prog, m, KEY_ONE))
 
 
 
@@ -963,7 +963,7 @@ class Frames(object):
                 if res is None:
                     logger.debug('frame %s managed to push %s' % (frame_no, c))
 
-                    if args.smoke_test:
+                    if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
                         logger.debug('jrw smoke testing...')
                         om = check_bmc(self.solver, self.prog, c, frame_no+1)
                         if om is not None:
@@ -1107,7 +1107,7 @@ class Frames(object):
         if depth is None:
             depth = len(self)
 
-        if args.smoke_test:
+        if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
             logger.debug('smoke testing at depth %s...' % (depth,))
             res = check_bmc(self.solver, self.prog, e, depth)
             if res is not None:
