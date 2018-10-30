@@ -534,17 +534,7 @@ class Diagram(object):
             res = check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
             if res is not None:
                 logger.debug('no!')
-                m = res
-                logger.always_print('')
-                out = io.StringIO()
-                f = z3.Formatter() # type: ignore
-                f.max_args = 10000
-                logger.always_print(str(f.max_args))
-                pp = z3.PP() # type: ignore
-                pp.max_lines = 10000
-                pp(out, f(m))
-                logger.always_print(out.getvalue())
-                assert False
+                verbose_print_z3_model(res)
             logger.debug('ok.')
 
     def check_valid(self, s: Solver, prog: Program, f: Iterable[Expr]) \
@@ -891,6 +881,19 @@ class CexFound(object):
 class GaveUp(object):
     pass
 
+def verbose_print_z3_model(m: z3.ModelRef) -> None:
+    logger.always_print('')
+    out = io.StringIO()
+    fmt = z3.Formatter() # type: ignore
+    fmt.max_args = 10000
+    logger.always_print(str(fmt.max_args))
+    pp = z3.PP() # type: ignore
+    pp.max_lines = 10000
+    pp(out, fmt(m))
+    logger.always_print(out.getvalue())
+    assert False
+
+
 class Frames(object):
     @log_start_end_xml(logging.DEBUG, 'Frames.__init__')
     def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr]) -> None:
@@ -1115,17 +1118,7 @@ class Frames(object):
             res = check_bmc(self.solver, self.prog, e, depth)
             if res is not None:
                 logger.debug('no!')
-                m = res
-                logger.always_print('')
-                out = io.StringIO()
-                f = z3.Formatter() # type: ignore
-                f.max_args = 10000
-                logger.always_print(str(f.max_args))
-                pp = z3.PP() # type: ignore
-                pp.max_lines = 10000
-                pp(out, f(m))
-                logger.always_print(out.getvalue())
-                assert False
+                verbose_print_z3_model(res)
             logger.debug('ok.')
 
         for i in range(depth+1):
@@ -1382,21 +1375,9 @@ def bmc(s: Solver, prog: Program) -> None:
         logger.always_print('ok. (%s)' % (datetime.now() - start))
         sys.stdout.flush()
     else:
-        m = res
-        logger.always_print('')
-        out = io.StringIO()
-        f = z3.Formatter() # type: ignore
-        f.max_args = 10000
-        logger.always_print(str(f.max_args))
-        pp = z3.PP() # type: ignore
-        pp.max_lines = 10000
-        pp(out, f(m))
-        logger.always_print(out.getvalue())
-        # logger.always_print(m)
         logger.always_print('no! (%s)' % (datetime.now() - start))
         sys.stdout.flush()
-
-
+        verbose_print_z3_model(res)
 
 @log_start_end_time()
 def theorem(s: Solver, prog: Program) -> None:
