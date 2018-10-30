@@ -1055,9 +1055,9 @@ def close_free_vars(expr: Expr, in_scope: List[str]=[]) -> Expr:
     if vs == []:
         return expr
     else:
-        logging.debug('closing expression')
-        logging.debug(str(expr))
-        logging.debug('with free vars %s' % vs)
+        # logging.debug('closing expression')
+        # logging.debug(str(expr))
+        # logging.debug('with free vars %s' % vs)
         return QuantifierExpr(None, 'FORALL', [SortedVar(None, v, None) for v in vs], expr)
 
 class InitDecl(Decl):

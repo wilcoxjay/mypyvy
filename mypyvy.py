@@ -13,6 +13,9 @@ import logging
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
+import xml
+import xml.sax
+import xml.sax.saxutils
 import z3
 
 import parser
@@ -20,7 +23,95 @@ import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, TransitionDecl, InvariantDecl
 
-logger = logging.getLogger(__file__)
+ALWAYS_PRINT = 35
+
+class MyLogger(object):
+    def __init__(self, logger: logging.Logger) -> None:
+        self.logger = logger
+
+    def setLevel(self, lvl: int) -> None:
+        self.logger.setLevel(lvl)
+
+    def isEnabledFor(self, lvl: int) -> bool:
+        return self.logger.isEnabledFor(lvl)
+
+    def warning(self, msg: str) -> None:
+        self.log(logging.WARNING, msg)
+
+    def info(self, msg: str) -> None:
+        self.log(logging.INFO, msg)
+
+    def debug(self, msg: str) -> None:
+        self.log(logging.DEBUG, msg)
+
+    def always_print(self, msg: str) -> None:
+        self.log(ALWAYS_PRINT, msg)
+
+    def log_list(self, lvl: int, msgs: List[str]) -> None:
+        if args.log_xml:
+            for msg in msgs:
+                self.log(lvl, msg)
+        else:
+            self.log(lvl, '\n'.join(msgs))
+
+    def log(self, lvl: int, msg: str) -> None:
+
+        if self.isEnabledFor(lvl):
+            if args.log_xml:
+                msg = xml.sax.saxutils.escape(msg)
+                with LogTag('msg', lvl=lvl):
+                    self.rawlog(ALWAYS_PRINT, msg)
+            else:
+                self.rawlog(lvl, msg)
+
+    def rawlog(self, lvl: int, msg: str) -> None:
+        self.logger.log(lvl, msg)
+
+logger = MyLogger(logging.getLogger(__file__))
+
+class LogTag(object):
+    def __init__(self, name: str, lvl: int=ALWAYS_PRINT, **kwargs: str) -> None:
+        self.name = name
+        self.lvl = lvl
+        self.kwargs = kwargs
+
+    def __enter__(self) -> None:
+        if args.log_xml and logger.isEnabledFor(self.lvl):
+            msg = ''
+            for k, v in self.kwargs.items():
+                msg += ' %s="%s"' % (k, xml.sax.saxutils.escape(v))
+
+            logger.rawlog(ALWAYS_PRINT, '<%s%s>' % (self.name, msg))
+
+    def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
+        if args.log_xml and logger.isEnabledFor(self.lvl):
+            logger.rawlog(ALWAYS_PRINT, '</%s>' % self.name)
+
+
+FuncType = Callable[..., Any]
+F = TypeVar('F', bound=FuncType)
+def log_start_end_time(lvl: int=logging.DEBUG) -> Callable[[F], F]:
+    def dec(func: F) -> F:
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs): # type: ignore
+            start = datetime.now()
+            logger.log(lvl, '%s started at %s' % (func.__name__, start))
+            ans = func(*args, **kwargs)
+            end = datetime.now()
+            logger.log(lvl, '%s ended at %s (took %s seconds)' % (func.__name__, end, (end - start).total_seconds()))
+            return ans
+        return cast(F, wrapped)
+    return dec
+
+def log_start_end_xml(lvl: int=logging.DEBUG, tag: Optional[str]=None) -> Callable[[F], F]:
+    def dec(func: F) -> F:
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs): # type: ignore
+            with LogTag(tag if tag is not None else func.__name__, lvl=lvl):
+                ans = func(*args, **kwargs)
+            return ans
+        return cast(F, wrapped)
+    return dec
 
 z3.Forall = z3.ForAll
 
@@ -128,15 +219,16 @@ def check_unsat(
     if s.check() != z3.unsat:
         m = Model(prog, s.model(), key, key_old)
 
-        print('')
-        print(m)
+        logger.always_print('')
+        logger.always_print(str(m))
         for tok, msg in zip(toks, errmsgs):
             syntax.print_error(tok, msg)
-    print('ok. (%s)' % (datetime.now() - start))
+    logger.always_print('    ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
 
+@log_start_end_xml(logging.INFO)
 def check_init(s: Solver, prog: Program) -> None:
-    print('checking init:')
+    logger.always_print('checking init:')
 
     t = s.get_translator(KEY_ONE)
 
@@ -154,7 +246,7 @@ def check_init(s: Solver, prog: Program) -> None:
                     msg = ' on line %d' % inv.tok.lineno
                 else:
                     msg = ''
-                print('  implies invariant%s...' % msg, end='')
+                logger.always_print('  implies invariant%s...' % msg)
                 sys.stdout.flush()
 
                 check_unsat([inv.tok], ['invariant%s may not hold in initial state' % msg], s, prog, KEY_ONE)
@@ -168,7 +260,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
             s.add(t.translate_expr(inv.expr, old=True))
 
         for trans in prog.transitions():
-            print('checking transation %s:' % (trans.name,))
+            logger.always_print('checking transation %s:' % (trans.name,))
 
             with s:
                 s.add(t.translate_transition(trans))
@@ -182,7 +274,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
                             msg = ' on line %d' % inv.tok.lineno
                         else:
                             msg = ''
-                        print('  preserves invariant%s...' % msg, end='')
+                        logger.always_print('  preserves invariant%s...' % msg)
                         sys.stdout.flush()
 
                         check_unsat([inv.tok, trans.tok],
@@ -237,21 +329,6 @@ def check_two_state_implication_all_transitions(
                     return s.model(), trans
 
     return None
-
-FuncType = Callable[..., Any]
-F = TypeVar('F', bound=FuncType)
-def log_start_end_time(lvl: int=logging.DEBUG) -> Callable[[F], F]:
-    def dec(func: F) -> F:
-        @functools.wraps(func)
-        def wrapped(*args, **kwargs): # type: ignore
-            start = datetime.now()
-            logger.log(lvl, '%s started at %s' % (func.__name__, start))
-            ans = func(*args, **kwargs)
-            end = datetime.now()
-            logger.log(lvl, '%s ended at %s (took %s seconds)' % (func.__name__, end, (end - start).total_seconds()))
-            return ans
-        return cast(F, wrapped)
-    return dec
 
 class Diagram(object):
     # This class represents a formula of the form
@@ -458,15 +535,15 @@ class Diagram(object):
             if res is not None:
                 logger.debug('no!')
                 m = res
-                print('')
+                logger.always_print('')
                 out = io.StringIO()
                 f = z3.Formatter() # type: ignore
                 f.max_args = 10000
-                print(f.max_args)
+                logger.always_print(str(f.max_args))
                 pp = z3.PP() # type: ignore
                 pp.max_lines = 10000
                 pp(out, f(m))
-                print(out.getvalue())
+                logger.always_print(out.getvalue())
                 assert False
             logger.debug('ok.')
 
@@ -482,7 +559,7 @@ class Diagram(object):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
             logger.debug(str(self))
-            logger.debug('previous frame is\n%s' % '\n'.join(str(x) for x in f))
+            logger.log_list(logging.DEBUG, ['previous frame is'] + [str(x) for x in f])
 
         T = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
         d: T
@@ -497,8 +574,8 @@ class Diagram(object):
             if res1 is None:
                 assert False
             m, t = res1
-            print(m)
-            print(t.name)
+            logger.always_print(str(m))
+            logger.always_print(t.name)
 
         self.smoke(s, prog, depth)
 
@@ -557,6 +634,9 @@ class Diagram(object):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalized diag')
             logger.debug(str(self))
+
+def log_diagram(diag: Diagram, lvl: int=logging.DEBUG) -> None:
+    logger.log(lvl, str(diag))
 
 class OrderedSet(Generic[T], Iterable[T]):
     def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
@@ -812,6 +892,7 @@ class GaveUp(object):
     pass
 
 class Frames(object):
+    @log_start_end_xml(logging.DEBUG, 'Frames.__init__')
     def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr]) -> None:
         self.solver = solver
         self.prog = prog
@@ -855,6 +936,10 @@ class Frames(object):
                 return self[i+1]
         return None
 
+    # with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
+    # with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
+    # with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
+    @log_start_end_xml(logging.DEBUG)
     def push_forward_frames(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
             logger.debug('pushing in frame %d' % i)
@@ -898,15 +983,15 @@ class Frames(object):
                             if om is not None:
                                 logger.debug('no!')
                                 m = om
-                                print('')
+                                logger.always_print('')
                                 out = io.StringIO()
                                 fmt = z3.Formatter() # type: ignore
                                 fmt.max_args = 10000
-                                print(fmt.max_args)
+                                logger.always_print(str(fmt.max_args))
                                 pp = z3.PP() # type: ignore
                                 pp.max_lines = 10000
                                 pp(out, fmt(m))
-                                print(out.getvalue())
+                                logger.always_print(out.getvalue())
                                 assert False
                             logger.debug('ok.')
 
@@ -951,7 +1036,7 @@ class Frames(object):
     ) -> Union[Blocked, CexFound, GaveUp]:
         if j == 0 or (j == 1 and diag.valid_in_init(self.solver, self.prog) is not None):
             if safety_goal:
-                print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
+                logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
             else:
                 if logger.isEnabledFor(logging.DEBUG):
@@ -971,10 +1056,9 @@ class Frames(object):
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
-                logger.debug(str(diag))
+                log_diagram(diag, lvl=logging.DEBUG)
 
-                logger.debug('frame %d is' % (j-1))
-                logger.debug('\n'.join(str(x) for x in self[j-1]))
+                self.print_frame(j-1, lvl=logging.DEBUG)
             res, x = self.find_predecessor(self[j-1], diag)
             if res == z3.unsat:
                 logger.debug('no predecessor: blocked!')
@@ -1032,15 +1116,15 @@ class Frames(object):
             if res is not None:
                 logger.debug('no!')
                 m = res
-                print('')
+                logger.always_print('')
                 out = io.StringIO()
                 f = z3.Formatter() # type: ignore
                 f.max_args = 10000
-                print(f.max_args)
+                logger.always_print(str(f.max_args))
                 pp = z3.PP() # type: ignore
                 pp.max_lines = 10000
                 pp(out, f(m))
-                print(out.getvalue())
+                logger.always_print(out.getvalue())
                 assert False
             logger.debug('ok.')
 
@@ -1171,25 +1255,32 @@ class Frames(object):
             self._simplify_frame(f)
 
 
+    def print_frame(self, i: int, lvl: int=logging.INFO) -> None:
+        f = self.fs[i]
+        with LogTag('frame', i=str(i)):
+            logger.log_list(lvl, ['frame %d is' % i] + [str(x) for x in f])
+
     def print_frames(self) -> None:
-        for i, f in enumerate(self.fs):
-            logger.info('frame %d is\n%s' % (i, '\n'.join(str(x) for x in f)))
-            logger.info('')
+        for i, _ in enumerate(self.fs):
+            self.print_frame(i)
 
     def search(self) -> MySet[Expr]:
         while True:
             f: Optional[OrderedSet[Expr]]
-            self.print_frames()
-            logger.info('considering frame %s' % (len(self) - 1,))
+            n = len(self) - 1
+            with LogTag('frame', lvl=logging.INFO, n=str(n)):
+                self.print_frames()
 
-            f = self.get_inductive_frame()
-            if f is not None:
-                print('frame is safe and inductive. done!')
-                print('\n'.join(str(x) for x in f))
-                return f
+                logger.info('considering frame %s' % (len(self) - 1,))
 
-            logger.info('frame is safe but not inductive. starting new frame')
-            self.new_frame()
+                f = self.get_inductive_frame()
+                if f is not None:
+                    logger.always_print('frame is safe and inductive. done!')
+                    logger.log_list(ALWAYS_PRINT, [str(x) for x in f])
+                    return f
+
+                logger.info('frame is safe but not inductive. starting new frame')
+                self.new_frame()
 
 def get_safety(prog: Program) -> List[Expr]:
     if args.safety is not None:
@@ -1206,6 +1297,7 @@ def get_safety(prog: Program) -> List[Expr]:
     return safety
 
 
+@log_start_end_xml(logging.INFO)
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
     if args.find_predecessor_via_transition_disjunction:
@@ -1227,16 +1319,16 @@ def debug_tokens(filename: str) -> None:
 
     while True:
         tok = l.token()
-        if not tok: 
+        if not tok:
             break      # No more input
-        print(tok)
+        logger.always_print(str(tok))
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
     check_init(s, prog)
     check_transitions(s, prog)
 
-    print('all ok!')
+    logger.always_print('all ok!')
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
     keys = ['state%d' % i for i in range(depth+1)]
@@ -1279,36 +1371,36 @@ def bmc(s: Solver, prog: Program) -> None:
 
     n = args.depth
 
-    print('bmc checking the following property to depth %d' % n)
-    print('  ' + str(safety))
+    logger.always_print('bmc checking the following property to depth %d' % n)
+    logger.always_print('  ' + str(safety))
 
     start = datetime.now()
 
     res = check_bmc(s, prog, safety, n)
 
     if res is None:
-        print('ok. (%s)' % (datetime.now() - start))
+        logger.always_print('ok. (%s)' % (datetime.now() - start))
         sys.stdout.flush()
     else:
         m = res
-        print('')
+        logger.always_print('')
         out = io.StringIO()
         f = z3.Formatter() # type: ignore
         f.max_args = 10000
-        print(f.max_args)
+        logger.always_print(str(f.max_args))
         pp = z3.PP() # type: ignore
         pp.max_lines = 10000
         pp(out, f(m))
-        print(out.getvalue())
-        # print(m)
-        print('no! (%s)' % (datetime.now() - start))
+        logger.always_print(out.getvalue())
+        # logger.always_print(m)
+        logger.always_print('no! (%s)' % (datetime.now() - start))
         sys.stdout.flush()
 
 
 
 @log_start_end_time()
 def theorem(s: Solver, prog: Program) -> None:
-    print('checking theorems:')
+    logger.always_print('checking theorems:')
 
     for th in prog.theorems():
         if th.twostate:
@@ -1325,7 +1417,7 @@ def theorem(s: Solver, prog: Program) -> None:
         else:
             msg = ''
 
-        print(' theorem%s...' % msg)
+        logger.always_print(' theorem%s...' % msg)
         sys.stdout.flush()
 
         with s:
@@ -1369,6 +1461,8 @@ def parse_args() -> argparse.Namespace:
                        help='logging level')
         s.add_argument('--log-time', action='store_true',
                        help='make each log message include current time')
+        s.add_argument('--log-xml', action='store_true',
+                       help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
         s.add_argument('--print-program-repr', action='store_true',
                        help='print a machine-readable representation of the program after parsing')
@@ -1401,22 +1495,29 @@ def parse_args() -> argparse.Namespace:
 
 class MyFormatter(logging.Formatter):
     def __init__(self, fmt: str) -> None:
-        super().__init__(fmt=fmt)
+        super().__init__(fmt='%(levelname)s ' + fmt)
+        self.withoutlevel = logging.Formatter(fmt='%(message)s')
         self.start = datetime.now()
+
+    def format(self, record: Any) -> str:
+        if record.levelno == ALWAYS_PRINT:
+            return self.withoutlevel.format(record)
+        else:
+            return super().format(record)
 
     def formatTime(self, record: Any, datefmt: Optional[str]=None) -> str:
         return str((datetime.now() - self.start).total_seconds())
 
 def main() -> None:
-    print(' '.join(['python3'] + sys.argv))
-
     global args
     args = parse_args()
 
-    if args.log_time:
-        fmt = '%(levelname)s %(asctime)s %(filename)s:%(lineno)d: %(message)s'
+    if args.log_xml:
+        fmt = '%(message)s'
+    elif args.log_time:
+        fmt = '%(asctime)s %(filename)s:%(lineno)d: %(message)s'
     else:
-        fmt = '%(levelname)s %(filename)s:%(lineno)d: %(message)s'
+        fmt = '%(filename)s:%(lineno)d: %(message)s'
 
     logger.setLevel(getattr(logging, args.log.upper(), None))
     handler = logging.StreamHandler(stream=sys.stdout)
@@ -1433,33 +1534,38 @@ def main() -> None:
         KEY_NEW = args.key_prefix + '_' + KEY_NEW
         KEY_OLD = args.key_prefix + '_' + KEY_OLD
 
-    logger.info('setting seed to %d' % args.seed)
-    z3.set_param('smt.random_seed', args.seed)
+    with LogTag('main', lvl=logging.INFO):
+        logger.always_print(' '.join(['python3'] + sys.argv))
 
-    with open(args.filename) as f:
-        l = parser.get_lexer()
-        p = parser.get_parser(forbid_rebuild=args.forbid_parser_rebuild)
-        prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=args.filename)
 
-    if args.print_program_repr:
-        print(repr(prog))
-    if args.print_program:
-        print(prog)
+        logger.info('setting seed to %d' % args.seed)
+        z3.set_param('smt.random_seed', args.seed)
 
-    prog.resolve()
+        with open(args.filename) as f:
+            l = parser.get_lexer()
+            p = parser.get_parser(forbid_rebuild=args.forbid_parser_rebuild)
+            prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=args.filename)
 
-    scope = prog.scope
-    assert scope is not None
-    assert len(scope.stack) == 0
+        if args.print_program_repr:
+            logger.always_print(repr(prog))
+        if args.print_program:
+            logger.always_print(str(prog))
 
-    s = Solver(cast(Scope[z3.ExprRef], scope))
-    t = s.get_translator()
-    for a in prog.axioms():
-        s.add(t.translate_expr(a.expr))
+        prog.resolve()
 
-    args.main(s, prog)
+        scope = prog.scope
+        assert scope is not None
+        assert len(scope.stack) == 0
 
-    logger.info('total number of queries: %s' % s.nqueries)
+        s = Solver(cast(Scope[z3.ExprRef], scope))
+        t = s.get_translator()
+        for a in prog.axioms():
+            s.add(t.translate_expr(a.expr))
+
+
+        args.main(s, prog)
+
+        logger.info('total number of queries: %s' % s.nqueries)
 
 if __name__ == '__main__':
     main()
