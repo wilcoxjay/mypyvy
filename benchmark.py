@@ -77,6 +77,7 @@ class Benchmark(object):
 
         if not timed_out:
             nqueries: Optional[int] = None
+            found = False
             for line in proc.stdout.splitlines():
                 if 'updr ended' in line:
                     m = re.search('\(took (?P<time>.*) seconds\)', line)
