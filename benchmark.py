@@ -18,6 +18,20 @@ def generate_parser() -> None:
     cmd = ['python3', 'mypyvy.py', 'generate-parser', 'test/lockserv.pyv']
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) # type: ignore
 
+def run_isolated_process(cmd: List[str], out: TextIO) -> None:
+    proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True) # type: ignore
+    print(proc.stdout, end='', file=out)
+    print(proc.stderr, end='', file=out)
+
+def dump_version_info(f: TextIO) -> None:
+    print('dump_version_info: dumping information about the current commit and working directory', file=f)
+    run_isolated_process(['git', 'rev-parse', 'HEAD'], f)
+    run_isolated_process(['git', 'status'], f)
+    run_isolated_process(['git', 'diff'], f)
+    run_isolated_process(['git', 'diff', '--cached'], f)
+    print('dump_version_info: done.', file=f)
+    print('-' * 80, file=f)
+
 class Benchmark(object):
     def __init__(self, name: str, safety: Optional[str]=None) -> None:
         self.name = name
@@ -211,6 +225,8 @@ def main() -> None:
 
     print(' '.join(['python3'] + sys.argv), file=results_file)
 
+    dump_version_info(results_file)
+
     generate_parser()
 
     q: queue.Queue[Optional[Tuple[Benchmark, int]]] = queue.Queue()
@@ -231,8 +247,9 @@ def main() -> None:
                 break
 
             n = q.unfinished_tasks # type: ignore
-            print('\r', end='')
-            print('benchmark %s has %s jobs remaining' % (the_bench.name, n), end='', flush=True)
+            if sys.stdout.isatty():
+                print('\r', end='')
+                print('benchmark %s has %s jobs remaining' % (the_bench.name, n), end='', flush=True)
 
         # print('ui worker exiting')
 
