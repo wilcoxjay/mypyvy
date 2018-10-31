@@ -59,7 +59,7 @@ class MyLogger(object):
         if self.isEnabledFor(lvl):
             if args.log_xml:
                 msg = xml.sax.saxutils.escape(msg)
-                with LogTag('msg', lvl=lvl):
+                with LogTag('msg', lvl=lvl, time=str((datetime.now() - start).total_seconds())):
                     self.rawlog(ALWAYS_PRINT, msg)
             else:
                 self.rawlog(lvl, msg)
@@ -544,12 +544,14 @@ class Diagram(object):
             return ans
         return self.valid_in_init(s, prog)
 
+    @log_start_end_xml()
     @log_start_end_time()
     def generalize(self, s: Solver, prog: Program, f: Iterable[Expr], depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
             logger.debug(str(self))
-            logger.log_list(logging.DEBUG, ['previous frame is'] + [str(x) for x in f])
+            with LogTag('previous-frame', lvl=logging.DEBUG):
+                logger.log_list(logging.DEBUG, ['previous frame is'] + [str(x) for x in f])
 
         T = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
         d: T
@@ -569,53 +571,54 @@ class Diagram(object):
 
         self.smoke(s, prog, depth)
 
-        for d in itertools.chain(I, R, C, F):
-            if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
-                continue
-            with self.without(d):
-                res = self.check_valid(s, prog, f)
-            if res is None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('eliminated all conjuncts from declaration %s' % d)
-                self.remove_clause(d)
-                self.smoke(s, prog, depth)
-                continue
-            if isinstance(d, RelationDecl):
-                l = self.rels[d]
-                cs = set()
-                S = self.tombstones[d]
-                assert S is not None
-                for j, x in enumerate(l):
-                    if j not in S and isinstance(x, syntax.UnaryExpr):
-                        cs.add(j)
-                with self.without(d, cs):
+        with LogTag('eliminating-conjuncts', lvl=logging.DEBUG):
+            for d in itertools.chain(I, R, C, F):
+                if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
+                    continue
+                with self.without(d):
                     res = self.check_valid(s, prog, f)
                 if res is None:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('eliminated all negative conjuncts from declaration %s' % d)
-                    self.remove_clause(d, cs)
+                        logger.debug('eliminated all conjuncts from declaration %s' % d)
+                    self.remove_clause(d)
                     self.smoke(s, prog, depth)
+                    continue
+                if isinstance(d, RelationDecl):
+                    l = self.rels[d]
+                    cs = set()
+                    S = self.tombstones[d]
+                    assert S is not None
+                    for j, x in enumerate(l):
+                        if j not in S and isinstance(x, syntax.UnaryExpr):
+                            cs.add(j)
+                    with self.without(d, cs):
+                        res = self.check_valid(s, prog, f)
+                    if res is None:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug('eliminated all negative conjuncts from declaration %s' % d)
+                        self.remove_clause(d, cs)
+                        self.smoke(s, prog, depth)
 
-        for d, j, c in self.conjuncts():
-            with self.without(d, j):
-                res = self.check_valid(s, prog, f)
-            if res is None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug('eliminated clause %s' % c)
-                self.remove_clause(d, j)
-                self.smoke(s, prog, depth)
-#            elif logger.isEnabledFor(logging.DEBUG):
-#
-#                logger.debug('failed to eliminate clause %s' % c)
-#                logger.debug('from diagram %s' % self)
-#
-#                if isinstance(res, tuple):
-#                    m, t = res
-#                    logger.debug('because of transition %s' % t.name)
-#                    logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
-#                else:
-#                    logger.debug('because the diagram is satisfiable in the initial state')
-#                    logger.debug('and model %s' % Model(prog, m, KEY_ONE))
+            for d, j, c in self.conjuncts():
+                with self.without(d, j):
+                    res = self.check_valid(s, prog, f)
+                if res is None:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug('eliminated clause %s' % c)
+                    self.remove_clause(d, j)
+                    self.smoke(s, prog, depth)
+    #            elif logger.isEnabledFor(logging.DEBUG):
+    #
+    #                logger.debug('failed to eliminate clause %s' % c)
+    #                logger.debug('from diagram %s' % self)
+    #
+    #                if isinstance(res, tuple):
+    #                    m, t = res
+    #                    logger.debug('because of transition %s' % t.name)
+    #                    logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
+    #                else:
+    #                    logger.debug('because the diagram is satisfiable in the initial state')
+    #                    logger.debug('and model %s' % Model(prog, m, KEY_ONE))
 
 
 
@@ -1024,6 +1027,7 @@ class Frames(object):
     # Also, if safety_goal is False and args.convergence_hacks is True, block() will
     # sometimes decide to give up blocking and return GaveUp(), which the caller
     # can handle in whatever way makes sense (typically, it is treated as a failure to block).
+    @log_start_end_xml(lvl=logging.DEBUG)
     def block(
             self,
             diag: Diagram,
@@ -1119,6 +1123,7 @@ class Frames(object):
             self[i].add(e)
 
 
+    @log_start_end_xml(lvl=logging.DEBUG)
     def find_predecessor(
             self,
             pre_frame: Iterable[Expr],
@@ -1471,11 +1476,14 @@ def parse_args() -> argparse.Namespace:
 
     return argparser.parse_args()
 
+start: datetime
+
 class MyFormatter(logging.Formatter):
     def __init__(self, fmt: str) -> None:
         super().__init__(fmt='%(levelname)s ' + fmt)
         self.withoutlevel = logging.Formatter(fmt='%(message)s')
-        self.start = datetime.now()
+        global start
+        start = datetime.now()
 
     def format(self, record: Any) -> str:
         if record.levelno == ALWAYS_PRINT:
@@ -1484,7 +1492,7 @@ class MyFormatter(logging.Formatter):
             return super().format(record)
 
     def formatTime(self, record: Any, datefmt: Optional[str]=None) -> str:
-        return str((datetime.now() - self.start).total_seconds())
+        return str((datetime.now() - start).total_seconds())
 
 def main() -> None:
     global args
