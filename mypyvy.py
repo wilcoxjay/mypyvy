@@ -454,9 +454,15 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        e = syntax.And(*(c for _, _, c in self.conjuncts_simple()))
-        fv = e.free_ids()
-        vs = [v for v in self.binder.vs if v.name in fv]
+        # TODO: remove this option on merge
+        if args.simple_conjuncts:
+            e = syntax.And(*(c for _, _, c in self.conjuncts_simple()))
+            fv = e.free_ids()
+            vs = [v for v in self.binder.vs if v.name in fv]
+        else:
+            e = syntax.And(*(c for _, _, c in self.conjuncts()))
+            vs = self.binder.vs
+
         if len(vs) == 0:
             return e
         else:
@@ -1479,9 +1485,11 @@ def parse_args() -> argparse.Namespace:
                                 'of all transitions rather than enumerating them one by one')
     updr_subparser.add_argument('--smoke-test', action='store_true',
                                 help='run bmc to confirm every conjunct added to a frame')
-
     updr_subparser.add_argument('--convergence-hacks', action='store_true',
                                 help='when some steps seem to be taking too long, just give up')
+    updr_subparser.add_argument('--simple-conjuncts', action='store_true',
+                                help='substitute existentially quantified variables that are equal to constants')
+
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
