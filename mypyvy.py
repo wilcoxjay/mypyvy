@@ -391,10 +391,13 @@ class Diagram(object):
             if S is not None and 0 not in S:
                 yield c, 0, e
 
-    def const_subst(self) -> Dict[Id, Id]:
-        return {e.arg2: e.arg1
-                for c, e in self.consts.items()
-                if isinstance(e, syntax.BinaryExpr) and e.op == 'EQUAL'}
+    def const_subst(self) -> Dict[syntax.Id, syntax.Id]:
+        ans = {}
+        for c, e in self.consts.items():
+            assert isinstance(e, syntax.BinaryExpr) and e.op == 'EQUAL' and \
+                isinstance(e.arg1, syntax.Id) and isinstance(e.arg2, syntax.Id)
+            ans[e.arg2] = e.arg1
+        return ans
 
     def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
         for t1 in self.ineq_conjuncts():
@@ -408,6 +411,7 @@ class Diagram(object):
 
     def conjuncts_simpl(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
         subst = self.const_subst()
+        s: Union[SortDecl, RelationDecl, FunctionDecl]
         for (s, r, e) in self.ineq_conjuncts():
             yield (s, r, syntax.subst_vars_simple(e, subst))
         for (s, r, e) in self.rel_conjuncts():

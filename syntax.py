@@ -6,7 +6,7 @@ import logging
 import ply.lex
 import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable
+    Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable, Mapping
 from typing_extensions import Protocol
 import z3
 
@@ -265,7 +265,7 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
         assert False
 
 
-def subst_vars_simple(expr: Expr, subst: Dict[Id, Expr]):
+def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
     if isinstance(expr, Bool):
         return expr
     elif isinstance(expr, UnaryExpr):
