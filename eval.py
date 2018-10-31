@@ -84,7 +84,10 @@ def times(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Op
 def nqueries(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Optional[int]]:
     return [x[1] if x is not None and isinstance(x, tuple) else None for x in l]
 
+all_data: Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]
+transformed_data: Sequence[Tuple[str, Sequence[Optional[float]]]]
 def main() -> None:
+    global all_data
     with open(args.filename) as f:
         all_data = get_all_matching_data(f, args.benchmark or "Benchmark")
 
@@ -95,23 +98,25 @@ def main() -> None:
         assert args.column == 'time'
         transform = times
 
-    td = [(b, transform(l)) for b, l in all_data]
+    global transformed_data
+    transformed_data = [(b, transform(l)) for b, l in all_data]
 
     if args.action == 'plot':
-        hist(td)
+        hist(transformed_data)
     elif args.action == 'pdb':
         pdb.set_trace()
     elif args.action == 'extract':
-        for b, d in td:
+        for b, d in transformed_data:
             print(b)
             print(d)
-    else:
-        assert args.action == 'argmax'
-        for b, d in td:
+    elif args.action == 'argmax':
+        for b, d in transformed_data:
             d = [x or np.NINF for x in d]
             print(b)
             i = np.argmax(d)
             print(i, d[i])
+    else:
+        assert args.action == 'nop'
 
 args: argparse.Namespace
 
@@ -122,7 +127,7 @@ if __name__ == '__main__':
 
     argparser.add_argument('--benchmark')
     argparser.add_argument('--column', default='nqueries', choices=['nqueries', 'time'])
-    argparser.add_argument('--action', default='plot', choices=['plot', 'argmax', 'pdb', 'extract'])
+    argparser.add_argument('--action', default='plot', choices=['plot', 'argmax', 'pdb', 'extract', 'nop'])
     argparser.add_argument('filename')
 
     args = argparser.parse_args()
