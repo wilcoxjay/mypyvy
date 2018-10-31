@@ -6,7 +6,7 @@ import logging
 import ply.lex
 import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable
+    Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable, Mapping
 from typing_extensions import Protocol
 import z3
 
@@ -262,6 +262,23 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
         else:
             return set()
     else:
+        assert False
+
+
+def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
+    if isinstance(expr, Bool):
+        return expr
+    elif isinstance(expr, UnaryExpr):
+        return UnaryExpr(tok=None, op=expr.op, arg=subst_vars_simple(expr.arg, subst))
+    elif isinstance(expr, BinaryExpr):
+        return BinaryExpr(tok=None, op=expr.op, arg1=subst_vars_simple(expr.arg1, subst),
+                                                arg2=subst_vars_simple(expr.arg2, subst))
+    elif isinstance(expr, AppExpr):
+        return AppExpr(tok=None, callee=expr.callee, args=[subst_vars_simple(a, subst) for a in expr.args])
+    elif isinstance(expr, Id):
+        return subst.get(expr, expr)
+    else:
+        print(expr)
         assert False
 
 
@@ -1367,4 +1384,3 @@ class Program(object):
 
     def __str__(self) -> str:
         return '\n'.join(str(d) for d in self.decls)
-            

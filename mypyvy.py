@@ -391,6 +391,14 @@ class Diagram(object):
             if S is not None and 0 not in S:
                 yield c, 0, e
 
+    def const_subst(self) -> Dict[syntax.Id, syntax.Id]:
+        ans = {}
+        for c, e in self.consts.items():
+            assert isinstance(e, syntax.BinaryExpr) and e.op == 'EQUAL' and \
+                isinstance(e.arg1, syntax.Id) and isinstance(e.arg2, syntax.Id)
+            ans[e.arg2] = e.arg1
+        return ans
+
     def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
         for t1 in self.ineq_conjuncts():
             yield t1
@@ -401,6 +409,15 @@ class Diagram(object):
         for t4 in self.func_conjuncts():
             yield t4
 
+    def conjuncts_simple(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
+        subst = self.const_subst()
+        s: Union[SortDecl, RelationDecl, FunctionDecl]
+        for (s, r, e) in self.ineq_conjuncts():
+            yield (s, r, syntax.subst_vars_simple(e, subst))
+        for (s, r, e) in self.rel_conjuncts():
+            yield (s, r, syntax.subst_vars_simple(e, subst))
+        for (s, r, e) in self.func_conjuncts():
+            yield (s, r, syntax.subst_vars_simple(e, subst))
 
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
@@ -437,11 +454,19 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        e = syntax.And(*(c for _, _, c in self.conjuncts()))
-        if len(self.binder.vs) == 0:
+        # TODO: remove this option on merge
+        if args.simple_conjuncts:
+            e = syntax.And(*(c for _, _, c in self.conjuncts_simple()))
+            fv = e.free_ids()
+            vs = [v for v in self.binder.vs if v.name in fv]
+        else:
+            e = syntax.And(*(c for _, _, c in self.conjuncts()))
+            vs = self.binder.vs
+
+        if len(vs) == 0:
             return e
         else:
-            return syntax.Exists(self.binder.vs, e)
+            return syntax.Exists(vs, e)
 
     def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:
         return check_implication(s, (init.expr for init in prog.inits()), [syntax.Not(self.to_ast())])
@@ -1086,7 +1111,8 @@ class Frames(object):
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('adding new clause to frames 0 through %d' % j)
-            logger.debug(str(e))
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("[%d] %s" % (j, str(e)))
 
         self.add(e, j)
 
@@ -1464,9 +1490,11 @@ def parse_args() -> argparse.Namespace:
                                 'of all transitions rather than enumerating them one by one')
     updr_subparser.add_argument('--smoke-test', action='store_true',
                                 help='run bmc to confirm every conjunct added to a frame')
-
     updr_subparser.add_argument('--convergence-hacks', action='store_true',
                                 help='when some steps seem to be taking too long, just give up')
+    updr_subparser.add_argument('--simple-conjuncts', action='store_true',
+                                help='substitute existentially quantified variables that are equal to constants')
+
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',

@@ -1,0 +1,41 @@
+sort node
+
+
+mutable relation nrtc(node, node)
+mutable constant h: node
+mutable constant i: node
+mutable constant j: node
+mutable constant null: node
+
+immutable relation nrtc0(node, node)
+
+# instantiate dtca(node, nrtc) for init
+init nrtc(X,X)
+init nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+init nrtc(X, Y) & nrtc(Y, X) -> X = Y
+init nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+init X != null -> !nrtc(X, null) & !nrtc(null, X)
+
+# instantiate dtca(node, nrtc) for invariant
+invariant nrtc(X,X)
+invariant nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+invariant nrtc(X, Y) & nrtc(Y, X) -> X = Y
+invariant nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+
+
+### The invariant that UPDR is supposed to find:
+#invariant i != null -> !(nrtc(i,X) & nrtc(j,X))
+
+### The invariant that UPDR actually finds:
+### invariant !(exists node0:node, node1:node, node4:node. nrtc(node0, node1) & nrtc(node4, node1) & i = node0 & j = node4)
+
+init i = h
+init j = null
+#init nrtc(U,V) <-> nrtc0(U,V)   # (interestingly, without this line, a different inv. is found :)
+
+transition step(x: node)  # x is not used; but pyvy fails with empty vars
+  modifies nrtc, i, j
+  old(i) != old(null) &
+  (nrtc(U,V) <-> old(nrtc(U,V) & !(nrtc(U,i) & nrtc(i,V) & i != V) | (nrtc(U,i) & nrtc(j,V)))) &
+  (exists K. K = i & old(nrtc(i, K) & i != K & forall Z. nrtc(i, Z) & i != Z -> nrtc(K, Z))) &
+  j = old(i)
