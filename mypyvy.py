@@ -391,6 +391,11 @@ class Diagram(object):
             if S is not None and 0 not in S:
                 yield c, 0, e
 
+    def const_subst(self) -> Dict[Id, Id]:
+        return {e.arg2: e.arg1
+                for c, e in self.consts.items()
+                if isinstance(e, syntax.BinaryExpr) and e.op == 'EQUAL'}
+
     def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
         for t1 in self.ineq_conjuncts():
             yield t1
@@ -401,6 +406,14 @@ class Diagram(object):
         for t4 in self.func_conjuncts():
             yield t4
 
+    def conjuncts_simpl(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
+        subst = self.const_subst()
+        for (s, r, e) in self.ineq_conjuncts():
+            yield (s, r, syntax.subst_vars_simple(e, subst))
+        for (s, r, e) in self.rel_conjuncts():
+            yield (s, r, syntax.subst_vars_simple(e, subst))
+        for (s, r, e) in self.func_conjuncts():
+            yield (s, r, syntax.subst_vars_simple(e, subst))
 
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
@@ -437,11 +450,13 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        e = syntax.And(*(c for _, _, c in self.conjuncts()))
-        if len(self.binder.vs) == 0:
+        e = syntax.And(*(c for _, _, c in self.conjuncts_simpl()))
+        fv = e.free_ids()
+        vs = [v for v in self.binder.vs if v.name in fv]
+        if len(vs) == 0:
             return e
         else:
-            return syntax.Exists(self.binder.vs, e)
+            return syntax.Exists(vs, e)
 
     def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:
         return check_implication(s, (init.expr for init in prog.inits()), [syntax.Not(self.to_ast())])
@@ -1082,7 +1097,8 @@ class Frames(object):
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('adding new clause to frames 0 through %d' % j)
-            logger.debug(str(e))
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("[%d] %s" % (j, str(e)))
 
         self.add(e, j)
 
