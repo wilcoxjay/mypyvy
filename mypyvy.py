@@ -409,7 +409,7 @@ class Diagram(object):
         for t4 in self.func_conjuncts():
             yield t4
 
-    def conjuncts_simpl(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
+    def conjuncts_simple(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
         subst = self.const_subst()
         s: Union[SortDecl, RelationDecl, FunctionDecl]
         for (s, r, e) in self.ineq_conjuncts():
@@ -454,7 +454,7 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        e = syntax.And(*(c for _, _, c in self.conjuncts_simpl()))
+        e = syntax.And(*(c for _, _, c in self.conjuncts_simple()))
         fv = e.free_ids()
         vs = [v for v in self.binder.vs if v.name in fv]
         if len(vs) == 0:
