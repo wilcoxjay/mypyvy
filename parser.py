@@ -27,6 +27,11 @@ reserved = {
     'twostate': 'TWOSTATE',
     'theorem': 'THEOREM',
     'assume': 'ASSUME',
+    'automaton': 'AUTOMATON',
+    'global': 'GLOBAL',
+    'safety': 'SAFETY',
+    'phase': 'PHASE',
+    'self': 'SELF',
 }
 
 tokens = [
@@ -363,6 +368,58 @@ def p_onetwostate(p: Any) -> None:
 def p_decl_theorem(p: Any) -> None:
     'decl : onetwostate THEOREM opt_name expr'
     p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], p[1])
+
+def p_phase_target_self(p: Any) -> None:
+    'phase_target : SELF'
+    p[0] = None
+
+def p_phase_target_phase(p: Any) -> None:
+    'phase_target : PHASE id'
+    p[0] = p[2].value
+
+def p_phase_transition_decl(p: Any) -> None:
+    'phase_component : TRANSITION id IMPLIES phase_target'
+    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, p[4])
+
+def p_phase_invariant_decl(p: Any) -> None:
+    'phase_component : INVARIANT expr'
+    p[0] = syntax.PhaseInvariantDecl(p.slice[1], p[2])
+
+def p_phase_components_empty(p: Any) -> None:
+    'phase_components : empty'
+    p[0] = []
+
+def p_phase_components_component(p: Any) -> None:
+    'phase_components : phase_components phase_component'
+    p[0] = p[1] + [p[2]]
+
+def p_adecl_global(p: Any) -> None:
+    'automaton_decl : GLOBAL phase_components'
+    p[0] = syntax.GlobalPhaseDecl(p.slice[1], p[2])
+
+def p_adecl_init_phase(p: Any) -> None:
+    'automaton_decl : INIT PHASE id'
+    p[0] = syntax.InitPhaseDecl(p.slice[1], p[3].value)
+
+def p_adecl_safety(p: Any) -> None:
+    'automaton_decl : SAFETY id'
+    p[0] = syntax.SafetyDecl(p.slice[1], p[2].value)
+
+def p_adecl_phase(p: Any) -> None:
+    'automaton_decl : PHASE id phase_components'
+    p[0] = syntax.PhaseDecl(p.slice[1], p[2].value, p[3])
+
+def p_automaton_decls_empty(p: Any) -> None:
+    'automaton_decls : empty'
+    p[0] = []
+
+def p_automaton_decls_decl(p: Any) -> None:
+    'automaton_decls : automaton_decls automaton_decl'
+    p[0] = p[1] + [p[2]]
+
+def p_decl_automaton(p: Any) -> None:
+    'decl : AUTOMATON LBRACE automaton_decls RBRACE'
+    p[0] = syntax.AutomatonDecl(p.slice[1], p[3])
 
 def p_empty(p: Any) -> None:
     'empty :'

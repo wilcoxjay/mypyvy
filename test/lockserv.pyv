@@ -117,3 +117,34 @@ invariant !(grant_msg(N) & server_holds_lock)
 invariant !(holds_lock(N) & server_holds_lock)
 invariant !(unlock_msg(N) & server_holds_lock)
 
+# Declare a phase automaton structure to prove safety.
+automaton {
+  safety mutex  # The safety property to prove.
+
+  init phase server  # The initial phase.
+
+  # Adds the given transition to every phase.
+  global
+    transition send_lock -> self
+
+
+  # Now come the phases. Each has a name, and then a sequence of declarations,
+  # consisting of allowed transitions and (partial) characterizations.
+
+  phase server
+    transition recv_lock -> phase grant
+    invariant server_holds_lock
+
+  phase grant
+    transition recv_grant -> phase client
+    invariant grant_msg(X) & grant_msg(Y) -> X = Y
+
+  phase client
+    transition unlock -> phase unlock
+    invariant holds_lock(X) & holds_lock(Y) -> X = Y
+
+  phase unlock
+    transition recv_unlock -> phase server
+    invariant unlock_msg(X) & unlock_msg(Y) -> X = Y
+}
+
