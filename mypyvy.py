@@ -1114,6 +1114,7 @@ class Frames(object):
                 logger.debug('no predecessor: blocked!')
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
+                self.augment_core_for_init(diag, core)
                 break
             assert isinstance(x, tuple), (res, x)
             trans, pre_diag = x
@@ -1146,6 +1147,41 @@ class Frames(object):
 
         return Blocked()
 
+
+    def augment_core_for_init(self, diag: Diagram, core: Optional[MySet[int]]) -> None:
+        if core is None or not args.use_z3_unsat_cores:
+            return
+
+        t = self.solver.get_translator(KEY_ONE)
+
+        with self.solver:
+            for init in self.prog.inits():
+                self.solver.add(t.translate_expr(init.expr))
+
+            self.solver.add(diag.to_z3(t))
+
+            res = self.solver.check(*diag.trackers)
+
+            assert res == z3.unsat
+            uc = self.solver.unsat_core()
+            # if logger.isEnabledFor(logging.DEBUG):
+            #     logger.debug('uc')
+            #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+
+                # logger.debug('assertions')
+                # logger.debug(str(self.solver.assertions()))
+
+            res = self.solver.check(*[diag.trackers[i] for i in core])
+            if res == z3.unsat:
+                logger.debug('augment_core_for_init: existing core sufficient')
+                return
+
+            for x in sorted(uc, key=lambda y: y.decl().name()):
+                assert isinstance(x, z3.ExprRef)
+                core.add(int(x.decl().name()[1:]))
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug('augment_core_for_init: new core')
+                logger.debug(str(sorted(core)))
 
     def commit(self) -> None:
         self.uncommitted = set()
