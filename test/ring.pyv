@@ -102,7 +102,7 @@ twostate theorem [recv_alt]
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
         (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next & sender != n & le(n, sender)))
 
-invariant [safety] leader(X) & leader(Y) -> X = Y
+invariant [one_leader] leader(X) & leader(Y) -> X = Y
 
 invariant pending(S, D) & btw(S, N, D) -> le(N, S)
 invariant [leader_max] leader(L) -> le(N, L)

@@ -127,7 +127,7 @@ convergant_benchmarks = [
     Benchmark('test/lockserv_multi.pyv', safety='mutex'),
     Benchmark('test/consensus.pyv', safety='one_leader'),
     Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
-    Benchmark('test/ring.pyv', safety='safety'),
+    Benchmark('test/ring.pyv', safety='one_leader'),
     Benchmark('test/sll-reverse.pyv')
 ]
 
