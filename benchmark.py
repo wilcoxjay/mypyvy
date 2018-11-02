@@ -24,6 +24,8 @@ def run_isolated_process(cmd: List[str], out: TextIO) -> None:
     print(proc.stderr, end='', file=out)
 
 def dump_version_info(f: TextIO) -> None:
+    if sys.stdout.isatty():
+        return
     print('dump_version_info: dumping information about the current commit and working directory', file=f)
     run_isolated_process(['git', 'rev-parse', 'HEAD'], f)
     run_isolated_process(['git', 'status'], f)
