@@ -10,7 +10,7 @@ import functools
 import io
 import itertools
 import logging
-import networkx
+import networkx  # type: ignore
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
@@ -933,16 +933,9 @@ class Frames(object):
         self.push_cache: List[Set[Expr]] = []
         self.counter = 0
         self.uncommitted: Set[Expr] = set()
-
         self.learned_order: 'networkx.DiGraph[Expr]' = networkx.DiGraph()
 
         self.new_frame([init.expr for init in prog.inits()])
-
-        # safety of initial state is checked before instantiating Frames
-        for c in safety:
-            self[-1].add(c)
-            self.learned_order.add_node(c)
-
         self.new_frame()
 
     def __getitem__(self, i: int) -> MySet[Expr]:
@@ -963,7 +956,29 @@ class Frames(object):
             self.learned_order.add_node(c)
 
         self.push_forward_frames()
+        self.establish_safety()
         self.simplify()
+
+
+    @log_start_end_xml()
+    def establish_safety(self) -> None:
+        frame_no = len(self.fs) - 1
+        f = self.fs[-1]
+
+        while True:
+            with LogTag('establish-safety-attempt'):
+                res = check_implication(self.solver, f, self.safety)
+
+                if res is None:
+                    self.commit()
+                    return
+
+                z3m: z3.ModelRef = res
+
+                mod = Model(self.prog, z3m, KEY_ONE)
+                diag = mod.as_diagram()
+                self.block(diag, frame_no, [(None, diag)], True)
+
 
     def get_inductive_frame(self) -> Optional[MySet[Expr]]:
         for i in range(len(self) - 1):
@@ -1060,6 +1075,7 @@ class Frames(object):
                                 assert False
 
                     for c in networkx.topological_sort(G):
+                        assert self.uncommitted == set()
                         process_conjunct(c)
 
                 while j < len(f):
@@ -1140,8 +1156,8 @@ class Frames(object):
             logger.info("[%d] %s" % (j, str(e)))
 
         c = trace[0][1]
-        assert isinstance(c, Expr)
-        self.learned_order.add_edge(e, c)
+        if isinstance(c, Expr):
+            self.learned_order.add_edge(e, c)
 
         self.add(e, j)
 
