@@ -10,6 +10,7 @@ import functools
 import io
 import itertools
 import logging
+import networkx
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
@@ -933,11 +934,14 @@ class Frames(object):
         self.counter = 0
         self.uncommitted: Set[Expr] = set()
 
-        self.new_frame(init.expr for init in prog.inits())
+        self.learned_order: 'networkx.DiGraph[Expr]' = networkx.DiGraph()
+
+        self.new_frame([init.expr for init in prog.inits()])
 
         # safety of initial state is checked before instantiating Frames
         for c in safety:
             self[-1].add(c)
+            self.learned_order.add_node(c)
 
         self.new_frame()
 
@@ -950,11 +954,13 @@ class Frames(object):
     def __len__(self) -> int:
         return len(self.fs)
 
-    def new_frame(self, contents: Optional[Iterable[Expr]]=None) -> None:
+    def new_frame(self, contents: Optional[Sequence[Expr]]=None) -> None:
         if contents is None:
             contents = [syntax.Bool(None, True)]
         self.fs.append(MySet(contents))
         self.push_cache.append(set())
+        for c in contents:
+            self.learned_order.add_node(c)
 
         self.push_forward_frames()
         self.simplify()
@@ -1030,18 +1036,36 @@ class Frames(object):
                 logger.debug('pushing in frame %d' % i)
 
                 frame_old_count = self.counter
-                j = 0
-                while j < len(f):
-                    assert self.uncommitted == set()
-                    c = f.l[j]
+
+                def process_conjunct(c: Expr) -> None:
                     if c in self[i+1] or c in self.push_cache[i]:
-                        j += 1
-                        continue
+                        return
 
                     with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
                         self.push_conjunct(i, c, frame_old_count)
 
                     self.push_cache[i].add(c)
+
+                j = 0
+                if args.push_toposort:
+                    j = len(f)
+                    G = networkx.graphviews.subgraph_view(self.learned_order, lambda x: x in f)
+
+                    if logger.isEnabledFor(logging.DEBUG):
+                        for c in f:
+                            if c not in G:
+                                print('c =', c)
+                                print('G =', ', '.join(str(x) for x in G))
+                                self.print_frames()
+                                assert False
+
+                    for c in networkx.topological_sort(G):
+                        process_conjunct(c)
+
+                while j < len(f):
+                    assert self.uncommitted == set()
+                    c = f.l[j]
+                    process_conjunct(c)
                     j += 1
 
     # Block the diagram in the given frame.
@@ -1113,6 +1137,10 @@ class Frames(object):
             logger.debug('adding new clause to frames 0 through %d' % j)
         if logger.isEnabledFor(logging.INFO):
             logger.info("[%d] %s" % (j, str(e)))
+
+        c = trace[0][1]
+        assert isinstance(c, Expr)
+        self.learned_order.add_edge(e, c)
 
         self.add(e, j)
 
@@ -1494,6 +1522,9 @@ def parse_args() -> argparse.Namespace:
                                 help='when some steps seem to be taking too long, just give up')
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
                                 help='substitute existentially quantified variables that are equal to constants')
+    updr_subparser.add_argument('--push-toposort', action='store_true',
+                                help='push lemmas in each frame in dependency orded '
+                                '(if lemma X was learned while pushing Y, then X will be pushed before Y in future frames)')
 
 
     bmc_subparser.add_argument('--safety', help='property to check')
