@@ -22,7 +22,7 @@ import z3
 import parser
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, TransitionDecl, InvariantDecl
+    FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
 
 ALWAYS_PRINT = 35
 
@@ -1424,12 +1424,131 @@ def debug_tokens(filename: str) -> None:
             break      # No more input
         logger.always_print(str(tok))
 
+
+def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+    logger.always_print('checking automaton init:')
+
+    t = s.get_translator(KEY_ONE)
+
+    init_phase = prog.scope.get_phase(a.the_init().phase)
+    assert init_phase is not None
+
+    with s:
+        for init in prog.inits():
+            s.add(t.translate_expr(init.expr))
+
+        for inv in init_phase.invs():
+            with s:
+                s.add(z3.Not(t.translate_expr(inv.expr)))
+
+                if inv.tok is not None:
+                    msg = ' on line %d' % inv.tok.lineno
+                else:
+                    msg = ''
+                logger.always_print('  implies phase invariant%s...' % msg)
+                sys.stdout.flush()
+
+                check_unsat([inv.tok], ['phase invariant%s may not hold in initial state' % msg], s, prog, KEY_ONE)
+
+def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+    logger.always_print('checking automaton edge covering:')
+
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+
+    for phase in a.phases():
+        logger.always_print('  checking phase %s:' % phase.name)
+        with s:
+            for inv in phase.invs():
+                s.add(t.translate_expr(inv.expr, old=True))
+
+            for trans in prog.transitions():
+                if not any(delta.transition == trans.name for delta in phase.transitions()):
+                    logger.always_print('    checking transition %s is disabled' % trans.name)
+
+                    s.add(t.translate_transition(trans))
+
+                    check_unsat([phase.tok, trans.tok],
+                                ['transition %s is not disabled by this phase' %
+                                 (trans.name, ),
+                                 'this transition may not be disabled in phase %s' % (phase.name,)],
+                                s, prog, KEY_NEW, KEY_OLD)
+
+
+def check_automaton_safety(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+    logger.always_print('checking automaton safety:')
+
+    t = s.get_translator(KEY_ONE)
+
+    safety = []
+    for d in a.safeties():
+        inv = prog.scope.get_invariant(d.name)
+        assert inv is not None
+        safety.append(inv.expr)
+
+    for phase in a.phases():
+        logger.always_print('  checking phase %s:' % phase.name)
+        res = check_implication(s, (inv.expr for inv in phase.invs()), safety)
+        if res is not None:
+            m = Model(prog, res, KEY_ONE)
+            logger.always_print(str(m))
+            syntax.print_error(phase.tok, 'phase characterization does not guarantee safety')
+
+
+def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+    logger.always_print('checking automaton inductiveness:')
+
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+
+    for phase in a.phases():
+        logger.always_print('  checking phase %s:' % phase.name)
+
+        with s:
+            for inv in phase.invs():
+                s.add(t.translate_expr(inv.expr, old=True))
+
+            for delta in phase.transitions():
+                trans = prog.scope.get_transition(delta.transition)
+                assert trans is not None
+                target = prog.scope.get_phase(delta.target) if delta.target is not None else phase
+                assert target is not None
+
+                logger.always_print('    checking transition %s:' % trans.name)
+
+                with s:
+                    s.add(t.translate_transition(trans))
+                    for inv in target.invs():
+                        with s:
+                            s.add(z3.Not(t.translate_expr(inv.expr)))
+
+                            if inv.tok is not None:
+                                msg = ' on line %d' % inv.tok.lineno
+                            else:
+                                msg = ''
+                            logger.always_print('      preserves invariant%s...' % msg)
+                            sys.stdout.flush()
+
+                            check_unsat([inv.tok, trans.tok],
+                                        ['invariant%s may not be preserved by transition %s in phase %s' %
+                                         (msg, trans.name, phase.name),
+                                         'this transition may not preserve invariant%s' % (msg,)],
+                                        s, prog, KEY_NEW, KEY_OLD)
+
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
+    a = prog.the_automaton()
+    if a is not None:
+        check_automaton_init(s, prog, a)
+        check_automaton_safety(s, prog, a)
+        check_automaton_inductiveness(s, prog, a)
+        check_automaton_edge_covering(s, prog, a)
+
     check_init(s, prog)
     check_transitions(s, prog)
 
-    logger.always_print('all ok!')
+    if not syntax.errored:
+        logger.always_print('all ok!')
+    else:
+        logger.always_print('program has errors.')
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
     keys = ['state%d' % i for i in range(depth+1)]

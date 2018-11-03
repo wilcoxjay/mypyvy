@@ -20,7 +20,11 @@ def tok_to_string(tok: Optional[Token]) -> str:
     else:
         return 'None'
 
+errored = False
+
 def print_error(tok: Optional[Token], msg: str) -> None:
+    global errored
+    errored = True
     print('error: %s: %s' % (tok_to_string(tok), msg))
 
 def error(tok: Optional[Token], msg: str) -> NoReturn:
@@ -1377,6 +1381,16 @@ class PhaseDecl(object):
         for c in self.components:
             c.resolve(scope)
 
+    def invs(self) -> Iterator[PhaseInvariantDecl]:
+        for c in self.components:
+            if isinstance(c, PhaseInvariantDecl):
+                yield c
+
+    def transitions(self) -> Iterator[PhaseTransitionDecl]:
+        for c in self.components:
+            if isinstance(c, PhaseTransitionDecl):
+                yield c
+
 
 AutomatonComponent = Union[GlobalPhaseDecl, InitPhaseDecl, SafetyDecl, PhaseDecl]
 
@@ -1389,6 +1403,15 @@ class AutomatonDecl(Decl):
         for c in self.components:
             if isinstance(c, InitPhaseDecl):
                 yield c
+
+    def the_init(self) -> InitPhaseDecl:
+        i = list(self.inits())
+        if len(i) == 0:
+            error(self.tok, 'automaton must declare an initial phase')
+        elif len(i) > 1:
+            error(self.tok, 'automaton may only declare one initial phase')
+
+        return i[0]
 
     def safeties(self) -> Iterator[SafetyDecl]:
         for c in self.components:
@@ -1404,7 +1427,6 @@ class AutomatonDecl(Decl):
         for c in self.components:
             if isinstance(c, PhaseDecl):
                 yield c
-
 
     def resolve(self, scope: Scope) -> None:
         for s in self.safeties():
@@ -1423,9 +1445,7 @@ class AutomatonDecl(Decl):
             p.components = list(p.components) + gcs
             p.resolve(scope)
 
-        for i in self.inits():
-            i.resolve(scope)
-
+        self.the_init().resolve(scope)
 
     def __repr__(self) -> str:
         return 'AutomatonDecl(tok=None, components=%s)' % (
