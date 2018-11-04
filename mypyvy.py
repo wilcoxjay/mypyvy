@@ -1462,15 +1462,22 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
                 s.add(t.translate_expr(inv.expr, old=True))
 
             for trans in prog.transitions():
-                if not any(delta.transition == trans.name for delta in phase.transitions()):
-                    logger.always_print('    checking transition %s is disabled' % trans.name)
+                if any(delta.transition == trans.name and delta.precond is None for delta in phase.transitions()):
+                    logger.always_print('    transition %s is covered trivially' % trans.name)
+                    continue
 
+                logger.always_print('    checking transition %s is covered' % trans.name)
+
+                with s:
                     s.add(t.translate_transition(trans))
+                    # TODO: this is the full AE -> AE check which is generally undecidable
+                    s.add(z3.And(*(z3.Not(t.translate_transition(trans, delta.precond))
+                                   for delta in phase.transitions() if trans.name == delta.transition)))
 
                     check_unsat([phase.tok, trans.tok],
-                                ['transition %s is not disabled by this phase' %
+                                ['transition %s is not covered by this phase' %
                                  (trans.name, ),
-                                 'this transition may not be disabled in phase %s' % (phase.name,)],
+                                 'this transition misses transitions from phase %s' % (phase.name,)],
                                 s, prog, KEY_NEW, KEY_OLD)
 
 
