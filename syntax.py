@@ -1246,26 +1246,33 @@ class TheoremDecl(Decl):
 ## decls inside an automaton block
 
 class PhaseTransitionDecl(object):
-    def __init__(self, tok: Optional[Token], transition: str, target: Optional[str]) -> None:
+    def __init__(self, tok: Optional[Token], transition: str, precond: Optional[Expr], target: Optional[str]) -> None:
         self.tok = tok
         self.transition = transition
+        self.precond = precond
         self.target = target
 
     def __repr__(self) -> str:
-        return 'PhaseTransitionDecl(tok=None, transition=%s, target=%s)' % (
+        return 'PhaseTransitionDecl(tok=None, transition=%s, precond=%s, target=%s)' % (
             repr(self.transition),
+            repr(self.precond),
             repr(self.target),
         )
 
     def __str__(self) -> str:
-        return 'transition %s -> %s' % (
+        return 'transition %s assume %s -> %s' % (
             self.transition,
+            (self.precond if (self.precond is not None) else "true"),
             self.target,
         )
 
     def resolve(self, scope: Scope) -> None:
         if scope.get_transition(self.transition) is None:
             error(self.tok, 'unknown transition %s' % (self.transition,))
+
+        if self.precond is not None:
+            self.precond = close_free_vars(self.precond)
+            self.precond.resolve(scope, BoolSort)
 
         if self.target is not None and scope.get_phase(self.target) is None:
             error(self.tok, 'unknown phase %s' % (self.target))

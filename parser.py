@@ -379,7 +379,11 @@ def p_phase_target_phase(p: Any) -> None:
 
 def p_phase_transition_decl(p: Any) -> None:
     'phase_component : TRANSITION id IMPLIES phase_target'
-    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, p[4])
+    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, None, p[4])
+
+def p_phase_transition_decl_w_assume(p: Any) -> None:
+    'phase_component : TRANSITION id ASSUME expr IMPLIES phase_target'
+    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, p[4], p[6])
 
 def p_phase_invariant_decl(p: Any) -> None:
     'phase_component : INVARIANT expr'

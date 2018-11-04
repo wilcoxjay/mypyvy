@@ -986,7 +986,7 @@ class Frames(object):
                 return self[i+1]
         return None
 
-    def push_conjunct(self, frame_no: int, c: Expr, frame_old_count: Optional[int]=None) -> None:
+    def  push_conjunct(self, frame_no: int, c: Expr, frame_old_count: Optional[int]=None) -> None:
         is_safety = c in self.safety
         conjunct_old_count = self.counter
 
@@ -1509,6 +1509,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
             for delta in phase.transitions():
                 trans = prog.scope.get_transition(delta.transition)
                 assert trans is not None
+                precond = delta.precond
                 target = prog.scope.get_phase(delta.target) if delta.target is not None else phase
                 assert target is not None
 
@@ -1516,6 +1517,8 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
                 with s:
                     s.add(t.translate_transition(trans))
+                    if precond is not None:
+                        s.add(t.translate_expr(precond, old=True))
                     for inv in target.invs():
                         with s:
                             s.add(z3.Not(t.translate_expr(inv.expr)))
@@ -1529,18 +1532,13 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
                             check_unsat([inv.tok, trans.tok],
                                         ['invariant%s may not be preserved by transition %s in phase %s' %
-                                         (msg, trans.name, phase.name),
+                                         (msg, (trans.name, str(precond) if (precond is not None) else 'true'), phase.name),
                                          'this transition may not preserve invariant%s' % (msg,)],
                                         s, prog, KEY_NEW, KEY_OLD)
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
-    a = prog.the_automaton()
-    if a is not None:
-        check_automaton_init(s, prog, a)
-        check_automaton_safety(s, prog, a)
-        check_automaton_inductiveness(s, prog, a)
-        check_automaton_edge_covering(s, prog, a)
+    check_automaton_full(s, prog)
 
     check_init(s, prog)
     check_transitions(s, prog)
@@ -1549,6 +1547,25 @@ def verify(s: Solver, prog: Program) -> None:
         logger.always_print('all ok!')
     else:
         logger.always_print('program has errors.')
+
+@log_start_end_time(logging.INFO)
+def verify_automaton(s: Solver, prog: Program) -> None:
+    check_automaton_full(s, prog)
+
+    if not syntax.errored:
+        logger.always_print('all ok!')
+    else:
+        logger.always_print('program has errors.')
+
+
+def check_automaton_full(s: Solver, prog: Program):
+    a = prog.the_automaton()
+    if a is not None:
+        check_automaton_init(s, prog, a)
+        check_automaton_safety(s, prog, a)
+        check_automaton_inductiveness(s, prog, a)
+        check_automaton_edge_covering(s, prog, a)
+
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
     keys = ['state%d' % i for i in range(depth+1)]
@@ -1644,6 +1661,10 @@ def parse_args() -> argparse.Namespace:
 
     verify_subparser = subparsers.add_parser('verify')
     verify_subparser.set_defaults(main=verify)
+    all_subparsers.append(verify_subparser)
+
+    verify_subparser = subparsers.add_parser('verify-automaton')
+    verify_subparser.set_defaults(main=verify_automaton)
     all_subparsers.append(verify_subparser)
 
     updr_subparser = subparsers.add_parser('updr')
