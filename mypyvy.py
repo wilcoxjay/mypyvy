@@ -1513,12 +1513,11 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                 target = prog.scope.get_phase(delta.target) if delta.target is not None else phase
                 assert target is not None
 
-                logger.always_print('    checking transition %s:' % trans.name)
+                trans_pretty = '(%s, %s)' % (trans.name, str(precond) if (precond is not None) else 'true')
+                logger.always_print('    checking transition: %s' % trans_pretty)
 
                 with s:
-                    s.add(t.translate_transition(trans))
-                    if precond is not None:
-                        s.add(t.translate_expr(precond, old=True))
+                    s.add(t.translate_transition(trans, precond=precond))
                     for inv in target.invs():
                         with s:
                             s.add(z3.Not(t.translate_expr(inv.expr)))
@@ -1532,7 +1531,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
                             check_unsat([inv.tok, trans.tok],
                                         ['invariant%s may not be preserved by transition %s in phase %s' %
-                                         (msg, (trans.name, str(precond) if (precond is not None) else 'true'), phase.name),
+                                         (msg, trans_pretty, phase.name),
                                          'this transition may not preserve invariant%s' % (msg,)],
                                         s, prog, KEY_NEW, KEY_OLD)
 
@@ -1558,7 +1557,7 @@ def verify_automaton(s: Solver, prog: Program) -> None:
         logger.always_print('program has errors.')
 
 
-def check_automaton_full(s: Solver, prog: Program):
+def check_automaton_full(s: Solver, prog: Program) -> None:
     a = prog.the_automaton()
     if a is not None:
         check_automaton_init(s, prog, a)

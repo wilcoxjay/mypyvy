@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, _GeneratorContextManager
 import itertools
 import logging
 import ply.lex
@@ -10,6 +10,9 @@ from typing import List, Union, Tuple, Optional, Dict, Iterator, \
 from typing_extensions import Protocol
 import z3
 
+import logging
+logger = logging.getLogger(__file__)
+logger.setLevel(logging.DEBUG)
 
 
 Token = ply.lex.LexToken
@@ -117,7 +120,7 @@ class Z3Translator(object):
         self.key = key
         self.key_old = key_old
         self.expr_cache: Dict[Tuple[Expr, bool], z3.ExprRef] = {}
-        self.transition_cache: Dict[TransitionDecl, z3.ExprRef] = {}
+        self.transition_cache: Dict[Tuple[TransitionDecl, Optional[Expr]], z3.ExprRef] = {}
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []
@@ -218,19 +221,23 @@ class Z3Translator(object):
 
         return frame
 
-    def translate_transition(self, t: TransitionDecl) -> z3.ExprRef:
-        if t not in self.transition_cache:
+    def translate_transition(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
+        cache_key = (t, precond)
+        if cache_key not in self.transition_cache:
 
             bs = self.bind(t.binder)
             with self.scope.in_scope(list(zip(t.binder.vs, bs))):
-                body = z3.And(self.translate_expr(t.expr), *self.frame(t.mods))
+                body = z3.And(self.translate_expr(t.expr),
+                              *self.frame(t.mods),
+                              self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
 
                 if len(bs) > 0:
-                    self.transition_cache[t] = z3.Exists(bs, body)
+                    tr_formula = z3.Exists(bs, body)
                 else:
-                    self.transition_cache[t] = body
+                    tr_formula = body
+                self.transition_cache[cache_key] = tr_formula
 
-        return self.transition_cache[t]
+        return self.transition_cache[cache_key]
 
 def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, Optional[Token], str]]:
     if isinstance(expr, Bool):
@@ -1267,12 +1274,15 @@ class PhaseTransitionDecl(object):
         )
 
     def resolve(self, scope: Scope) -> None:
-        if scope.get_transition(self.transition) is None:
+        transition = scope.get_transition(self.transition)
+        if transition is None:
             error(self.tok, 'unknown transition %s' % (self.transition,))
 
         if self.precond is not None:
-            self.precond = close_free_vars(self.precond)
-            self.precond.resolve(scope, BoolSort)
+            transition_constants = transition.binder.vs
+            self.precond = close_free_vars(self.precond, in_scope=[x.name for x in transition_constants])
+            with scope.in_scope_wo_translated(transition_constants):
+                self.precond.resolve(scope, BoolSort)
 
         if self.target is not None and scope.get_phase(self.target) is None:
             error(self.tok, 'unknown phase %s' % (self.target))
@@ -1589,6 +1599,9 @@ class Scope(Generic[B]):
         yield
         self.pop()
         assert n == len(self.stack)
+
+    def in_scope_wo_translated(self, l: List[SortedVar]) -> _GeneratorContextManager[B]:
+        return self.in_scope([(x, None) for x in l]) # TODO: for mypy, scope should use Optional[B], right?
 
 class Program(object):
     def __init__(self, decls: List[Decl]) -> None:
