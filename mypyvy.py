@@ -614,7 +614,7 @@ class Diagram(object):
     @log_start_end_xml()
     @log_start_end_time()
     def generalize(self, s: Solver, prog: Program, f: Frame,
-                   transitions_to_grouped_by_src: Mapping[Phase, Sequence[PhaseTransition]],
+                   transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                    depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
@@ -967,7 +967,7 @@ class Frames(object):
         # TODO: accommodate multiple phases in convergence hacks
         self.push_cache.append({p: set() for p in self.automaton.phases()})
         c: Expr
-        for c in set().union(*contents.values()):
+        for c in set().union(*(set(cjs) for cjs in contents.values())):
             self.learned_order.add_node(c)
 
         self.push_forward_frames()
@@ -1191,7 +1191,7 @@ class Frames(object):
             assert isinstance(x, tuple), (res, x)
             trans, (pre_phase, pre_diag) = x
 
-            trace.append(x)
+            trace.append((trans, pre_diag))
             ans = self.block(pre_diag, j-1, pre_phase, trace, safety_goal)
             if not isinstance(ans, Blocked):
                 return ans
@@ -1296,7 +1296,7 @@ class Frames(object):
             pre_frame: Frame,
             current_phase: Phase,
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Tuple[Phase, Diagram]]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
         core: MySet[int] = MySet()
@@ -1320,9 +1320,9 @@ class Frames(object):
             t: syntax.Z3Translator,
             pre_frame: Frame,
             src_phase: Phase,
-            transitions: List[PhaseTransition],
+            transitions: Sequence[PhaseTransition],
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Tuple[Phase, Diagram]]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
             if args.use_z3_unsat_cores:
                 core: MySet[int] = MySet()
 
@@ -1344,7 +1344,7 @@ class Frames(object):
                         m = Model(self.prog, self.solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug(str(m))
-                        return (res, (trans, (src_phase, m.as_diagram(old=True))))
+                        return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
                     elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
                         uc = self.solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
