@@ -1002,9 +1002,10 @@ class Frames(object):
             res = check_implication(self.solver, f.summary_of(p), self.safety)
 
             if res is None:
-                logger.debug("Frontier frame phase %s implies safety" % p.name())
+                logger.debug("Frontier frame phase %s implies safety, summary is %s" % (p.name(), f.summary_of(p)))
                 continue
 
+            logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
             return (p, z3m)
 
@@ -1048,9 +1049,9 @@ class Frames(object):
                         assert frame_old_count is not None and self.counter > frame_old_count + 10
                         logger.warning("because I've spent too long in this frame")
                     self.abort()
-                    has_air = False
+                    break
 
-                res = self.find_predecessor_to_conjunct(f, p, c)
+                res = self.clause_implied_by_transitions_from_frame(f, p, c)
                 if res is None:
                     logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
 
@@ -1067,7 +1068,7 @@ class Frames(object):
                     self.commit()
                     break
 
-                m, t = res
+                pre_phase, (m, t) = res
                 mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
                 diag = mod.as_diagram(old=True)
 
@@ -1076,10 +1077,10 @@ class Frames(object):
                     # logger.debug(str(mod))
                 if is_safety:
                     logger.debug('note: current clause is safety condition')
-                    self.block(diag, frame_no, p, [(None, c), (t, diag)], True)
+                    self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], True)
                     logger.debug("this case is the one")
                 else:
-                    ans = self.block(diag, frame_no, p, [(None, c), (t, diag)], False)
+                    ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], False)
                     if isinstance(ans, GaveUp):
                         logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
                         logger.warning('because a call to block gave up')
@@ -1417,20 +1418,20 @@ class Frames(object):
 
             return (z3.unsat, ret_core)
 
-    def find_predecessor_to_conjunct(
+    def clause_implied_by_transitions_from_frame(
             self,
             pre_frame: Frame,
             current_phase: Phase,
             c: Expr
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Tuple[Phase, Diagram]]]]:
+    ) -> Tuple[z3.CheckSatResult, Tuple[Phase, Tuple[z3.ModelRef, TransitionDecl]]]:
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
         for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
             ans = check_two_state_implication_along_transitions(self.solver, self.prog,
                                                                 pre_frame.summary_of(src), transitions,
-                                                                syntax.Not(c))
+                                                                c)
             if ans is not None:
-                return ans
+                return (src, ans)
 
         return None
 
@@ -1454,7 +1455,7 @@ class Frames(object):
         for i, f in enumerate(self.fs):
             for p in self.automaton.phases():
                 with LogTag('simplify', frame=str(i)):
-                    logger.debug('simplifying frame %d, pred %s' % (i, p))
+                    logger.debug('simplifying frame %d, pred %s' % (i, p.name()))
                     self._simplify_summary(f.summary_of(p))
 
 
