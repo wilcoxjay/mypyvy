@@ -986,13 +986,15 @@ class Frames(object):
                     self.commit()
                     return
 
-                z3m: z3.ModelRef = res
+                z3m: z3.ModelRef
+                violating: Phase
+                (violating, z3m) = res
 
                 mod = Model(self.prog, z3m, KEY_ONE)
                 diag = mod.as_diagram()
-                self.block(diag, frame_no, [(None, diag)], True)
+                self.block(diag, frame_no, violating, [(None, diag)], True)
 
-    def _get_some_cex_to_safety(self):
+    def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, z3.ModelRef]]:
         f = self.fs[-1]
 
         # TODO: also check edge covering
@@ -1004,7 +1006,7 @@ class Frames(object):
                 continue
 
             z3m: z3.ModelRef = res
-            return z3m
+            return (p, z3m)
 
         return None
 
