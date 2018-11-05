@@ -1175,7 +1175,7 @@ class Frames(object):
             trans, pre_diag = x
 
             trace.append(x)
-            ans = self.block(pre_diag, j-1, trace, safety_goal)
+            ans = self.block(pre_diag, j-1, p, trace, safety_goal)
             if not isinstance(ans, Blocked):
                 return ans
             trace.pop()
