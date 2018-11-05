@@ -504,6 +504,7 @@ class Diagram(object):
         else:
             return syntax.Exists(vs, e)
 
+    # TODO: can be removed? replaced with Frames.valid_in_initial_frame (YF)
     def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:
         return check_implication(s, (init.expr for init in prog.inits()), [syntax.Not(self.to_ast())])
 
@@ -1140,7 +1141,7 @@ class Frames(object):
             trace: List[Tuple[Optional[TransitionDecl],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
-        if j == 0 or (j == 1 and diag.valid_in_init(self.solver, self.prog) is not None):
+        if j == 0 or (j == 1 and self.valid_in_initial_frame(p, diag) is not None):
             if safety_goal:
                 logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
@@ -1204,6 +1205,9 @@ class Frames(object):
         self.add(p, e, j)
 
         return Blocked()
+
+    def valid_in_initial_frame(self, p: Phase, diag: Diagram) -> Optional[z3.ModelRef]:
+        return check_implication(self.solver, self.fs[0].summary_of(p), [syntax.Not(diag.to_ast())])
 
 
     def augment_core_for_init(self, diag: Diagram, core: Optional[MySet[int]]) -> None:
