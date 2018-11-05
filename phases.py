@@ -71,10 +71,10 @@ class PhaseAutomaton(object):
         return [t.src() for t in self._transitions if t.target() == trg]
 
     def transitions_between(self, src: Phase, target: Phase) -> List[Phase]:
-        return filter(lambda t: t.src() == src & t.target() == target, self._transitions)
+        return filter(lambda t: (t.src() == src) & (t.target() == target), self._transitions)
 
     def transitions_to_grouped_by_src(self, target: Phase) -> Dict[Phase, List[PhaseTransition]]:
-        return {p: self.transitions_between(p, target) for p in self.transitions_between()}
+        return {p: self.transitions_between(p, target) for p in self.predecessors(target)}
 
 
 class Frame(object):

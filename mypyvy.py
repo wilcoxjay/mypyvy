@@ -336,6 +336,7 @@ def check_two_state_implication_all_transitions(
 
 def check_two_state_implication_along_transitions(
         s: Solver,
+        prog: Program,
         old_hyps: Iterable[Expr],
         transitions: Iterator[PhaseTransition],
         new_conc: Expr
@@ -347,9 +348,14 @@ def check_two_state_implication_along_transitions(
 
         s.add(z3.Not(t.translate_expr(new_conc)))
 
-        for trans in transitions:
+        for phase_transition in transitions:
+            delta = phase_transition.transition_decl()
+            trans = prog.scope.get_transition(delta.transition)
+            assert trans is not None
+            precond = delta.precond
+
             with s:
-                s.add(t.translate_transition(trans.transition_decl()))
+                s.add(t.translate_transition(trans, precond=precond))
 
                 # if logger.isEnabledFor(logging.DEBUG):
                 #     logger.debug('assertions')
@@ -945,6 +951,8 @@ class Frames(object):
         return len(self.fs)
 
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
+        if contents is None:
+            contents = {}
         self.fs.append(Frame(self.automaton.phases(), contents))
         # TODO: accomodate multiple phases in convergence hacks
         self.push_cache.append(set())
@@ -1012,8 +1020,9 @@ class Frames(object):
                     has_air = False
 
                 found_pred_cex = False
-                for src, transitions in self.automaton.transitions_to_grouped_by_src(p):
-                    res = check_two_state_implication_along_transitions(self.solver, f.summary_of(src), transitions, c)
+                for src, transitions in self.automaton.transitions_to_grouped_by_src(p).items():
+                    res = check_two_state_implication_along_transitions(self.solver, self.prog,
+                                                                        f.summary_of(src), transitions, c)
                     if res is None:
                         continue
 
@@ -1067,7 +1076,7 @@ class Frames(object):
         frame_old_count = self.counter
 
         def process_conjunct(c: Expr) -> None:
-            if c in self[i + 1] or c in self.push_cache[i]:
+            if c in self.fs[i+1].summary_of(p) or c in self.push_cache[i]: # TODO: cache per phase?
                 return
 
             with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
@@ -1079,11 +1088,11 @@ class Frames(object):
 
         j = 0
         if args.push_toposort:
-            j = len(f)
+            j = len(conjuncts)
             G = networkx.graphviews.subgraph_view(self.learned_order, lambda x: x in conjuncts)
 
             if logger.isEnabledFor(logging.DEBUG):
-                for c in f:
+                for c in conjuncts:
                     if c not in G:
                         print('c =', c)
                         print('G =', ', '.join(str(x) for x in G))
@@ -1093,9 +1102,9 @@ class Frames(object):
             for c in networkx.topological_sort(G):
                 assert self.uncommitted == set()
                 process_conjunct(c)
-        while j < len(f):
+        while j < len(conjuncts):
             assert self.uncommitted == set()
-            c = f.l[j]
+            c = conjuncts.l[j]
             process_conjunct(c)
             j += 1
 
@@ -1349,7 +1358,7 @@ class Frames(object):
 
         return (z3.unsat, ret_core)
 
-    def _simplify_frame(self, f: MySet[Expr]) -> None:
+    def _simplify_summary(self, f: MySet[Expr]) -> None:
         l = []
         for c in reversed(f.l):
             f_minus_c = [x for x in f.l if x in f.s and x is not c]
@@ -1366,9 +1375,10 @@ class Frames(object):
     @log_start_end_xml()
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
-            with LogTag('simplify', frame=str(i)):
-                logger.debug('simplifying frame %d' % i)
-                self._simplify_frame(f)
+            for p in self.automaton.phases():
+                with LogTag('simplify', frame=str(i)):
+                    logger.debug('simplifying frame %d, pred %s' % (i, p))
+                    self._simplify_summary(f.summary_of(p))
 
 
     def print_frame(self, i: int, lvl: int=logging.INFO) -> None:
