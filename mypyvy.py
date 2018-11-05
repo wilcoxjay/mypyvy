@@ -598,16 +598,22 @@ class Diagram(object):
                 verbose_print_z3_model(res)
             logger.debug('ok.')
 
-    def check_valid(self, s: Solver, prog: Program, f: Iterable[Expr]) \
+    def check_valid_in_phase_from_frame(self, s: Solver, prog: Program, f: Frame,
+                                        transitions_to_grouped_by_src: Dict[Phase, PhaseTransition],) \
     -> Union[None, Tuple[z3.ModelRef, TransitionDecl], z3.ModelRef]:
-        ans = check_two_state_implication_all_transitions(s, prog, f, syntax.Not(self.to_ast()))
-        if ans is not None:
-            return ans
-        return self.valid_in_init(s, prog)
+        for src, transitions in transitions_to_grouped_by_src.items():
+            ans = check_two_state_implication_along_transitions(s, prog, f.summary_of(src), transitions,
+                                                                syntax.Not(self.to_ast()))
+            if ans is not None:
+                return ans
+        return None
+        # return self.valid_in_init(s, prog) # TODO: is this necessary?
 
     @log_start_end_xml()
     @log_start_end_time()
-    def generalize(self, s: Solver, prog: Program, f: Iterable[Expr], depth: Optional[int]=None) -> None:
+    def generalize(self, s: Solver, prog: Program, f: Iterable[Expr],
+                   transitions_to_grouped_by_src: Dict[Phase, PhaseTransition],
+                   depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
             logger.debug(str(self))
@@ -637,7 +643,7 @@ class Diagram(object):
                 if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                     continue
                 with self.without(d):
-                    res = self.check_valid(s, prog, f)
+                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src)
                 if res is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug('eliminated all conjuncts from declaration %s' % d)
@@ -653,7 +659,7 @@ class Diagram(object):
                         if j not in S and isinstance(x, syntax.UnaryExpr):
                             cs.add(j)
                     with self.without(d, cs):
-                        res = self.check_valid(s, prog, f)
+                        res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src)
                     if res is None:
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug('eliminated all negative conjuncts from declaration %s' % d)
@@ -662,7 +668,7 @@ class Diagram(object):
 
             for d, j, c in self.conjuncts():
                 with self.without(d, j):
-                    res = self.check_valid(s, prog, f)
+                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src)
                 if res is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug('eliminated clause %s' % c)
@@ -1173,7 +1179,9 @@ class Frames(object):
             logger.debug('unminimized diag\n%s' % diag)
 
         diag.minimize_from_core(core)
-        diag.generalize(self.solver, self.prog, self[j-1], j)
+        diag.generalize(self.solver, self.prog,
+                        self[j-1], self.automaton.transitions_to_grouped_by_src(p),
+                        j)
 
         e = syntax.Not(diag.to_ast())
 
@@ -1186,7 +1194,7 @@ class Frames(object):
         if isinstance(c, Expr):
             self.learned_order.add_edge(e, c)
 
-        self.add(e, j)
+        self.add(p, e, j)
 
         return Blocked()
 
@@ -1237,7 +1245,7 @@ class Frames(object):
             self[i] -= self.uncommitted
         self.uncommitted = set()
 
-    def add(self, e: Expr, depth: Optional[int]=None) -> None:
+    def add(self, p: Pred, e: Expr, depth: Optional[int]=None) -> None:
         self.counter += 1
         self.uncommitted.add(e)
 
@@ -1253,7 +1261,7 @@ class Frames(object):
             logger.debug('ok.')
 
         for i in range(depth+1):
-            self[i].add(e)
+            self[i].strengthen(p, e)
 
 
     @log_start_end_xml(lvl=logging.DEBUG)
