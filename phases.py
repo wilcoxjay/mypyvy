@@ -33,6 +33,9 @@ class PhaseTransition(object):
     def transition_decl(self):
         return self._transition_decl
 
+    def pp(self):
+        return '%s assume %s' % (self._transition_decl.transition, self._transition_decl.precond)
+
     def __repr__(self) -> str:
         return 'PhaseTransition(src=%s, target=%s, transition_decl=%s)' % (
             self._src,

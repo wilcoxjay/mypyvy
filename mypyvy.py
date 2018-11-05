@@ -362,7 +362,7 @@ def check_two_state_implication_along_transitions(
                 #     logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
-                    return s.model(), trans
+                    return s.model(), phase_transition
 
     return None
 
@@ -985,8 +985,10 @@ class Frames(object):
                     res = check_implication(self.solver, f.summary_of(p), self.safety)
 
                     if res is None:
+                        logger.debug("Frontier frame phase %s implies safety" % p.name())
                         continue
 
+                    logger.debug("Cex to safety in frontier frame phase %s" % p.name())
                     found_cex = True
                     z3m: z3.ModelRef = res
 
@@ -1019,7 +1021,7 @@ class Frames(object):
         has_air = True
         while has_air:
             with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
-                logger.debug('frame %s attempting to push %s' % (frame_no, c))
+                logger.debug('frame %s phase %s attempting to push %s' % (frame_no, p.name(), c))
 
                 if not is_safety and args.convergence_hacks and (
                         self.counter > conjunct_old_count + 3 or
@@ -1046,7 +1048,7 @@ class Frames(object):
                     mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
                     diag = mod.as_diagram(old=True)
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.name))
+                        logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.pp()))
                         # logger.debug(str(mod))
                     if is_safety:
                         logger.debug('note: current clause is safety condition')
@@ -1116,6 +1118,7 @@ class Frames(object):
             for c in networkx.topological_sort(G):
                 assert self.uncommitted == set()
                 process_conjunct(c)
+
         while j < len(conjuncts):
             assert self.uncommitted == set()
             c = conjuncts.l[j]
@@ -1137,7 +1140,7 @@ class Frames(object):
             diag: Diagram,
             j: int,
             p: Phase,
-            trace: List[Tuple[Optional[TransitionDecl],Union[Diagram, Expr]]]=[],
+            trace: List[Tuple[Optional[PhaseTransition],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
         if j == 0 or (j == 1 and self.valid_in_initial_frame(p, diag) is not None):
@@ -1173,10 +1176,10 @@ class Frames(object):
                 self.augment_core_for_init(diag, core)
                 break
             assert isinstance(x, tuple), (res, x)
-            trans, pre_diag = x
+            trans, (pre_phase, pre_diag) = x
 
             trace.append(x)
-            ans = self.block(pre_diag, j-1, p, trace, safety_goal)
+            ans = self.block(pre_diag, j-1, pre_phase, trace, safety_goal)
             if not isinstance(ans, Blocked):
                 return ans
             trace.pop()
@@ -1193,7 +1196,7 @@ class Frames(object):
         e = syntax.Not(diag.to_ast())
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('adding new clause to frames 0 through %d' % j)
+            logger.debug('adding new clause to frames 0 through %d phase %s' % (j, p.name()))
         if logger.isEnabledFor(logging.INFO):
             logger.info("[%d] %s" % (j, str(e)))
 
@@ -1202,6 +1205,7 @@ class Frames(object):
             self.learned_order.add_edge(e, c)
 
         self.add(p, e, j)
+        logger.debug("Done blocking")
 
         return Blocked()
 
@@ -1280,7 +1284,7 @@ class Frames(object):
             pre_frame: Frame,
             current_phase: Phase,
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Diagram]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Tuple[Phase, Diagram]]]]:
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
         core: MySet[int] = MySet()
@@ -1291,10 +1295,10 @@ class Frames(object):
             self.solver.add(diag.to_z3(t))
 
             for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
-                (sat_res, aux) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
+                (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
                 if sat_res == z3.unsat:
                     continue
-                return (sat_res, aux)
+                return (sat_res, (src, pre_diag))
 
             ret_core = None
             return (z3.unsat, ret_core)
@@ -1306,7 +1310,7 @@ class Frames(object):
             src_phase: Phase,
             transitions: List[PhaseTransition],
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Diagram]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Tuple[Phase, Diagram]]]]:
             if args.use_z3_unsat_cores:
                 core: MySet[int] = MySet()
 
@@ -1439,7 +1443,6 @@ class Frames(object):
 
     def search(self) -> MySet[Expr]:
         while True:
-            f: Optional[OrderedSet[Expr]]
             n = len(self) - 1
             with LogTag('frame', lvl=logging.INFO, n=str(n)):
                 with LogTag('current-frames', lvl=logging.INFO):
