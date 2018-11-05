@@ -1516,24 +1516,15 @@ def updr(s: Solver, prog: Program) -> None:
 
     check_init(s, prog)
 
-    fs = Frames(s, prog, get_safety(prog))
+    if args.automaton:
+        automaton = prog.the_automaton()
+        if automaton is None:
+            syntax.error(None,'--automaton requires the file to declare an automaton')
+    else:
+        automaton = None
+
+    fs = Frames(s, prog, get_safety(prog), automaton=automaton)
     fs.search()
-
-@log_start_end_xml(logging.INFO)
-@log_start_end_time(logging.INFO)
-def phase_updr(s: Solver, prog: Program) -> None:
-    # TODO: handle these
-    if args.find_predecessor_via_transition_disjunction:
-        args.use_z3_unsat_cores = True
-
-    if args.use_z3_unsat_cores:
-        z3.set_param('smt.core.minimize', True)
-
-    check_init(s, prog)
-
-    fs = Frames(s, prog, get_safety(prog), automaton=prog.the_automaton())
-    fs.search()
-
 
 def debug_tokens(filename: str) -> None:
     l = parser.get_lexer()
@@ -1667,7 +1658,11 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
-    check_automaton_full(s, prog)
+    a = prog.the_automaton()
+    if a is None:
+        syntax.error(None,'--automaton requires the file to declare an automaton')
+    else:
+        check_automaton_full(s, prog, a)
 
     check_init(s, prog)
     check_transitions(s, prog)
@@ -1677,23 +1672,11 @@ def verify(s: Solver, prog: Program) -> None:
     else:
         logger.always_print('program has errors.')
 
-@log_start_end_time(logging.INFO)
-def verify_automaton(s: Solver, prog: Program) -> None:
-    check_automaton_full(s, prog)
-
-    if not syntax.errored:
-        logger.always_print('all ok!')
-    else:
-        logger.always_print('program has errors.')
-
-
-def check_automaton_full(s: Solver, prog: Program) -> None:
-    a = prog.the_automaton()
-    if a is not None:
-        check_automaton_init(s, prog, a)
-        check_automaton_safety(s, prog, a)
-        check_automaton_inductiveness(s, prog, a)
-        check_automaton_edge_covering(s, prog, a)
+def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+    check_automaton_init(s, prog, a)
+    check_automaton_safety(s, prog, a)
+    check_automaton_inductiveness(s, prog, a)
+    check_automaton_edge_covering(s, prog, a)
 
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
@@ -1792,10 +1775,6 @@ def parse_args() -> argparse.Namespace:
     verify_subparser.set_defaults(main=verify)
     all_subparsers.append(verify_subparser)
 
-    verify_subparser = subparsers.add_parser('verify-automaton')
-    verify_subparser.set_defaults(main=verify_automaton)
-    all_subparsers.append(verify_subparser)
-
     updr_subparser = subparsers.add_parser('updr')
     updr_subparser.set_defaults(main=updr)
     all_subparsers.append(updr_subparser)
@@ -1847,16 +1826,18 @@ def parse_args() -> argparse.Namespace:
                                 help='push lemmas in each frame in dependency orded '
                                 '(if lemma X was learned while pushing Y, then X will be pushed before Y in future frames)')
 
+    for sp in [verify_subparser, updr_subparser]:
+        sp.add_argument('--automaton', action='store_true',
+                        help='use (only) phase automata. in verify mode, without this option both '
+                        'non-automaton and automaton proofs are checked, while this option causes '
+                        'only the automaton proof to be checked. in updr mode, by default '
+                        'any input automata are ignored, but this option causes automaton inference to be used')
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
                                help='number of steps to check')
 
     argparser.add_argument('filename')
-
-    phase_updr_subparser = subparsers.add_parser('phase-updr', parents=[updr_subparser], add_help=False)
-    phase_updr_subparser.set_defaults(main=phase_updr)
-    all_subparsers.append(phase_updr_subparser)
 
     return argparser.parse_args()
 
