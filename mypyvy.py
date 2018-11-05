@@ -25,7 +25,7 @@ from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
 from utils import MySet, OrderedSet
 
-from phases import PhaseAutomaton, Phase
+from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
 ALWAYS_PRINT = 35
 
@@ -324,6 +324,32 @@ def check_two_state_implication_all_transitions(
         for trans in prog.transitions():
             with s:
                 s.add(t.translate_transition(trans))
+
+                # if logger.isEnabledFor(logging.DEBUG):
+                #     logger.debug('assertions')
+                #     logger.debug(str(s.assertions()))
+
+                if s.check() != z3.unsat:
+                    return s.model(), trans
+
+    return None
+
+def check_two_state_implication_along_transitions(
+        s: Solver,
+        old_hyps: Iterable[Expr],
+        transitions: Iterator[PhaseTransition],
+        new_conc: Expr
+) -> Optional[Tuple[z3.ModelRef, TransitionDecl]]:
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+    with s:
+        for h in old_hyps:
+            s.add(t.translate_expr(h, old=True))
+
+        s.add(z3.Not(t.translate_expr(new_conc)))
+
+        for trans in transitions:
+            with s:
+                s.add(t.translate_transition(trans.transition_decl()))
 
                 # if logger.isEnabledFor(logging.DEBUG):
                 #     logger.debug('assertions')
@@ -896,7 +922,7 @@ class Frames(object):
         self.safety = safety
         assert automaton is not None
         self.automaton = PhaseAutomaton(automaton)
-        self.fs: List[MySet[Expr]] = []
+        self.fs: List[Frame] = []
         self.push_cache: List[Set[Expr]] = []
         self.counter = 0
         self.uncommitted: Set[Expr] = set()
@@ -904,26 +930,25 @@ class Frames(object):
 
         init_conjuncts = [init.expr for init in prog.inits()]
         self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
-                            else syntax.FalseExpr
+                            else [syntax.FalseExpr]
                         for p in self.automaton.phases()})
 
         self.new_frame()
 
-    def __getitem__(self, i: int) -> MySet[Expr]:
+    def __getitem__(self, i: int) -> Frame:
         return self.fs[i]
 
-    def __setitem__(self, i: int, e: MySet[Expr]) -> None:
+    def __setitem__(self, i: int, e: Frame) -> None:
         assert e is self.fs[i]
 
     def __len__(self) -> int:
         return len(self.fs)
 
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
-        if contents is None:
-            contents = [syntax.Bool(None, True)]
-        self.fs.append(MySet(contents))
+        self.fs.append(Frame(self.automaton.phases(), contents))
+        # TODO: accomodate multiple phases in convergence hacks
         self.push_cache.append(set())
-        for c in contents:
+        for c in set().union(*contents.values()):
             self.learned_order.add_node(c)
 
         self.push_forward_frames()
@@ -957,12 +982,13 @@ class Frames(object):
                 return self[i+1]
         return None
 
-    def  push_conjunct(self, frame_no: int, c: Expr, frame_old_count: Optional[int]=None) -> None:
+    def push_conjunct(self, frame_no: int, c: Expr, p: Phase, frame_old_count: Optional[int]=None) -> None:
         is_safety = c in self.safety
         conjunct_old_count = self.counter
 
         f = self.fs[frame_no]
-        while True:
+        has_air = True
+        while has_air:
             with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
                 logger.debug('frame %s attempting to push %s' % (frame_no, c))
 
@@ -977,24 +1003,15 @@ class Frames(object):
                         assert frame_old_count is not None and self.counter > frame_old_count + 10
                         logger.warning("because I've spent too long in this frame")
                     self.abort()
-                    break
+                    has_air = False
 
-                res = check_two_state_implication_all_transitions(self.solver, self.prog, f, c)
-                if res is None:
-                    logger.debug('frame %s managed to push %s' % (frame_no, c))
+                found_pred_cex = False
+                for src, transitions in self.automaton.transitions_to_grouped_by_src(p):
+                    res = check_two_state_implication_along_transitions(self.solver, f.summary_of(src), transitions, c)
+                    if res is None:
+                        continue
 
-                    if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('jrw smoke testing...')
-                        om = check_bmc(self.solver, self.prog, c, frame_no+1)
-                        if om is not None:
-                            logger.debug('no!')
-                            verbose_print_z3_model(om)
-                        logger.debug('ok.')
-
-                    self[frame_no+1].add(c)
-                    self.commit()
-                    break
-                else:
+                    found_pred_cex = True
                     m, t = res
                     mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
                     diag = mod.as_diagram(old=True)
@@ -1010,10 +1027,26 @@ class Frames(object):
                             logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
                             logger.warning('because a call to block gave up')
                             self.abort()
-                            break
+                            has_air = False
                         elif isinstance(ans, CexFound):
                             self.commit()
-                            break
+                            has_air = False
+
+                if not found_pred_cex:
+                    logger.debug('frame %s managed to push %s' % (frame_no, c))
+
+                    if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
+                        logger.debug('jrw smoke testing...')
+                        # TODO: phases
+                        om = check_bmc(self.solver, self.prog, c, frame_no + 1)
+                        if om is not None:
+                            logger.debug('no!')
+                            verbose_print_z3_model(om)
+                        logger.debug('ok.')
+
+                    self[frame_no + 1].strengthen(p, c)
+                    self.commit()
+                    has_air = False
 
     @log_start_end_xml(logging.DEBUG)
     def push_forward_frames(self) -> None:
@@ -1021,39 +1054,45 @@ class Frames(object):
             with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
                 logger.debug('pushing in frame %d' % i)
 
-                frame_old_count = self.counter
+                for p in self.automaton.phases():
+                    self.push_phase_from_pred(i, f, p)
 
-                def process_conjunct(c: Expr) -> None:
-                    if c in self[i+1] or c in self.push_cache[i]:
-                        return
+    def push_phase_from_pred(self, i: int, f: Frame, p: Phase) -> None:
+        frame_old_count = self.counter
 
-                    with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
-                        self.push_conjunct(i, c, frame_old_count)
+        def process_conjunct(c: Expr) -> None:
+            if c in self[i + 1] or c in self.push_cache[i]:
+                return
 
-                    self.push_cache[i].add(c)
+            with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
+                self.push_conjunct(i, c, p, frame_old_count)
 
-                j = 0
-                if args.push_toposort:
-                    j = len(f)
-                    G = networkx.graphviews.subgraph_view(self.learned_order, lambda x: x in f)
+            self.push_cache[i].add(c)
 
-                    if logger.isEnabledFor(logging.DEBUG):
-                        for c in f:
-                            if c not in G:
-                                print('c =', c)
-                                print('G =', ', '.join(str(x) for x in G))
-                                self.print_frames()
-                                assert False
+        conjuncts = f.summary_of(p)
 
-                    for c in networkx.topological_sort(G):
-                        assert self.uncommitted == set()
-                        process_conjunct(c)
+        j = 0
+        if args.push_toposort:
+            j = len(f)
+            G = networkx.graphviews.subgraph_view(self.learned_order, lambda x: x in conjuncts)
 
-                while j < len(f):
-                    assert self.uncommitted == set()
-                    c = f.l[j]
-                    process_conjunct(c)
-                    j += 1
+            if logger.isEnabledFor(logging.DEBUG):
+                for c in f:
+                    if c not in G:
+                        print('c =', c)
+                        print('G =', ', '.join(str(x) for x in G))
+                        self.print_frames()
+                        assert False
+
+            for c in networkx.topological_sort(G):
+                assert self.uncommitted == set()
+                process_conjunct(c)
+        while j < len(f):
+            assert self.uncommitted == set()
+            c = f.l[j]
+            process_conjunct(c)
+            j += 1
+
 
     # Block the diagram in the given frame.
     # If safety_goal is True, the only possible outcomes are returning Blocked() on success
@@ -1329,7 +1368,8 @@ class Frames(object):
     def print_frame(self, i: int, lvl: int=logging.INFO) -> None:
         f = self.fs[i]
         with LogTag('frame', i=str(i)):
-            logger.log_list(lvl, ['frame %d is' % i] + [str(x) for x in f])
+            for p in self.automaton.phases():
+                logger.log_list(lvl, ['frame %d of %s is' % (i, p.name())] + [str(x) for x in f.summary_of(p)])
 
     def print_frames(self) -> None:
         for i, _ in enumerate(self.fs):

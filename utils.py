@@ -31,7 +31,7 @@ class OrderedSet(Generic[T], Iterable[T]):
         if x not in self.s:
             raise
 
-    def __isub__(self, other: Set[T]) -> OrderedSet[T]:
+    def __isub__(self, other: Set[T]): # -> OrderedSet[T]:
         self.s -= other
         self.l = [x for x in self.l if x in self.s]
         return self
