@@ -23,6 +23,9 @@ import parser
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
+from utils import MySet, OrderedSet
+
+from phases import PhaseAutomaton, Phase
 
 ALWAYS_PRINT = 35
 
@@ -657,45 +660,6 @@ class Diagram(object):
 def log_diagram(diag: Diagram, lvl: int=logging.DEBUG) -> None:
     logger.log(lvl, str(diag))
 
-class OrderedSet(Generic[T], Iterable[T]):
-    def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
-        self.l: List[T] = []
-        self.s: Set[T] = set()
-
-        if contents is None:
-            contents = []
-
-        for x in contents:
-            self.add(x)
-
-    def __len__(self) -> int:
-        return len(self.l)
-
-    def __str__(self) -> str:
-        return '{%s}' % ','.join(str(x) for x in self.l)
-
-    def __contains__(self, item: T) -> bool:
-        return item in self.s
-
-    def add(self, x: T) -> None:
-        if x not in self.s:
-            self.l.append(x)
-            self.s.add(x)
-
-    def remove(self, x: T) -> None:
-        if x not in self.s:
-            raise
-
-    def __isub__(self, other: Set[T]) -> OrderedSet[T]:
-        self.s -= other
-        self.l = [x for x in self.l if x in self.s]
-        return self
-
-    def __iter__(self) -> Iterator[T]:
-        return iter(self.l)
-
-MySet = OrderedSet
-
 class Model(object):
     def __init__(
             self,
@@ -923,19 +887,26 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
     assert False
 
 
+
 class Frames(object):
     @log_start_end_xml(logging.DEBUG, 'Frames.__init__')
-    def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr]) -> None:
+    def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr], automaton: Optional[AutomatonDecl]=None) -> None:
         self.solver = solver
         self.prog = prog
         self.safety = safety
+        assert automaton is not None
+        self.automaton = PhaseAutomaton(automaton)
         self.fs: List[MySet[Expr]] = []
         self.push_cache: List[Set[Expr]] = []
         self.counter = 0
         self.uncommitted: Set[Expr] = set()
         self.learned_order: 'networkx.DiGraph[Expr]' = networkx.DiGraph()
 
-        self.new_frame([init.expr for init in prog.inits()])
+        init_conjuncts = [init.expr for init in prog.inits()]
+        self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
+                            else syntax.FalseExpr
+                        for p in self.automaton.phases()})
+
         self.new_frame()
 
     def __getitem__(self, i: int) -> MySet[Expr]:
@@ -947,7 +918,7 @@ class Frames(object):
     def __len__(self) -> int:
         return len(self.fs)
 
-    def new_frame(self, contents: Optional[Sequence[Expr]]=None) -> None:
+    def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
             contents = [syntax.Bool(None, True)]
         self.fs.append(MySet(contents))
@@ -1412,6 +1383,22 @@ def updr(s: Solver, prog: Program) -> None:
     fs = Frames(s, prog, get_safety(prog))
     fs.search()
 
+@log_start_end_xml(logging.INFO)
+@log_start_end_time(logging.INFO)
+def phase_updr(s: Solver, prog: Program) -> None:
+    # TODO: handle these
+    if args.find_predecessor_via_transition_disjunction:
+        args.use_z3_unsat_cores = True
+
+    if args.use_z3_unsat_cores:
+        z3.set_param('smt.core.minimize', True)
+
+    check_init(s, prog)
+
+    fs = Frames(s, prog, get_safety(prog), automaton=prog.the_automaton())
+    fs.search()
+
+
 def debug_tokens(filename: str) -> None:
     l = parser.get_lexer()
 
@@ -1470,7 +1457,7 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
 
                 with s:
                     s.add(t.translate_transition(trans))
-                    # TODO: this is the full AE -> AE check which is generally undecidable
+                    # TODO: this is the full EA -> EA check which is generally undecidable
                     s.add(z3.And(*(z3.Not(t.translate_transition(trans, delta.precond))
                                    for delta in phase.transitions() if trans.name == delta.transition)))
 
@@ -1730,6 +1717,10 @@ def parse_args() -> argparse.Namespace:
                                help='number of steps to check')
 
     argparser.add_argument('filename')
+
+    phase_updr_subparser = subparsers.add_parser('phase-updr', parents=[updr_subparser], add_help=False)
+    phase_updr_subparser.set_defaults(main=phase_updr)
+    all_subparsers.append(phase_updr_subparser)
 
     return argparser.parse_args()
 

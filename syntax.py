@@ -370,6 +370,9 @@ class Bool(Expr):
     def free_ids(self) -> List[str]:
         return []
 
+TrueExpr  = Bool(None, True)
+FalseExpr = Bool(None, False)
+
 UNOPS = {
     'NOT',
     'OLD'
