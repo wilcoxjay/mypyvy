@@ -1278,7 +1278,7 @@ class Frames(object):
                     continue
                 return (sat_res, aux)
 
-            ret_core =             MySet(sorted(core))
+            ret_core = None
             return (z3.unsat, ret_core)
 
     def find_predecessor_from_src_phase(
@@ -1380,6 +1380,8 @@ class Frames(object):
                 ret_core: Optional[MySet[int]] = None
             else:
                 ret_core = MySet(sorted(core))
+
+            assert ret_core is None, "Phases - not yet supported"
 
             return (z3.unsat, ret_core)
 
