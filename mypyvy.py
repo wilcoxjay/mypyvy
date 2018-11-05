@@ -963,17 +963,23 @@ class Frames(object):
 
         while True:
             with LogTag('establish-safety-attempt'):
-                res = check_implication(self.solver, f, self.safety)
+                found_cex = False
+                for p in self.automaton.phases():
+                    res = check_implication(self.solver, f.summary_of(p), self.safety)
 
-                if res is None:
+                    if res is None:
+                        continue
+
+                    found_cex = True
+                    z3m: z3.ModelRef = res
+
+                    mod = Model(self.prog, z3m, KEY_ONE)
+                    diag = mod.as_diagram()
+                    self.block(diag, frame_no, [(None, diag)], True)
+
+                if not found_cex:
                     self.commit()
                     return
-
-                z3m: z3.ModelRef = res
-
-                mod = Model(self.prog, z3m, KEY_ONE)
-                diag = mod.as_diagram()
-                self.block(diag, frame_no, [(None, diag)], True)
 
 
     def get_inductive_frame(self) -> Optional[MySet[Expr]]:
