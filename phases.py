@@ -85,6 +85,9 @@ class Frame(object):
         for phase in phases:
             self._summary_by_pred[phase] = MySet(summaries.get(phase, [TrueExpr]))
 
+    def phases(self):
+        return self._summary_by_pred.keys()
+
     def summary_of(self, phase: Phase) -> MySet[Expr]:
         return self._summary_by_pred[phase]
 

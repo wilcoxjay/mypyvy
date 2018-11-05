@@ -611,14 +611,15 @@ class Diagram(object):
 
     @log_start_end_xml()
     @log_start_end_time()
-    def generalize(self, s: Solver, prog: Program, f: Iterable[Expr],
+    def generalize(self, s: Solver, prog: Program, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, PhaseTransition],
                    depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
             logger.debug(str(self))
             with LogTag('previous-frame', lvl=logging.DEBUG):
-                logger.log_list(logging.DEBUG, ['previous frame is'] + [str(x) for x in f])
+                for p in f.phases():
+                    logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] + [str(x) for x in f.summary_of(p)])
 
         T = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
         d: T
