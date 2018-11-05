@@ -1442,7 +1442,7 @@ class Frames(object):
                 if f is not None:
                     logger.always_print('frame is safe and inductive. done!')
                     for p in self.automaton.phases():
-                        logger.log_list(ALWAYS_PRINT, ['summary of %s: ' % p] + [str(x) for x in f.summary_of(p)])
+                        logger.log_list(ALWAYS_PRINT, ['summary of %s: ' % p.name()] + [str(x) for x in f.summary_of(p)])
                     return f
 
                 logger.info('frame is safe but not inductive. starting new frame')
