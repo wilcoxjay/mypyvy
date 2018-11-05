@@ -999,10 +999,15 @@ class Frames(object):
 
     def get_inductive_frame(self) -> Optional[Frame]:
         for i in range(len(self) - 1):
-            for p in self.automaton.phases():
-                if check_implication(self.solver, self[i+1].summary_of(p), self[i].summary_of(p)) is None:
-                    return self[i+1]
+            if self.is_frame_inductive(i):
+                return self[i+1]
         return None
+
+    def is_frame_inductive(self, i: int) -> Bool:
+        for p in self.automaton.phases():
+            if check_implication(self.solver, self[i + 1].summary_of(p), self[i].summary_of(p)) is None:
+                return False
+        return True
 
     def push_conjunct(self, frame_no: int, c: Expr, p: Phase, frame_old_count: Optional[int]=None) -> None:
         is_safety = c in self.safety
