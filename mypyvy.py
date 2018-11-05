@@ -940,8 +940,6 @@ class Frames(object):
         self.fs: List[Frame] = []
         self.push_cache: List[Dict[Phase, Set[Expr]]] = []
         self.counter = 0
-        self.uncommitted: Set[Expr] = set()
-        self.learned_order: 'networkx.DiGraph[Expr]' = networkx.DiGraph()
 
         init_conjuncts = [init.expr for init in prog.inits()]
         self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
@@ -964,11 +962,7 @@ class Frames(object):
             contents = {}
         logger.debug("new frame! %s" % len(self.fs))
         self.fs.append(Frame(self.automaton.phases(), contents))
-        # TODO: accommodate multiple phases in convergence hacks
         self.push_cache.append({p: set() for p in self.automaton.phases()})
-        c: Expr
-        for c in set().union(*(set(cjs) for cjs in contents.values())):
-            self.learned_order.add_node(c)
 
         self.push_forward_frames()
         self.establish_safety()
@@ -985,7 +979,6 @@ class Frames(object):
                 res = self._get_some_cex_to_safety()
 
                 if res is None:
-                    self.commit()
                     return
 
                 z3m: z3.ModelRef
@@ -1035,23 +1028,6 @@ class Frames(object):
             with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
                 logger.debug('frame %s phase %s attempting to push %s' % (frame_no, p.name(), c))
 
-                # if not is_safety:
-                #     has_air = False
-                #     continue
-
-                if not is_safety and args.convergence_hacks and (
-                        self.counter > conjunct_old_count + 3 or
-                        (frame_old_count is not None and self.counter > frame_old_count + 10)
-                    ): # total hack
-                    logger.warning('decided to give up pushing conjunct %s in frame %d' % (c, frame_no))
-                    if self.counter > conjunct_old_count + 3:
-                        logger.warning("because I've tried to push this conjunct 3 times")
-                    else:
-                        assert frame_old_count is not None and self.counter > frame_old_count + 10
-                        logger.warning("because I've spent too long in this frame")
-                    self.abort()
-                    break
-
                 res = self.clause_implied_by_transitions_from_frame(f, p, c)
                 if res is None:
                     logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
@@ -1066,7 +1042,6 @@ class Frames(object):
                         logger.debug('ok.')
 
                     self[frame_no + 1].strengthen(p, c)
-                    self.commit()
                     break
 
                 pre_phase, (m, t) = res
@@ -1082,13 +1057,7 @@ class Frames(object):
                     logger.debug("this case is the one")
                 else:
                     ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], False)
-                    if isinstance(ans, GaveUp):
-                        logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
-                        logger.warning('because a call to block gave up')
-                        self.abort()
-                        break
-                    elif isinstance(ans, CexFound):
-                        self.commit()
+                    if isinstance(ans, CexFound):
                         break
 
 
@@ -1115,25 +1084,7 @@ class Frames(object):
         conjuncts = f.summary_of(p)
 
         j = 0
-        if args.push_toposort:
-            assert False, "phases - not yet supported"
-            j = len(conjuncts)
-            G = networkx.graphviews.subgraph_view(self.learned_order, lambda x: x in conjuncts)
-
-            if logger.isEnabledFor(logging.DEBUG):
-                for c in conjuncts:
-                    if c not in G:
-                        print('c =', c)
-                        print('G =', ', '.join(str(x) for x in G))
-                        self.print_frames()
-                        assert False
-
-            for c in networkx.topological_sort(G):
-                assert self.uncommitted == set()
-                process_conjunct(c)
-
         while j < len(conjuncts):
-            assert self.uncommitted == set()
             c = conjuncts.l[j]
             process_conjunct(c)
             j += 1
@@ -1144,9 +1095,6 @@ class Frames(object):
     # or throwing an exception describing an abstract counterexample on failure.
     # If safety_goal is False, then no abstract counterexample is ever reported to user,
     # instead, CexFound() is returned to indicate the diagram could not be blocked.
-    # Also, if safety_goal is False and args.convergence_hacks is True, block() will
-    # sometimes decide to give up blocking and return GaveUp(), which the caller
-    # can handle in whatever way makes sense (typically, it is treated as a failure to block).
     @log_start_end_xml(lvl=logging.DEBUG)
     def block(
             self,
@@ -1155,7 +1103,7 @@ class Frames(object):
             p: Phase,
             trace: List[Tuple[Optional[PhaseTransition],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
-    ) -> Union[Blocked, CexFound, GaveUp]:
+    ) -> Union[Blocked, CexFound]:
         if j == 0 or (j == 1 and self.valid_in_initial_frame(p, diag) is not None):
             if safety_goal:
                 logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') + str(diag) for t, diag in trace))
@@ -1170,12 +1118,6 @@ class Frames(object):
 
         # print fs
         while True:
-            if not safety_goal and args.convergence_hacks and self.counter >= old_count + 3:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.warning('decided to give up blocking diagram after 3 tries in frame %s' % j)
-                    logger.debug(str(diag))
-                return GaveUp()
-
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('blocking diagram in frame %s' % j)
                 log_diagram(diag, lvl=logging.DEBUG)
@@ -1212,10 +1154,6 @@ class Frames(object):
             logger.debug('adding new clause to frames 0 through %d phase %s' % (j, p.name()))
         if logger.isEnabledFor(logging.INFO):
             logger.info("[%d] %s" % (j, str(e)))
-
-        c = trace[0][1]
-        if isinstance(c, Expr):
-            self.learned_order.add_edge(e, c)
 
         self.add(p, e, j)
         logger.debug("Done blocking")
@@ -1261,20 +1199,8 @@ class Frames(object):
                 logger.debug('augment_core_for_init: new core')
                 logger.debug(str(sorted(core)))
 
-    def commit(self) -> None:
-        self.uncommitted = set()
-
-    def abort(self) -> None:
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('aborting')
-            logger.debug('\n'.join(str(x) for x in self.uncommitted))
-        for i in range(len(self)):
-            self[i] -= self.uncommitted # TODO: compilation error with phases
-        self.uncommitted = set()
-
     def add(self, p: Phase, e: Expr, depth: Optional[int]=None) -> None:
         self.counter += 1
-        self.uncommitted.add(e)
 
         if depth is None:
             depth = len(self)
@@ -1819,13 +1745,8 @@ def parse_args() -> argparse.Namespace:
                                 'of all transitions rather than enumerating them one by one')
     updr_subparser.add_argument('--smoke-test', action='store_true',
                                 help='run bmc to confirm every conjunct added to a frame')
-    updr_subparser.add_argument('--convergence-hacks', action='store_true',
-                                help='when some steps seem to be taking too long, just give up')
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
                                 help='substitute existentially quantified variables that are equal to constants')
-    updr_subparser.add_argument('--push-toposort', action='store_true',
-                                help='push lemmas in each frame in dependency orded '
-                                '(if lemma X was learned while pushing Y, then X will be pushed before Y in future frames)')
 
     for sp in [verify_subparser, updr_subparser]:
         sp.add_argument('--automaton', action='store_true',
