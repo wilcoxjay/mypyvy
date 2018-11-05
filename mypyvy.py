@@ -1660,7 +1660,8 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 def verify(s: Solver, prog: Program) -> None:
     a = prog.the_automaton()
     if a is None:
-        syntax.error(None,'--automaton requires the file to declare an automaton')
+        if args.automaton:
+            syntax.error(None, '--automaton requires the file to declare an automaton')
     else:
         check_automaton_full(s, prog, a)
 
