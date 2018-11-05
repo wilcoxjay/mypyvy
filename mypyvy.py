@@ -1063,7 +1063,7 @@ class Frames(object):
                             has_air = False
 
                 if not found_pred_cex:
-                    logger.debug('frame %s managed to push %s' % (frame_no, c))
+                    logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
 
                     if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
                         logger.debug('jrw smoke testing...')
