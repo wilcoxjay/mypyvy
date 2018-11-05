@@ -997,10 +997,11 @@ class Frames(object):
                     return
 
 
-    def get_inductive_frame(self) -> Optional[MySet[Expr]]:
+    def get_inductive_frame(self) -> Optional[Frame]:
         for i in range(len(self) - 1):
-            if check_implication(self.solver, self[i+1], self[i]) is None:
-                return self[i+1]
+            for p in self.automaton.phases():
+                if check_implication(self.solver, self[i+1].summary_of(p), self[i].summary_of(p)) is None:
+                    return self[i+1]
         return None
 
     def push_conjunct(self, frame_no: int, c: Expr, p: Phase, frame_old_count: Optional[int]=None) -> None:
@@ -1440,7 +1441,8 @@ class Frames(object):
                 f = self.get_inductive_frame()
                 if f is not None:
                     logger.always_print('frame is safe and inductive. done!')
-                    logger.log_list(ALWAYS_PRINT, [str(x) for x in f])
+                    for p in self.automaton.phases():
+                        logger.log_list(ALWAYS_PRINT, ['summary of %s: ' % p] + [str(x) for x in f.summary_of(p)])
                     return f
 
                 logger.info('frame is safe but not inductive. starting new frame')
