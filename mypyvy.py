@@ -984,7 +984,7 @@ class Frames(object):
 
                     mod = Model(self.prog, z3m, KEY_ONE)
                     diag = mod.as_diagram()
-                    self.block(diag, frame_no, [(None, diag)], True)
+                    self.block(diag, frame_no, p, [(None, diag)], True)
 
                 if not found_cex:
                     self.commit()
@@ -1036,9 +1036,9 @@ class Frames(object):
                         # logger.debug(str(mod))
                     if is_safety:
                         logger.debug('note: current clause is safety condition')
-                        self.block(diag, frame_no, [(None, c), (t, diag)], True)
+                        self.block(diag, frame_no, p, [(None, c), (t, diag)], True)
                     else:
-                        ans = self.block(diag, frame_no, [(None, c), (t, diag)], False)
+                        ans = self.block(diag, frame_no, p, [(None, c), (t, diag)], False)
                         if isinstance(ans, GaveUp):
                             logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
                             logger.warning('because a call to block gave up')
@@ -1123,6 +1123,7 @@ class Frames(object):
             self,
             diag: Diagram,
             j: int,
+            p: Phase,
             trace: List[Tuple[Optional[TransitionDecl],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound, GaveUp]:
@@ -1151,7 +1152,7 @@ class Frames(object):
                 log_diagram(diag, lvl=logging.DEBUG)
 
                 self.print_frame(j-1, lvl=logging.DEBUG)
-            res, x = self.find_predecessor(self[j-1], diag)
+            res, x = self.find_predecessor(self[j-1], p, diag)
             if res == z3.unsat:
                 logger.debug('no predecessor: blocked!')
                 assert x is None or isinstance(x, MySet)
@@ -1258,27 +1259,50 @@ class Frames(object):
     @log_start_end_xml(lvl=logging.DEBUG)
     def find_predecessor(
             self,
-            pre_frame: Iterable[Expr],
+            pre_frame: Frame,
+            current_phase: Phase,
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Diagram]]]:
-        if args.use_z3_unsat_cores:
-            core: MySet[int] = MySet()
-
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
-        with self.solver:
-            for f in pre_frame:
-                self.solver.add(t.translate_expr(f, old=True))
+        core: MySet[int] = MySet()
+        assert not args.use_z3_unsat_cores, "phases - not yet supported"
+        assert not args.find_predecessor_via_transition_disjunction, "phases - not yet supported"
 
+        with self.solver:
             self.solver.add(diag.to_z3(t))
 
-            for trans in self.prog.transitions():
-                logger.debug('checking %s' % trans.name)
+            for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
+                (sat_res, aux) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
+                if sat_res == z3.unsat:
+                    continue
+                return (sat_res, aux)
+
+            ret_core =             MySet(sorted(core))
+            return (z3.unsat, ret_core)
+
+    def find_predecessor_from_src_phase(
+            self,
+            t: syntax.Z3Translator,
+            pre_frame: Frame,
+            src_phase: Phase,
+            transitions: List[PhaseTransition],
+            diag: Diagram
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Diagram]]]:
+            if args.use_z3_unsat_cores:
+                core: MySet[int] = MySet()
+
+            for f in pre_frame.summary_of(src_phase):
+                self.solver.add(t.translate_expr(f, old=True))
+
+            for phase_transition in transitions:
+                delta = phase_transition.transition_decl()
+                trans = self.prog.scope.get_transition(delta.transition)
+                assert trans is not None
+                precond = delta.precond
+
                 with self.solver:
-                    self.solver.add(t.translate_transition(trans))
-                    # if logger.isEnabledFor(logging.DEBUG):
-                    #     logger.debug('assertions')
-                    #     logger.debug(str(self.solver.assertions()))
+                    self.solver.add(t.translate_transition(trans, precond=precond))
                     res = self.solver.check(*diag.trackers)
 
                     if res != z3.unsat:
@@ -1352,12 +1376,13 @@ class Frames(object):
                         logger.debug(str(sorted(core)))
 
 
-        if not args.use_z3_unsat_cores:
-            ret_core: Optional[MySet[int]] = None
-        else:
-            ret_core = MySet(sorted(core))
+            if not args.use_z3_unsat_cores:
+                ret_core: Optional[MySet[int]] = None
+            else:
+                ret_core = MySet(sorted(core))
 
-        return (z3.unsat, ret_core)
+            return (z3.unsat, ret_core)
+
 
     def _simplify_summary(self, f: MySet[Expr]) -> None:
         l = []
