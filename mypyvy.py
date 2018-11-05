@@ -1029,8 +1029,7 @@ class Frames(object):
         conjunct_old_count = self.counter
 
         f = self.fs[frame_no]
-        has_air = True
-        while has_air:
+        while True:
             with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
                 logger.debug('frame %s phase %s attempting to push %s' % (frame_no, p.name(), c))
 
