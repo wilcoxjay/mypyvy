@@ -464,7 +464,7 @@ class Diagram(object):
     def resolve(self, scope: Scope) -> None:
         self.binder.pre_resolve(scope)
 
-        with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
+        with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             for _, _, c in self.conjuncts():
                 c.resolve(scope, syntax.BoolSort)
 
@@ -472,7 +472,7 @@ class Diagram(object):
 
     def to_z3(self, t: syntax.Z3Translator) -> z3.ExprRef:
         bs = t.bind(self.binder)
-        with t.scope.in_scope(list(zip(self.binder.vs, bs))):
+        with t.scope.in_scope(self.binder, bs):
             z3conjs = []
             self.trackers = []
             self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int]] = []

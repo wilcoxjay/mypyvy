@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, _GeneratorContextManager
+from contextlib import contextmanager
 import itertools
 import logging
 import ply.lex
@@ -163,7 +163,7 @@ class Z3Translator(object):
                 self.expr_cache[t] = R(*(self.translate_expr(arg, old) for arg in expr.args))
             elif isinstance(expr, QuantifierExpr):
                 bs = self.bind(expr.binder)
-                with self.scope.in_scope(list(zip(expr.binder.vs, bs))):
+                with self.scope.in_scope(expr.binder, bs):
                     e = self.translate_expr(expr.body, old)
                 q = z3.ForAll if expr.quant == 'FORALL' else z3.Exists
                 self.expr_cache[t] = q(bs, e)
@@ -226,7 +226,7 @@ class Z3Translator(object):
         if cache_key not in self.transition_cache:
 
             bs = self.bind(t.binder)
-            with self.scope.in_scope(list(zip(t.binder.vs, bs))):
+            with self.scope.in_scope(t.binder, bs):
                 body = z3.And(self.translate_expr(t.expr),
                               *self.frame(t.mods),
                               self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
@@ -263,7 +263,7 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
         else:
             return set()
     elif isinstance(expr, QuantifierExpr):
-        with scope.in_scope(list(zip(expr.binder.vs, [None for i in range(len(expr.binder.vs))]))):
+        with scope.in_scope(expr.binder, [None for i in range(len(expr.binder.vs))]):
             return symbols_used(scope, expr.body, old)
     elif isinstance(expr, Id):
         d = scope.get(expr.name)
@@ -752,7 +752,7 @@ class QuantifierExpr(Expr):
 
         self.binder.pre_resolve(scope)
 
-        with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
+        with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             self.body.resolve(scope, BoolSort)
 
         self.binder.post_resolve()
@@ -1157,12 +1157,12 @@ class TransitionDecl(Decl):
 
         self.expr = close_free_vars(self.expr, in_scope=[v.name for v in self.binder.vs])
 
-        with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
+        with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             self.expr.resolve(scope, BoolSort)
 
         self.binder.post_resolve()
 
-        with scope.in_scope([(v, v.sort) for v in self.binder.vs]):
+        with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             syms = symbols_used(scope, self.expr)
             for is_old, tok, sym in syms:
                 if not is_old:
@@ -1284,7 +1284,7 @@ class PhaseTransitionDecl(object):
         if self.precond is not None:
             transition_constants = transition.binder.vs
             self.precond = close_free_vars(self.precond, in_scope=[x.name for x in transition_constants])
-            with scope.in_scope_wo_translated(transition_constants):
+            with scope.in_scope(transition.binder, [v.sort for v in transition_constants]):
                 self.precond.resolve(scope, BoolSort)
 
         if self.target is not None and scope.get_phase(self.target) is None:
@@ -1596,15 +1596,14 @@ class Scope(Generic[B]):
         return self.transitions.get(transition)
 
     @contextmanager
-    def in_scope(self, l: List[Tuple[SortedVar, B]]) -> Iterator[None]:
+    def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:
         n = len(self.stack)
-        self.push(l)
+        assert len(b.vs) == len(annots)
+        self.push(list(zip(b.vs, annots)))
         yield
         self.pop()
         assert n == len(self.stack)
 
-    def in_scope_wo_translated(self, l: List[SortedVar]) -> _GeneratorContextManager[B]:
-        return self.in_scope([(x, None) for x in l]) # TODO: for mypy, scope should use Optional[B], right?
 
 class Program(object):
     def __init__(self, decls: List[Decl]) -> None:
