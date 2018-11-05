@@ -961,7 +961,7 @@ class Frames(object):
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
             contents = {}
-        logger.debug("new frame!")
+        logger.debug("new frame! %s" % len(self.fs))
         self.fs.append(Frame(self.automaton.phases(), contents))
         # TODO: accommodate multiple phases in convergence hacks
         self.push_cache.append({p: set() for p in self.automaton.phases()})
@@ -980,26 +980,33 @@ class Frames(object):
 
         while True:
             with LogTag('establish-safety-attempt'):
-                found_cex = False
-                # TODO: also check edge covering
-                for p in self.automaton.phases():
-                    res = check_implication(self.solver, f.summary_of(p), self.safety)
+                res = self._get_some_cex_to_safety()
 
-                    if res is None:
-                        logger.debug("Frontier frame phase %s implies safety" % p.name())
-                        continue
-
-                    logger.debug("Cex to safety in frontier frame phase %s" % p.name())
-                    found_cex = True
-                    z3m: z3.ModelRef = res
-
-                    mod = Model(self.prog, z3m, KEY_ONE)
-                    diag = mod.as_diagram()
-                    self.block(diag, frame_no, p, [(None, diag)], True)
-
-                if not found_cex:
+                if res is None:
                     self.commit()
                     return
+
+                z3m: z3.ModelRef = res
+
+                mod = Model(self.prog, z3m, KEY_ONE)
+                diag = mod.as_diagram()
+                self.block(diag, frame_no, [(None, diag)], True)
+
+    def _get_some_cex_to_safety(self):
+        f = self.fs[-1]
+
+        # TODO: also check edge covering
+        for p in self.automaton.phases():
+            res = check_implication(self.solver, f.summary_of(p), self.safety)
+
+            if res is None:
+                logger.debug("Frontier frame phase %s implies safety" % p.name())
+                continue
+
+            z3m: z3.ModelRef = res
+            return z3m
+
+        return None
 
 
     def get_inductive_frame(self) -> Optional[Frame]:
