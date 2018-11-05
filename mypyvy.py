@@ -972,6 +972,7 @@ class Frames(object):
         while True:
             with LogTag('establish-safety-attempt'):
                 found_cex = False
+                # TODO: also check edge covering
                 for p in self.automaton.phases():
                     res = check_implication(self.solver, f.summary_of(p), self.safety)
 
