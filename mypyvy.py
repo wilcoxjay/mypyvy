@@ -338,9 +338,9 @@ def check_two_state_implication_along_transitions(
         s: Solver,
         prog: Program,
         old_hyps: Iterable[Expr],
-        transitions: Iterator[PhaseTransition],
+        transitions: Sequence[PhaseTransition],
         new_conc: Expr
-) -> Optional[Tuple[z3.ModelRef, TransitionDecl]]:
+) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
     with s:
         for h in old_hyps:
@@ -599,9 +599,10 @@ class Diagram(object):
                 verbose_print_z3_model(res)
             logger.debug('ok.')
 
+    # TODO: merge with clause_implied_by_transitions_from_frame...
     def check_valid_in_phase_from_frame(self, s: Solver, prog: Program, f: Frame,
-                                        transitions_to_grouped_by_src: Dict[Phase, PhaseTransition],) \
-    -> Union[None, Tuple[z3.ModelRef, TransitionDecl], z3.ModelRef]:
+                                        transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],) \
+    -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
         for src, transitions in transitions_to_grouped_by_src.items():
             ans = check_two_state_implication_along_transitions(s, prog, f.summary_of(src), transitions,
                                                                 syntax.Not(self.to_ast()))
@@ -613,7 +614,7 @@ class Diagram(object):
     @log_start_end_xml()
     @log_start_end_time()
     def generalize(self, s: Solver, prog: Program, f: Frame,
-                   transitions_to_grouped_by_src: Dict[Phase, PhaseTransition],
+                   transitions_to_grouped_by_src: Mapping[Phase, Sequence[PhaseTransition]],
                    depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
@@ -965,6 +966,7 @@ class Frames(object):
         self.fs.append(Frame(self.automaton.phases(), contents))
         # TODO: accommodate multiple phases in convergence hacks
         self.push_cache.append({p: set() for p in self.automaton.phases()})
+        c: Expr
         for c in set().union(*contents.values()):
             self.learned_order.add_node(c)
 
@@ -1018,7 +1020,7 @@ class Frames(object):
                 return self[i+1]
         return None
 
-    def is_frame_inductive(self, i: int) -> Bool:
+    def is_frame_inductive(self, i: int) -> bool:
         for p in self.automaton.phases():
             if check_implication(self.solver, self[i + 1].summary_of(p), self[i].summary_of(p)) is None:
                 return False
@@ -1156,7 +1158,7 @@ class Frames(object):
     ) -> Union[Blocked, CexFound, GaveUp]:
         if j == 0 or (j == 1 and self.valid_in_initial_frame(p, diag) is not None):
             if safety_goal:
-                logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') + str(diag) for t, diag in trace))
+                logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
             else:
                 if logger.isEnabledFor(logging.DEBUG):
@@ -1267,7 +1269,7 @@ class Frames(object):
             logger.debug('aborting')
             logger.debug('\n'.join(str(x) for x in self.uncommitted))
         for i in range(len(self)):
-            self[i] -= self.uncommitted
+            self[i] -= self.uncommitted # TODO: compilation error with phases
         self.uncommitted = set()
 
     def add(self, p: Phase, e: Expr, depth: Optional[int]=None) -> None:
@@ -1308,7 +1310,7 @@ class Frames(object):
                 (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
                 if sat_res == z3.unsat:
                     continue
-                return (sat_res, (src, pre_diag))
+                return (sat_res, pre_diag)
 
             ret_core = None
             return (z3.unsat, ret_core)
@@ -1342,7 +1344,7 @@ class Frames(object):
                         m = Model(self.prog, self.solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug(str(m))
-                        return (res, (trans, m.as_diagram(old=True)))
+                        return (res, (trans, (src_phase, m.as_diagram(old=True))))
                     elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
                         uc = self.solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
@@ -1422,10 +1424,11 @@ class Frames(object):
             pre_frame: Frame,
             current_phase: Phase,
             c: Expr
-    ) -> Tuple[z3.CheckSatResult, Tuple[Phase, Tuple[z3.ModelRef, TransitionDecl]]]:
+    ) -> Optional[Tuple[Phase, Tuple[z3.ModelRef, PhaseTransition]]]:
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
         for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
+            logger.debug("check transition from %s by %s" % (src.name(), str(list(transitions))))
             ans = check_two_state_implication_along_transitions(self.solver, self.prog,
                                                                 pre_frame.summary_of(src), transitions,
                                                                 c)
@@ -1468,7 +1471,7 @@ class Frames(object):
         for i, _ in enumerate(self.fs):
             self.print_frame(i)
 
-    def search(self) -> MySet[Expr]:
+    def search(self) -> Frame:
         while True:
             n = len(self) - 1
             with LogTag('frame', lvl=logging.INFO, n=str(n)):

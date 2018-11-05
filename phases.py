@@ -30,10 +30,10 @@ class PhaseTransition(object):
     def target(self) -> Phase:
         return self._target
 
-    def transition_decl(self):
+    def transition_decl(self) -> PhaseTransitionDecl:
         return self._transition_decl
 
-    def pp(self):
+    def pp(self) -> str:
         return '%s assume %s' % (self._transition_decl.transition, self._transition_decl.precond)
 
     def __repr__(self) -> str:
@@ -61,8 +61,8 @@ class PhaseAutomaton(object):
 
         self._init_phase = self._phases[automaton_decl.the_init().phase]
 
-    def phases(self) -> Iterable[Phase]:
-        return self._phases.values()
+    def phases(self) -> Sequence[Phase]:
+        return list(self._phases.values())
 
     def phase_by_name(self, name: str) -> Phase:
         return self._phases[name]
@@ -73,7 +73,7 @@ class PhaseAutomaton(object):
     def predecessors(self, trg: Phase) -> List[Phase]:
         return [t.src() for t in self._transitions if t.target() == trg]
 
-    def transitions_between(self, src: Phase, target: Phase) -> List[Phase]:
+    def transitions_between(self, src: Phase, target: Phase) -> List[PhaseTransition]:
         return list(filter(lambda t: (t.src() == src) & (t.target() == target), self._transitions))
 
     def transitions_to_grouped_by_src(self, target: Phase) -> Dict[Phase, List[PhaseTransition]]:
@@ -88,8 +88,8 @@ class Frame(object):
         for phase in phases:
             self._summary_by_pred[phase] = MySet(summaries.get(phase, [TrueExpr]))
 
-    def phases(self):
-        return self._summary_by_pred.keys()
+    def phases(self) -> Sequence[Phase]:
+        return list(self._summary_by_pred.keys())
 
     def summary_of(self, phase: Phase) -> MySet[Expr]:
         return self._summary_by_pred[phase]
