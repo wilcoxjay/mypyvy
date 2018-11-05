@@ -961,8 +961,9 @@ class Frames(object):
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
             contents = {}
+        logger.debug("new frame!")
         self.fs.append(Frame(self.automaton.phases(), contents))
-        # TODO: accomodate multiple phases in convergence hacks
+        # TODO: accommodate multiple phases in convergence hacks
         self.push_cache.append({p: set() for p in self.automaton.phases()})
         for c in set().union(*contents.values()):
             self.learned_order.add_node(c)
@@ -1023,6 +1024,10 @@ class Frames(object):
             with LogTag('pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
                 logger.debug('frame %s phase %s attempting to push %s' % (frame_no, p.name(), c))
 
+                # if not is_safety:
+                #     has_air = False
+                #     continue
+
                 if not is_safety and args.convergence_hacks and (
                         self.counter > conjunct_old_count + 3 or
                         (frame_old_count is not None and self.counter > frame_old_count + 10)
@@ -1036,35 +1041,8 @@ class Frames(object):
                     self.abort()
                     has_air = False
 
-                found_pred_cex = False
-                for src, transitions in self.automaton.transitions_to_grouped_by_src(p).items():
-                    res = check_two_state_implication_along_transitions(self.solver, self.prog,
-                                                                        f.summary_of(src), transitions, c)
-                    if res is None:
-                        continue
-
-                    found_pred_cex = True
-                    m, t = res
-                    mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
-                    diag = mod.as_diagram(old=True)
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.pp()))
-                        # logger.debug(str(mod))
-                    if is_safety:
-                        logger.debug('note: current clause is safety condition')
-                        self.block(diag, frame_no, p, [(None, c), (t, diag)], True)
-                    else:
-                        ans = self.block(diag, frame_no, p, [(None, c), (t, diag)], False)
-                        if isinstance(ans, GaveUp):
-                            logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
-                            logger.warning('because a call to block gave up')
-                            self.abort()
-                            has_air = False
-                        elif isinstance(ans, CexFound):
-                            self.commit()
-                            has_air = False
-
-                if not found_pred_cex:
+                res = self.find_predecessor_to_conjunct(f, p, c)
+                if res is None:
                     logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
 
                     if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
@@ -1078,7 +1056,30 @@ class Frames(object):
 
                     self[frame_no + 1].strengthen(p, c)
                     self.commit()
-                    has_air = False
+                    break
+
+                m, t = res
+                mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
+                diag = mod.as_diagram(old=True)
+
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.pp()))
+                    # logger.debug(str(mod))
+                if is_safety:
+                    logger.debug('note: current clause is safety condition')
+                    self.block(diag, frame_no, p, [(None, c), (t, diag)], True)
+                    logger.debug("this case is the one")
+                else:
+                    ans = self.block(diag, frame_no, p, [(None, c), (t, diag)], False)
+                    if isinstance(ans, GaveUp):
+                        logger.warning('frame %d decided to give up pushing conjunct %s' % (frame_no, c))
+                        logger.warning('because a call to block gave up')
+                        self.abort()
+                        break
+                    elif isinstance(ans, CexFound):
+                        self.commit()
+                        break
+
 
     @log_start_end_xml(logging.DEBUG)
     def push_forward_frames(self) -> None:
@@ -1104,6 +1105,7 @@ class Frames(object):
 
         j = 0
         if args.push_toposort:
+            assert False, "phases - not yet supported"
             j = len(conjuncts)
             G = networkx.graphviews.subgraph_view(self.learned_order, lambda x: x in conjuncts)
 
@@ -1277,7 +1279,6 @@ class Frames(object):
         for i in range(depth+1):
             self[i].strengthen(p, e)
 
-
     @log_start_end_xml(lvl=logging.DEBUG)
     def find_predecessor(
             self,
@@ -1406,6 +1407,23 @@ class Frames(object):
             assert ret_core is None, "Phases - not yet supported"
 
             return (z3.unsat, ret_core)
+
+    def find_predecessor_to_conjunct(
+            self,
+            pre_frame: Frame,
+            current_phase: Phase,
+            c: Expr
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[TransitionDecl, Tuple[Phase, Diagram]]]]:
+        t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+
+        for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
+            ans = check_two_state_implication_along_transitions(self.solver, self.prog,
+                                                                pre_frame.summary_of(src), transitions,
+                                                                syntax.Not(c))
+            if ans is not None:
+                return ans
+
+        return None
 
 
     def _simplify_summary(self, f: MySet[Expr]) -> None:
