@@ -937,7 +937,7 @@ class Frames(object):
         assert automaton is not None
         self.automaton = PhaseAutomaton(automaton)
         self.fs: List[Frame] = []
-        self.push_cache: List[Set[Expr]] = []
+        self.push_cache: List[Dict[Phase, Set[Expr]]] = []
         self.counter = 0
         self.uncommitted: Set[Expr] = set()
         self.learned_order: 'networkx.DiGraph[Expr]' = networkx.DiGraph()
@@ -963,7 +963,7 @@ class Frames(object):
             contents = {}
         self.fs.append(Frame(self.automaton.phases(), contents))
         # TODO: accomodate multiple phases in convergence hacks
-        self.push_cache.append(set())
+        self.push_cache.append({p: set() for p in self.automaton.phases()})
         for c in set().union(*contents.values()):
             self.learned_order.add_node(c)
 
@@ -1082,22 +1082,21 @@ class Frames(object):
     def push_forward_frames(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
             with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
-                logger.debug('pushing in frame %d' % i)
-
                 for p in self.automaton.phases():
+                    logger.debug('pushing in frame %d phase %s' % (i, p.name()))
                     self.push_phase_from_pred(i, f, p)
 
     def push_phase_from_pred(self, i: int, f: Frame, p: Phase) -> None:
         frame_old_count = self.counter
 
         def process_conjunct(c: Expr) -> None:
-            if c in self.fs[i+1].summary_of(p) or c in self.push_cache[i]: # TODO: cache per phase?
+            if c in self.fs[i+1].summary_of(p) or c in self.push_cache[i][p]:
                 return
 
             with LogTag('pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
                 self.push_conjunct(i, c, p, frame_old_count)
 
-            self.push_cache[i].add(c)
+            self.push_cache[i][p].add(c)
 
         conjuncts = f.summary_of(p)
 
@@ -1256,7 +1255,7 @@ class Frames(object):
             self[i] -= self.uncommitted
         self.uncommitted = set()
 
-    def add(self, p: Pred, e: Expr, depth: Optional[int]=None) -> None:
+    def add(self, p: Phase, e: Expr, depth: Optional[int]=None) -> None:
         self.counter += 1
         self.uncommitted.add(e)
 
