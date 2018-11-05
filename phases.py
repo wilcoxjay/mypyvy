@@ -81,7 +81,7 @@ class PhaseAutomaton(object):
 
 
 class Frame(object):
-    def __init__(self, phases: Sequence[Phase], summaries: Optional[Dict[Phase, Sequence[Expr]]]=None):
+    def __init__(self, phases: Sequence[Phase], summaries: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         self._summary_by_pred: Dict[Phase, MySet[Expr]] = {}
         if summaries is None:
             summaries = {}
