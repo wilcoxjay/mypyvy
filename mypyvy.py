@@ -1322,7 +1322,6 @@ class Frames(object):
 
         core: MySet[int] = MySet()
         assert not args.use_z3_unsat_cores, "phases - not yet supported"
-        assert not args.find_predecessor_via_transition_disjunction, "phases - not yet supported"
 
         with self.solver:
             self.solver.add(diag.to_z3(t))
@@ -1379,7 +1378,7 @@ class Frames(object):
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
-                        elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
+                        elif args.use_z3_unsat_cores:
                             uc = solver.unsat_core()
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug('uc')
@@ -1399,50 +1398,6 @@ class Frames(object):
                             if logger.isEnabledFor(logging.DEBUG):
                                 logger.debug('new core')
                                 logger.debug(str(sorted(core)))
-
-                if args.find_predecessor_via_transition_disjunction:
-                    ts = []
-                    revmap = []
-                    for k, trans in enumerate(self.prog.transitions()):
-                        tx = z3.Bool('t%d' % k)
-                        ts.append(tx)
-                        solver.add(tx == t.translate_transition(trans))
-                        revmap.append(trans)
-                    solver.add(z3.Or(*ts))
-                    res = solver.check(*diag.trackers)
-                    assert res == z3.unsat
-                    # if res != z3.unsat:
-                    #     z3mod = solver.model()
-                    #     the_trans: Optional[TransitionDecl] = None
-                    #     for k, tx in enumerate(ts):
-                    #         if z3mod.eval(tx):
-                    #             the_trans = revmap[k]
-                    #             break
-                    #     else:
-                    #         assert False
-                    #
-                    #     logger.debug('found predecessor via %s' % the_trans.name)
-                    #     m = Model(self.prog, z3mod, KEY_NEW, KEY_OLD)
-                    #     return (res, (trans, m.as_diagram(old=True)))
-                    # else:
-                    if True:
-                        assert args.use_z3_unsat_cores
-
-                        uc = solver.unsat_core()
-                        # if logger.isEnabledFor(logging.DEBUG):
-                        #     logger.debug('uc')
-                        #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
-
-                            # logger.debug('assertions')
-                            # logger.debug(str(solver.assertions()))
-
-                        for x in sorted(uc, key=lambda y: y.decl().name()):
-                            assert isinstance(x, z3.ExprRef)
-                            core.add(int(x.decl().name()[1:]))
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug('core')
-                            logger.debug(str(sorted(core)))
-
 
                 if not args.use_z3_unsat_cores:
                     ret_core: Optional[MySet[int]] = None
@@ -1546,9 +1501,6 @@ def get_safety(prog: Program) -> List[Expr]:
 @log_start_end_xml(logging.INFO)
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
-    if args.find_predecessor_via_transition_disjunction:
-        args.use_z3_unsat_cores = True
-
     if args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
 
@@ -1852,9 +1804,6 @@ def parse_args() -> argparse.Namespace:
     updr_subparser.add_argument('--safety', help='name of invariant to use as safety property')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
                                 help='generalize diagrams using unsat cores instead of brute force')
-    updr_subparser.add_argument('--find-predecessor-via-transition-disjunction', action='store_true',
-                                help='when searching for diagram predecessors, use a big disjunction ' +
-                                'of all transitions rather than enumerating them one by one')
     updr_subparser.add_argument('--smoke-test', action='store_true',
                                 help='run bmc to confirm every conjunct added to a frame')
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
