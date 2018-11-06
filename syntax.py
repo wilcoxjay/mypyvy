@@ -1263,17 +1263,17 @@ class PhaseTransitionDecl(object):
         self.target = target
 
     def __repr__(self) -> str:
-        return 'PhaseTransitionDecl(tok=None, transition=%s, precond=%s, target=%s)' % (
+        return 'PhaseTransitionDecl(tok=None, transition=%s, target=%s, precond=%s)' % (
             repr(self.transition),
-            repr(self.precond),
             repr(self.target),
+            repr(self.precond),
         )
 
     def __str__(self) -> str:
-        return 'transition %s assume %s -> %s' % (
+        return 'transition %s -> %s%s' % (
             self.transition,
-            (self.precond if (self.precond is not None) else "true"),
             self.target,
+            (('assume %s' % self.precond) if (self.precond is not None) else ''),
         )
 
     def resolve(self, scope: Scope) -> None:
