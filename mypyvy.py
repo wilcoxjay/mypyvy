@@ -349,6 +349,7 @@ def check_two_state_implication_along_transitions(
         s.add(z3.Not(t.translate_expr(new_conc)))
 
         for phase_transition in transitions:
+            logger.debug("two state implication check post %s transition %s pre %s" % (new_conc, phase_transition, old_hyps))
             delta = phase_transition.transition_decl()
             trans = prog.scope.get_transition(delta.transition)
             assert trans is not None
@@ -362,7 +363,9 @@ def check_two_state_implication_along_transitions(
                 #     logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
+                    logger.debug("two state implication check invalid")
                     return s.model(), phase_transition
+            logger.debug("two state implication check valid")
 
     return None
 
@@ -604,6 +607,7 @@ class Diagram(object):
                                         transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],) \
     -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
         for src, transitions in transitions_to_grouped_by_src.items():
+            logger.debug("gen: check transition from %s by %s" % (src.name(), str(list(transitions))))
             ans = check_two_state_implication_along_transitions(s, prog, f.summary_of(src), transitions,
                                                                 syntax.Not(self.to_ast()))
             if ans is not None:
