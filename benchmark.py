@@ -128,7 +128,7 @@ convergant_benchmarks = [
     Benchmark('test/consensus.pyv', safety='one_leader'),
     Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
     Benchmark('test/ring.pyv', safety='one_leader'),
-    Benchmark('test/sll-reverse.pyv')
+#    Benchmark('test/sll-reverse.pyv')
 ]
 
 other_benchmarks: List[Benchmark] = [
