@@ -1026,20 +1026,25 @@ class Frames(object):
     def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, z3.ModelRef]]:
         f = self.fs[-1]
 
-        # TODO: also check edge covering
-        for p in self.automaton.phases():
+        def safety_property_checker(p: Phase) -> Optional[Tuple[Phase, z3.ModelRef]]:
             res = check_implication(self.solver, f.summary_of(p), self.safety)
 
             if res is None:
                 logger.debug("Frontier frame phase %s implies safety, summary is %s" % (p.name(), f.summary_of(p)))
-                continue
+                return None
 
             logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
             return (p, z3m)
 
+        # TODO: also check edge covering
+        safety_checkers = [safety_property_checker]
+        for p in self.automaton.phases():
+            for checker in safety_checkers:
+                sres = checker(p)
+                if sres is not None:
+                    return sres
         return None
-
 
     def get_inductive_frame(self) -> Optional[Frame]:
         for i in range(len(self) - 1):
