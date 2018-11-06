@@ -58,16 +58,16 @@ automaton {
   global
     transition send_lock -> self
 
-    transition recv_lock assume l!=ql -> self
-    transition recv_grant assume l!=ql -> self
-    transition unlock assume l!=ql -> self
-    transition recv_unlock assume l!=ql -> self
+    transition recv_lock -> self assume l!=ql
+    transition recv_grant -> self assume l!=ql
+    transition unlock -> self assume l!=ql
+    transition recv_unlock -> self assume l!=ql
 
   # Now come the phases. Each has a name, and then a sequence of declarations,
   # consisting of allowed transitions and (partial) characterizations.
 
   phase server
-    transition recv_lock assume l=ql -> phase grant
+    transition recv_lock -> phase grant assume l=ql
     invariant server_holds_lock(ql)
 
     invariant !grant_msg(X, ql)
@@ -75,7 +75,7 @@ automaton {
     invariant !unlock_msg(X, ql)
 
   phase grant
-    transition recv_grant assume l=ql -> phase client
+    transition recv_grant -> phase client assume l=ql
     invariant grant_msg(X, ql) & grant_msg(Y, ql) -> X = Y
 
     invariant !server_holds_lock(ql)
@@ -83,7 +83,7 @@ automaton {
     invariant !unlock_msg(X, ql)
 
   phase client
-    transition unlock assume l=ql -> phase unlock
+    transition unlock -> phase unlock assume l=ql
     invariant holds_lock(X, ql) & holds_lock(Y, ql) -> X = Y
 
     invariant !server_holds_lock(ql)
@@ -91,7 +91,7 @@ automaton {
     invariant !unlock_msg(X, ql)
 
   phase unlock
-    transition recv_unlock assume l=ql -> phase server
+    transition recv_unlock -> phase server assume l=ql
     invariant unlock_msg(X, ql) & unlock_msg(Y, ql) -> X = Y
 
     invariant !server_holds_lock(ql)

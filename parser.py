@@ -378,12 +378,16 @@ def p_phase_target_phase(p: Any) -> None:
     p[0] = p[2].value
 
 def p_phase_transition_decl(p: Any) -> None:
-    'phase_component : TRANSITION id IMPLIES phase_target'
-    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, None, p[4])
+    'phase_component : TRANSITION id IMPLIES phase_target option_guard'
+    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, p[5], p[4])
 
-def p_phase_transition_decl_w_assume(p: Any) -> None:
-    'phase_component : TRANSITION id ASSUME expr IMPLIES phase_target'
-    p[0] = syntax.PhaseTransitionDecl(p.slice[1], p[2].value, p[4], p[6])
+def p_option_guard_empty(p: Any) -> None:
+    'option_guard : empty'
+    p[0] = None
+
+def p_option_guard_guard(p: Any) -> None:
+    'option_guard : ASSUME expr'
+    p[0] = p[2]
 
 def p_phase_invariant_decl(p: Any) -> None:
     'phase_component : INVARIANT expr'
@@ -448,7 +452,7 @@ def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:
     global program_parser
     if not program_parser:
         # intentionally don's pass optimize=True here, because that disables the signature check
-        program_parser = ply.yacc.yacc(start='program', debug=False, forbid_rebuild=forbid_rebuild)
+        program_parser = ply.yacc.yacc(start='program', debug=True)
 
     return program_parser
 
