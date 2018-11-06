@@ -1270,7 +1270,7 @@ class PhaseTransitionDecl(object):
         )
 
     def __str__(self) -> str:
-        return 'transition %s -> %s%s' % (
+        return 'transition %s -> %s %s' % (
             self.transition,
             self.target,
             (('assume %s' % self.precond) if (self.precond is not None) else ''),

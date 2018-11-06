@@ -38,8 +38,8 @@ class PhaseTransition(object):
 
     def __repr__(self) -> str:
         return 'PhaseTransition(src=%s, target=%s, transition_decl=%s)' % (
-            self._src,
-            self._target,
+            self._src.name(),
+            self._target.name(),
             self._transition_decl
         )
 
