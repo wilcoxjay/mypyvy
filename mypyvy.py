@@ -131,6 +131,7 @@ class Solver(object):
         self.scope = scope
         self.translators: Dict[Tuple[Optional[str], Optional[str]], syntax.Z3Translator] = {}
         self.nqueries = 0
+        self.assumptions_necessary = False
 
     def get_translator(self, key: Optional[str]=None, key_old: Optional[str]=None) \
         -> syntax.Z3Translator:
@@ -138,6 +139,13 @@ class Solver(object):
         if t not in self.translators:
             self.translators[t] = syntax.Z3Translator(self.scope, key, key_old)
         return self.translators[t]
+
+    @contextmanager
+    def mark_assumptions_necessary(self) -> Iterator[None]:
+        old = self.assumptions_necessary
+        self.assumptions_necessary = True
+        yield None
+        self.assumptions_necessary = old
 
     def __enter__(self) -> None:
         self.z3solver.push()
@@ -153,6 +161,8 @@ class Solver(object):
 
     def check(self, *assumptions: z3.ExprRef) -> z3.CheckSatResult:
         # logger.debug('solver.check')
+        if self.assumptions_necessary and len(assumptions) == 0:
+            assert False
         self.nqueries += 1
         return self.z3solver.check(*assumptions)
 
@@ -1336,21 +1346,22 @@ class Frames(object):
         assert not args.use_z3_unsat_cores, "phases - not yet supported"
 
         with self.solver:
-            self.solver.add(diag.to_z3(t))
+            with self.solver.mark_assumptions_necessary():
+                self.solver.add(diag.to_z3(t))
 
-            transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
-            for src in self._predecessor_precedence(current_phase, list(transitions_into.keys())):
-                transitions = transitions_into[src]
-                assert transitions
-                logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
-                (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
-                if sat_res == z3.unsat:
-                    continue
-                return (sat_res, pre_diag)
+                transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
+                for src in self._predecessor_precedence(current_phase, list(transitions_into.keys())):
+                    transitions = transitions_into[src]
+                    assert transitions
+                    logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
+                    (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
+                    if sat_res == z3.unsat:
+                        continue
+                    return (sat_res, pre_diag)
 
-            ret_core = None
-            # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
-            return (z3.unsat, ret_core)
+                ret_core = None
+                # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
+                return (z3.unsat, ret_core)
 
     def _predecessor_precedence(self, dst_phase: Phase, pre_phases: Sequence[Phase]) -> Sequence[Phase]:
         if dst_phase not in pre_phases:
