@@ -1037,8 +1037,44 @@ class Frames(object):
             z3m: z3.ModelRef = res
             return (p, z3m)
 
+        def edge_covering_checker(p: Phase) -> Optional[Tuple[Phase, z3.ModelRef]]:
+            t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+            f = self.fs[-1]
+
+            with self.solver:
+                for c in f.summary_of(p):
+                    self.solver.add(t.translate_expr(c, old=True))
+
+                transitions_from_phase = self.automaton.transitions_from(p)
+
+                for trans in self.prog.transitions():
+                    edges_from_phase_matching_prog_trans = [t for t in transitions_from_phase
+                                                                if t.prog_transition_name() == trans.name]
+                    if any(delta.precond is None for delta in edges_from_phase_matching_prog_trans):
+                        logger.debug('transition %s is covered trivially by %s' % (trans.name, p.name()))
+                        continue
+
+                    logger.debug('checking transition %s is covered by %s' % (trans.name, p.name()))
+
+                    with self.solver:
+                        self.solver.add(t.translate_transition(trans))
+                        # TODO: this is the full EA -> EA check which is generally undecidable
+                        self.solver.add(z3.And(*(z3.Not(t.translate_transition(trans, delta.precond()))
+                                       for delta in edges_from_phase_matching_prog_trans)))
+
+                        if self.solver.check() != z3.unsat:
+                            logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
+                            z3m: z3.ModelRef = self.solver.model()
+                            return (p, z3m)
+
+                        logger.debug('transition %s is covered non-trivially by %s' % (trans.name, p.name()))
+                        continue
+
+                logger.debug('all edges covered from phase %s' % p.name())
+                return None
+
         # TODO: also check edge covering
-        safety_checkers = [safety_property_checker]
+        safety_checkers = [safety_property_checker, edge_covering_checker]
         for p in self.automaton.phases():
             for checker in safety_checkers:
                 sres = checker(p)
