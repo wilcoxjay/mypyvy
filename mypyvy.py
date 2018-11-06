@@ -1034,7 +1034,7 @@ class Frames(object):
 
     def is_frame_inductive(self, i: int) -> bool:
         for p in self.automaton.phases():
-            if check_implication(self.solver, self[i + 1].summary_of(p), self[i].summary_of(p)) is None:
+            if check_implication(self.solver, self[i + 1].summary_of(p), self[i].summary_of(p)) is not None:
                 return False
         return True
 
