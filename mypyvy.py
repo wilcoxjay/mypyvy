@@ -1284,7 +1284,9 @@ class Frames(object):
         assert not args.use_z3_unsat_cores, "phases - not yet supported"
         assert not args.find_predecessor_via_transition_disjunction, "phases - not yet supported"
 
-        for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
+        transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
+        for src in self._predecessor_precedence(current_phase, list(transitions_into.keys())):
+            transitions = transitions_into[src]
             assert transitions
             logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
             (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
@@ -1295,6 +1297,11 @@ class Frames(object):
         ret_core = None
         # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
         return (z3.unsat, ret_core)
+
+    def _predecessor_precedence(self, dst_phase: Phase, pre_phases: Sequence[Phase]) -> Sequence[Phase]:
+        if dst_phase not in pre_phases:
+            return pre_phases
+        return [x for x in pre_phases if x != dst_phase] + [dst_phase]
 
     def find_predecessor_from_src_phase(
             self,
