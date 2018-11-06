@@ -349,7 +349,7 @@ def check_two_state_implication_along_transitions(
         s.add(z3.Not(t.translate_expr(new_conc)))
 
         for phase_transition in transitions:
-            logger.debug("two state implication check post %s; transition %s; pre %s" % (new_conc, phase_transition, old_hyps))
+            #logger.debug("two state implication check post %s; transition %s; pre %s" % (new_conc, phase_transition, old_hyps))
             delta = phase_transition.transition_decl()
             trans = prog.scope.get_transition(delta.transition)
             assert trans is not None
@@ -363,9 +363,9 @@ def check_two_state_implication_along_transitions(
                 #     logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
-                    logger.debug("two state implication check invalid")
+                    #logger.debug("two state implication check invalid")
                     return s.model(), phase_transition
-            logger.debug("two state implication check valid")
+            #logger.debug("two state implication check valid")
 
     return None
 
@@ -607,7 +607,7 @@ class Diagram(object):
                                         transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],) \
     -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
         for src, transitions in transitions_to_grouped_by_src.items():
-            logger.debug("gen: check transition from %s by %s" % (src.name(), str(list(transitions))))
+            # logger.debug("gen: check transition from %s by %s" % (src.name(), str(list(transitions))))
             ans = check_two_state_implication_along_transitions(s, prog, f.summary_of(src), transitions,
                                                                 syntax.Not(self.to_ast()))
             if ans is not None:
@@ -995,8 +995,20 @@ class Frames(object):
         self.push_cache.append({p: set() for p in self.automaton.phases()})
 
         self.push_forward_frames()
+
+        with LogTag('current-frames-after-push', lvl=logging.DEBUG):
+            self.print_frames(lvl=logging.DEBUG)
+
         self.establish_safety()
+
+        with LogTag('current-frames-after-safety', lvl=logging.DEBUG):
+            self.print_frames(lvl=logging.DEBUG)
+
         self.simplify()
+
+        with LogTag('current-frames-after-simplify', lvl=logging.DEBUG):
+            self.print_frames(lvl=logging.DEBUG)
+
 
 
     @log_start_end_xml()
@@ -1460,9 +1472,9 @@ class Frames(object):
             for p in self.automaton.phases():
                 logger.log_list(lvl, ['frame %d of %s is' % (i, p.name())] + [str(x) for x in f.summary_of(p)])
 
-    def print_frames(self) -> None:
+    def print_frames(self, lvl: int=logging.INFO) -> None:
         for i, _ in enumerate(self.fs):
-            self.print_frame(i)
+            self.print_frame(i, lvl=lvl)
 
     def search(self) -> Frame:
         while True:
