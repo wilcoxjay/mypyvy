@@ -134,31 +134,31 @@ automaton {
     transition recv_lock -> phase grant
     invariant server_holds_lock
 
-    invariant !grant_msg(X)
-    invariant !holds_lock(X)
-    invariant !unlock_msg(X)
+#    invariant !grant_msg(X)
+#    invariant !holds_lock(X)
+#    invariant !unlock_msg(X)
 
   phase grant
     transition recv_grant -> phase client
     invariant grant_msg(X) & grant_msg(Y) -> X = Y
 
-    invariant !server_holds_lock
-    invariant !holds_lock(X)
-    invariant !unlock_msg(X)
+#    invariant !server_holds_lock
+#    invariant !holds_lock(X)
+#    invariant !unlock_msg(X)
 
   phase client
     transition unlock -> phase unlock
     invariant holds_lock(X) & holds_lock(Y) -> X = Y
 
-    invariant !server_holds_lock
-    invariant !grant_msg(X)
-    invariant !unlock_msg(X)
+#    invariant !server_holds_lock
+#    invariant !grant_msg(X)
+#    invariant !unlock_msg(X)
 
   phase unlock
     transition recv_unlock -> phase server
     invariant unlock_msg(X) & unlock_msg(Y) -> X = Y
 
-    invariant !server_holds_lock
-    invariant !grant_msg(X)
-    invariant !holds_lock(X)
+#    invariant !server_holds_lock
+#    invariant !grant_msg(X)
+#    invariant !holds_lock(X)
 }
