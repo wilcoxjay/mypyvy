@@ -1289,19 +1289,22 @@ class Frames(object):
         assert not args.use_z3_unsat_cores, "phases - not yet supported"
         assert not args.find_predecessor_via_transition_disjunction, "phases - not yet supported"
 
-        transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
-        for src in self._predecessor_precedence(current_phase, list(transitions_into.keys())):
-            transitions = transitions_into[src]
-            assert transitions
-            logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
-            (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
-            if sat_res == z3.unsat:
-                continue
-            return (sat_res, pre_diag)
+        with self.solver:
+            self.solver.add(diag.to_z3(t))
 
-        ret_core = None
-        # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
-        return (z3.unsat, ret_core)
+            transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
+            for src in self._predecessor_precedence(current_phase, list(transitions_into.keys())):
+                transitions = transitions_into[src]
+                assert transitions
+                logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
+                (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
+                if sat_res == z3.unsat:
+                    continue
+                return (sat_res, pre_diag)
+
+            ret_core = None
+            # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
+            return (z3.unsat, ret_core)
 
     def _predecessor_precedence(self, dst_phase: Phase, pre_phases: Sequence[Phase]) -> Sequence[Phase]:
         if dst_phase not in pre_phases:
@@ -1319,29 +1322,77 @@ class Frames(object):
             if args.use_z3_unsat_cores:
                 core: MySet[int] = MySet()
 
-            solver = self._fresh_solver()
-            solver.add(diag.to_z3(t))
+            solver = self.solver
+            with solver:
 
-            for f in pre_frame.summary_of(src_phase):
-                solver.add(t.translate_expr(f, old=True))
+                for f in pre_frame.summary_of(src_phase):
+                    solver.add(t.translate_expr(f, old=True))
 
-            for phase_transition in transitions:
-                delta = phase_transition.transition_decl()
-                trans = self.prog.scope.get_transition(delta.transition)
-                assert trans is not None
-                precond = delta.precond
+                for phase_transition in transitions:
+                    delta = phase_transition.transition_decl()
+                    trans = self.prog.scope.get_transition(delta.transition)
+                    assert trans is not None
+                    precond = delta.precond
 
-                with solver:
-                    solver.add(t.translate_transition(trans, precond=precond))
+                    with solver:
+                        solver.add(t.translate_transition(trans, precond=precond))
+                        res = solver.check(*diag.trackers)
+
+                        if res != z3.unsat:
+                            logger.debug('found predecessor via %s' % trans.name)
+                            m = Model(self.prog, solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
+                            # if logger.isEnabledFor(logging.DEBUG):
+                            #     logger.debug(str(m))
+                            return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
+                        elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
+                            uc = solver.unsat_core()
+                            # if logger.isEnabledFor(logging.DEBUG):
+                            #     logger.debug('uc')
+                            #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+
+                                # logger.debug('assertions')
+                                # logger.debug(str(solver.assertions()))
+
+                            res = solver.check(*[diag.trackers[i] for i in core])
+                            if res == z3.unsat:
+                                logger.debug('but existing core sufficient, skipping')
+                                continue
+
+                            for x in sorted(uc, key=lambda y: y.decl().name()):
+                                assert isinstance(x, z3.ExprRef)
+                                core.add(int(x.decl().name()[1:]))
+                            if logger.isEnabledFor(logging.DEBUG):
+                                logger.debug('new core')
+                                logger.debug(str(sorted(core)))
+
+                if args.find_predecessor_via_transition_disjunction:
+                    ts = []
+                    revmap = []
+                    for k, trans in enumerate(self.prog.transitions()):
+                        tx = z3.Bool('t%d' % k)
+                        ts.append(tx)
+                        solver.add(tx == t.translate_transition(trans))
+                        revmap.append(trans)
+                    solver.add(z3.Or(*ts))
                     res = solver.check(*diag.trackers)
+                    assert res == z3.unsat
+                    # if res != z3.unsat:
+                    #     z3mod = solver.model()
+                    #     the_trans: Optional[TransitionDecl] = None
+                    #     for k, tx in enumerate(ts):
+                    #         if z3mod.eval(tx):
+                    #             the_trans = revmap[k]
+                    #             break
+                    #     else:
+                    #         assert False
+                    #
+                    #     logger.debug('found predecessor via %s' % the_trans.name)
+                    #     m = Model(self.prog, z3mod, KEY_NEW, KEY_OLD)
+                    #     return (res, (trans, m.as_diagram(old=True)))
+                    # else:
+                    if True:
+                        assert args.use_z3_unsat_cores
 
-                    if res != z3.unsat:
-                        logger.debug('found predecessor via %s' % trans.name)
-                        m = Model(self.prog, solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
-                        # if logger.isEnabledFor(logging.DEBUG):
-                        #     logger.debug(str(m))
-                        return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
-                    elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
                         uc = solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug('uc')
@@ -1350,70 +1401,22 @@ class Frames(object):
                             # logger.debug('assertions')
                             # logger.debug(str(solver.assertions()))
 
-                        res = solver.check(*[diag.trackers[i] for i in core])
-                        if res == z3.unsat:
-                            logger.debug('but existing core sufficient, skipping')
-                            continue
-
                         for x in sorted(uc, key=lambda y: y.decl().name()):
                             assert isinstance(x, z3.ExprRef)
                             core.add(int(x.decl().name()[1:]))
                         if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug('new core')
+                            logger.debug('core')
                             logger.debug(str(sorted(core)))
 
-            if args.find_predecessor_via_transition_disjunction:
-                ts = []
-                revmap = []
-                for k, trans in enumerate(self.prog.transitions()):
-                    tx = z3.Bool('t%d' % k)
-                    ts.append(tx)
-                    solver.add(tx == t.translate_transition(trans))
-                    revmap.append(trans)
-                solver.add(z3.Or(*ts))
-                res = solver.check(*diag.trackers)
-                assert res == z3.unsat
-                # if res != z3.unsat:
-                #     z3mod = solver.model()
-                #     the_trans: Optional[TransitionDecl] = None
-                #     for k, tx in enumerate(ts):
-                #         if z3mod.eval(tx):
-                #             the_trans = revmap[k]
-                #             break
-                #     else:
-                #         assert False
-                #
-                #     logger.debug('found predecessor via %s' % the_trans.name)
-                #     m = Model(self.prog, z3mod, KEY_NEW, KEY_OLD)
-                #     return (res, (trans, m.as_diagram(old=True)))
-                # else:
-                if True:
-                    assert args.use_z3_unsat_cores
 
-                    uc = solver.unsat_core()
-                    # if logger.isEnabledFor(logging.DEBUG):
-                    #     logger.debug('uc')
-                    #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+                if not args.use_z3_unsat_cores:
+                    ret_core: Optional[MySet[int]] = None
+                else:
+                    ret_core = MySet(sorted(core))
 
-                        # logger.debug('assertions')
-                        # logger.debug(str(solver.assertions()))
+                assert ret_core is None, "Phases - not yet supported"
 
-                    for x in sorted(uc, key=lambda y: y.decl().name()):
-                        assert isinstance(x, z3.ExprRef)
-                        core.add(int(x.decl().name()[1:]))
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug('core')
-                        logger.debug(str(sorted(core)))
-
-
-            if not args.use_z3_unsat_cores:
-                ret_core: Optional[MySet[int]] = None
-            else:
-                ret_core = MySet(sorted(core))
-
-            assert ret_core is None, "Phases - not yet supported"
-
-            return (z3.unsat, ret_core)
+                return (z3.unsat, ret_core)
 
     def clause_implied_by_transitions_from_frame(
             self,
