@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from syntax import AutomatonDecl, PhaseDecl, PhaseTransitionDecl, Expr, TrueExpr
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
     Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
@@ -57,7 +58,9 @@ class PhaseAutomaton(object):
     def __init__(self, automaton_decl: AutomatonDecl) -> None:
         self.automaton_decl = automaton_decl
 
-        self._phases = {p.name : Phase(p) for p in self.automaton_decl.phases()}
+        self._phases: Dict[str, Phase] = OrderedDict()
+        for p in self.automaton_decl.phases():
+            self._phases[p.name] = Phase(p)
 
         self._transitions = [PhaseTransition(self._phases[p.name],
                                              self._phases[(delta.target if delta.target is not None else p.name)],
@@ -91,7 +94,7 @@ class PhaseAutomaton(object):
 
 class Frame(object):
     def __init__(self, phases: Sequence[Phase], summaries: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
-        self._summary_by_pred: Dict[Phase, MySet[Expr]] = {}
+        self._summary_by_pred: Dict[Phase, MySet[Expr]] = OrderedDict()
         if summaries is None:
             summaries = {}
         for phase in phases:
