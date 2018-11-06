@@ -33,7 +33,7 @@ class PhaseTransition(object):
     def prog_transition_name(self) -> str:
         return self._transition_decl.transition
 
-    def precond(self) -> Expr:
+    def precond(self) -> Optional[Expr]:
         return self._transition_decl.precond
 
     def transition_decl(self) -> PhaseTransitionDecl:
@@ -85,7 +85,7 @@ class PhaseAutomaton(object):
     def transitions_to_grouped_by_src(self, target: Phase) -> Dict[Phase, Sequence[PhaseTransition]]:
         return {p: self.transitions_between(p, target) for p in self.predecessors(target)}
 
-    def transitions_from(self, p: Phase) -> Sequence[Phase]:
+    def transitions_from(self, p: Phase) -> Sequence[PhaseTransition]:
         return [t for t in self._transitions if t.src() == p ]
 
 
@@ -106,6 +106,6 @@ class Frame(object):
     def strengthen(self, phase: Phase, conjunct: Expr) -> None:
         self._summary_by_pred[phase].add(conjunct)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str({p.name(): [str(x) for x in summary] for (p, summary) in self._summary_by_pred.items()})
 
