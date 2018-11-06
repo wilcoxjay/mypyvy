@@ -349,7 +349,7 @@ def check_two_state_implication_along_transitions(
         s.add(z3.Not(t.translate_expr(new_conc)))
 
         for phase_transition in transitions:
-            logger.debug("two state implication check post %s transition %s pre %s" % (new_conc, phase_transition, old_hyps))
+            logger.debug("two state implication check post %s; transition %s; pre %s" % (new_conc, phase_transition, old_hyps))
             delta = phase_transition.transition_decl()
             trans = prog.scope.get_transition(delta.transition)
             assert trans is not None
@@ -980,6 +980,13 @@ class Frames(object):
     def __len__(self) -> int:
         return len(self.fs)
 
+    def _fresh_solver(self) -> Solver:
+        scope = self.prog.scope
+        assert scope is not None
+        assert len(scope.stack) == 0
+
+        return Solver(cast(Scope[z3.ExprRef], scope))
+
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
             contents = {}
@@ -994,6 +1001,8 @@ class Frames(object):
 
     @log_start_end_xml()
     def establish_safety(self) -> None:
+        self.assert_inductive_trace()
+
         frame_no = len(self.fs) - 1
         f = self.fs[-1]
 
@@ -1011,6 +1020,8 @@ class Frames(object):
                 mod = Model(self.prog, z3m, KEY_ONE)
                 diag = mod.as_diagram()
                 self.block(diag, frame_no, violating, [(None, diag)], True)
+
+        self.assert_inductive_trace()
 
     def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, z3.ModelRef]]:
         f = self.fs[-1]
@@ -1064,7 +1075,9 @@ class Frames(object):
                             verbose_print_z3_model(om)
                         logger.debug('ok.')
 
+                    # assert self.clause_implied_by_transitions_from_frame(f, p, c) is None
                     self[frame_no + 1].strengthen(p, c)
+                    self.assert_inductive_trace()
                     break
 
                 pre_phase, (m, t) = res
@@ -1077,7 +1090,6 @@ class Frames(object):
                 if is_safety:
                     logger.debug('note: current clause is safety condition')
                     self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], True)
-                    logger.debug("this case is the one")
                 else:
                     ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], False)
                     if isinstance(ans, CexFound):
@@ -1086,11 +1098,25 @@ class Frames(object):
 
     @log_start_end_xml(logging.DEBUG)
     def push_forward_frames(self) -> None:
+        self.assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
             with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
                     logger.debug('pushing in frame %d phase %s' % (i, p.name()))
                     self.push_phase_from_pred(i, f, p)
+                    # self.assert_inductive_trace()
+
+        self.assert_inductive_trace()
+
+    def assert_inductive_trace(self) -> None:
+        return # don't use in release
+
+        for i, f in enumerate(self.fs[:-1]):
+            with LogTag('inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
+                for p in self.automaton.phases():
+                    for c in self.fs[i+1].summary_of(p):
+                        res = self.clause_implied_by_transitions_from_frame(self._fresh_solver(), f, p, c)
+                        assert res is None, "Non inductive trace:\n\t%s\n\t%s\n\t%s" % (p.name(), c, f)
 
     def push_phase_from_pred(self, i: int, f: Frame, p: Phase) -> None:
         frame_old_count = self.counter
@@ -1149,6 +1175,7 @@ class Frames(object):
             res, x = self.find_predecessor(self[j-1], p, diag)
             if res == z3.unsat:
                 logger.debug('no predecessor: blocked!')
+                # assert self.clause_implied_by_transitions_from_frame(self[j-1], p, syntax.Not(diag.to_ast())) is None
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
                 self.augment_core_for_init(diag, core)
@@ -1178,6 +1205,7 @@ class Frames(object):
         if logger.isEnabledFor(logging.INFO):
             logger.info("[%d] %s" % (j, str(e)))
 
+        # assert self.clause_implied_by_transitions_from_frame(self.fs[j-1], p, syntax.Not(diag.to_ast())) is None
         self.add(p, e, j)
         logger.debug("Done blocking")
 
@@ -1236,8 +1264,12 @@ class Frames(object):
                 verbose_print_z3_model(res)
             logger.debug('ok.')
 
+        self.assert_inductive_trace()
         for i in range(depth+1):
             self[i].strengthen(p, e)
+            logger.debug("%d %s %s" % (i, p.name(), e))
+            self.assert_inductive_trace()
+        self.assert_inductive_trace()
 
     @log_start_end_xml(lvl=logging.DEBUG)
     def find_predecessor(
@@ -1252,17 +1284,17 @@ class Frames(object):
         assert not args.use_z3_unsat_cores, "phases - not yet supported"
         assert not args.find_predecessor_via_transition_disjunction, "phases - not yet supported"
 
-        with self.solver:
-            self.solver.add(diag.to_z3(t))
+        for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
+            assert transitions
+            logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
+            (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
+            if sat_res == z3.unsat:
+                continue
+            return (sat_res, pre_diag)
 
-            for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
-                (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
-                if sat_res == z3.unsat:
-                    continue
-                return (sat_res, pre_diag)
-
-            ret_core = None
-            return (z3.unsat, ret_core)
+        ret_core = None
+        # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
+        return (z3.unsat, ret_core)
 
     def find_predecessor_from_src_phase(
             self,
@@ -1275,8 +1307,11 @@ class Frames(object):
             if args.use_z3_unsat_cores:
                 core: MySet[int] = MySet()
 
+            solver = self._fresh_solver()
+            solver.add(diag.to_z3(t))
+
             for f in pre_frame.summary_of(src_phase):
-                self.solver.add(t.translate_expr(f, old=True))
+                solver.add(t.translate_expr(f, old=True))
 
             for phase_transition in transitions:
                 delta = phase_transition.transition_decl()
@@ -1284,26 +1319,26 @@ class Frames(object):
                 assert trans is not None
                 precond = delta.precond
 
-                with self.solver:
-                    self.solver.add(t.translate_transition(trans, precond=precond))
-                    res = self.solver.check(*diag.trackers)
+                with solver:
+                    solver.add(t.translate_transition(trans, precond=precond))
+                    res = solver.check(*diag.trackers)
 
                     if res != z3.unsat:
                         logger.debug('found predecessor via %s' % trans.name)
-                        m = Model(self.prog, self.solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
+                        m = Model(self.prog, solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug(str(m))
                         return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
                     elif args.use_z3_unsat_cores and not args.find_predecessor_via_transition_disjunction:
-                        uc = self.solver.unsat_core()
+                        uc = solver.unsat_core()
                         # if logger.isEnabledFor(logging.DEBUG):
                         #     logger.debug('uc')
                         #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
                             # logger.debug('assertions')
-                            # logger.debug(str(self.solver.assertions()))
+                            # logger.debug(str(solver.assertions()))
 
-                        res = self.solver.check(*[diag.trackers[i] for i in core])
+                        res = solver.check(*[diag.trackers[i] for i in core])
                         if res == z3.unsat:
                             logger.debug('but existing core sufficient, skipping')
                             continue
@@ -1321,13 +1356,13 @@ class Frames(object):
                 for k, trans in enumerate(self.prog.transitions()):
                     tx = z3.Bool('t%d' % k)
                     ts.append(tx)
-                    self.solver.add(tx == t.translate_transition(trans))
+                    solver.add(tx == t.translate_transition(trans))
                     revmap.append(trans)
-                self.solver.add(z3.Or(*ts))
-                res = self.solver.check(*diag.trackers)
+                solver.add(z3.Or(*ts))
+                res = solver.check(*diag.trackers)
                 assert res == z3.unsat
                 # if res != z3.unsat:
-                #     z3mod = self.solver.model()
+                #     z3mod = solver.model()
                 #     the_trans: Optional[TransitionDecl] = None
                 #     for k, tx in enumerate(ts):
                 #         if z3mod.eval(tx):
@@ -1343,13 +1378,13 @@ class Frames(object):
                 if True:
                     assert args.use_z3_unsat_cores
 
-                    uc = self.solver.unsat_core()
+                    uc = solver.unsat_core()
                     # if logger.isEnabledFor(logging.DEBUG):
                     #     logger.debug('uc')
                     #     logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
                         # logger.debug('assertions')
-                        # logger.debug(str(self.solver.assertions()))
+                        # logger.debug(str(solver.assertions()))
 
                     for x in sorted(uc, key=lambda y: y.decl().name()):
                         assert isinstance(x, z3.ExprRef)
@@ -1372,13 +1407,17 @@ class Frames(object):
             self,
             pre_frame: Frame,
             current_phase: Phase,
-            c: Expr
+            c: Expr,
+            solver: Optional[Solver]=None
     ) -> Optional[Tuple[Phase, Tuple[z3.ModelRef, PhaseTransition]]]:
-        t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+        if solver is None:
+            solver = self.solver
+        t = solver.get_translator(KEY_NEW, KEY_OLD)
 
         for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
             logger.debug("check transition from %s by %s" % (src.name(), str(list(transitions))))
-            ans = check_two_state_implication_along_transitions(self.solver, self.prog,
+
+            ans = check_two_state_implication_along_transitions(solver, self.prog, # TODO: OK to use clean solver here?
                                                                 pre_frame.summary_of(src), transitions,
                                                                 c)
             if ans is not None:
