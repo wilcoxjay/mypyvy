@@ -18,7 +18,7 @@ def traverse(e: etree.Element) -> Optional[Tuple[float, float]]:
         assert hi is not None
         e.set('begin', lo)
         e.set('end', hi)
-        e.set('duration', str(round(float(hi) - float(lo), 2)))
+        e.set('duration', str(round(float(hi) - float(lo), 3)))
         return (lo, hi)
     else:
         return None
