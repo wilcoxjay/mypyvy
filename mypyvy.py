@@ -1013,20 +1013,15 @@ class Frames(object):
                 if res is None:
                     return
 
-                z3m: z3.ModelRef
-                violating: Phase
-                (violating, z3m) = res
-
-                mod = Model(self.prog, z3m, KEY_ONE)
-                diag = mod.as_diagram()
+                (violating, diag) = res
                 self.block(diag, frame_no, violating, [(None, diag)], True)
 
         self.assert_inductive_trace()
 
-    def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, z3.ModelRef]]:
+    def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, Diagram]]:
         f = self.fs[-1]
 
-        def safety_property_checker(p: Phase) -> Optional[Tuple[Phase, z3.ModelRef]]:
+        def safety_property_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
             res = check_implication(self.solver, f.summary_of(p), self.safety)
 
             if res is None:
@@ -1035,9 +1030,11 @@ class Frames(object):
 
             logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            return (p, z3m)
+            mod = Model(self.prog, z3m, KEY_ONE)
+            diag = mod.as_diagram()
+            return (p, diag)
 
-        def edge_covering_checker(p: Phase) -> Optional[Tuple[Phase, z3.ModelRef]]:
+        def edge_covering_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
             t = self.solver.get_translator(KEY_NEW, KEY_OLD)
             f = self.fs[-1]
 
@@ -1065,7 +1062,9 @@ class Frames(object):
                         if self.solver.check() != z3.unsat:
                             logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            return (p, z3m)
+                            mod = Model(self.prog, z3m, KEY_NEW, KEY_OLD)
+                            diag = mod.as_diagram(old=True)
+                            return (p, diag)
 
                         logger.debug('transition %s is covered non-trivially by %s' % (trans.name, p.name()))
                         continue
