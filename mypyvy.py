@@ -931,11 +931,30 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
 
 class Frames(object):
     @log_start_end_xml(logging.DEBUG, 'Frames.__init__')
-    def __init__(self, solver: Solver, prog: Program, safety: Sequence[Expr], automaton: Optional[AutomatonDecl]=None) -> None:
+    def __init__(self, solver: Solver, prog: Program, automaton: Optional[AutomatonDecl]=None) -> None:
         self.solver = solver
         self.prog = prog
-        self.safety = safety
-        assert automaton is not None
+
+        if automaton is None:
+            if args.safety is None:
+                syntax.error(None, 'updr without --automaton requires --safety')
+            the_phase = 'the_phase'
+            pcs = []
+            for t in self.prog.transitions():
+                pcs.append(syntax.PhaseTransitionDecl(None, t.name, None, the_phase))
+            automaton = AutomatonDecl(None, [syntax.SafetyDecl(None, args.safety),
+                                             syntax.InitPhaseDecl(None, the_phase),
+                                             syntax.PhaseDecl(None, the_phase, pcs)])
+
+            print(automaton)
+
+        l = []
+        for s in automaton.safeties():
+            inv = prog.scope.get_invariant(s.name)
+            assert inv is not None
+            l.append(inv.expr)
+        self.safety = l
+
         self.automaton = PhaseAutomaton(automaton)
         self.fs: List[Frame] = []
         self.push_cache: List[Dict[Phase, Set[Expr]]] = []
@@ -1449,7 +1468,7 @@ def updr(s: Solver, prog: Program) -> None:
     else:
         automaton = None
 
-    fs = Frames(s, prog, get_safety(prog), automaton=automaton)
+    fs = Frames(s, prog, automaton=automaton)
     fs.search()
 
 def debug_tokens(filename: str) -> None:
