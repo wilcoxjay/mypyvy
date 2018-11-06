@@ -44,7 +44,7 @@ class PhaseTransition(object):
         )
 
     def __str__(self) -> str:
-        return str(self.transition_decl)
+        return str(self.transition_decl())
 
 
 class PhaseAutomaton(object):
@@ -96,3 +96,7 @@ class Frame(object):
 
     def strengthen(self, phase: Phase, conjunct: Expr) -> None:
         self._summary_by_pred[phase].add(conjunct)
+
+    def __str__(self):
+        return str({p.name(): [str(x) for x in summary] for (p, summary) in self._summary_by_pred.items()})
+
