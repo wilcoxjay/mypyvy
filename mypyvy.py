@@ -159,16 +159,17 @@ class Solver(object):
 
         self.z3solver.add(e)
 
-    def check(self, *assumptions: z3.ExprRef) -> z3.CheckSatResult:
+    def check(self, assumptions: Optional[Sequence[z3.ExprRef]]=None) -> z3.CheckSatResult:
         # logger.debug('solver.check')
-        if self.assumptions_necessary and len(assumptions) == 0:
-            assert False
+        if assumptions is None:
+            assert not self.assumptions_necessary
+            assumptions = []
         self.nqueries += 1
         return self.z3solver.check(*assumptions)
 
-    def model(self, *assumptions: z3.ExprRef) -> z3.ModelRef:
+    def model(self, assumptions: Optional[Sequence[z3.ExprRef]]=None) -> z3.ModelRef:
         if args.minimize_models:
-            return self._minimal_model(*assumptions)
+            return self._minimal_model(assumptions)
         else:
             return self.z3solver.model()
 
@@ -181,7 +182,7 @@ class Solver(object):
 
         return z3.Forall(x, z3.Or(*disjs))
 
-    def _minimal_model(self, *assumptions: z3.ExprRef) -> z3.ModelRef:
+    def _minimal_model(self, assumptions: Optional[Sequence[z3.ExprRef]]) -> z3.ModelRef:
         m = self.z3solver.model()
         # logger.debug('computing minimal model from initial model')
         # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
@@ -195,13 +196,13 @@ class Solver(object):
                 while n < len(u):
                     with self:
                         self.add(self._cardinality_constraint(s, n))
-                        res = self.check(*assumptions)
+                        res = self.check(assumptions)
                         if res == z3.sat:
                             break
                     n += 1
                 if n < len(u):
                     self.add(self._cardinality_constraint(s, n))
-            assert self.check(*assumptions) == z3.sat
+            assert self.check(assumptions) == z3.sat
             m = self.z3solver.model()
             # logger.debug('finished with minimal model')
             # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
@@ -1289,7 +1290,7 @@ class Frames(object):
 
             self.solver.add(diag.to_z3(t))
 
-            res = self.solver.check(*diag.trackers)
+            res = self.solver.check(diag.trackers)
 
             assert res == z3.unsat
             uc = self.solver.unsat_core()
@@ -1300,7 +1301,7 @@ class Frames(object):
                 # logger.debug('assertions')
                 # logger.debug(str(self.solver.assertions()))
 
-            res = self.solver.check(*[diag.trackers[i] for i in core])
+            res = self.solver.check([diag.trackers[i] for i in core])
             if res == z3.unsat:
                 logger.debug('augment_core_for_init: existing core sufficient')
                 return
@@ -1342,8 +1343,10 @@ class Frames(object):
     ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
-        core: MySet[int] = MySet()
-        assert not args.use_z3_unsat_cores, "phases - not yet supported"
+        if args.use_z3_unsat_cores:
+            core: Optional[MySet[int]] = MySet()
+        else:
+            core = None
 
         with self.solver:
             with self.solver.mark_assumptions_necessary():
@@ -1354,12 +1357,17 @@ class Frames(object):
                     transitions = transitions_into[src]
                     assert transitions
                     logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
-                    (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag)
+                    (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag, core)
                     if sat_res == z3.unsat:
                         continue
                     return (sat_res, pre_diag)
 
-                ret_core = None
+                if args.use_z3_unsat_cores:
+                    assert core is not None
+                    ret_core: Optional[MySet[int]] = MySet(sorted(core))
+                else:
+                    ret_core = None
+
                 # assert self.clause_implied_by_transitions_from_frame(pre_frame, current_phase, syntax.Not(diag.to_ast())) is None
                 return (z3.unsat, ret_core)
 
@@ -1374,10 +1382,9 @@ class Frames(object):
             pre_frame: Frame,
             src_phase: Phase,
             transitions: Sequence[PhaseTransition],
-            diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
-            if args.use_z3_unsat_cores:
-                core: MySet[int] = MySet()
+            diag: Diagram,
+            core: Optional[MySet[int]]
+    ) -> Tuple[z3.CheckSatResult, Optional[Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
 
             solver = self.solver
             with solver:
@@ -1393,15 +1400,16 @@ class Frames(object):
 
                     with solver:
                         solver.add(t.translate_transition(trans, precond=precond))
-                        res = solver.check(*diag.trackers)
+                        res = solver.check(diag.trackers)
 
                         if res != z3.unsat:
                             logger.debug('found predecessor via %s' % trans.name)
-                            m = Model(self.prog, solver.model(*diag.trackers), KEY_NEW, KEY_OLD)
+                            m = Model(self.prog, solver.model(diag.trackers), KEY_NEW, KEY_OLD)
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
                         elif args.use_z3_unsat_cores:
+                            assert core is not None
                             uc = solver.unsat_core()
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug('uc')
@@ -1410,7 +1418,7 @@ class Frames(object):
                                 # logger.debug('assertions')
                                 # logger.debug(str(solver.assertions()))
 
-                            res = solver.check(*[diag.trackers[i] for i in core])
+                            res = solver.check([diag.trackers[i] for i in core])
                             if res == z3.unsat:
                                 logger.debug('but existing core sufficient, skipping')
                                 continue
@@ -1422,14 +1430,7 @@ class Frames(object):
                                 logger.debug('new core')
                                 logger.debug(str(sorted(core)))
 
-                if not args.use_z3_unsat_cores:
-                    ret_core: Optional[MySet[int]] = None
-                else:
-                    ret_core = MySet(sorted(core))
-
-                assert ret_core is None, "Phases - not yet supported"
-
-                return (z3.unsat, ret_core)
+                return (z3.unsat, None)
 
     def clause_implied_by_transitions_from_frame(
             self,
