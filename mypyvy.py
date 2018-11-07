@@ -491,6 +491,7 @@ class Diagram(object):
             self.trackers = []
             self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int]] = []
             i = 0
+
             for (d, j, c) in self.conjuncts():
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
@@ -1241,7 +1242,7 @@ class Frames(object):
                 # assert self.clause_implied_by_transitions_from_frame(self[j-1], p, syntax.Not(diag.to_ast())) is None
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
-                self.augment_core_for_init(diag, core)
+                self.augment_core_for_init(p, diag, core)
                 break
             assert isinstance(x, tuple), (res, x)
             trans, (pre_phase, pre_diag) = x
@@ -1278,15 +1279,15 @@ class Frames(object):
         return check_implication(self.solver, self.fs[0].summary_of(p), [syntax.Not(diag.to_ast())])
 
 
-    def augment_core_for_init(self, diag: Diagram, core: Optional[MySet[int]]) -> None:
+    def augment_core_for_init(self, p: Phase, diag: Diagram, core: Optional[MySet[int]]) -> None:
         if core is None or not args.use_z3_unsat_cores:
             return
 
         t = self.solver.get_translator(KEY_ONE)
 
         with self.solver:
-            for init in self.prog.inits():
-                self.solver.add(t.translate_expr(init.expr))
+            for init in self.fs[0].summary_of(p):
+                self.solver.add(t.translate_expr(init))
 
             self.solver.add(diag.to_z3(t))
 
