@@ -1,0 +1,30 @@
+python3 benchmark.py -n 50 -j 4 --timeout 120 --pin-cores --benchmark test/lockserv.pyv test/lockserv_multi_view.pyv --keep-logs logs/181106-160506-phase --args --automaton
+dump_version_info: dumping information about the current commit and working directory
+e70a97819433a9321dc4ec307704b1da3aa7dc7c
+On branch master
+Your branch is ahead of 'origin/master' by 2 commits.
+  (use "git push" to publish your local commits)
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+
+	logs/181106-154526-updr/
+	logs/181106-160506-phase/
+	tmp.sh
+
+nothing added to commit but untracked files present (use "git add" to track)
+dump_version_info: done.
+--------------------------------------------------------------------------------
+Benchmark('test/lockserv.pyv',safety=mutex)
+[(0.465373, 952), (0.440859, 952), (0.443898, 952), (0.445689, 952), (0.44151, 952), (0.443859, 952), (0.445321, 952), (0.45018, 952), (0.463947, 952), (0.443438, 952), (0.443701, 952), (0.446327, 952), (0.450182, 952), (0.444229, 952), (0.463231, 952), (0.443227, 952), (0.445024, 952), (0.445777, 952), (0.442802, 952), (0.448691, 952), (0.446642, 952), (0.447228, 952), (0.453914, 952), (0.471149, 952), (0.442862, 952), (0.446159, 952), (0.446722, 952), (0.450065, 952), (0.459423, 952), (0.446983, 952), (0.443872, 952), (0.4436, 952), (0.446263, 952), (0.448108, 952), (0.458378, 952), (0.441285, 952), (0.442131, 952), (0.445151, 952), (0.442449, 952), (0.443264, 952), (0.450115, 952), (0.463065, 952), (0.451734, 952), (0.446593, 952), (0.448113, 952), (0.444312, 952), (0.44552, 952), (0.445298, 952), (0.439448, 952), (0.447679, 952)]
+avg_time: 0.4480958
+stdev_time: 0.007046987201084227
+avg_nqueries: 952
+stdev_nqueries: 0.0
+# timeouts: 0
+Benchmark('test/lockserv_multi_view.pyv')
+[None, None, None, None, (27.859692, 14043), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 27.859692
+stdev_time: 0.0
+avg_nqueries: 14043
+stdev_nqueries: 0.0
+# timeouts: 49
