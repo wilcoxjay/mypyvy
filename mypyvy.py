@@ -492,7 +492,12 @@ class Diagram(object):
             self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int]] = []
             i = 0
 
-            for (d, j, c) in self.conjuncts():
+            conjuncts: Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]
+            if args.simplify_diagram:
+                conjuncts = self.conjuncts_simple()
+            else:
+                conjuncts = self.conjuncts()
+            for (d, j, c) in conjuncts:
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
                 self.reverse_map.append((d, j))
@@ -1833,6 +1838,8 @@ def parse_args() -> argparse.Namespace:
                                 help='run bmc to confirm every conjunct added to a frame')
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
                                 help='substitute existentially quantified variables that are equal to constants')
+    updr_subparser.add_argument('--simplify-diagram', action='store_true',
+                                help='in diagram generation, substitute existentially quantified variables that are equal to constants')
 
     for sp in [verify_subparser, updr_subparser]:
         sp.add_argument('--automaton', action='store_true',
