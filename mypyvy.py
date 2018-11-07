@@ -1193,7 +1193,7 @@ class Frames(object):
         self.assert_inductive_trace()
 
     def assert_inductive_trace(self) -> None:
-        # return # don't use in release
+        return # don't use in release
 
         for i, f in enumerate(self.fs[:-1]):
             with LogTag('inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
