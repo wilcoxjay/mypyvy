@@ -1193,13 +1193,13 @@ class Frames(object):
         self.assert_inductive_trace()
 
     def assert_inductive_trace(self) -> None:
-        return # don't use in release
+        # return # don't use in release
 
         for i, f in enumerate(self.fs[:-1]):
             with LogTag('inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
                     for c in self.fs[i+1].summary_of(p):
-                        res = self.clause_implied_by_transitions_from_frame(self._fresh_solver(), f, p, c)
+                        res = self.clause_implied_by_transitions_from_frame(f, p, c, self._fresh_solver())
                         assert res is None, "Non inductive trace:\n\t%s\n\t%s\n\t%s" % (p.name(), c, f)
 
     def push_phase_from_pred(self, i: int, f: Frame, p: Phase) -> None:
