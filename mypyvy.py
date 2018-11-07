@@ -550,10 +550,7 @@ class Diagram(object):
         C: Dict[ConstantDecl, Expr] = {}
         F: Dict[FunctionDecl, List[Expr]] = {}
 
-        started = False
-
         for i in core:
-            started = True
             d, j = self.reverse_map[i]
             if isinstance(d, SortDecl):
                 if d not in I:
@@ -572,8 +569,6 @@ class Diagram(object):
                 assert isinstance(d, ConstantDecl)
                 assert d not in C
                 C[d] = self.consts[d]
-
-        assert started
 
         self.prune_unused_vars()
 
@@ -1184,6 +1179,8 @@ class Frames(object):
     def push_forward_frames(self) -> None:
         self.assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
+            if i == 0:
+                continue
             with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
                     logger.debug('pushing in frame %d phase %s' % (i, p.name()))
