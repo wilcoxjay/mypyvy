@@ -469,6 +469,24 @@ class Diagram(object):
         for (s, r, e) in self.func_conjuncts():
             yield (s, r, syntax.subst_vars_simple(e, subst))
 
+    def simplify_consts(self):
+        subst = self.const_subst()
+        I: Dict[SortDecl, List[Expr]]
+        R: Dict[RelationDecl, List[Expr]]
+        F: Dict[FunctionDecl, List[Expr]]
+
+        def apply_subst(l): return [syntax.subst_vars_simple(e, subst) for e in l]
+
+        I = OrderedDict((s, apply_subst(l)) for s, l in self.ineqs.items())
+        R = OrderedDict((r, apply_subst(l)) for r, l in self.rels.items())
+        F = OrderedDict((f, apply_subst(l)) for f, l in self.funcs.items())
+
+        self.ineqs = I
+        self.rels = R
+        self.funcs = F
+
+        self.prune_unused_vars()
+
     def __str__(self) -> str:
         return 'exists %s.\n  %s' % (
             ', '.join(v.name for v in self.binder.vs),
@@ -492,12 +510,7 @@ class Diagram(object):
             self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int]] = []
             i = 0
 
-            conjuncts: Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]
-            if args.simplify_diagram:
-                conjuncts = self.conjuncts_simple()
-            else:
-                conjuncts = self.conjuncts()
-            for (d, j, c) in conjuncts:
+            for (d, j, c) in self.conjuncts():
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
                 self.reverse_map.append((d, j))
@@ -924,6 +937,8 @@ class Model(object):
 
 
         diag = Diagram(vs, ineqs, rels, consts, funcs)
+        if args.simplify_diagram:
+            diag.simplify_consts()
         assert self.prog.scope is not None
         diag.resolve(self.prog.scope)
 
