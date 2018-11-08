@@ -120,7 +120,7 @@ class Z3Translator(object):
         self.key = key
         self.key_old = key_old
         self.expr_cache: Dict[Tuple[Expr, bool], z3.ExprRef] = {}
-        self.transition_cache: Dict[Tuple[TransitionDecl, Optional[Expr]], z3.ExprRef] = {}
+        self.transition_cache: Dict[Tuple[TransitionDecl, Optional[Expr]], z3.ExprRef, bool] = {}
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []
@@ -222,7 +222,7 @@ class Z3Translator(object):
         return frame
 
     def translate_transition(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
-        cache_key = (t, precond)
+        cache_key = (t, precond, True)
         if cache_key not in self.transition_cache:
 
             bs = self.bind(t.binder)
@@ -230,6 +230,22 @@ class Z3Translator(object):
                 body = z3.And(self.translate_expr(t.expr),
                               *self.frame(t.mods),
                               self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
+
+                if len(bs) > 0:
+                    tr_formula = z3.Exists(bs, body)
+                else:
+                    tr_formula = body
+                self.transition_cache[cache_key] = tr_formula
+
+        return self.transition_cache[cache_key]
+
+    def translate_precond_of_transition(self, precond: Optional[Expr], t: TransitionDecl) -> z3.ExprRef:
+        cache_key = (t, precond, False)
+        if cache_key not in self.transition_cache:
+
+            bs = self.bind(t.binder)
+            with self.scope.in_scope(t.binder, bs):
+                body = self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True)
 
                 if len(bs) > 0:
                     tr_formula = z3.Exists(bs, body)
