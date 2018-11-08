@@ -1178,12 +1178,14 @@ class Frames(object):
                     # logger.debug(str(mod))
                 if is_safety:
                     logger.debug('note: current clause is safety condition')
-                    self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], True)
+                    self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=True)
                 else:
-                    ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], False)
-                    if isinstance(ans, CexFound):
+                    if not args.dont_block_may_cexs:
+                        ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=False)
+                        if isinstance(ans, CexFound):
+                            break
+                    else:
                         break
-
 
     @log_start_end_xml(logging.DEBUG)
     def push_forward_frames(self) -> None:
@@ -1868,6 +1870,8 @@ def parse_args() -> argparse.Namespace:
                                 help='in diagram generation, substitute existentially quantified variables that are equal to constants')
     updr_subparser.add_argument('--automaton', action='store_true',
                                 help='whether to run vanilla UPDR or phase UPDR')
+    updr_subparser.add_argument('--dont-block-may-cexs', action='store_false',
+                                help="don't treat failures to push as additional proof obligations")
 
     verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],
                                   help="whether to use phase automata during verification. by default ('yes'), both non-automaton "
