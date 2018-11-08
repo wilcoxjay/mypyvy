@@ -1701,13 +1701,14 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 def verify(s: Solver, prog: Program) -> None:
     a = prog.the_automaton()
     if a is None:
-        if args.automaton:
-            syntax.error(None, '--automaton requires the file to declare an automaton')
-    else:
+        if args.automaton == 'only':
+            syntax.error(None, "--automaton='only' requires the file to declare an automaton")
+    elif args.automaton != 'no':
         check_automaton_full(s, prog, a)
 
-    check_init(s, prog)
-    check_transitions(s, prog)
+    if args.automaton != 'only':
+        check_init(s, prog)
+        check_transitions(s, prog)
 
     if not syntax.errored:
         logger.always_print('all ok!')
@@ -1862,12 +1863,13 @@ def parse_args() -> argparse.Namespace:
     updr_subparser.add_argument('--simplify-diagram', action='store_true',
                                 help='in diagram generation, substitute existentially quantified variables that are equal to constants')
 
-    for sp in [verify_subparser, updr_subparser]:
-        sp.add_argument('--automaton', action='store_true',
-                        help='use (only) phase automata. in verify mode, without this option both '
-                        'non-automaton and automaton proofs are checked, while this option causes '
-                        'only the automaton proof to be checked. in updr mode, by default '
-                        'any input automata are ignored, but this option causes automaton inference to be used')
+    updr_subparser.add_argument('--automaton', action='store_true',
+                                help='whether to run vanilla UPDR or phase UPDR')
+
+    verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],
+                                  help="whether to use phase automata during verification. by default ('yes'), both non-automaton "
+                                  "and autotomaton proofs are checked. 'no' means ignore automaton proofs. "
+                                  "'only' means ignore non-automaton proofs.")
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
