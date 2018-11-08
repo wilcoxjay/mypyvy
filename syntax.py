@@ -120,7 +120,7 @@ class Z3Translator(object):
         self.key = key
         self.key_old = key_old
         self.expr_cache: Dict[Tuple[Expr, bool], z3.ExprRef] = {}
-        self.transition_cache: Dict[Tuple[TransitionDecl, Optional[Expr]], z3.ExprRef, bool] = {}
+        self.transition_cache: Dict[Tuple[TransitionDecl, Optional[Expr], bool], z3.ExprRef] = {}
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []

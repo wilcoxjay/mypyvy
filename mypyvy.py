@@ -469,16 +469,16 @@ class Diagram(object):
         for (s, r, e) in self.func_conjuncts():
             yield (s, r, syntax.subst_vars_simple(e, subst))
 
-    def simplify_consts(self):
+    def simplify_consts(self) -> None:
         subst = self.const_subst()
         I: Dict[SortDecl, List[Expr]]
         R: Dict[RelationDecl, List[Expr]]
         C: Dict[ConstantDecl, Expr]
         F: Dict[FunctionDecl, List[Expr]]
 
-        def apply_subst1(e): return syntax.subst_vars_simple(e, subst)
-        def apply_subst(l): return [apply_subst1(e) for e in l]
-        def is_trivial_eq(eq):
+        def apply_subst1(e: Expr) -> Expr: return syntax.subst_vars_simple(e, subst)
+        def apply_subst(l: List[Expr]) -> List[Expr]: return [apply_subst1(e) for e in l]
+        def is_trivial_eq(eq: Expr) -> bool:
             return isinstance(eq, syntax.BinaryExpr) and eq.op == 'EQUAL' and \
                     eq.arg1 == eq.arg2
 
@@ -638,13 +638,13 @@ class Diagram(object):
     def check_valid_in_phase_from_frame(self, s: Solver, prog: Program, f: Frame,
                                         transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                                         propagate_init: bool) \
-    -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
+    -> Optional[z3.ModelRef]:
         for src, transitions in transitions_to_grouped_by_src.items():
             # logger.debug("gen: check transition from %s by %s" % (src.name(), str(list(transitions))))
             ans = check_two_state_implication_along_transitions(s, prog, f.summary_of(src), transitions,
                                                                 syntax.Not(self.to_ast()))
             if ans is not None:
-                return ans
+                return ans[0]
 
         if propagate_init:
             return self.valid_in_init(s, prog)
