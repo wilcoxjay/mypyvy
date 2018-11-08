@@ -1098,8 +1098,7 @@ class Frames(object):
 
                     with self.solver:
                         self.solver.add(t.translate_transition(trans))
-                        # TODO: this is the full EA -> EA check which is generally undecidable
-                        self.solver.add(z3.And(*(z3.Not(t.translate_transition(trans, delta.precond()))
+                        self.solver.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond(), trans))
                                        for delta in edges_from_phase_matching_prog_trans)))
 
                         if self.solver.check() != z3.unsat:
@@ -1620,8 +1619,7 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
 
                 with s:
                     s.add(t.translate_transition(trans))
-                    # TODO: this is the full EA -> EA check which is generally undecidable
-                    s.add(z3.And(*(z3.Not(t.translate_transition(trans, delta.precond))
+                    s.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond, trans))
                                    for delta in phase.transitions() if trans.name == delta.transition)))
 
                     check_unsat([phase.tok, trans.tok],
