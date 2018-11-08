@@ -17,11 +17,11 @@ init nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
 init X != null -> !nrtc(X, null) & !nrtc(null, X)
 
 # instantiate dtca(node, nrtc) for invariant
-invariant nrtc(X,X)
-invariant nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
-invariant nrtc(X, Y) & nrtc(Y, X) -> X = Y
-invariant nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
-
+#invariant [acyc] nrtc(X,X)
+#invariant [acyc] nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+#invariant [acyc] nrtc(X, Y) & nrtc(Y, X) -> X = Y
+#invariant [acyc] nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+invariant [acyc]  nrtc(X,X)  & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)) & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
 
 ### The invariant that UPDR is supposed to find:
 #invariant i != null -> !(nrtc(i,X) & nrtc(j,X))

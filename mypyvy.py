@@ -627,9 +627,10 @@ class Diagram(object):
                 verbose_print_z3_model(res)
             logger.debug('ok.')
 
-    # TODO: merge with clause_implied_by_transitions_from_frame...
+    # TODO: merge similarities with clause_implied_by_transitions_from_frame...
     def check_valid_in_phase_from_frame(self, s: Solver, prog: Program, f: Frame,
-                                        transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],) \
+                                        transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
+                                        propagate_init: bool) \
     -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
         for src, transitions in transitions_to_grouped_by_src.items():
             # logger.debug("gen: check transition from %s by %s" % (src.name(), str(list(transitions))))
@@ -637,13 +638,16 @@ class Diagram(object):
                                                                 syntax.Not(self.to_ast()))
             if ans is not None:
                 return ans
+
+        if propagate_init:
+            return self.valid_in_init(s, prog)
         return None
-        # return self.valid_in_init(s, prog) # TODO: is this necessary?
 
     @log_start_end_xml()
     @log_start_end_time()
     def generalize(self, s: Solver, prog: Program, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
+                   propagate_init: bool,
                    depth: Optional[int]=None) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('generalizing diagram')
@@ -675,7 +679,7 @@ class Diagram(object):
                 if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                     continue
                 with self.without(d):
-                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src)
+                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug('eliminated all conjuncts from declaration %s' % d)
@@ -691,7 +695,7 @@ class Diagram(object):
                         if j not in S and isinstance(x, syntax.UnaryExpr):
                             cs.add(j)
                     with self.without(d, cs):
-                        res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src)
+                        res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src, propagate_init)
                     if res is None:
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug('eliminated all negative conjuncts from declaration %s' % d)
@@ -700,7 +704,7 @@ class Diagram(object):
 
             for d, j, c in self.conjuncts():
                 with self.without(d, j):
-                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src)
+                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug('eliminated clause %s' % c)
@@ -1234,7 +1238,7 @@ class Frames(object):
             trace: List[Tuple[Optional[PhaseTransition],Union[Diagram, Expr]]]=[],
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound]:
-        if j == 0 or (j == 1 and self.valid_in_initial_frame(p, diag) is not None):
+        if j == 0 or (j == 1 and self.valid_in_initial_frame(self.solver, p, diag) is not None):
             if safety_goal:
                 logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
@@ -1276,7 +1280,7 @@ class Frames(object):
 
         diag.minimize_from_core(core)
         diag.generalize(self.solver, self.prog,
-                        self[j-1], self.automaton.transitions_to_grouped_by_src(p),
+                        self[j-1], self.automaton.transitions_to_grouped_by_src(p), p == self.automaton.init_phase(),
                         j)
 
         e = syntax.Not(diag.to_ast())
@@ -1292,8 +1296,8 @@ class Frames(object):
 
         return Blocked()
 
-    def valid_in_initial_frame(self, p: Phase, diag: Diagram) -> Optional[z3.ModelRef]:
-        return check_implication(self.solver, self.fs[0].summary_of(p), [syntax.Not(diag.to_ast())])
+    def valid_in_initial_frame(self, s: Solver, p: Phase, diag: Diagram) -> Optional[z3.ModelRef]:
+        return check_implication(s, self.fs[0].summary_of(p), [syntax.Not(diag.to_ast())])
 
 
     def augment_core_for_init(self, p: Phase, diag: Diagram, core: Optional[MySet[int]]) -> None:
