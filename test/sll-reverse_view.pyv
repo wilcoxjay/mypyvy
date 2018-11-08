@@ -1,0 +1,96 @@
+sort node
+
+
+mutable relation nrtc(node, node)
+mutable constant h: node
+mutable constant i: node
+mutable constant j: node
+mutable constant null: node
+
+#immutable relation nrtc0(node, node)
+
+immutable constant u: node
+immutable constant v: node
+
+# instantiate dtca(node, nrtc) for init
+init nrtc(X,X)
+init nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+init nrtc(X, Y) & nrtc(Y, X) -> X = Y
+init nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+init X != null -> !nrtc(X, null) & !nrtc(null, X)
+
+init u != null & v != null
+init nrtc(h, u) & h != u & nrtc(u, v) & u != v & (nrtc(u, Z) & u != Z -> nrtc(v, Z))
+
+# instantiate dtca(node, nrtc) for invariant
+#invariant [acyc] nrtc(X,X)
+#invariant [acyc] nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+#invariant [acyc] nrtc(X, Y) & nrtc(Y, X) -> X = Y
+#invariant [acyc] nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+invariant [acyc]  nrtc(X,X)  & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z))
+  & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
+  & (nrtc(v, i) & v != i -> nrtc(v, u))
+
+### The invariant that UPDR is supposed to find:
+#invariant i != null -> !(nrtc(i,X) & nrtc(j,X))
+
+### The invariant that UPDR actually finds:
+### invariant !(exists node0:node, node1:node, node4:node. nrtc(node0, node1) & nrtc(node4, node1) & i = node0 & j = node4)
+
+init i = h
+init j = null
+#init nrtc(U,V) <-> nrtc0(U,V)   # (interestingly, without this line, a different inv. is found :)
+
+transition step(x: node)  # x is not used; but pyvy fails with empty vars
+  modifies nrtc, i, j
+  old(i) != old(null) &
+  (nrtc(U,V) <-> old(nrtc(U,V) & !(nrtc(U,i) & nrtc(i,V) & i != V) | (nrtc(U,i) & nrtc(j,V)))) &
+  (exists K. K = i & old(nrtc(i, K) & i != K & forall Z. nrtc(i, Z) & i != Z -> nrtc(K, Z))) &
+  j = old(i)
+
+
+automaton {
+
+  safety acyc
+
+  init phase before
+
+  phase before
+    transition step -> phase at_u assume nrtc(i,u) & i != u & (nrtc(i,Z) & i != Z -> nrtc(u,Z))
+    transition step -> phase before assume exists Z. nrtc(i, Z) & nrtc(Z, u) & Z != i & Z != u
+    invariant nrtc(i, u) & u != i
+    invariant nrtc(u, v) & u != v & (nrtc(u, Z) & u != Z -> nrtc(v, Z))
+    invariant nrtc(X,X) & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z))
+      & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
+      & (nrtc(v, i) & v != i -> nrtc(v, u))
+    invariant i != null -> !(nrtc(i,X) & nrtc(j,X))
+
+  phase at_u
+    transition step -> phase at_v
+    invariant i = u
+    invariant nrtc(u, v) & u != v & (nrtc(u, Z) & u != Z -> nrtc(v, Z))
+    invariant nrtc(X,X) & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z))
+      & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
+      & (nrtc(v, i) & v != i -> nrtc(v, u))
+    invariant i != null -> !(nrtc(i,X) & nrtc(j,X))
+
+  phase at_v
+    transition step -> phase after
+    invariant i = v
+    invariant j = u
+    invariant nrtc(X,X) & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z))
+      & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
+      & (nrtc(v, i) & v != i -> nrtc(v, u))
+    invariant i != null -> !(nrtc(i,X) & nrtc(j,X))
+
+  phase after
+    transition step -> phase after
+    invariant !nrtc(i, u) & !nrtc(i, v)
+    invariant nrtc(X,X)
+    invariant nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+    invariant nrtc(X, Y) & nrtc(Y, X) -> X = Y
+    invariant nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+    invariant nrtc(v, u)
+    invariant i != null -> !(nrtc(i,X) & nrtc(j,X))
+
+}

@@ -7,7 +7,10 @@ mutable constant i: node
 mutable constant j: node
 mutable constant null: node
 
-immutable relation nrtc0(node, node)
+#immutable relation nrtc0(node, node)
+
+immutable constant u: node
+immutable constant v: node
 
 # instantiate dtca(node, nrtc) for init
 init nrtc(X,X)
@@ -16,12 +19,17 @@ init nrtc(X, Y) & nrtc(Y, X) -> X = Y
 init nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
 init X != null -> !nrtc(X, null) & !nrtc(null, X)
 
+init u != null & v != null
+init nrtc(h, u) & nrtc(u, v) & u != v & (nrtc(u, Z) & u != Z -> nrtc(v, Z))
+
 # instantiate dtca(node, nrtc) for invariant
 #invariant [acyc] nrtc(X,X)
 #invariant [acyc] nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
 #invariant [acyc] nrtc(X, Y) & nrtc(Y, X) -> X = Y
 #invariant [acyc] nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
-invariant [acyc]  nrtc(X,X)  & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)) & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
+invariant [acyc]  nrtc(X,X)  & (nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z))
+  & (nrtc(X, Y) & nrtc(Y, X) -> X = Y) & (nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y))
+  & (nrtc(v, i) & v != i -> nrtc(v, u))
 
 ### The invariant that UPDR is supposed to find:
 #invariant i != null -> !(nrtc(i,X) & nrtc(j,X))

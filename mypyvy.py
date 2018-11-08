@@ -473,16 +473,23 @@ class Diagram(object):
         subst = self.const_subst()
         I: Dict[SortDecl, List[Expr]]
         R: Dict[RelationDecl, List[Expr]]
+        C: Dict[ConstantDecl, Expr]
         F: Dict[FunctionDecl, List[Expr]]
 
-        def apply_subst(l): return [syntax.subst_vars_simple(e, subst) for e in l]
+        def apply_subst1(e): return syntax.subst_vars_simple(e, subst)
+        def apply_subst(l): return [apply_subst1(e) for e in l]
+        def is_trivial_eq(eq):
+            return isinstance(eq, syntax.BinaryExpr) and eq.op == 'EQUAL' and \
+                    eq.arg1 == eq.arg2
 
         I = OrderedDict((s, apply_subst(l)) for s, l in self.ineqs.items())
         R = OrderedDict((r, apply_subst(l)) for r, l in self.rels.items())
+        C = OrderedDict((c, apply_subst1(e)) for c, e in self.consts.items())
         F = OrderedDict((f, apply_subst(l)) for f, l in self.funcs.items())
 
         self.ineqs = I
         self.rels = R
+        self.consts = OrderedDict((c, e) for c, e in C.items() if not is_trivial_eq(e))
         self.funcs = F
 
         self.prune_unused_vars()
