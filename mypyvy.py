@@ -1200,7 +1200,8 @@ class Frames(object):
         self.assert_inductive_trace()
 
     def assert_inductive_trace(self) -> None:
-        return # don't use in release
+        if not args.assert_inductive_trace:
+            return
 
         for i, f in enumerate(self.fs[:-1]):
             with LogTag('inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
@@ -1857,12 +1858,14 @@ def parse_args() -> argparse.Namespace:
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
                                 help='generalize diagrams using unsat cores instead of brute force')
     updr_subparser.add_argument('--smoke-test', action='store_true',
-                                help='run bmc to confirm every conjunct added to a frame')
+                                help='(for debugging mypyvy itself) run bmc to confirm every conjunct added to a frame')
+    updr_subparser.add_argument('--assert-inductive-trace', action='store_true',
+                                help='(for debugging mypyvy itself) check that frames are always inductive')
+
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
                                 help='substitute existentially quantified variables that are equal to constants')
     updr_subparser.add_argument('--simplify-diagram', action='store_true',
                                 help='in diagram generation, substitute existentially quantified variables that are equal to constants')
-
     updr_subparser.add_argument('--automaton', action='store_true',
                                 help='whether to run vanilla UPDR or phase UPDR')
 
