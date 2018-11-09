@@ -973,29 +973,28 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
 
 class Frames(object):
     @log_start_end_xml(logging.DEBUG, 'Frames.__init__')
-    def __init__(self, solver: Solver, prog: Program, automaton: Optional[AutomatonDecl]=None) -> None:
+    def __init__(self, solver: Solver, prog: Program) -> None:
         self.solver = solver
         self.prog = prog
 
-        if automaton is None:
-            if args.safety is None:
-                syntax.error(None, 'updr without --automaton requires --safety')
+        if args.automaton:
+            automaton = prog.the_automaton()
+            if automaton is None:
+                syntax.error(None, 'updr --automaton requires the file to declare an automaton')
+        else:
             the_phase = 'the_phase'
-            pcs = []
+            pcs: List[syntax.PhaseComponent] = []
             for t in self.prog.transitions():
                 pcs.append(syntax.PhaseTransitionDecl(None, t.name, None, the_phase))
-            automaton = AutomatonDecl(None, [syntax.SafetyDecl(None, args.safety),
-                                             syntax.InitPhaseDecl(None, the_phase),
+            for inv in self.prog.safeties():
+                pcs.append(inv)
+
+            automaton = AutomatonDecl(None, [syntax.InitPhaseDecl(None, the_phase),
                                              syntax.PhaseDecl(None, the_phase, pcs)])
 
-            print(automaton)
+            automaton.resolve(prog.scope)
 
-        l = []
-        for s in automaton.safeties():
-            inv = prog.scope.get_invariant(s.name)
-            assert inv is not None
-            l.append(inv.expr)
-        self.safety = l
+        print(automaton)
 
         self.automaton = PhaseAutomaton(automaton)
         self.fs: List[Frame] = []
@@ -1072,7 +1071,7 @@ class Frames(object):
         f = self.fs[-1]
 
         def safety_property_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
-            res = check_implication(self.solver, f.summary_of(p), self.safety)
+            res = check_implication(self.solver, f.summary_of(p), (inv.expr for inv in p.safety))
 
             if res is None:
                 logger.debug("Frontier frame phase %s implies safety, summary is %s" % (p.name(), f.summary_of(p)))
@@ -1143,7 +1142,7 @@ class Frames(object):
         return True
 
     def push_conjunct(self, frame_no: int, c: Expr, p: Phase, frame_old_count: Optional[int]=None) -> None:
-        is_safety = c in self.safety
+        is_safety = c in p.safety
         conjunct_old_count = self.counter
 
         f = self.fs[frame_no]
@@ -1486,11 +1485,11 @@ class Frames(object):
         return None
 
 
-    def _simplify_summary(self, f: MySet[Expr]) -> None:
+    def _simplify_summary(self, f: MySet[Expr], p: Phase) -> None:
         l = []
         for c in reversed(f.l):
             f_minus_c = [x for x in f.l if x in f.s and x is not c]
-            if c not in self.safety and \
+            if c not in p.safety and \
                check_implication(self.solver, f_minus_c, [c]) is None:
                 logger.debug('removed %s' % c)
                 f.s.remove(c)
@@ -1506,7 +1505,7 @@ class Frames(object):
             for p in self.automaton.phases():
                 with LogTag('simplify', frame=str(i)):
                     logger.debug('simplifying frame %d, pred %s' % (i, p.name()))
-                    self._simplify_summary(f.summary_of(p))
+                    self._simplify_summary(f.summary_of(p), p)
 
 
     def print_frame(self, i: int, lvl: int=logging.INFO) -> None:
@@ -1561,14 +1560,7 @@ def updr(s: Solver, prog: Program) -> None:
 
     check_init(s, prog)
 
-    if args.automaton:
-        automaton = prog.the_automaton()
-        if automaton is None:
-            syntax.error(None,'--automaton requires the file to declare an automaton')
-    else:
-        automaton = None
-
-    fs = Frames(s, prog, automaton=automaton)
+    fs = Frames(s, prog)
     fs.search()
 
 def debug_tokens(filename: str) -> None:
@@ -1639,26 +1631,6 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
                                 s, prog, KEY_NEW, KEY_OLD)
 
 
-def check_automaton_safety(s: Solver, prog: Program, a: AutomatonDecl) -> None:
-    logger.always_print('checking automaton safety:')
-
-    t = s.get_translator(KEY_ONE)
-
-    safety = []
-    for d in a.safeties():
-        inv = prog.scope.get_invariant(d.name)
-        assert inv is not None
-        safety.append(inv.expr)
-
-    for phase in a.phases():
-        logger.always_print('  checking phase %s:' % phase.name)
-        res = check_implication(s, (inv.expr for inv in phase.invs()), safety)
-        if res is not None:
-            m = Model(prog, res, KEY_ONE)
-            logger.always_print(str(m))
-            syntax.print_error(phase.tok, 'phase characterization does not guarantee safety')
-
-
 def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     logger.always_print('checking automaton inductiveness:')
 
@@ -1720,10 +1692,8 @@ def verify(s: Solver, prog: Program) -> None:
 
 def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_init(s, prog, a)
-    check_automaton_safety(s, prog, a)
     check_automaton_inductiveness(s, prog, a)
     check_automaton_edge_covering(s, prog, a)
-
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
     keys = ['state%d' % i for i in range(depth+1)]
@@ -1856,7 +1826,6 @@ def parse_args() -> argparse.Namespace:
         s.add_argument('--minimize-models', action='store_true',
                        help='find models with minimal cardinality')
 
-    updr_subparser.add_argument('--safety', help='name of invariant to use as safety property')
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
                                 help='generalize diagrams using unsat cores instead of brute force')
     updr_subparser.add_argument('--smoke-test', action='store_true',

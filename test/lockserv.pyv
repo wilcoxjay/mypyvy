@@ -91,7 +91,7 @@ transition recv_unlock(n: node)
 # It says that at most one client thinks they hold the lock. 
 # Remember again that capital variables like `N1` and `N2` are 
 # implicitly univerally quantified at the outermost scope.
-invariant [mutex] holds_lock(N1) & holds_lock(N2) -> N1 = N2
+safety [mutex] holds_lock(N1) & holds_lock(N2) -> N1 = N2
 
 # What follows is an inductive invariant to prove [mutex].
 # You can verify this system's inductiveness by running 
@@ -119,12 +119,11 @@ invariant !(unlock_msg(N) & server_holds_lock)
 
 # Declare a phase automaton structure to prove safety.
 automaton {
-  safety mutex  # The safety property to prove.
-
   init phase server  # The initial phase.
 
   # Adds the given transition to every phase.
   global
+    safety holds_lock(N1) & holds_lock(N2) -> N1 = N2
     transition send_lock -> self
 
   # Now come the phases. Each has a name, and then a sequence of declarations,

@@ -7,6 +7,7 @@ from utils import MySet
 class Phase(object):
     def __init__(self, phase_decl: PhaseDecl) -> None:
         self.phase_decl = phase_decl
+        self.safety = list(phase_decl.safeties())
 
     def name(self) -> str:
         return self.phase_decl.name

@@ -1205,24 +1205,28 @@ class TransitionDecl(Decl):
              self.expr)
 
 class InvariantDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, is_safety: bool) -> None:
         self.tok = tok
         self.name = name
         self.expr = expr
+        self.is_safety = is_safety
 
     def resolve(self, scope: Scope) -> None:
-        scope.add_invariant(self)
         self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        return 'InvariantDecl(tok=None, name=%s, expr=%s)' % (
+        return 'InvariantDecl(tok=None, name=%s, expr=%s, is_safety=%s)' % (
             repr(self.name) if self.name is not None else 'None',
-            repr(self.expr))
+            repr(self.expr),
+            repr(self.is_safety)
+        )
 
     def __str__(self) -> str:
-        return 'invariant %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
-                                   self.expr)
+        kwd = 'safety' if self.is_safety else 'invariant'
+        return '%s %s%s' % (kwd,
+                            ('[%s] ' % self.name) if self.name is not None else '',
+                            self.expr)
 
 
 class AxiomDecl(Decl):
@@ -1306,26 +1310,7 @@ class PhaseTransitionDecl(object):
         if self.target is not None and scope.get_phase(self.target) is None:
             error(self.tok, 'unknown phase %s' % (self.target))
 
-class PhaseInvariantDecl(object):
-    def __init__(self, tok: Optional[Token], expr: Expr) -> None:
-        self.tok = tok
-        self.expr = expr
-
-    def __repr__(self) -> str:
-        return 'PhaseInvariantDecl(tok=None, expr=%s)' % (
-            repr(self.expr),
-        )
-
-    def __str__(self) -> str:
-        return 'invariant %s' % (
-            self.expr,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        self.expr = close_free_vars(self.expr)
-        self.expr.resolve(scope, BoolSort)
-
-PhaseComponent = Union[PhaseTransitionDecl, PhaseInvariantDecl]
+PhaseComponent = Union[PhaseTransitionDecl, InvariantDecl]
 
 class GlobalPhaseDecl(object):
     def __init__(self, tok: Optional[Token], components: Sequence[PhaseComponent]) -> None:
@@ -1371,25 +1356,6 @@ class InitPhaseDecl(object):
             error(self.tok, 'unknown phase %s' % (self.phase,))
 
 
-class SafetyDecl(object):
-    def __init__(self, tok: Optional[Token], name: str) -> None:
-        self.tok = tok
-        self.name = name
-
-    def __repr__(self) -> str:
-        return 'SafetyDecl(tok=None, name=%s)' % (
-            self.name,
-        )
-
-    def __str__(self) -> str:
-        return 'safety %s' % (
-            self.name,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        if scope.get_invariant(self.name) is None:
-            error(self.tok, 'unknown invariant %s' % (self.name,))
-
 class PhaseDecl(object):
     def __init__(self, tok: Optional[Token], name: str, components: Sequence[PhaseComponent]) -> None:
         self.tok = tok
@@ -1417,10 +1383,16 @@ class PhaseDecl(object):
         for c in self.components:
             c.resolve(scope)
 
-    def invs(self) -> Iterator[PhaseInvariantDecl]:
+    def invs(self) -> Iterator[InvariantDecl]:
         for c in self.components:
-            if isinstance(c, PhaseInvariantDecl):
+            if isinstance(c, InvariantDecl):
                 yield c
+
+    def safeties(self) -> Iterator[InvariantDecl]:
+        for c in self.components:
+            if isinstance(c, InvariantDecl) and c.is_safety:
+                yield c
+
 
     def transitions(self) -> Iterator[PhaseTransitionDecl]:
         for c in self.components:
@@ -1428,7 +1400,7 @@ class PhaseDecl(object):
                 yield c
 
 
-AutomatonComponent = Union[GlobalPhaseDecl, InitPhaseDecl, SafetyDecl, PhaseDecl]
+AutomatonComponent = Union[GlobalPhaseDecl, InitPhaseDecl, PhaseDecl]
 
 class AutomatonDecl(Decl):
     def __init__(self, tok: Optional[Token], components: Sequence[AutomatonComponent]) -> None:
@@ -1449,11 +1421,6 @@ class AutomatonDecl(Decl):
 
         return i[0]
 
-    def safeties(self) -> Iterator[SafetyDecl]:
-        for c in self.components:
-            if isinstance(c, SafetyDecl):
-                yield c
-
     def globals(self) -> Iterator[GlobalPhaseDecl]:
         for c in self.components:
             if isinstance(c, GlobalPhaseDecl):
@@ -1465,9 +1432,6 @@ class AutomatonDecl(Decl):
                 yield c
 
     def resolve(self, scope: Scope) -> None:
-        for s in self.safeties():
-            s.resolve(scope)
-
         for p in self.phases():
             scope.add_phase(p)
 
@@ -1511,7 +1475,6 @@ class Scope(Generic[B]):
         self.relations: Dict[str, RelationDecl] = {}
         self.constants: Dict[str, ConstantDecl] = {}
         self.functions: Dict[str, FunctionDecl] = {}
-        self.invariants: Dict[str, InvariantDecl] = {}
         self.transitions: Dict[str, TransitionDecl] = {}
         self.phases: Dict[str, PhaseDecl] = {}
 
@@ -1578,17 +1541,6 @@ class Scope(Generic[B]):
         self._check_duplicate_name(decl.tok, decl.name)
         self.functions[decl.name] = decl
 
-    def add_invariant(self, decl: InvariantDecl) -> None:
-        assert len(self.stack) == 0
-
-        if decl.name is not None:
-            if decl.name in self.invariants:
-                error(decl.tok, 'there is already an invariant named %s' % decl.name)
-            self.invariants[decl.name] = decl
-
-    def get_invariant(self, inv: str) -> Optional[InvariantDecl]:
-        return self.invariants.get(inv)
-
     def add_phase(self, decl: PhaseDecl) -> None:
         assert len(self.stack) == 0
 
@@ -1639,6 +1591,11 @@ class Program(object):
     def invs(self) -> Iterator[InvariantDecl]:
         for d in self.decls:
             if isinstance(d, InvariantDecl):
+                yield d
+
+    def safeties(self) -> Iterator[InvariantDecl]:
+        for d in self.decls:
+            if isinstance(d, InvariantDecl) and d.is_safety:
                 yield d
 
     def transitions(self) -> Iterator[TransitionDecl]:

@@ -175,9 +175,22 @@ def p_decl_init(p: Any) -> None:
     'decl : INIT opt_name expr'
     p[0] = syntax.InitDecl(p.slice[1], p[2], p[3])
 
+def p_safety_or_invariant_keyword_safety(p: Any) -> None:
+    'safety_or_invariant_keyword : SAFETY'
+    p[0] = (p.slice[1], True)
+
+def p_safety_or_invariant_keyword_invariant(p: Any) -> None:
+    'safety_or_invariant_keyword : INVARIANT'
+    p[0] = (p.slice[1], False)
+
+def p_invariant_decl(p: Any) -> None:
+    'invariant_decl : safety_or_invariant_keyword opt_name expr'
+    tok, is_safety = p[1]
+    p[0] = syntax.InvariantDecl(tok, p[2], p[3], is_safety)
+
 def p_decl_invariant(p: Any) -> None:
-    'decl : INVARIANT opt_name expr'
-    p[0] = syntax.InvariantDecl(p.slice[1], p[2], p[3])
+    'decl : invariant_decl'
+    p[0] = p[1]
 
 def p_opt_name_none(p: Any) -> None:
     'opt_name : empty'
@@ -390,8 +403,8 @@ def p_option_guard_guard(p: Any) -> None:
     p[0] = p[2]
 
 def p_phase_invariant_decl(p: Any) -> None:
-    'phase_component : INVARIANT expr'
-    p[0] = syntax.PhaseInvariantDecl(p.slice[1], p[2])
+    'phase_component : invariant_decl'
+    p[0] = p[1]
 
 def p_phase_components_empty(p: Any) -> None:
     'phase_components : empty'
@@ -408,10 +421,6 @@ def p_adecl_global(p: Any) -> None:
 def p_adecl_init_phase(p: Any) -> None:
     'automaton_decl : INIT PHASE id'
     p[0] = syntax.InitPhaseDecl(p.slice[1], p[3].value)
-
-def p_adecl_safety(p: Any) -> None:
-    'automaton_decl : SAFETY id'
-    p[0] = syntax.SafetyDecl(p.slice[1], p[2].value)
 
 def p_adecl_phase(p: Any) -> None:
     'automaton_decl : PHASE id phase_components'
