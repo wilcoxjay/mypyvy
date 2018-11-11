@@ -4,24 +4,37 @@ sort quorum
 immutable relation member(node, quorum)
 axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
 
+mutable relation vote_request_msg(node, node)
+mutable relation voted(node)
 mutable relation vote_msg(node, node)
 mutable relation votes(node, node)
 mutable relation leader(node)
 mutable constant voting_quorum: quorum
 
+init !vote_request_msg(N1, N2)
+init !voted(N)
 init !vote_msg(N1, N2)
 init !votes(N1, N2)
 init !leader(N1)
 
+transition send_request_vote(src: node, dst: node)
+	modifies vote_request_msg
+	vote_request_msg(N1, N2) <-> (old(vote_request_msg(N1, N2)) | (N1=src & N2=dst))
+
 transition send_vote(src: node, dst: node)
-  modifies vote_msg
-  (!old(vote_msg(src, D))) &
-  (vote_msg(N1, N2) <-> old(vote_msg(N1, N2)) | N1 = src & N2 = dst)
+  modifies vote_msg, voted, vote_request_msg
+  (old(!voted(src)) & (old(vote_request_msg(dst, src)))) &
+  (vote_msg(N1, N2) <-> old(vote_msg(N1, N2)) | N1 = src & N2 = dst) &
+  (voted(N) <-> old(voted(N)) | N=src) &
+  ((!(N1=dst & N2=src)) -> (vote_request_msg(N1, N2) <-> old(vote_request_msg(N1, N2))))
+
 
 transition recv_vote(n: node, sender: node)
-  modifies votes
+  # TODO: remove message from the queue?
+  modifies votes, vote_msg
   old(vote_msg(sender, n)) &
-  (votes(N1, N2) <-> old(votes(N1, N2)) | N1 = n & N2 = sender)
+  (votes(N1, N2) <-> old(votes(N1, N2)) | N1 = n & N2 = sender) & 
+  ((!(N1=sender & N2=n)) -> (vote_msg(N1, N2) <-> old(vote_msg(N1, N2))))
 
 transition become_leader(n: node)
   modifies leader
@@ -29,9 +42,11 @@ transition become_leader(n: node)
   (leader(N) <-> old(leader(N)) | N = n)
 
 
-safety leader(N1) & leader(N2) -> N1 = N2
+# safety leader(N1) & leader(N2) -> N1 = N2
+safety votes(N1, N) & votes(N2, N) -> N1 = N2
 
-invariant votes(N1, N2) -> vote_msg(N2, N1)
-invariant vote_msg(V, L1) & vote_msg(V, L2) -> L1 = L2
-invariant leader(L) & member(N, voting_quorum) -> votes(L, N)
-
+invariant votes(N2, N1) -> voted(N1)
+invariant vote_msg(N1, N2) -> voted(N1)
+invariant vote_msg(N1, N2) & vote_msg(N1, N3) -> N2 = N3
+invariant vote_msg(N1, N2) & votes(N3, N1) -> N2 = N3
+invariant votes(N2, N1) & votes(N3, N1) -> N2 = N3
