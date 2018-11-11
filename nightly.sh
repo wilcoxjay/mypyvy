@@ -4,8 +4,8 @@ function cleanup() {
     DIR="$1"
 
     if [ ! -d "$DIR" ]; then
-	echo "not cleaning up non-existant directory $DIR" >&2
-	return 1
+        echo "not cleaning up non-existant directory $DIR" >&2
+        return 1
     fi
 
     pushd $DIR
@@ -17,29 +17,41 @@ function cleanup() {
 }
 
 
-LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-updr
-time python3 benchmark.py -n 500 -j 4 --timeout 10 --pin-cores --keep-logs "$LOGDIR"
-cleanup "$LOGDIR"
+#LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-updr
+#time python3 benchmark.py -n 500 -j 16 --timeout 30 --keep-logs "$LOGDIR"
+#cleanup "$LOGDIR"
 
-PHASE_ARGS="-n 50 -j 4 --timeout 120 --pin-cores --benchmark test/lockserv.pyv test/lockserv_multi_view.pyv --keep-logs"
+COMMON_ARGS="-n 16 -j 16 --timeout 1800 --benchmark test/sharded-kv-retransmit.pyv --keep-logs"
 
-for SIMP in '' --simplify-diagram; do
-    for MIN in '' --minimize-models; do
-	for CORES in '' --use-z3-unsat-core; do
-	    TAG='phase'
-	    if [ "$SIMP"x != x ]; then
-		TAG="${TAG}-simpl"
-	    fi
-	    if [ "$MIN"x != x ]; then
-		TAG="${TAG}-min"
-	    fi
-	    if [ "$CORES"x != x ]; then
-		TAG="${TAG}-cores"
-	    fi
+for AUTOMATON in '' --automaton; do
+    for SIMP in '' --simplify-diagram; do
+        for MIN in '' --minimize-models; do
+            for CORES in '' --use-z3-unsat-core; do
+                for MAY in '' --dont-block-may-cex; do
+                    if [ "$AUTOMATON"x == x ]; then
+			TAG="updr"
+		    else
+			TAG="phase"
+		    fi
+                    if [ "$SIMP"x != x ]; then
+                       TAG="${TAG}-simpl"
+                    fi
+                    if [ "$MIN"x != x ]; then
+                        TAG="${TAG}-min"
+                    fi
+                    if [ "$CORES"x != x ]; then
+                        TAG="${TAG}-cores"
+                    fi
+                    if [ "$MAY"x != x ]; then
+                        TAG="${TAG}-noblockmay"
+                    fi
 
-	    LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-$TAG
-	    time python3 benchmark.py $PHASE_ARGS "$LOGDIR" --args --automaton $SIMP $MIN $CORES
-	    cleanup "$LOGDIR"
-	done
+                    LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-$TAG
+		    echo $LOGDIR
+                    time python3 benchmark.py $COMMON_ARGS "$LOGDIR" --args $AUTOMATON $SIMP $MIN $CORES $MAY
+                    # cleanup "$LOGDIR"
+                done
+            done
+        done
     done
 done
