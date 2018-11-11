@@ -21,7 +21,7 @@ function cleanup() {
 #time python3 benchmark.py -n 500 -j 16 --timeout 30 --keep-logs "$LOGDIR"
 #cleanup "$LOGDIR"
 
-COMMON_ARGS="-n 16 -j 16 --timeout 1800 --benchmark test/sharded-kv-retransmit.pyv --keep-logs"
+COMMON_ARGS="-n 16 -j 16 --timeout 1200 --benchmark test/sharded-kv-retransmit.pyv --keep-logs"
 
 for AUTOMATON in '' --automaton; do
     for SIMP in '' --simplify-diagram; do
