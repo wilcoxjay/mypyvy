@@ -1839,7 +1839,7 @@ def parse_args() -> argparse.Namespace:
                                 help='in diagram generation, substitute existentially quantified variables that are equal to constants')
     updr_subparser.add_argument('--automaton', action='store_true',
                                 help='whether to run vanilla UPDR or phase UPDR')
-    updr_subparser.add_argument('--dont-block-may-cexs', action='store_false',
+    updr_subparser.add_argument('--dont-block-may-cexs', action='store_true',
                                 help="don't treat failures to push as additional proof obligations")
 
     verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],
