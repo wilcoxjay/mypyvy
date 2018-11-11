@@ -862,12 +862,15 @@ class Model(object):
                         rl = []
                         domains = [self.z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
-                        g = itertools.product(*domains)
-                        for row in g:
-                            ans = self.z3model.eval(z3decl(*row))
-                            rl.append(([rename(str(col)) for col in row], bool(ans)))
-                        assert decl not in R
-                        R[decl] = rl
+                        if not any(x is None for x in domains):
+                            # Note: if any domain is None, we silently drop this symbol.
+                            # It's not entirely clear that this is an ok thing to do.
+                            g = itertools.product(*domains)
+                            for row in g:
+                                ans = self.z3model.eval(z3decl(*row))
+                                rl.append(([rename(str(col)) for col in row], bool(ans)))
+                            assert decl not in R
+                            R[decl] = rl
                     else:
                         ans = self.z3model.eval(z3decl())
                         assert decl not in R
@@ -876,12 +879,15 @@ class Model(object):
                     fl = []
                     domains = [self.z3model.get_universe(z3decl.domain(i))
                                for i in range(z3decl.arity())]
-                    g = itertools.product(*domains)
-                    for row in g:
-                        ans = self.z3model.eval(z3decl(*row))
-                        fl.append(([rename(str(col)) for col in row], rename(ans.decl().name())))
-                    assert decl not in F
-                    F[decl] = fl
+                    if not any(x is None for x in domains):
+                        # Note: if any domain is None, we silently drop this symbol.
+                        # It's not entirely clear that this is an ok thing to do.
+                        g = itertools.product(*domains)
+                        for row in g:
+                            ans = self.z3model.eval(z3decl(*row))
+                            fl.append(([rename(str(col)) for col in row], rename(ans.decl().name())))
+                        assert decl not in F
+                        F[decl] = fl
 
                 else:
                     assert isinstance(decl, ConstantDecl)
