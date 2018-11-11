@@ -206,7 +206,7 @@ transition evict_exclusive_or_shared(c: core, a: address)
   (forall C, A. shared(C, A) <-> old(shared(C, A)) & !(C = c & A = a)) &
   (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a)
 
-invariant [safety] !invalid(C, A) & !modified(C, A) -> cache(C, A) = memory(A)
+safety !invalid(C, A) & !modified(C, A) -> cache(C, A) = memory(A)
 
 # each cache line is in at most one state
 invariant !(invalid(C, A) & modified(C, A))

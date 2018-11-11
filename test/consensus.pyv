@@ -29,7 +29,7 @@ transition become_leader(n: node)
   (leader(N) <-> old(leader(N)) | N = n)
 
 
-invariant [one_leader] leader(N1) & leader(N2) -> N1 = N2
+safety leader(N1) & leader(N2) -> N1 = N2
 
 invariant votes(N1, N2) -> vote_msg(N2, N1)
 invariant vote_msg(V, L1) & vote_msg(V, L2) -> L1 = L2

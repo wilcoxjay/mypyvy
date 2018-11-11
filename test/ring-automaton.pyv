@@ -112,15 +112,13 @@ invariant pending(L, L) -> le(N, L)
 immutable constant qn1: node
 immutable constant qn2: node
 axiom qn1 != qn2
-invariant [leader_max_view] leader(qn1) -> le(qn1, qn2)
 
 automaton {
-  safety leader_max_view
-
   init phase wander
 
   # Adds the given transition to every phase.
   global
+    safety leader(qn1) -> le(qn1, qn2)
     transition send -> self
 
   phase wander

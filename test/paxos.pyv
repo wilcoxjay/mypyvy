@@ -75,7 +75,7 @@ transition decide(r: round, v: value, q: quorum)
     !(R = r & V = v) -> decision_quorum(R, V) = old(decision_quorum(R, V))) &
   decision_quorum(r, v) = q
 
-invariant [safety]
+safety
   decision(R1, V1) & decision(R2, V2) -> V1 = V2
 
 invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
