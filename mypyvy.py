@@ -1190,7 +1190,8 @@ class Frames(object):
     def push_forward_frames(self) -> None:
         self.assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
-            if i == 0:
+            if ((args.push_frame_zero == 'if_trivial' and self.automaton.nontrivial) or \
+                (args.push_frame_zero == 'never')) and i == 0:
                 continue
             with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
@@ -1840,6 +1841,8 @@ def parse_args() -> argparse.Namespace:
     updr_subparser.add_argument('--automaton', action='store_true',
                                 help='whether to run vanilla UPDR or phase UPDR')
     updr_subparser.add_argument('--dont-block-may-cexs', action='store_true',
+                                help="don't treat failures to push as additional proof obligations")
+    updr_subparser.add_argument('--push-frame-zero', default='if_trivial', choices=['if_trivial', 'always', 'never'],
                                 help="don't treat failures to push as additional proof obligations")
 
     verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],

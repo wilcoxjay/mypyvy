@@ -71,6 +71,8 @@ class PhaseAutomaton(object):
 
         self._init_phase = self._phases[automaton_decl.the_init().phase]
 
+        self.nontrivial = len(self._phases) > 1
+
     def phases(self) -> Sequence[Phase]:
         return list(self._phases.values())
 
