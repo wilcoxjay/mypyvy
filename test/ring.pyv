@@ -124,7 +124,10 @@ automaton {
   phase wander
     transition recv -> phase trump assume (sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))
 
-    transition recv -> self assume ((!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))) & (sender=qn1 & pending(sender, n) -> (btw(qn1, n, qn2) | n=qn1 | n=qn2)))
+    transition recv -> self assume (!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender)))
+
+    # this transition provides additional information by stating that recv transitions in this phase can occur only for nodes that are between qn1, qn2. Speeds up inference even more.
+    # transition recv -> self assume ((!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))) & (sender=qn1 & pending(sender, n) -> (btw(qn1, n, qn2) | n=qn1 | n=qn2)))
 
   phase trump
     transition recv -> self
