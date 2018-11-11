@@ -994,8 +994,6 @@ class Frames(object):
 
             automaton.resolve(prog.scope)
 
-        print(automaton)
-
         self.automaton = PhaseAutomaton(automaton)
         self.fs: List[Frame] = []
         self.push_cache: List[Dict[Phase, Set[Expr]]] = []
