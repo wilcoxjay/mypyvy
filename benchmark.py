@@ -62,7 +62,7 @@ class Benchmark(object):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout) # type: ignore
         except subprocess.TimeoutExpired as e:
-            print('timeout uid %s' % uid)
+            # print('timeout uid %s' % uid)
             timed_out = True
             timed_out_stdout = e.stdout
             timed_out_stderr = e.stderr
@@ -104,14 +104,14 @@ class Benchmark(object):
                 return time, nqueries
 
         # probably the child job was killed or terminated abnormally
-        print('could not find "updr ended" in job %s' % uid)
-        print('timed_out = %s' % timed_out)
-        if not timed_out:
-            print(proc.stdout)
-            print(proc.stderr)
-        else:
-            print(timed_out_stdout)
-            print(timed_out_stderr)
+#        print('could not find "updr ended" in job %s' % uid)
+#        print('timed_out = %s' % timed_out)
+#        if not timed_out:
+#            print(proc.stdout)
+#            print(proc.stderr)
+#        else:
+#            print(timed_out_stdout)
+#            print(timed_out_stderr)
 
         return None
 
