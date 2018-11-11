@@ -102,9 +102,30 @@ twostate theorem [recv_alt]
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
         (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next & sender != n & le(n, sender)))
 
-safety [one_leader] leader(X) & leader(Y) -> X = Y
+# safety [one_leader] leader(X) & leader(Y) -> X = Y
 
-invariant pending(S, D) & btw(S, N, D) -> le(N, S)
-invariant [leader_max] leader(L) -> le(N, L)
+# invariant pending(S, D) & btw(S, N, D) -> le(N, S)
+safety [leader_max] leader(L) -> le(N, L)
 invariant pending(L, L) -> le(N, L)
 
+
+immutable constant qn1: node
+immutable constant qn2: node
+axiom qn1 != qn2
+
+automaton {
+  init phase wander
+
+  # Adds the given transition to every phase.
+  global
+    safety leader(qn1) -> le(qn2, qn1)
+    transition send -> self
+
+  phase wander
+    transition recv -> phase trump assume (sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))
+
+    transition recv -> self assume ((!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))) & (sender=qn1 & pending(sender, n) -> (btw(qn1, n, qn2) | n=qn1 | n=qn2)))
+
+  phase trump
+    transition recv -> self
+}
