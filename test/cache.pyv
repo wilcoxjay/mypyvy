@@ -262,3 +262,107 @@ invariant !(bus_upgrade(C1, A) & exclusive(C2, A))
 invariant !(bus_upgrade(C1, A) & modified(C2, A))
 
 # invariant [bmc] !(exists C, A. modified(C, A))
+
+immutable constant qa: address
+automaton {
+  init phase shared
+
+  global
+    safety !invalid(C, qa) & !modified(C, qa) -> cache(C, qa) = memory(qa)
+
+#    transition issue_proc_read_invalid -> self assume a!=qa
+#    transition do_bus_read_invalid -> self assume a!=qa
+#    transition do_bus_read_valid -> self assume a!=qa
+#    transition complete_proc_read_invalid_shared -> self assume a!=qa
+#    transition complete_proc_read_invalid_exclusive -> self assume a!=qa
+#    transition issue_proc_write_invalid -> self assume a!=qa 
+#    transition do_bus_read_for_ownership_invalid -> self assume a!=qa
+#    transition do_bus_read_for_ownership_valid -> self assume a!=qa
+#    transition complete_proc_write_invalid -> self assume a!=qa
+#    transition proc_write_exclusive -> self assume a!=qa
+#    transition issue_proc_write_shared -> self assume a!=qa
+#    transition do_bus_upgrade -> self assume a!=qa
+#    transition complete_proc_write_shared -> self assume a!=qa
+#    transition evict_modified -> self assume a!=qa
+#    transition evict_exclusive_or_shared -> self assume a!=qa
+
+    invariant bus_read(C, qa) -> bus_in_use
+    invariant bus_read_for_ownership(C, qa) -> bus_in_use
+    invariant bus_upgrade(C, qa) -> bus_in_use
+    invariant proc_read(C, qa) -> bus_in_use
+    invariant proc_write(C, qa, V) -> bus_in_use
+
+  phase shared
+    transition issue_proc_read_invalid -> self assume a!=qa
+    transition do_bus_read_invalid -> self assume a!=qa
+    transition do_bus_read_valid -> self assume a!=qa
+    transition complete_proc_read_invalid_shared -> self assume a!=qa
+    transition complete_proc_read_invalid_exclusive -> self assume a!=qa
+    transition issue_proc_write_invalid -> self assume a!=qa 
+    transition do_bus_read_for_ownership_invalid -> self assume a!=qa
+    transition do_bus_read_for_ownership_valid -> self assume a!=qa
+    transition complete_proc_write_invalid -> self assume a!=qa
+    transition proc_write_exclusive -> self assume a!=qa
+    transition issue_proc_write_shared -> self assume a!=qa
+    transition do_bus_upgrade -> self assume a!=qa
+    transition complete_proc_write_shared -> self assume a!=qa
+    transition evict_modified -> self assume a!=qa
+    transition evict_exclusive_or_shared -> self assume a!=qa
+
+    transition issue_proc_read_invalid -> phase shared_bus_read assume a=qa
+    transition issue_proc_write_invalid -> phase shared_bus_read_for_ownership assume a=qa
+    transition issue_proc_write_shared -> phase shared_bus_upgrade assume a=qa
+
+    transition evict_exclusive_or_shared -> self assume a=qa
+
+    invariant !exclusive(C, qa)
+    invariant !modified(C, qa)
+    invariant !proc_read(C, qa)
+    invariant !proc_write(C, qa, V)
+    invariant !bus_read(C, qa)
+    invariant !bus_read_for_ownership(C, qa)
+    invariant !bus_upgrade(C, qa)
+
+  phase shared_bus_read
+#    transition complete_proc_read_invalid_exclusive -> phase exclusive assume a=qa
+    transition complete_proc_read_invalid_shared -> phase shared assume a=qa
+    transition do_bus_read_invalid -> self assume a=qa
+    transition do_bus_read_valid -> self assume a=qa
+
+    invariant !exclusive(C, qa)
+    invariant !modified(C, qa)
+    invariant bus_in_use
+    invariant proc_read(C1, qa) & proc_read(C2, qa) -> C1 = C2
+    invariant !bus_upgrade(C, qa)
+    invariant !bus_read_for_ownership(C, qa)
+    invariant !proc_write(C, qa, V)
+
+  phase shared_bus_read_for_ownership
+#    transition complete_proc_write_invalid -> phase modified assume a=qa
+#    transition complete_proc_write_shared -> phase modified assume a=qa
+    transition do_bus_read_for_ownership_valid -> self assume a=qa
+    transition do_bus_read_for_ownership_invalid -> self assume a=qa
+
+    invariant !exclusive(C, qa)
+    invariant !modified(C, qa)
+    invariant bus_in_use
+    invariant proc_write(C1, qa, V1) & proc_write(C2, qa, V2) -> C1 = C2 & V1 = V2
+    invariant !bus_upgrade(C, qa)
+    invariant !bus_read(C, qa)
+    invariant !proc_read(C, qa)
+    
+  phase shared_bus_upgrade
+
+#  phase modified
+#    invariant modified(C1, qa) & modified(C2, qa) -> C1 = C2
+#    invariant !exclusive(C, qa)
+#    invariant !shared(C, qa)
+#    invariant !bus_in_use
+#
+#  phase exclusive
+#    invariant exclusive(C1, qa) & exclusive(C2, qa) -> C1 = C2
+#    invariant !modified(C, qa)
+#    invariant !shared(C, qa)
+#    invariant !bus_in_use
+
+}
