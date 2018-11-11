@@ -33,7 +33,7 @@ transition put(n: node, k: key, v: value)
   (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) & 
   (table(n, k, V) <-> V = v)
 
-invariant [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
+safety [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
 
 invariant owner(N1, K) & owner(N2, K) -> N1 = N2
 invariant table(N, K, V) -> owner(N, K)
