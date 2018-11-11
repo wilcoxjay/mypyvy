@@ -126,7 +126,7 @@ automaton {
   phase wander
     transition receive -> phase trump assume (sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))
 
-    transition receive -> self assume (~(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender)) & (sender=qn1 & n=qn2 & pending(sender, n) -> btw(qn1, n, qn2)))
+    transition receive -> self assume (!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender)) & (sender=qn1 & n=qn2 & pending(sender, n) -> btw(qn1, n, qn2)))
 
   phase trump
     transition receive -> self
