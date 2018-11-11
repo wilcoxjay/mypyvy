@@ -35,15 +35,12 @@ def dump_version_info(f: TextIO) -> None:
     print('-' * 80, file=f)
 
 class Benchmark(object):
-    def __init__(self, name: str, safety: Optional[str]=None) -> None:
+    def __init__(self, name: str) -> None:
         self.name = name
-        self.safety = safety
 
     def __repr__(self) -> str:
         l = []
         l.append(repr(self.name))
-        if self.safety is not None:
-            l.append('safety=%s' % self.safety)
         return 'Benchmark(%s)' % ','.join(l)
 
     def run(self, uid: Optional[int]=None, seed: Optional[int]=None, worker_id: Optional[int]=None) -> Optional[Tuple[float, int]]:
@@ -55,9 +52,6 @@ class Benchmark(object):
 
         if seed is not None:
             cmd.append('--seed=%s' % seed)
-
-        if self.safety is not None:
-            cmd.append('--safety=%s' % self.safety)
 
         cmd.extend(args.args)
         cmd.append(self.name)
@@ -123,16 +117,16 @@ class Benchmark(object):
 
 
 convergant_benchmarks = [
-    Benchmark('test/lockserv.pyv', safety='mutex'),
-    Benchmark('test/lockserv_multi.pyv', safety='mutex'),
-    Benchmark('test/consensus.pyv', safety='one_leader'),
-    Benchmark('test/sharded-kv.pyv', safety='keys_unique'),
-    Benchmark('test/ring.pyv', safety='one_leader'),
+    Benchmark('test/lockserv.pyv'),
+    Benchmark('test/lockserv_multi.pyv'),
+    Benchmark('test/consensus.pyv'),
+    Benchmark('test/sharded-kv.pyv'),
+    Benchmark('test/ring.pyv'),
 #    Benchmark('test/sll-reverse.pyv')
 ]
 
 other_benchmarks: List[Benchmark] = [
-    Benchmark('test/cache.pyv', safety='safety')
+    Benchmark('test/cache.pyv')
 ]
 
 all_benchmarks = convergant_benchmarks + other_benchmarks
