@@ -1949,7 +1949,6 @@ def add_derived_relation_axioms(vocab_keys, prog, s):
     for r in prog.derived_relations():
         for k in vocab_keys:
             t = s.get_translator(k)
-            print(t.translate_expr(r.derived_axiom))
             s.add(t.translate_expr(r.derived_axiom))
 
 
