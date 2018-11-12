@@ -124,6 +124,7 @@ args: argparse.Namespace
 KEY_ONE = 'one'
 KEY_NEW = 'new'
 KEY_OLD = 'old'
+ALL_KEYS = [KEY_ONE, KEY_OLD, KEY_NEW]
 
 class Solver(object):
     def __init__(self, scope: Scope[z3.ExprRef]) -> None:
@@ -136,6 +137,8 @@ class Solver(object):
     def get_translator(self, key: Optional[str]=None, key_old: Optional[str]=None) \
         -> syntax.Z3Translator:
         t = (key, key_old)
+        assert key is None or key in ALL_KEYS, key
+        assert key_old is None or key_old in ALL_KEYS, key_old
         if t not in self.translators:
             self.translators[t] = syntax.Z3Translator(self.scope, key, key_old)
         return self.translators[t]
@@ -1934,10 +1937,21 @@ def main() -> None:
         for a in prog.axioms():
             s.add(t.translate_expr(a.expr))
 
+        add_derived_relation_axioms(ALL_KEYS, prog, s)
 
         args.main(s, prog)
 
         logger.info('total number of queries: %s' % s.nqueries)
+
+
+def add_derived_relation_axioms(vocab_keys, prog, s):
+    # TODO: I'm so sorry
+    for r in prog.derived_relations():
+        for k in vocab_keys:
+            t = s.get_translator(k)
+            print(t.translate_expr(r.derived_axiom))
+            s.add(t.translate_expr(r.derived_axiom))
+
 
 if __name__ == '__main__':
     main()

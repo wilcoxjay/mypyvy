@@ -1022,13 +1022,14 @@ class FunctionDecl(Decl):
             return self.immut_z3
 
 class RelationDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool) -> None:
+    def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool, derived: Optional[Expr]=None) -> None:
         self.tok = tok
         self.name = name
         self.arity = arity
         self.mutable = mutable
         self.mut_z3: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]] = {}
         self.immut_z3: Optional[Union[z3.FuncDeclRef, z3.ExprRef]] = None
+        self.derived_axiom = derived
 
     def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
@@ -1036,13 +1037,18 @@ class RelationDecl(Decl):
 
         scope.add_relation(self)
 
+        if self.derived_axiom:
+            self.derived_axiom = close_free_vars(self.derived_axiom)
+            self.derived_axiom.resolve(scope, BoolSort)
+
     def __repr__(self) -> str:
-        return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s)' % (repr(self.name), self.arity, self.mutable)
+        return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s, derived=%s)' % (repr(self.name), self.arity, self.mutable, self.derived_axiom)
 
     def __str__(self) -> str:
-        return '%s relation %s(%s)' % ('mutable' if self.mutable else 'immutable',
+        return '%s relation %s(%s)%s' % ('mutable' if self.mutable else 'immutable',
                                        self.name,
-                                       ', '.join([str(s) for s in self.arity]))
+                                       ', '.join([str(s) for s in self.arity]),
+                                         '' if not self.derived_axiom else (': %s' % str(self.derived_axiom)))
 
     def to_z3(self, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
         if self.mutable:
@@ -1618,6 +1624,11 @@ class Program(object):
             if isinstance(d, RelationDecl) or \
                isinstance(d, ConstantDecl) or \
                isinstance(d, FunctionDecl):
+                yield d
+
+    def derived_relations(self) -> Iterator[RelationDecl]:
+        for d in self.decls:
+            if isinstance(d, RelationDecl) and d.derived_axiom:
                 yield d
 
     def decls_containing_exprs(self)\

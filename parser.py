@@ -11,6 +11,7 @@ reserved = {
     'sort': 'SORT',
     'mutable': 'MUTABLE',
     'immutable': 'IMMUTABLE',
+    'derived': 'DERIVED',
     'relation': 'RELATION',
     'constant': 'CONSTANT',
     'function': 'FUNCTION',
@@ -158,6 +159,10 @@ def p_sort(p: Any) -> None:
 def p_decl_relation(p: Any) -> None:
     'decl : mut RELATION id LPAREN arity RPAREN'
     p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[5], p[1])
+
+def p_decl_relation_derived(p: Any) -> None:
+    'decl : DERIVED RELATION id LPAREN arity RPAREN COLON expr'
+    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[5], mutable=True, derived=p[8])
 
 def p_decl_constant(p: Any) -> None:
     'decl : mut CONSTANT id COLON sort'

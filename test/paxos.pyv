@@ -23,7 +23,7 @@ mutable relation vote(node, round, value)
 mutable relation decision(round, value)
 
 mutable function decision_quorum(round, value): quorum
-mutable relation choosable(round, value, quorum)
+derived relation choosable(round, value, quorum): (choosable(R, V, Q) <-> ((forall N. member(N, Q) -> (!left_round(N, R) | vote(N, R, V)))))
 
 init !one_a(R)
 init !one_b(N, R)
@@ -31,7 +31,7 @@ init !left_round(N, R)
 init !proposal(R, V)
 init !vote(N, R, V)
 init !decision(R, V)
-init choosable(R, V, Q)
+# init choosable(R, V, Q)
 
 transition send_1a(r: round)
   modifies one_a
@@ -39,13 +39,12 @@ transition send_1a(r: round)
   (forall R. one_a(R) <-> old(one_a(R)) | R = r)
 
 transition join_round(n: node, r: round)
-  modifies one_b, left_round, choosable
+  modifies one_b, left_round
   r != none &
   old(one_a(r)) &
   !old(left_round(n, r)) &
   (forall N, R. one_b(N, R) <-> old(one_b(N,R)) | N = n & R = r) &
-  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R)) &
-  (forall R, V, Q. (forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V)) <-> choosable(R, V, Q))
+  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
 
 transition propose(r: round, q: quorum, maxr: round, v: value)
   modifies proposal
@@ -59,12 +58,11 @@ transition propose(r: round, q: quorum, maxr: round, v: value)
   (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | R = r & V = v)
 
 transition cast_vote(n: node, v: value, r: round)
-  modifies vote, choosable
+  modifies vote
   r != none &
   !old(left_round(n, r)) &
   old(proposal(r, v)) &
-  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v) &
-  (forall R, V, Q. (forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V)) <-> choosable(R, V, Q))
+  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
 
 transition decide(r: round, v: value, q: quorum)
   modifies decision, decision_quorum
@@ -83,16 +81,16 @@ invariant vote(N,R,V) -> proposal(R,V)
 invariant !vote(N,none,V)
 invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
 
-# invariant
+#invariant
 #   forall R1, V1, R2, V2.
 #     (exists Q. forall N. member(N, Q) -> !left_round(N, R1) | vote(N, R1, V1)) &
 #     !le(R2, R1) &
 #     proposal(R2, V2) ->
 #     V1 = V2
 
-invariant forall R, V, Q.
-  choosable(R, V, Q) <->
-  (forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V))
+#invariant forall R, V, Q.
+#  choosable(R, V, Q) <->
+#  (forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V))
 
 invariant
   forall R1, V1, R2, V2, Q.
