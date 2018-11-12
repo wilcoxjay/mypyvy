@@ -1,6 +1,5 @@
 sort node
 sort quorum
-sort value
 
 immutable relation member(node, quorum)
 axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
@@ -11,14 +10,12 @@ mutable relation vote_msg(node, node)
 mutable relation votes(node, node)
 mutable relation leader(node)
 mutable constant voting_quorum: quorum
-mutable relation decided(node, value)
 
 init !vote_request_msg(N1, N2)
 init !voted(N)
 init !vote_msg(N1, N2)
 init !votes(N1, N2)
 init !leader(N1)
-init !decided(N, V)
 
 transition send_request_vote(src: node, dst: node)
 	modifies vote_request_msg
@@ -35,25 +32,51 @@ transition send_vote(src: node, dst: node)
 transition recv_vote(n: node, sender: node)
   modifies votes, vote_msg
   old(vote_msg(sender, n)) &
-  (votes(N1, N2) <-> old(votes(N1, N2)) | N1 = n & N2 = sender) 
-  # & ((!(N1=sender & N2=n)) -> (vote_msg(N1, N2) <-> old(vote_msg(N1, N2))))
-
+  (votes(N1, N2) <-> old(votes(N1, N2)) | N1 = n & N2 = sender) & 
+  ((!(N1=sender & N2=n)) -> (vote_msg(N1, N2) <-> old(vote_msg(N1, N2))))
 
 transition become_leader(n: node)
   modifies leader
   (member(N, voting_quorum) -> old(votes(n, N))) &
   (leader(N) <-> old(leader(N)) | N = n)
 
-transition decide(n: node, v: value)
-  modifies decided
-  (old(leader(n)) & !old(decided(n, V))) &
-  (decided(N,V) <-> (old(decided(N, V)) | (N=n & V=v)))
 
-safety decided(N1, V1) & decided(N2, V2) -> V1 = V2
+# safety leader(N1) & leader(N2) -> N1 = N2
+safety votes(N1, N) & votes(N2, N) -> N1 = N2
 
-invariant leader(N1) & leader(N2) -> N1 = N2
-invariant votes(N, N1) -> vote_msg(N1, N)
-invariant vote_msg(N, N1) & vote_msg(N, N2) -> N1 = N2
-invariant vote_msg(N, N1) -> voted(N)
-invariant leader(N) & member(N1, voting_quorum) -> votes(N, N1)
-invariant decided(N, V) -> leader(N)
+invariant votes(N2, N1) -> voted(N1)
+invariant vote_msg(N1, N2) -> voted(N1)
+invariant vote_msg(N1, N2) & vote_msg(N1, N3) -> N2 = N3
+invariant vote_msg(N1, N2) & votes(N3, N1) -> N2 = N3
+invariant votes(N2, N1) & votes(N3, N1) -> N2 = N3
+
+
+
+
+immutable constant qn: node
+
+automaton {
+	init phase no_vote
+
+	global
+		safety votes(N1, qn) & votes(N2, qn) -> N1 = N2
+
+		transition send_request_vote -> self
+
+		transition send_vote -> self assume src!=qn
+		transition recv_vote -> self assume n!=qn
+		transition become_leader -> self
+
+	phase no_vote
+		transition send_vote -> phase voted assume src=qn
+
+	phase voted
+		transition recv_vote -> phase vote_committed assume n=qn
+
+		transition send_vote -> self assume src=qn
+
+	phase vote_committed
+		transition send_vote -> self assume src=qn
+		transition recv_vote -> self assume n=qn
+
+}
