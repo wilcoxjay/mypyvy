@@ -159,7 +159,7 @@ automaton {
     transition decide -> self assume v = qv1 # but impossible for v = qv2
 
     invariant proposal(R, qv2) -> le(R, highest_proposal(qv1))
-    invariant !le(highest_proposal(qv1), R) & R!=none -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv2)
+    invariant !le(highest_proposal(qv1), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv2)
     invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv1)
     invariant !(decision(R1,qv1) & decision(R2,qv2))
 
