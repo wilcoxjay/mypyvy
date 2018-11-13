@@ -26,13 +26,6 @@ stdev_time: 0.03677066229386092
 avg_nqueries: 2647
 stdev_nqueries: 0.0
 # timeouts: 0
-Benchmark('test/consensus.pyv')
-[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
-avg_time: 0.0
-stdev_time: 0.0
-avg_nqueries: 0.0
-stdev_nqueries: 0.0
-# timeouts: 16
 Benchmark('test/sharded-kv.pyv')
 [(1.787294, 838), (1.764279, 838), (1.756381, 833), (1.797713, 838), (1.788146, 838), (1.816529, 838), (1.788891, 838), (1.82713, 838), (1.822634, 838), (1.782281, 838), (1.774197, 838), (1.768465, 838), (1.807615, 838), (1.769767, 838), (1.824099, 838), (1.786178, 838)]
 avg_time: 1.7913499375
@@ -60,4 +53,11 @@ avg_time: 34.4787598125
 stdev_time: 22.835653050884375
 avg_nqueries: 2711.4375
 stdev_nqueries: 1599.9267886896157
+# timeouts: 0
+Benchmark('test/consensus-0.1.pyv')
+[(1.660445, 638), (1.660043, 638), (1.803697, 677), (1.74608, 677), (1.764555, 638), (2.032561, 719), (1.79452, 677), (1.681965, 638), (1.679603, 638), (1.947806, 720), (1.962532, 720), (2.002054, 719), (1.86663, 677), (2.00534, 720), (1.842283, 677), (1.835336, 677)]
+avg_time: 1.830340625
+stdev_time: 0.12904368116203904
+avg_nqueries: 678.125
+stdev_nqueries: 33.32641594891356
 # timeouts: 0
