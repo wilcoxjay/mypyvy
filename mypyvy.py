@@ -1944,12 +1944,14 @@ def main() -> None:
         logger.info('total number of queries: %s' % s.nqueries)
 
 
-def add_derived_relation_axioms(vocab_keys, prog, s):
+def add_derived_relation_axioms(vocab_keys: Sequence[str], prog: Program, s: Solver) -> None:
     # TODO: I'm so sorry
     for r in prog.derived_relations():
         for k in vocab_keys:
             t = s.get_translator(k)
-            s.add(t.translate_expr(r.derived_axiom))
+            a = r.derived_axiom
+            assert a is not None
+            s.add(t.translate_expr(a))
 
 
 if __name__ == '__main__':
