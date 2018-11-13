@@ -218,6 +218,9 @@ class Solver(object):
     def unsat_core(self) -> Sequence[z3.ExprRef]:
         return self.z3solver.unsat_core()
 
+    def reason_unknown(self) -> str:
+        return self.z3solver.reason_unknown()
+
 
 T = TypeVar('T')
 
@@ -234,11 +237,17 @@ def check_unsat(
     #     logger.debug('assertions')
     #     logger.debug(str(s.assertions()))
 
-    if s.check() != z3.unsat:
-        m = Model(prog, s.model(), key, key_old)
+    res = s.check()
+    if res != z3.unsat:
+        if res == z3.sat:
+            m = Model(prog, s.model(), key, key_old)
 
-        logger.always_print('')
-        logger.always_print(str(m))
+            logger.always_print('')
+            logger.always_print(str(m))
+        else:
+            assert res == z3.unknown
+            logger.always_print('unknown!')
+            logger.always_print('reason unknown: ' + s.reason_unknown())
         for tok, msg in zip(toks, errmsgs):
             syntax.print_error(tok, msg)
     logger.always_print('    ok. (%s)' % (datetime.now() - start))
@@ -1833,6 +1842,8 @@ def parse_args() -> argparse.Namespace:
                        help='additional string to use in front of names sent to z3')
         s.add_argument('--minimize-models', action='store_true',
                        help='find models with minimal cardinality')
+        s.add_argument('--timeout', type=int, default=None,
+                       help='z3 timeout (milliseconds)')
 
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
                                 help='generalize diagrams using unsat cores instead of brute force')
@@ -1915,6 +1926,10 @@ def main() -> None:
 
         logger.info('setting seed to %d' % args.seed)
         z3.set_param('smt.random_seed', args.seed)
+
+        if args.timeout is not None:
+            logger.info('setting z3 timeout to %s' % args.timeout)
+            z3.set_param('timeout', args.timeout)
 
         with open(args.filename) as f:
             l = parser.get_lexer()
