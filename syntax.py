@@ -196,7 +196,7 @@ class Z3Translator(object):
         C: T = iter(self.scope.constants.values())
         F: T = iter(self.scope.functions.values())
         for d in itertools.chain(R, C, F):
-            if not d.mutable or any(mc.name == d.name for mc in mods):
+            if not d.mutable or (isinstance(d, RelationDecl) and d.derived_axiom is not None) or any(mc.name == d.name for mc in mods):
                 continue
 
             if isinstance(d, ConstantDecl) or len(d.arity) == 0:
