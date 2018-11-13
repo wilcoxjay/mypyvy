@@ -135,14 +135,17 @@ automaton {
     transition cast_vote -> self assume v != qv1 & v != qv2
     transition decide -> self assume v != qv1 & v != qv2
 
+    # full characterizations
+    # invariant proposal(R,V) -> proposed(R)
     invariant decision(R,V) & member(N, decision_quorum(R, V)) -> vote(N,R,V)
     invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
     invariant vote(N,R,V) -> proposal(R,V)
     invariant !proposal(none,V)
+    invariant highest_proposal(V)!=none -> proposal(highest_proposal(V), V)
+    invariant highest_proposal(V)=none -> !proposal(R, V)
+    invariant proposal(R,V) -> le(R, highest_proposal(V))
     invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
 
-    # invariant highest_proposal(qv1)=none | proposal(highest_proposal(qv1), qv1)
-    # invariant highest_proposal(qv2)=none | proposal(highest_proposal(qv2), qv2)
 
   phase beginning
     transition propose -> phase V1P assume v = qv1
@@ -153,25 +156,41 @@ automaton {
 
   phase V1P
     transition propose -> self assume v = qv1
-    transition propose -> phase V2P assume v = qv2 & (forall R. proposal(R, qv1) -> !le(r, R))
-    transition propose -> self assume v = qv2 & (exists R. proposal(R, qv1) & le(r, R))
+    transition propose -> phase V2P assume v = qv2 & !le(r, highest_proposal(qv1))
+    transition propose -> self assume v = qv2 & le(r, highest_proposal(qv1))
     transition cast_vote -> self
     transition decide -> self assume v = qv1 # but impossible for v = qv2
 
+    # partial characterizations
     invariant proposal(R, qv2) -> le(R, highest_proposal(qv1))
+    invariant proposal(highest_proposal(qv1), qv1)
+
+    invariant !le(highest_proposal(qv1), R) -> !choosable(R, qv2, Q)
+
+    # full characterizations
+    invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
     invariant !le(highest_proposal(qv1), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv2)
     invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv1)
     invariant !(decision(R1,qv1) & decision(R2,qv2))
 
   phase V2P
     transition propose -> self assume v = qv2
-    transition propose -> phase V1P assume v = qv1 & (forall R. proposal(R, qv2) -> !le(r, R))
-    transition propose -> self assume v = qv1 & (exists R. proposal(R, qv2) & le(r, R))
+    transition propose -> phase V1P assume v = qv1 & !le(r, highest_proposal(qv2))
+    transition propose -> self assume v = qv1 & le(r, highest_proposal(qv2))
     transition cast_vote -> self
     transition decide -> self assume v = qv2 # but impossible for v = qv1
 
+    # partial characterizations
     invariant proposal(R, qv1) -> le(R, highest_proposal(qv2))
+    invariant proposal(highest_proposal(qv2), qv2)
+
+    invariant !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
+
+    # full characterizations
+    invariant highest_proposal(qv1)!=none & !le(highest_proposal(qv1), R) -> !choosable(R,qv2,Q)
     invariant highest_proposal(qv1)!=none & !le(highest_proposal(qv1), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv2)
     invariant !le(highest_proposal(qv2), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv1)
     invariant !(decision(R1,qv1) & decision(R2,qv2))
+
+
 }
