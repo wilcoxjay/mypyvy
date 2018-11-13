@@ -1,0 +1,63 @@
+python3 benchmark.py -n 16 -j 16 --timeout 1200 --keep-logs logs/181112-180621-updr --args --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
+dump_version_info: dumping information about the current commit and working directory
+d7eeea2e6f833c73b8f99a0d37d1c82b2e53aa9f
+On branch master
+Your branch is up to date with 'origin/master'.
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+
+	logs/181112-180621-updr/
+
+nothing added to commit but untracked files present (use "git add" to track)
+dump_version_info: done.
+--------------------------------------------------------------------------------
+Benchmark('test/lockserv.pyv')
+[(2.186573, 2512), (2.210215, 2512), (2.242847, 2512), (2.204019, 2512), (2.215569, 2512), (2.223673, 2512), (2.236519, 2512), (2.233381, 2512), (2.191384, 2512), (2.201619, 2512), (2.21801, 2512), (2.219308, 2512), (2.163903, 2471), (2.203667, 2512), (2.189778, 2512), (2.262312, 2512)]
+avg_time: 2.2126735625
+stdev_time: 0.024351872015565847
+avg_nqueries: 2509.4375
+stdev_nqueries: 10.25
+# timeouts: 0
+Benchmark('test/lockserv_multi.pyv')
+[(2.742382, 2647), (2.693685, 2647), (2.726455, 2647), (2.7657, 2647), (2.731576, 2647), (2.747959, 2647), (2.751817, 2647), (2.8339, 2647), (2.797491, 2647), (2.710616, 2647), (2.725489, 2647), (2.757662, 2647), (2.737651, 2647), (2.787657, 2647), (2.80579, 2647), (2.752155, 2647)]
+avg_time: 2.7542490625
+stdev_time: 0.03677066229386092
+avg_nqueries: 2647
+stdev_nqueries: 0.0
+# timeouts: 0
+Benchmark('test/consensus.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
+Benchmark('test/sharded-kv.pyv')
+[(1.787294, 838), (1.764279, 838), (1.756381, 833), (1.797713, 838), (1.788146, 838), (1.816529, 838), (1.788891, 838), (1.82713, 838), (1.822634, 838), (1.782281, 838), (1.774197, 838), (1.768465, 838), (1.807615, 838), (1.769767, 838), (1.824099, 838), (1.786178, 838)]
+avg_time: 1.7913499375
+stdev_time: 0.022585568246024566
+avg_nqueries: 837.6875
+stdev_nqueries: 1.25
+# timeouts: 0
+Benchmark('test/sharded-kv-retransmit.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
+Benchmark('test/ring.pyv')
+[(198.916827, 9348), (139.590582, 6771), (153.427397, 7409), (85.771648, 5023), (162.856841, 8039), (153.438954, 7919), (185.593146, 8376), (183.967569, 8582), (142.121514, 7696), (194.032741, 8940), (128.808439, 6944), (129.942417, 6836), (179.317242, 8618), (125.957586, 6374), (200.058088, 8809), (64.665131, 4208)]
+avg_time: 151.779132625
+stdev_time: 39.38114595278808
+avg_nqueries: 7493.25
+stdev_nqueries: 1424.1816597611416
+# timeouts: 0
+Benchmark('test/sll-reverse.pyv')
+[(19.638262, 1851), (22.426633, 1861), (26.308022, 2118), (21.955182, 1809), (48.723034, 3681), (26.284825, 2168), (22.927975, 1837), (24.831551, 1862), (19.947601, 1728), (38.526399, 2846), (36.793714, 2673), (31.148714, 2496), (21.365369, 1770), (113.601244, 8220), (42.213575, 3578), (34.968057, 2885)]
+avg_time: 34.4787598125
+stdev_time: 22.835653050884375
+avg_nqueries: 2711.4375
+stdev_nqueries: 1599.9267886896157
+# timeouts: 0
