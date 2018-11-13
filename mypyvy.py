@@ -1938,6 +1938,9 @@ def main() -> None:
             logger.always_print(str(prog))
 
         prog.resolve()
+        if syntax.errored:
+            logger.always_print('program has resolution errors.')
+            return
 
         scope = prog.scope
         assert scope is not None

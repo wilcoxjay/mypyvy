@@ -404,7 +404,7 @@ def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: Infe
     elif isinstance(expected, Sort):
         if isinstance(actual, Sort):
             if expected != actual:
-                error(tok, 'expected sort %s but got %s' % (expected, actual))
+                print_error(tok, 'expected sort %s but got %s' % (expected, actual))
         else:
             actual.solve(expected)
     else:
@@ -654,7 +654,7 @@ def Apply(callee: str, args: List[Expr]) -> Expr:
 class AppExpr(Expr):
     def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
         if not (len(args) > 0):
-            error(tok, "must be applied to at least one argument")
+            print_error(tok, "must be applied to at least one argument")
         self.tok = tok
         self.callee = callee
         self.args = args
@@ -662,13 +662,15 @@ class AppExpr(Expr):
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         d = scope.get(self.callee)
         if d is None:
-            error(self.tok, 'Unresolved relation or function name %s' % self.callee)
+            print_error(self.tok, 'Unresolved relation or function name %s' % self.callee)
+            return sort  # bogus
 
         if not (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)):
-            error(self.tok, 'Only relations or functions can be applied, not %s' % self.callee)
+            print_error(self.tok, 'Only relations or functions can be applied, not %s' % self.callee)
+            return sort  # bogus
 
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
-            error(self.tok, 'Callee applied to wrong number of arguments')
+            print_error(self.tok, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(self.args, d.arity):
             arg.resolve(scope, s)
 
@@ -717,7 +719,8 @@ class SortedVar(object):
 
     def resolve(self, scope: Scope[InferenceSort]) -> None:
         if self.sort is None:
-            error(self.tok, 'type annotation required for variable %s' % (self.name,))
+            print_error(self.tok, 'type annotation required for variable %s' % (self.name,))
+            return
 
         assert not isinstance(self.sort, SortInferencePlaceholder)
 
@@ -751,7 +754,7 @@ class Binder(object):
     def post_resolve(self) -> None:
         for sv in self.vs:
             if isinstance(sv.sort, SortInferencePlaceholder):
-                error(sv.tok, 'Could not infer sort for variable %s' % (sv.name,))
+                print_error(sv.tok, 'Could not infer sort for variable %s' % (sv.name,))
 
 
 class QuantifierExpr(Expr):
@@ -811,10 +814,12 @@ class Id(Expr):
         d = scope.get(self.name)
 
         if d is None:
-            error(self.tok, 'Unresolved variable %s' % (self.name,))
+            print_error(self.tok, 'Unresolved variable %s' % (self.name,))
+            return sort  # bogus
 
         if isinstance(d, FunctionDecl):
-            error(self.tok, 'Function %s must be applied to arguments' % (self.name,))
+            print_error(self.tok, 'Function %s must be applied to arguments' % (self.name,))
+            return sort  # bogus
 
         if isinstance(d, RelationDecl):
             assert len(d.arity) == 0
@@ -854,7 +859,7 @@ class UninterpretedSort(Sort):
     def resolve(self, scope: Scope) -> None:
         self.decl = scope.get_sort(self.name)
         if self.decl is None:
-            error(self.tok, 'Unresolved sort name %s' % (self.name,))
+            print_error(self.tok, 'Unresolved sort name %s' % (self.name,))
 
     def __repr__(self) -> str:
         return 'UninterpretedSort(tok=None, name=%s)' % (repr(self.name),)
@@ -1146,7 +1151,7 @@ class ModifiesClause(object):
         assert d is None or isinstance(d, RelationDecl) or \
             isinstance(d, ConstantDecl) or isinstance(d, FunctionDecl)
         if d is None:
-            error(self.tok, 'Unresolved constant, relation, or function %s' % (self.name,))
+            print_error(self.tok, 'Unresolved constant, relation, or function %s' % (self.name,))
 
     def __repr__(self) -> str:
         return 'ModifiesClause(tok=None, name=%s)' % (repr(self.name),)
@@ -1184,6 +1189,9 @@ class TransitionDecl(Decl):
 
         self.binder.post_resolve()
 
+        if errored:
+            return
+
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             syms = symbols_used(scope, self.expr)
             for is_old, tok, sym in syms:
@@ -1195,7 +1203,7 @@ class TransitionDecl(Decl):
                             break
 
                     if not found:
-                        error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
+                        print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
 
     def __repr__(self) -> str:
         return 'TransitionDecl(tok=None, name=%s, params=%s, mods=%s, expr=%s)' % (
@@ -1305,7 +1313,8 @@ class PhaseTransitionDecl(object):
     def resolve(self, scope: Scope) -> None:
         transition = scope.get_transition(self.transition)
         if transition is None:
-            error(self.tok, 'unknown transition %s' % (self.transition,))
+            print_error(self.tok, 'unknown transition %s' % (self.transition,))
+            return
 
         if self.precond is not None:
             transition_constants = transition.binder.vs
@@ -1314,7 +1323,7 @@ class PhaseTransitionDecl(object):
                 self.precond.resolve(scope, BoolSort)
 
         if self.target is not None and scope.get_phase(self.target) is None:
-            error(self.tok, 'unknown phase %s' % (self.target))
+            print_error(self.tok, 'unknown phase %s' % (self.target))
 
 PhaseComponent = Union[PhaseTransitionDecl, InvariantDecl]
 
@@ -1359,7 +1368,7 @@ class InitPhaseDecl(object):
 
     def resolve(self, scope: Scope) -> None:
         if scope.get_phase(self.phase) is None:
-            error(self.tok, 'unknown phase %s' % (self.phase,))
+            print_error(self.tok, 'unknown phase %s' % (self.phase,))
 
 
 class PhaseDecl(object):
@@ -1423,7 +1432,7 @@ class AutomatonDecl(Decl):
         if len(i) == 0:
             error(self.tok, 'automaton must declare an initial phase')
         elif len(i) > 1:
-            error(self.tok, 'automaton may only declare one initial phase')
+            print_error(self.tok, 'automaton may only declare one initial phase')
 
         return i[0]
 
@@ -1503,16 +1512,16 @@ class Scope(Generic[B]):
 
     def _check_duplicate_name(self, tok: Optional[Token], name: str) -> None:
         if name in self.constants:
-            error(tok, 'Name %s is already declared as a constant' %
-                  (name,))
+            print_error(tok, 'Name %s is already declared as a constant' %
+                        (name,))
 
         if name in self.relations:
-            error(tok, 'Name %s is already declared as a relation' %
-                  (name,))
+            print_error(tok, 'Name %s is already declared as a relation' %
+                        (name,))
 
         if name in self.functions:
-            error(tok, 'Name %s is already declared as a function' %
-                  (name,))
+            print_error(tok, 'Name %s is already declared as a function' %
+                        (name,))
 
 
     def add_sort(self, decl: SortDecl) -> None:
@@ -1522,7 +1531,7 @@ class Scope(Generic[B]):
         sort = decl.name
 
         if sort in self.sorts:
-            error(tok, 'Duplicate sort name %s' % (sort,))
+            print_error(tok, 'Duplicate sort name %s' % (sort,))
 
         self.sorts[sort] = decl
 
@@ -1552,7 +1561,7 @@ class Scope(Generic[B]):
 
         if decl.name is not None:
             if decl.name in self.phases:
-                error(decl.tok, 'there is already a phase named %s' % decl.name)
+                print_error(decl.tok, 'there is already a phase named %s' % decl.name)
             self.phases[decl.name] = decl
 
     def get_phase(self, phase: str) -> Optional[PhaseDecl]:
@@ -1563,7 +1572,7 @@ class Scope(Generic[B]):
 
         if decl.name is not None:
             if decl.name in self.transitions:
-                error(decl.tok, 'there is already a transition named %s' % decl.name)
+                print_error(decl.tok, 'there is already a transition named %s' % decl.name)
             self.transitions[decl.name] = decl
 
     def get_transition(self, transition: str) -> Optional[TransitionDecl]:
@@ -1665,7 +1674,7 @@ class Program(object):
 
         automata = list(self.automata())
         if len(automata) > 1:
-            error(automata[1].tok, 'at most one automaton may be declared (first was declared at %s)' % (
+            print_error(automata[1].tok, 'at most one automaton may be declared (first was declared at %s)' % (
                 tok_to_string(automata[0].tok)
             ))
 
