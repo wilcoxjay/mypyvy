@@ -225,8 +225,7 @@ class Solver(object):
 T = TypeVar('T')
 
 def check_unsat(
-        toks: List[Optional[syntax.Token]],
-        errmsgs: List[str],
+        errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
         prog: Program,
         key: str,
@@ -248,7 +247,7 @@ def check_unsat(
             assert res == z3.unknown
             logger.always_print('unknown!')
             logger.always_print('reason unknown: ' + s.reason_unknown())
-        for tok, msg in zip(toks, errmsgs):
+        for tok, msg in errmsgs:
             syntax.print_error(tok, msg)
     logger.always_print('    ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
@@ -276,7 +275,7 @@ def check_init(s: Solver, prog: Program) -> None:
                 logger.always_print('  implies invariant%s...' % msg)
                 sys.stdout.flush()
 
-                check_unsat([inv.tok], ['invariant%s may not hold in initial state' % msg], s, prog, KEY_ONE)
+                check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)], s, prog, KEY_ONE)
 
 
 def check_transitions(s: Solver, prog: Program) -> None:
@@ -304,10 +303,9 @@ def check_transitions(s: Solver, prog: Program) -> None:
                         logger.always_print('  preserves invariant%s...' % msg)
                         sys.stdout.flush()
 
-                        check_unsat([inv.tok, trans.tok],
-                                    ['invariant%s may not be preserved by transition %s' %
-                                     (msg, trans.name),
-                                     'this transition may not preserve invariant%s' % (msg,)],
+                        check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s' %
+                                      (msg, trans.name)),
+                                     (trans.tok, 'this transition may not preserve invariant%s' % (msg,))],
                                     s, prog, KEY_NEW, KEY_OLD)
 
 def check_implication(
@@ -1616,7 +1614,7 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
                 logger.always_print('  implies phase invariant%s...' % msg)
                 sys.stdout.flush()
 
-                check_unsat([inv.tok], ['phase invariant%s may not hold in initial state' % msg], s, prog, KEY_ONE)
+                check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, prog, KEY_ONE)
 
 def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     logger.always_print('checking automaton edge covering:')
@@ -1641,10 +1639,9 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
                     s.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond, trans))
                                    for delta in phase.transitions() if trans.name == delta.transition)))
 
-                    check_unsat([phase.tok, trans.tok],
-                                ['transition %s is not covered by this phase' %
-                                 (trans.name, ),
-                                 'this transition misses transitions from phase %s' % (phase.name,)],
+                    check_unsat([(phase.tok, 'transition %s is not covered by this phase' %
+                                  (trans.name, )),
+                                 (trans.tok, 'this transition misses transitions from phase %s' % (phase.name,))],
                                 s, prog, KEY_NEW, KEY_OLD)
 
 
@@ -1683,10 +1680,9 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                             logger.always_print('      preserves invariant%s...' % msg)
                             sys.stdout.flush()
 
-                            check_unsat([inv.tok, trans.tok],
-                                        ['invariant%s may not be preserved by transition %s in phase %s' %
-                                         (msg, trans_pretty, phase.name),
-                                         'this transition may not preserve invariant%s' % (msg,)],
+                            check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
+                                          (msg, trans_pretty, phase.name)),
+                                         (trans.tok, 'this transition may not preserve invariant%s' % (msg,))],
                                         s, prog, KEY_NEW, KEY_OLD)
 
 @log_start_end_time(logging.INFO)
@@ -1793,7 +1789,7 @@ def theorem(s: Solver, prog: Program) -> None:
         with s:
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            check_unsat([th.tok], ['theorem%s may not hold' % msg], s, prog, *keys)
+            check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, prog, *keys)
 
 def generate_parser(s: Solver, prog: Program) -> None:
     pass  # parser is generated implicitly by main when it parses the program
