@@ -185,6 +185,15 @@ class Solver(object):
 
         return z3.Forall(x, z3.Or(*disjs))
 
+    def _relational_cardinality_constraint(self, d: z3.FuncDeclRef, n: int) -> z3.ExprRef:
+        assert d.arity() == 1 and n == 1
+
+        s = d.domain(0)
+
+        x, y = z3.Consts('x y', s)
+
+        return z3.Forall([x, y], z3.Implies(z3.And(d(x), d(y)), x == y))
+
     def _minimal_model(self, assumptions: Optional[Sequence[z3.ExprRef]]) -> z3.ModelRef:
         m = self.z3solver.model()
         # logger.debug('computing minimal model from initial model')
@@ -205,6 +214,26 @@ class Solver(object):
                     n += 1
                 if n < len(u):
                     self.add(self._cardinality_constraint(s, n))
+
+            for d in m.decls():
+                nm = d.name()
+                if nm.startswith(KEY_OLD) or nm.startswith(KEY_ONE):
+                    arity = d.arity()
+                    if arity == 1 and d.range() == z3.BoolSort():
+                        s = d.domain(0)
+                        u = m.get_universe(s)
+                        hi = sum(1 if m.eval(d(x)) else 0 for x in u)
+                        n = 1
+                        while n < hi and n < 2:  # hehe
+                            with self:
+                                self.add(self._relational_cardinality_constraint(d, n))
+                                res = self.check(assumptions)
+                                if res == z3.sat:
+                                    break
+                            n += 1
+                        if n < hi and n < 2:
+                            self.add(self._relational_cardinality_constraint(d, n))
+
             assert self.check(assumptions) == z3.sat
             m = self.z3solver.model()
             # logger.debug('finished with minimal model')
