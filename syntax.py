@@ -822,7 +822,9 @@ class Id(Expr):
             return sort  # bogus
 
         if isinstance(d, RelationDecl):
-            assert len(d.arity) == 0
+            if len(d.arity) > 0:
+                print_error(self.tok, 'Relation %s must be applied to arguments' % (self.name,))
+                return sort  # bogus
             check_constraint(self.tok, sort, BoolSort)
             return BoolSort
         elif isinstance(d, ConstantDecl):
