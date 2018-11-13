@@ -128,7 +128,7 @@ convergant_benchmarks = [
 ]
 
 other_benchmarks: List[Benchmark] = [
-    Benchmark('test/cache.pyv')
+    Benchmark('test/cache.pyv'),
     Benchmark('test/paxos.pyv'),
 ]
 
