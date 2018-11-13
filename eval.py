@@ -7,7 +7,7 @@ import pdb
 import sys
 from typing import List, Optional, Tuple, TextIO, Union, Sequence, Any, Callable
 
-def get_all_matching_data(buf: TextIO, pattern: str) -> Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]:
+def get_all_matching_data(buf: TextIO, pattern: str, exclude: Optional[str]) -> Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]:
     matched = False
     benchmark_name = ''
     data = []
@@ -15,7 +15,7 @@ def get_all_matching_data(buf: TextIO, pattern: str) -> Sequence[Tuple[str, Sequ
         if matched:
             data.append((benchmark_name, eval(line)))
             matched = False
-        if pattern in line:
+        if pattern in line and (exclude is None or exclude not in line):
             matched = True
             tail = line[len("Benchmark('"):]
             benchmark_name = tail[:tail.index("'")]
@@ -40,26 +40,52 @@ def index(axs: Any, nrows: int, ncols: int, i: int, j: int) -> Any:
             return axs[i][j]
 
 
-def hist(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]) -> None:
-    length = len(all_data)
+def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]]]) -> None:
+    length = len(all_data[0][1])
+    assert all(len(l) == length for _, l in all_data)
     ncols = math.ceil(math.sqrt(length))
     nrows = math.ceil(length / ncols)
 
     fig, axs = plt.subplots(nrows, ncols)
 
+    fig.subplots_adjust(hspace=.6, wspace=.4)
+
     dims = [(i, j) for i in range(nrows) for j in range(ncols)]
 
-    for k, (bname, data) in enumerate(all_data):
-        tdata = [(x if x is not None else -1.0) for x in data]
+    labels = [t for t, _ in all_data]
+    hists = []
 
+    timeout_distance = 2
+
+    for k in range(length):
+        tdata = []
+        lo = np.PINF
+        hi = np.NINF
+        any_timeouts = False
+        for nm, run in all_data:
+            _, data = run[k]
+            lo = min(lo, min((x for x in data if x is not None), default=lo))
+            hi = max(hi, max((x for x in data if x is not None), default=hi))
+            any_timeouts |= any(x is None for x in data)
+
+        for nm, run in all_data:
+            _, data = run[k]
+            tdata.append([(x if x is not None else timeout_distance * hi) for x in data])
         i, j = dims[k]
 
         a = index(axs, nrows, ncols, i, j)
-        a.hist(tdata, bins=80)
-        a.set_title(bname)
+        _, _, patches = a.hist(tdata, bins=15, label=labels, range=(0, max(max(run) for run in tdata)))
+        hists.append(patches)
+        title = all_data[0][1][k][0]
+        a.set_title(title)
+        a.set_xlabel(args.column)
+        a.set_ylabel('frequency')
 
+        if any_timeouts:
+            a.axvline(x=math.sqrt(timeout_distance) * hi, color='black')
+
+    fig.legend(hists[0], labels)
     plt.show()
-
 
 def violin(all_data: Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]) -> None:
     fig, axs = plt.subplots()
@@ -84,12 +110,14 @@ def times(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Op
 def nqueries(l: Sequence[Optional[Union[float, Tuple[float, int]]]]) -> Sequence[Optional[int]]:
     return [x[1] if x is not None and isinstance(x, tuple) else None for x in l]
 
-all_data: Sequence[Tuple[str, Sequence[Optional[Union[float, Tuple[float, int]]]]]]
-transformed_data: Sequence[Tuple[str, Sequence[Optional[float]]]]
+all_data: List[Tuple[str, Sequence[Tuple[str, Sequence[Union[float, Tuple[float, int], None]]]]]]
+transformed_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[float]]]]]]
 def main() -> None:
     global all_data
-    with open(args.filename) as f:
-        all_data = get_all_matching_data(f, args.benchmark or "Benchmark")
+    all_data = []
+    for fn in args.filename:
+        with open(fn) as f:
+            all_data.append((fn, get_all_matching_data(f, args.benchmark or "Benchmark", args.exclude)))
 
     transform: Callable[[Sequence[Union[float, Tuple[float, int], None]]], Sequence[Optional[Union[float,int]]]]
     if args.column == 'nqueries':
@@ -99,22 +127,26 @@ def main() -> None:
         transform = times
 
     global transformed_data
-    transformed_data = [(b, transform(l)) for b, l in all_data]
+    transformed_data = [(nm, [(b, transform(l)) for b, l in run]) for nm, run in all_data]
 
     if args.action == 'plot':
         hist(transformed_data)
     elif args.action == 'pdb':
         pdb.set_trace()
     elif args.action == 'extract':
-        for b, d in transformed_data:
-            print(b)
-            print(d)
+        for nm, run in transformed_data:
+            print(nm)
+            for b, d in run:
+                print(' ', b)
+                print(' ', d)
     elif args.action == 'argmax':
-        for b, d in transformed_data:
-            d = [x or np.NINF for x in d]
-            print(b)
-            i = np.argmax(d)
-            print(i, d[i])
+        for nm, run in transformed_data:
+            print(nm)
+            for b, d in run:
+                d = [x or np.NINF for x in d]
+                print(' ', b)
+                i = np.argmax(d)
+                print(' ', i, d[i])
     else:
         assert args.action == 'nop'
 
@@ -126,9 +158,10 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
 
     argparser.add_argument('--benchmark')
+    argparser.add_argument('--exclude')
     argparser.add_argument('--column', default='nqueries', choices=['nqueries', 'time'])
     argparser.add_argument('--action', default='plot', choices=['plot', 'argmax', 'pdb', 'extract', 'nop'])
-    argparser.add_argument('filename')
+    argparser.add_argument('filename', nargs='+')
 
     args = argparser.parse_args()
 
