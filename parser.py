@@ -140,9 +140,13 @@ def p_arity_empty(p: Any) -> None:
     'arity : empty'
     p[0] = []
 
+def p_arity_paren_empty(p: Any) -> None:
+    'arity : LPAREN RPAREN'
+    p[0] = []
+
 def p_arity_nonempty(p: Any) -> None:
-    'arity : arity_nonempty'
-    p[0] = p[1]
+    'arity : LPAREN arity_nonempty RPAREN'
+    p[0] = p[2]
 
 def p_arity_nonempty_one(p: Any) -> None:
     'arity_nonempty : sort'
@@ -157,19 +161,19 @@ def p_sort(p: Any) -> None:
     p[0] = syntax.UninterpretedSort(p[1], p[1].value)
 
 def p_decl_relation(p: Any) -> None:
-    'decl : mut RELATION id LPAREN arity RPAREN'
-    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[5], p[1])
+    'decl : mut RELATION id arity'
+    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], p[1])
 
 def p_decl_relation_derived(p: Any) -> None:
-    'decl : DERIVED RELATION id LPAREN arity RPAREN COLON expr'
-    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[5], mutable=True, derived=p[8])
+    'decl : DERIVED RELATION id arity COLON expr'
+    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], mutable=True, derived=p[6])
 
 def p_decl_constant(p: Any) -> None:
     'decl : mut CONSTANT id COLON sort'
     p[0] = syntax.ConstantDecl(p.slice[2], p[3].value, p[5], p[1])
 
 def p_decl_function(p: Any) -> None:
-    'decl : mut FUNCTION id LPAREN arity RPAREN COLON sort'
+    'decl : mut FUNCTION id LPAREN arity_nonempty RPAREN COLON sort'
     p[0] = syntax.FunctionDecl(p.slice[2], p[3].value, p[5], p[8], p[1])
 
 def p_decl_axiom(p: Any) -> None:
