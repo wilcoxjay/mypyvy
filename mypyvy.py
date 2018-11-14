@@ -928,14 +928,14 @@ class Model(object):
                                     is_old_decl = self.key_old is not None and z3name.startswith(self.key_old)
                                     relation_expr = translator.translate_derived(decl, row, old=is_old_decl)
                                 ans = self.z3model.eval(relation_expr, model_completion=True)
-                                if not(z3.is_true(ans) or z3.is_true(ans)):
+                                if not(ans == True or ans == False):
                                     # when relation_expr is quantified sometimes Z3 retains them, and ans is an expression.
                                     # try to circumvent this by checking validity or validity of negation;
                                     # to refrain from a new solver currently just check for ForAll(-, True) or ForAll(-, False)
                                     # TODO: circumvent using something more robust to derived relation axiom
-                                    assert isinstance(ans, z3.QuantifierRef) and ans.is_forall()
+                                    assert isinstance(ans, z3.QuantifierRef) and ans.is_forall(), ans
                                     ans = ans.body()
-                                assert z3.is_true(ans) or z3.is_true(ans), ans
+                                assert ans == True or ans == False, ans
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
                             R[decl] = rl
