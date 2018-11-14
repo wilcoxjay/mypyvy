@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-for AUTOMATON in '' --automaton; do
+for AUTOMATON in '' --automaton '--automaton --sketch'; do
     if [ "$AUTOMATON"x == x ]; then
         TAG="updr"
     else
-        TAG="phase"
+        TAG=$(echo $AUTOMATON | tr -d '-' | tr ' ' '-' | sed 's/automaton/phase/')
     fi
     LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-$TAG
     echo "$LOGDIR"
