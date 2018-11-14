@@ -62,11 +62,16 @@ def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Uni
         lo = np.PINF
         hi = np.NINF
         any_timeouts = False
+        all_timeouts = True
         for nm, run in all_data:
             _, data = run[k]
             lo = min(lo, min((x for x in data if x is not None), default=lo))
             hi = max(hi, max((x for x in data if x is not None), default=hi))
             any_timeouts |= any(x is None for x in data)
+            all_timeouts &= all(x is None for x in data)
+
+        if all_timeouts:
+            continue
 
         for nm, run in all_data:
             _, data = run[k]
