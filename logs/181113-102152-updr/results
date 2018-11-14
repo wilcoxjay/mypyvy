@@ -1,0 +1,84 @@
+python3 benchmark.py -n 16 -j 16 --all-benchmarks --timeout 1200 --keep-logs logs/181113-102152-updr --args --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
+dump_version_info: dumping information about the current commit and working directory
+a8f69a8b999dedb97081d0963871314dbbb003d1
+On branch master
+Your branch is up to date with 'origin/master'.
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+
+	logs/181113-102152-updr/
+
+nothing added to commit but untracked files present (use "git add" to track)
+dump_version_info: done.
+--------------------------------------------------------------------------------
+Benchmark('test/lockserv.pyv')
+[(2.189096, 2512), (2.215805, 2512), (2.197579, 2512), (2.188561, 2512), (2.181862, 2512), (2.244582, 2512), (2.178401, 2512), (2.228332, 2512), (2.25198, 2512), (2.205504, 2512), (2.248169, 2512), (2.201007, 2512), (2.162974, 2471), (2.2244, 2512), (2.200156, 2512), (2.220742, 2512)]
+avg_time: 2.2086968750000002
+stdev_time: 0.026243752833452202
+avg_nqueries: 2509.4375
+stdev_nqueries: 10.25
+# timeouts: 0
+Benchmark('test/lockserv_multi.pyv')
+[(2.773714, 2647), (2.72632, 2647), (2.70855, 2647), (2.771159, 2647), (2.696391, 2647), (2.759089, 2647), (2.704437, 2647), (2.711439, 2647), (2.713426, 2647), (2.759418, 2647), (2.816052, 2647), (2.736167, 2647), (2.740524, 2647), (2.734219, 2647), (2.763253, 2647), (2.790583, 2647)]
+avg_time: 2.7440463125
+stdev_time: 0.03404238865437959
+avg_nqueries: 2647
+stdev_nqueries: 0.0
+# timeouts: 0
+Benchmark('test/consensus.pyv')
+[(60.007937, 9798), (57.432848, 9853), (63.033268, 10252), (63.609609, 10235), (56.335317, 9814), (64.721621, 10087), (61.80213, 9949), (56.680871, 9728), (56.326011, 9730), (60.906915, 9940), (61.992337, 10153), (56.223014, 9628), (64.164037, 10291), (62.817954, 10075), (61.315617, 9903), (60.548257, 9968)]
+avg_time: 60.4948589375
+stdev_time: 2.997301867484653
+avg_nqueries: 9962.75
+stdev_nqueries: 202.76801194139736
+# timeouts: 0
+Benchmark('test/consensus-0.1.pyv')
+[(1.681998, 638), (1.652181, 638), (1.811668, 677), (1.757979, 677), (1.644255, 638), (1.969216, 719), (1.790496, 677), (1.678822, 638), (1.691434, 638), (1.967138, 720), (1.953178, 720), (1.957644, 719), (1.8662, 677), (1.941086, 720), (1.856905, 677), (1.850872, 677)]
+avg_time: 1.816942
+stdev_time: 0.12080286520112013
+avg_nqueries: 678.125
+stdev_nqueries: 33.32641594891356
+# timeouts: 0
+Benchmark('test/sharded-kv.pyv')
+[(1.773959, 838), (1.782503, 838), (1.758128, 833), (1.789917, 838), (1.842872, 838), (1.826607, 838), (1.775212, 838), (1.822425, 838), (1.833185, 838), (1.800746, 838), (1.784336, 838), (1.759198, 838), (1.821041, 838), (1.779002, 838), (1.782554, 838), (1.798909, 838)]
+avg_time: 1.795662125
+stdev_time: 0.026334463523109808
+avg_nqueries: 837.6875
+stdev_nqueries: 1.25
+# timeouts: 0
+Benchmark('test/sharded-kv-retransmit.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
+Benchmark('test/ring.pyv')
+[(195.626981, 9348), (139.137253, 6771), (156.367463, 7409), (84.511881, 5023), (164.286102, 8039), (155.363476, 7919), (184.450246, 8376), (185.891921, 8582), (139.43198, 7696), (194.866921, 8940), (131.160916, 6944), (129.662066, 6836), (179.152867, 8618), (126.189885, 6374), (198.452491, 8809), (64.654124, 4208)]
+avg_time: 151.8254108125
+stdev_time: 39.264312866644175
+avg_nqueries: 7493.25
+stdev_nqueries: 1424.1816597611416
+# timeouts: 0
+Benchmark('test/sll-reverse.pyv')
+[(19.736994, 1851), (22.613067, 1861), (26.111563, 2118), (21.790209, 1809), (48.105437, 3681), (26.216415, 2168), (22.665958, 1837), (24.898359, 1862), (20.028621, 1728), (38.402596, 2846), (37.462334, 2673), (31.152803, 2496), (21.230524, 1770), (112.94311, 8220), (41.932859, 3578), (34.90883, 2885)]
+avg_time: 34.387479937500004
+stdev_time: 22.666207769653123
+avg_nqueries: 2711.4375
+stdev_nqueries: 1599.9267886896157
+# timeouts: 0
+Benchmark('test/cache.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
+Benchmark('test/paxos.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
