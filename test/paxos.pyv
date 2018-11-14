@@ -23,7 +23,8 @@ mutable relation vote(node, round, value)
 mutable relation decision(round, value)
 
 mutable function decision_quorum(round, value): quorum
-derived relation choosable(round, value, quorum): (choosable(R, V, Q) <-> ((forall N. member(N, Q) -> (!left_round(N, R) | vote(N, R, V)))))
+derived relation choosable(round, value, quorum):
+    (choosable(R, V, Q) <-> ((forall N. (member(N, Q) -> (!left_round(N, R) | vote(N, R, V))))))
 
 mutable function highest_proposal(value): round
 
@@ -169,8 +170,7 @@ automaton {
 
     # full characterizations
     invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
-    invariant !le(highest_proposal(qv1), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv2)
-    invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv1)
+    invariant !le(highest_proposal(qv1), R) -> !choosable(R, qv2, Q)
     invariant !(decision(R1,qv1) & decision(R2,qv2))
 
   phase V2P
@@ -188,9 +188,6 @@ automaton {
 
     # full characterizations
     invariant highest_proposal(qv1)!=none & !le(highest_proposal(qv1), R) -> !choosable(R,qv2,Q)
-    invariant highest_proposal(qv1)!=none & !le(highest_proposal(qv1), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv2)
-    invariant !le(highest_proposal(qv2), R) -> exists N. member(N,Q) & left_round(N,R) & !vote(N,R,qv1)
+    invariant !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
     invariant !(decision(R1,qv1) & decision(R2,qv2))
-
-
 }
