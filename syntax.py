@@ -163,12 +163,7 @@ class Z3Translator(object):
                 app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
                 translated_app = R(*app_translated_args)
                 if d.is_derived():
-                    subst_pairs, rel_axiom = d.substitute_derived(app_translated_args)
-                    # TODO: handle vocabulary conflicts wrt to the entire formula related to quantified variables
-                    rel_axiom_translated = self.translate_expr(rel_axiom, old)
-                    tranlsted_subst_pairs = [(self.translate_expr(formal_param, old), actual_param) for
-                                                (formal_param, actual_param) in subst_pairs]
-                    translated_app = z3.substitute(rel_axiom_translated, *tranlsted_subst_pairs)
+                    translated_app = self.translate_derived(d, app_translated_args, old)
                 self.expr_cache[t] = translated_app
             elif isinstance(expr, QuantifierExpr):
                 bs = self.bind(expr.binder)
@@ -197,6 +192,15 @@ class Z3Translator(object):
                 assert False
 
         return self.expr_cache[t]
+
+    def translate_derived(self, d: RelationDecl, z3_apps: Sequence[z3.ExprRef], old: bool) -> z3.ExprRef:
+        subst_pairs, rel_axiom = d.substitute_derived(z3_apps)
+        # TODO: handle vocabulary conflicts wrt to the entire formula related to quantified variables
+        rel_axiom_translated = self.translate_expr(rel_axiom, old)
+        tranlsted_subst_pairs = [(self.translate_expr(formal_param, old), actual_param) for
+                                 (formal_param, actual_param) in subst_pairs]
+        translated_app = z3.substitute(rel_axiom_translated, *tranlsted_subst_pairs)
+        return translated_app
 
     def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
         frame = []
@@ -1096,6 +1100,7 @@ class RelationDecl(Decl):
     def is_derived(self) -> bool:
         return self.derived_axiom is not None
 
+    # TODO: rename
     def substitute_derived(self, args: Sequence[z3.ExprRef]) -> Tuple[List[Tuple[Expr, z3.ExprRef]], Expr]:
         assert isinstance(self.derived_axiom, QuantifierExpr) and self.derived_axiom.quant == 'FORALL', self.derived_axiom
         body = self.derived_axiom.body
@@ -1108,6 +1113,8 @@ class RelationDecl(Decl):
 
         subst_map = list(zip(rel_def.args, args))
         return subst_map, rel_axiom
+
+
 
 class ConstantDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, sort: Sort, mutable: bool) -> None:

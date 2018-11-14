@@ -268,7 +268,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Model(prog, s.model(), key, key_old)
+            m = Model(prog, s.model(), s, key, key_old)
 
             logger.always_print('')
             logger.always_print(str(m))
@@ -785,13 +785,15 @@ class Model(object):
             self,
             prog: Program,
             m: z3.ModelRef,
+            solver: Solver,
             key: str,
-            key_old: Optional[str]=None
+            key_old: Optional[str]=None,
     ) -> None:
         self.prog = prog
         self.z3model = m
         self.key = key
         self.key_old = key_old
+        self.solver = solver
 
         self.read_out()
 
@@ -838,6 +840,15 @@ class Model(object):
 
         return '\n'.join(l)
 
+    def _derived_relations_z3_decls(self):
+        res = []
+        for r in self.prog.derived_relations():
+            for k in [self.key, self.key_old]:
+                if k is None:
+                    continue
+                res.append(r.to_z3(k))
+        return res
+
     def read_out(self) -> None:
         # logger.debug('read_out')
         def rename(s: str) -> str:
@@ -871,7 +882,10 @@ class Model(object):
             self.old_const_interps: CT = OrderedDict()
             self.old_func_interps: FT = OrderedDict()
 
-        for z3decl in sorted(self.z3model.decls(), key=str):
+        model_decls = self.z3model.decls()
+        derived_decls = self._derived_relations_z3_decls()
+        all_decls = model_decls + derived_decls
+        for z3decl in sorted(all_decls, key=str):
             z3name = str(z3decl)
             if z3name.startswith(self.key):
                 name = z3name[len(self.key)+1:]
@@ -906,7 +920,21 @@ class Model(object):
                             # It's not entirely clear that this is an ok thing to do.
                             g = itertools.product(*domains)
                             for row in g:
-                                ans = self.z3model.eval(z3decl(*row))
+                                if not decl.is_derived():
+                                    relation_expr = z3decl(*row)
+                                else:
+                                    translator = self.solver.get_translator(self.key, self.key_old)
+                                    is_old_decl = self.key_old is not None and z3name.startswith(self.key_old)
+                                    relation_expr = translator.translate_derived(decl, row, old=is_old_decl)
+                                ans = self.z3model.eval(relation_expr, model_completion=True)
+                                if not(z3.is_true(ans) or z3.is_true(ans)):
+                                    # when relation_expr is quantified sometimes Z3 retains them, and ans is an expression.
+                                    # try to circumvent this by checking validity or validity of negation;
+                                    # to refrain from a new solver currently just check for ForAll(-, True) or ForAll(-, False)
+                                    # TODO: circumvent using something more robust to derived relation axiom
+                                    assert isinstance(ans, z3.QuantifierRef) and ans.is_forall()
+                                    ans = ans.body()
+                                assert z3.is_true(ans) or z3.is_true(ans), ans
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
                             R[decl] = rl
@@ -1128,7 +1156,7 @@ class Frames(object):
 
             logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Model(self.prog, z3m, KEY_ONE)
+            mod = Model(self.prog, z3m, self.solver, KEY_ONE)
             diag = mod.as_diagram()
             return (p, diag)
 
@@ -1159,7 +1187,7 @@ class Frames(object):
                         if self.solver.check() != z3.unsat:
                             logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Model(self.prog, z3m, KEY_NEW, KEY_OLD)
+                            mod = Model(self.prog, z3m, self.solver, KEY_NEW, KEY_OLD)
                             diag = mod.as_diagram(old=True)
                             return (p, diag)
 
@@ -1218,7 +1246,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Model(self.prog, m, KEY_NEW, KEY_OLD)
+                mod = Model(self.prog, m, self.solver, KEY_NEW, KEY_OLD)
                 diag = mod.as_diagram(old=True)
 
                 if logger.isEnabledFor(logging.DEBUG):
@@ -1484,7 +1512,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             logger.debug('found predecessor via %s' % trans.name)
-                            m = Model(self.prog, solver.model(diag.trackers), KEY_NEW, KEY_OLD)
+                            m = Model(self.prog, solver.model(diag.trackers), self.solver, KEY_NEW, KEY_OLD)
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
