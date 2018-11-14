@@ -142,8 +142,8 @@ automaton {
     transition recv_transfer_msg -> self assume k!=qk
     transition reshard -> self assume k!=qk
 
-    invariant owner(N1, qk) & owner(N2, qk) -> N1 = N2
-    invariant !(transfer_msg(SRC, DST, qk, V, S) & !seqnum_recvd(DST, SRC, S))
+    sketch invariant owner(N1, qk) & owner(N2, qk) -> N1 = N2
+    sketch invariant !(transfer_msg(SRC, DST, qk, V, S) & !seqnum_recvd(DST, SRC, S))
 
     invariant table(N, qk, V) -> owner(N, qk)
     invariant table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
@@ -153,8 +153,8 @@ automaton {
   phase transferring
     transition recv_transfer_msg -> phase owned assume k=qk
 
-    invariant !owner(N, qk)
-    invariant transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & transfer_msg(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
+    sketch invariant !owner(N, qk)
+    sketch invariant transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & transfer_msg(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
 
     invariant table(N, qk, V) -> owner(N, qk)
     invariant transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & unacked(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2

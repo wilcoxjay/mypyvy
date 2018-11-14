@@ -92,8 +92,8 @@ automaton {
       transition become_leader -> self
 
       # partial characterizations
-      invariant leader(N1) & leader(N2) -> N1 = N2
-      invariant !decided(N, V)
+      sketch invariant leader(N1) & leader(N2) -> N1 = N2
+      sketch invariant !decided(N, V)
 
       # full characterizations
       invariant leader(N1) & member(N2, voting_quorum) -> votes(N1, N2)
@@ -108,8 +108,8 @@ automaton {
       transition decide -> self
 
       # partial characterizations
-      invariant leader(N1) & leader(N2) -> N1 = N2
-      invariant decided(N1,V1) & decided(N2,V2) -> V1 = V2
+      sketch invariant leader(N1) & leader(N2) -> N1 = N2
+      sketch invariant decided(N1,V1) & decided(N2,V2) -> V1 = V2
 
       # full characterizations
       invariant decided(N,V) -> leader(N)

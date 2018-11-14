@@ -1002,6 +1002,12 @@ class CexFound(object):
 class GaveUp(object):
     pass
 
+
+def phase_safety(p: Phase) -> Sequence[InvariantDecl]:
+    if args.sketch:
+        return p.safety + p.sketch_invs
+    return p.safety
+
 def verbose_print_z3_model(m: z3.ModelRef) -> None:
     logger.always_print('')
     out = io.StringIO()
@@ -1114,7 +1120,7 @@ class Frames(object):
         f = self.fs[-1]
 
         def safety_property_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
-            res = check_implication(self.solver, f.summary_of(p), (inv.expr for inv in p.safety))
+            res = check_implication(self.solver, f.summary_of(p), (inv.expr for inv in phase_safety(p)))
 
             if res is None:
                 logger.debug("Frontier frame phase %s implies safety, summary is %s" % (p.name(), f.summary_of(p)))
@@ -1185,7 +1191,7 @@ class Frames(object):
         return True
 
     def push_conjunct(self, frame_no: int, c: Expr, p: Phase, frame_old_count: Optional[int]=None) -> None:
-        is_safety = c in p.safety
+        is_safety = c in phase_safety(p)
         conjunct_old_count = self.counter
 
         f = self.fs[frame_no]
@@ -1533,7 +1539,7 @@ class Frames(object):
         l = []
         for c in reversed(f.l):
             f_minus_c = [x for x in f.l if x in f.s and x is not c]
-            if c not in p.safety and \
+            if c not in phase_safety(p) and \
                check_implication(self.solver, f_minus_c, [c]) is None:
                 logger.debug('removed %s' % c)
                 f.s.remove(c)
@@ -1876,6 +1882,9 @@ def parse_args() -> argparse.Namespace:
                                 help='(for debugging mypyvy itself) run bmc to confirm every conjunct added to a frame')
     updr_subparser.add_argument('--assert-inductive-trace', action='store_true',
                                 help='(for debugging mypyvy itself) check that frames are always inductive')
+
+    updr_subparser.add_argument('--sketch', action='store_true',
+                                help='use sketched invariants as additional safety (currently only in automaton)')
 
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
                                 help='substitute existentially quantified variables that are equal to constants')

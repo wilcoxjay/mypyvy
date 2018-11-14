@@ -18,6 +18,7 @@ reserved = {
     'init': 'INIT',
     'transition': 'TRANSITION',
     'invariant': 'INVARIANT',
+    'sketch': 'SKETCH',
     'axiom': 'AXIOM',
     'old': 'OLD',
     'forall': 'FORALL',
@@ -186,16 +187,20 @@ def p_decl_init(p: Any) -> None:
 
 def p_safety_or_invariant_keyword_safety(p: Any) -> None:
     'safety_or_invariant_keyword : SAFETY'
-    p[0] = (p.slice[1], True)
+    p[0] = (p.slice[1], True, False)
 
 def p_safety_or_invariant_keyword_invariant(p: Any) -> None:
     'safety_or_invariant_keyword : INVARIANT'
-    p[0] = (p.slice[1], False)
+    p[0] = (p.slice[1], False, False)
+
+def p_safety_or_invariant_keyword_sketch_invariant(p: Any) -> None:
+    'safety_or_invariant_keyword : SKETCH INVARIANT'
+    p[0] = (p.slice[1], False, True)
 
 def p_invariant_decl(p: Any) -> None:
     'invariant_decl : safety_or_invariant_keyword opt_name expr'
-    tok, is_safety = p[1]
-    p[0] = syntax.InvariantDecl(tok, p[2], p[3], is_safety)
+    tok, is_safety, is_sketch = p[1]
+    p[0] = syntax.InvariantDecl(tok, p[2], p[3], is_safety, is_sketch)
 
 def p_decl_invariant(p: Any) -> None:
     'decl : invariant_decl'

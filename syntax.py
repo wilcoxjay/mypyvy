@@ -1221,26 +1221,29 @@ class TransitionDecl(Decl):
              self.expr)
 
 class InvariantDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, is_safety: bool) -> None:
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, is_safety: bool, is_sketch: bool) -> None:
         self.tok = tok
         self.name = name
         self.expr = expr
         self.is_safety = is_safety
+        self.is_sketch = is_sketch
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        return 'InvariantDecl(tok=None, name=%s, expr=%s, is_safety=%s)' % (
+        return 'InvariantDecl(tok=None, name=%s, expr=%s, is_safety=%s, is_sketch=%s)' % (
             repr(self.name) if self.name is not None else 'None',
             repr(self.expr),
-            repr(self.is_safety)
+            repr(self.is_safety),
+            repr(self.is_sketch)
         )
 
     def __str__(self) -> str:
         kwd = 'safety' if self.is_safety else 'invariant'
-        return '%s %s%s' % (kwd,
+        pre = '' if not self.is_sketch else 'sketch '
+        return '%s %s%s' % (pre + kwd,
                             ('[%s] ' % self.name) if self.name is not None else '',
                             self.expr)
 
@@ -1407,7 +1410,12 @@ class PhaseDecl(object):
 
     def safeties(self) -> Iterator[InvariantDecl]:
         for c in self.components:
-            if isinstance(c, InvariantDecl) and c.is_safety:
+            if isinstance(c, InvariantDecl) and c.is_safety :
+                yield c
+
+    def sketch_invs(self) -> Iterator[InvariantDecl]:
+        for c in self.components:
+            if isinstance(c, InvariantDecl) and c.is_sketch:
                 yield c
 
 
