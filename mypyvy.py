@@ -560,7 +560,6 @@ class Diagram(object):
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
                 self.reverse_map.append((d, j))
-                print(c)
                 z3conjs.append(p == t.translate_expr(c))
                 i += 1
 
