@@ -194,11 +194,13 @@ class Z3Translator(object):
         return self.expr_cache[t]
 
     def translate_derived(self, d: RelationDecl, z3_apps: Sequence[z3.ExprRef], old: bool) -> z3.ExprRef:
-        subst_pairs, rel_axiom = d.substitute_derived(z3_apps)
+        subst_pairs, rel_axiom, binder = d.substitute_derived(z3_apps)
         # TODO: handle vocabulary conflicts wrt to the entire formula related to quantified variables
-        rel_axiom_translated = self.translate_expr(rel_axiom, old)
-        tranlsted_subst_pairs = [(self.translate_expr(formal_param, old), actual_param) for
-                                 (formal_param, actual_param) in subst_pairs]
+        bs = self.bind(binder)
+        with self.scope.in_scope(binder, bs):
+            rel_axiom_translated = self.translate_expr(rel_axiom, old)
+            tranlsted_subst_pairs = [(self.translate_expr(formal_param, old), actual_param) for
+                                     (formal_param, actual_param) in subst_pairs]
         translated_app = z3.substitute(rel_axiom_translated, *tranlsted_subst_pairs)
         return translated_app
 
@@ -1044,7 +1046,7 @@ class FunctionDecl(Decl):
     def is_derived(self) -> bool:
         return False
 
-    def substitute_derived(self, key: str, args: Sequence[z3.ExprRef]) -> z3.ExprRef:
+    def substitute_derived(self, args: Sequence[z3.ExprRef]) -> z3.ExprRef:
         raise Exception("Derived functions not supported")
 
 class RelationDecl(Decl):
@@ -1112,7 +1114,7 @@ class RelationDecl(Decl):
         assert all(isinstance(applied, Id) for applied in rel_def.args)
 
         subst_map = list(zip(rel_def.args, args))
-        return subst_map, rel_axiom
+        return subst_map, rel_axiom, self.derived_axiom.binder
 
 
 
