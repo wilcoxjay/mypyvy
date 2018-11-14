@@ -162,10 +162,10 @@ automaton {
     transition decide -> self assume v = qv1 # but impossible for v = qv2
 
     # partial characterizations
-    invariant proposal(R, qv2) -> le(R, highest_proposal(qv1))
-    invariant proposal(highest_proposal(qv1), qv1)
+    sketch invariant proposal(R, qv2) -> le(R, highest_proposal(qv1))
+    sketch invariant proposal(highest_proposal(qv1), qv1)
 
-    invariant !le(highest_proposal(qv1), R) -> !choosable(R, qv2, Q)
+    sketch invariant !le(highest_proposal(qv1), R) -> !choosable(R, qv2, Q)
 
     # full characterizations
     invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
@@ -181,10 +181,10 @@ automaton {
     transition decide -> self assume v = qv2 # but impossible for v = qv1
 
     # partial characterizations
-    invariant proposal(R, qv1) -> le(R, highest_proposal(qv2))
-    invariant proposal(highest_proposal(qv2), qv2)
+    sketch invariant proposal(R, qv1) -> le(R, highest_proposal(qv2))
+    sketch invariant proposal(highest_proposal(qv2), qv2)
 
-    invariant !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
+    sketch invariant !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
 
     # full characterizations
     invariant highest_proposal(qv1)!=none & !le(highest_proposal(qv1), R) -> !choosable(R,qv2,Q)
