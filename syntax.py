@@ -1069,7 +1069,7 @@ class RelationDecl(Decl):
         scope.add_relation(self)
 
         if self.derived_axiom:
-            self.derived_axiom = close_free_vars(self.derived_axiom)
+            self.derived_axiom = close_free_vars(self.tok, self.derived_axiom)
             self.derived_axiom.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
@@ -1155,7 +1155,7 @@ class ConstantDecl(Decl):
 
             return self.immut_z3
 
-def close_free_vars(expr: Expr, in_scope: List[str]=[]) -> Expr:
+def close_free_vars(tok: Optional[Token], expr: Expr, in_scope: List[str]=[]) -> Expr:
     vs = [s for s in expr.free_ids() if s not in in_scope and s.isupper()]
     if vs == []:
         return expr
@@ -1163,7 +1163,7 @@ def close_free_vars(expr: Expr, in_scope: List[str]=[]) -> Expr:
         # logging.debug('closing expression')
         # logging.debug(str(expr))
         # logging.debug('with free vars %s' % vs)
-        return QuantifierExpr(None, 'FORALL', [SortedVar(None, v, None) for v in vs], expr)
+        return QuantifierExpr(None, 'FORALL', [SortedVar(tok, v, None) for v in vs], expr)
 
 class InitDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
@@ -1172,7 +1172,7 @@ class InitDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope: Scope) -> None:
-        self.expr = close_free_vars(self.expr)
+        self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
 
 
@@ -1226,7 +1226,7 @@ class TransitionDecl(Decl):
         for mod in self.mods:
             mod.resolve(scope)
 
-        self.expr = close_free_vars(self.expr, in_scope=[v.name for v in self.binder.vs])
+        self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             self.expr.resolve(scope, BoolSort)
@@ -1271,7 +1271,7 @@ class InvariantDecl(Decl):
         self.is_sketch = is_sketch
 
     def resolve(self, scope: Scope) -> None:
-        self.expr = close_free_vars(self.expr)
+        self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
@@ -1297,7 +1297,7 @@ class AxiomDecl(Decl):
         self.expr = expr
 
     def resolve(self, scope: Scope) -> None:
-        self.expr = close_free_vars(self.expr)
+        self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
@@ -1317,7 +1317,7 @@ class TheoremDecl(Decl):
         self.twostate = twostate
 
     def resolve(self, scope: Scope) -> None:
-        self.expr = close_free_vars(self.expr)
+        self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
@@ -1365,7 +1365,7 @@ class PhaseTransitionDecl(object):
 
         if self.precond is not None:
             transition_constants = transition.binder.vs
-            self.precond = close_free_vars(self.precond, in_scope=[x.name for x in transition_constants])
+            self.precond = close_free_vars(self.tok, self.precond, in_scope=[x.name for x in transition_constants])
             with scope.in_scope(transition.binder, [v.sort for v in transition_constants]):
                 self.precond.resolve(scope, BoolSort)
 
