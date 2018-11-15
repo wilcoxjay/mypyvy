@@ -1745,7 +1745,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
                             check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
                                           (msg, trans_pretty, phase.name)),
-                                         (trans.tok, 'this transition may not preserve invariant%s' % (msg,))],
+                                         (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
                                         s, prog, KEY_NEW, KEY_OLD)
 
 @log_start_end_time(logging.INFO)
