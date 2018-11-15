@@ -849,6 +849,19 @@ class Model(object):
                 res.append(r.to_z3(k))
         return res
 
+    def _eval(self, expr):
+        ans = self.z3model.eval(expr, model_completion=True)
+        if not (ans == True or ans == False):
+            # when expr is quantified sometimes Z3 retains the quantifier, and ans is an expression.
+            # try to circumvent this by evaluating the quantified expression directly (by enumerating
+            #  domain elements).
+            # TODO: currently works for single universally quantified variable only
+            assert isinstance(ans, z3.QuantifierRef) and ans.is_forall() and ans.num_vars() == 1, ans
+            ans = all(self._eval(z3.substitute_vars(ans.body(), el))
+                      for el in self.z3model.get_universe(ans.var_sort(0)))
+        assert ans == True or ans == False, (expr, ans)
+        return ans
+
     def read_out(self) -> None:
         # logger.debug('read_out')
         def rename(s: str) -> str:
@@ -926,15 +939,7 @@ class Model(object):
                                     translator = self.solver.get_translator(self.key, self.key_old)
                                     is_old_decl = self.key_old is not None and z3name.startswith(self.key_old)
                                     relation_expr = translator.translate_derived(decl, row, old=is_old_decl)
-                                ans = self.z3model.eval(relation_expr, model_completion=True)
-                                if not(ans == True or ans == False):
-                                    # when relation_expr is quantified sometimes Z3 retains them, and ans is an expression.
-                                    # try to circumvent this by checking validity or validity of negation;
-                                    # to refrain from a new solver currently just check for ForAll(-, True) or ForAll(-, False)
-                                    # TODO: circumvent using something more robust to derived relation axiom
-                                    assert isinstance(ans, z3.QuantifierRef) and ans.is_forall(), ans
-                                    ans = ans.body()
-                                assert ans == True or ans == False, ans
+                                ans = self._eval(relation_expr)
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
                             R[decl] = rl
