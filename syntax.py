@@ -8,6 +8,7 @@ import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
     Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable, Mapping, Sequence
 from typing_extensions import Protocol
+import utils
 import z3
 
 import logging
@@ -29,6 +30,8 @@ def print_error(tok: Optional[Token], msg: str) -> None:
     global errored
     errored = True
     print('error: %s: %s' % (tok_to_string(tok), msg))
+    if utils.args.exit_on_error:
+        sys.exit(1)
 
 def error(tok: Optional[Token], msg: str) -> NoReturn:
     print_error(tok, msg)

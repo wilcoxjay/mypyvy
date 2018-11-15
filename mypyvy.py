@@ -1902,6 +1902,9 @@ def parse_args() -> argparse.Namespace:
                        help='find models with minimal cardinality')
         s.add_argument('--timeout', type=int, default=None,
                        help='z3 timeout (milliseconds)')
+        s.add_argument('--exit-on-error', action='store_true',
+                       help='exit after reporting first error')
+
 
     updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
                                 help='generalize diagrams using unsat cores instead of brute force')
