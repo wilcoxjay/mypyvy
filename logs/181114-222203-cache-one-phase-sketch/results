@@ -1,0 +1,24 @@
+python3 benchmark.py -n 16 -j 16 --benchmark test/cache_one.pyv --timeout 1200 --keep-logs logs/181114-222203-cache-one-phase-sketch --args --automaton --sketch --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
+dump_version_info: dumping information about the current commit and working directory
+346fa1e66eb8505e89295e5f7fefb3e208eafa4e
+On branch master
+Your branch is ahead of 'origin/master' by 1 commit.
+  (use "git push" to publish your local commits)
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+
+	logs/181114-220029-cache-one-updr/
+	logs/181114-222030-cache-one-phase/
+	logs/181114-222203-cache-one-phase-sketch/
+
+nothing added to commit but untracked files present (use "git add" to track)
+dump_version_info: done.
+--------------------------------------------------------------------------------
+Benchmark('test/cache_one.pyv')
+[(43.091147, 36641), (44.628906, 37756), (45.32198, 38425), (44.64331, 37236), (45.122295, 38193), (43.697804, 37198), (44.350397, 37885), (44.856005, 38067), (45.108779, 38402), (44.297136, 37526), (44.374135, 37921), (46.343297, 38376), (44.747879, 37839), (44.247305, 37404), (45.035483, 38097), (44.927705, 38078)]
+avg_time: 44.6745976875
+stdev_time: 0.7215786743931876
+avg_nqueries: 37815.25
+stdev_nqueries: 500.2206846316267
+# timeouts: 0
