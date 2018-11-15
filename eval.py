@@ -54,11 +54,8 @@ def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Uni
         if not all_timeouts:
             actual_length += 1
 
-    length = actual_length
-
-
-    ncols = math.ceil(math.sqrt(length))
-    nrows = math.ceil(length / ncols)
+    ncols = math.ceil(math.sqrt(actual_length))
+    nrows = math.ceil(actual_length / ncols)
 
     fig, axs = plt.subplots(nrows, ncols)
 
@@ -71,6 +68,7 @@ def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Uni
 
     timeout_distance = 2
 
+    l = 0
     for k in range(length):
         tdata = []
         lo = np.PINF
@@ -90,7 +88,7 @@ def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Uni
         for nm, run in all_data:
             _, data = run[k]
             tdata.append([(x if x is not None else timeout_distance * hi) for x in data])
-        i, j = dims[k]
+        i, j = dims[l]
 
         a = index(axs, nrows, ncols, i, j)
         _, _, patches = a.hist(tdata, bins=15, label=labels, range=(0, max(max(run) for run in tdata)))
@@ -102,6 +100,8 @@ def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Uni
 
         if any_timeouts:
             a.axvline(x=math.sqrt(timeout_distance) * hi, color='black')
+
+        l += 1
 
     fig.legend(hists[0], labels)
     plt.show()
