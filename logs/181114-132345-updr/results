@@ -83,3 +83,10 @@ stdev_time: 0.0
 avg_nqueries: 0.0
 stdev_nqueries: 0.0
 # timeouts: 16
+Benchmark('test/cache_one.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
