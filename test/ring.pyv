@@ -102,9 +102,7 @@ twostate theorem [recv_alt]
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
         (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next & sender != n & le(n, sender)))
 
-# safety [one_leader] leader(X) & leader(Y) -> X = Y
-
-# invariant pending(S, D) & btw(S, N, D) -> le(N, S)
+invariant pending(S, D) & btw(S, N, D) -> le(N, S)
 safety [leader_max] leader(L) -> le(N, L)
 invariant pending(L, L) -> le(N, L)
 
@@ -126,9 +124,11 @@ automaton {
 
     transition recv -> self assume (!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender)))
 
-    # this transition provides additional information by stating that recv transitions in this phase can occur only for nodes that are between qn1, qn2. Speeds up inference even more.
-    # transition recv -> self assume ((!(sender=qn1 & n=qn2 & pending(sender, n) & le(n, sender))) & (sender=qn1 & pending(sender, n) -> (btw(qn1, n, qn2) | n=qn1 | n=qn2)))
+    invariant !leader(qn1)
+    invariant N != qn2 & pending(qn1, N) -> btw(qn1, N, qn2)
 
   phase trump
     transition recv -> self
+
+    invariant !le(qn1, qn2)
 }
