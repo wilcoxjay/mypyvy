@@ -43,6 +43,20 @@ def index(axs: Any, nrows: int, ncols: int, i: int, j: int) -> Any:
 def hist(all_data: Sequence[Tuple[str, Sequence[Tuple[str, Sequence[Optional[Union[float,int]]]]]]]) -> None:
     length = len(all_data[0][1])
     assert all(len(l) == length for _, l in all_data)
+
+    actual_length = 0
+    for k in range(length):
+        all_timeouts = True
+        for nm, run in all_data:
+            _, data = run[k]
+            all_timeouts &= all(x is None for x in data)
+
+        if not all_timeouts:
+            actual_length += 1
+
+    length = actual_length
+
+
     ncols = math.ceil(math.sqrt(length))
     nrows = math.ceil(length / ncols)
 
