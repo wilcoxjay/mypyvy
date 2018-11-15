@@ -40,37 +40,38 @@ class MyLogger(object):
     def isEnabledFor(self, lvl: int) -> bool:
         return self.logger.isEnabledFor(lvl)
 
-    def warning(self, msg: str) -> None:
-        self.log(logging.WARNING, msg)
+    def warning(self, msg: str, end: str='\n') -> None:
+        self.log(logging.WARNING, msg, end=end)
 
-    def info(self, msg: str) -> None:
-        self.log(logging.INFO, msg)
+    def info(self, msg: str, end: str='\n') -> None:
+        self.log(logging.INFO, msg, end=end)
 
-    def debug(self, msg: str) -> None:
-        self.log(logging.DEBUG, msg)
+    def debug(self, msg: str, end: str='\n') -> None:
+        self.log(logging.DEBUG, msg, end=end)
 
-    def always_print(self, msg: str) -> None:
-        self.log(ALWAYS_PRINT, msg)
+    def always_print(self, msg: str, end: str='\n') -> None:
+        self.log(ALWAYS_PRINT, msg, end=end)
 
-    def log_list(self, lvl: int, msgs: List[str]) -> None:
+    def log_list(self, lvl: int, msgs: List[str], sep: str='\n', end: str='\n') -> None:
         if utils.args.log_xml:
-            for msg in msgs:
-                self.log(lvl, msg)
+            n = len(msgs)
+            for i, msg in enumerate(msgs):
+                self.log(lvl, msg, end=sep if i < n - 1 else end)
         else:
-            self.log(lvl, '\n'.join(msgs))
+            self.log(lvl, sep.join(msgs), end=end)
 
-    def log(self, lvl: int, msg: str) -> None:
+    def log(self, lvl: int, msg: str, end: str='\n') -> None:
 
         if self.isEnabledFor(lvl):
             if utils.args.log_xml:
                 msg = xml.sax.saxutils.escape(msg)
                 with LogTag('msg', lvl=lvl, time=str((datetime.now() - start).total_seconds())):
-                    self.rawlog(ALWAYS_PRINT, msg)
+                    self.rawlog(ALWAYS_PRINT, msg, end=end)
             else:
-                self.rawlog(lvl, msg)
+                self.rawlog(lvl, msg, end=end)
 
-    def rawlog(self, lvl: int, msg: str) -> None:
-        self.logger.log(lvl, msg)
+    def rawlog(self, lvl: int, msg: str, end: str='\n') -> None:
+        self.logger.log(lvl, msg + end)
 
 logger = MyLogger(logging.getLogger(__file__))
 
@@ -277,7 +278,7 @@ def check_unsat(
             logger.always_print('reason unknown: ' + s.reason_unknown())
         for tok, msg in errmsgs:
             syntax.print_error(tok, msg)
-    logger.always_print('    ok. (%s)' % (datetime.now() - start))
+    logger.always_print('ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
 
 @log_start_end_xml(logging.INFO)
@@ -300,7 +301,7 @@ def check_init(s: Solver, prog: Program) -> None:
                     msg = ' on line %d' % inv.tok.lineno
                 else:
                     msg = ''
-                logger.always_print('  implies invariant%s...' % msg)
+                logger.always_print('  implies invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
                 check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)], s, prog, KEY_ONE)
@@ -328,7 +329,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
                             msg = ' on line %d' % inv.tok.lineno
                         else:
                             msg = ''
-                        logger.always_print('  preserves invariant%s...' % msg)
+                        logger.always_print('  preserves invariant%s... ' % msg, end='')
                         sys.stdout.flush()
 
                         check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s' %
@@ -1673,7 +1674,7 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
                     msg = ' on line %d' % inv.tok.lineno
                 else:
                     msg = ''
-                logger.always_print('  implies phase invariant%s...' % msg)
+                logger.always_print('  implies phase invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
                 check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, prog, KEY_ONE)
@@ -1691,10 +1692,10 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
 
             for trans in prog.transitions():
                 if any(delta.transition == trans.name and delta.precond is None for delta in phase.transitions()):
-                    logger.always_print('    transition %s is covered trivially' % trans.name)
+                    logger.always_print('    transition %s is covered trivially.' % trans.name)
                     continue
 
-                logger.always_print('    checking transition %s is covered' % trans.name)
+                logger.always_print('    checking transition %s is covered... ' % trans.name, end='')
 
                 with s:
                     s.add(t.translate_transition(trans))
@@ -1739,7 +1740,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                                 msg = ' on line %d' % inv.tok.lineno
                             else:
                                 msg = ''
-                            logger.always_print('      preserves invariant%s...' % msg)
+                            logger.always_print('      preserves invariant%s... ' % msg, end='')
                             sys.stdout.flush()
 
                             check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
@@ -1845,7 +1846,7 @@ def theorem(s: Solver, prog: Program) -> None:
         else:
             msg = ''
 
-        logger.always_print(' theorem%s...' % msg)
+        logger.always_print(' theorem%s... ' % msg, end='')
         sys.stdout.flush()
 
         with s:
@@ -1970,6 +1971,7 @@ def main() -> None:
 
     logger.setLevel(getattr(logging, utils.args.log.upper(), None))
     handler = logging.StreamHandler(stream=sys.stdout)
+    handler.terminator = ''
     handler.setFormatter(MyFormatter(fmt))
     logging.root.addHandler(handler)
     # logger.addHandler(handler)
