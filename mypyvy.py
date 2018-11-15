@@ -23,6 +23,7 @@ import parser
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
+import utils
 from utils import MySet, OrderedSet
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
@@ -52,7 +53,7 @@ class MyLogger(object):
         self.log(ALWAYS_PRINT, msg)
 
     def log_list(self, lvl: int, msgs: List[str]) -> None:
-        if args.log_xml:
+        if utils.args.log_xml:
             for msg in msgs:
                 self.log(lvl, msg)
         else:
@@ -61,7 +62,7 @@ class MyLogger(object):
     def log(self, lvl: int, msg: str) -> None:
 
         if self.isEnabledFor(lvl):
-            if args.log_xml:
+            if utils.args.log_xml:
                 msg = xml.sax.saxutils.escape(msg)
                 with LogTag('msg', lvl=lvl, time=str((datetime.now() - start).total_seconds())):
                     self.rawlog(ALWAYS_PRINT, msg)
@@ -80,7 +81,7 @@ class LogTag(object):
         self.kwargs = kwargs
 
     def __enter__(self) -> None:
-        if args.log_xml and logger.isEnabledFor(self.lvl):
+        if utils.args.log_xml and logger.isEnabledFor(self.lvl):
             msg = ''
             for k, v in self.kwargs.items():
                 msg += ' %s="%s"' % (k, xml.sax.saxutils.escape(v))
@@ -88,7 +89,7 @@ class LogTag(object):
             logger.rawlog(ALWAYS_PRINT, '<%s%s>' % (self.name, msg))
 
     def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
-        if args.log_xml and logger.isEnabledFor(self.lvl):
+        if utils.args.log_xml and logger.isEnabledFor(self.lvl):
             logger.rawlog(ALWAYS_PRINT, '</%s>' % self.name)
 
 
@@ -118,8 +119,6 @@ def log_start_end_xml(lvl: int=logging.DEBUG, tag: Optional[str]=None) -> Callab
     return dec
 
 z3.Forall = z3.ForAll
-
-args: argparse.Namespace
 
 KEY_ONE = 'one'
 KEY_NEW = 'new'
@@ -171,7 +170,7 @@ class Solver(object):
         return self.z3solver.check(*assumptions)
 
     def model(self, assumptions: Optional[Sequence[z3.ExprRef]]=None) -> z3.ModelRef:
-        if args.minimize_models:
+        if utils.args.minimize_models:
             return self._minimal_model(assumptions)
         else:
             return self.z3solver.model()
@@ -570,7 +569,7 @@ class Diagram(object):
 
     def to_ast(self) -> Expr:
         # TODO: remove this option on merge
-        if args.simple_conjuncts:
+        if utils.args.simple_conjuncts:
             e = syntax.And(*(c for _, _, c in self.conjuncts_simple()))
             fv = e.free_ids()
             vs = [v for v in self.binder.vs if v.name in fv]
@@ -664,7 +663,7 @@ class Diagram(object):
 
 
     def smoke(self, s: Solver, prog: Program, depth: Optional[int]) -> None:
-        if args.smoke_test and depth is not None:
+        if utils.args.smoke_test and depth is not None:
             logger.debug('smoke testing at depth %s...' % (depth,))
             logger.debug(str(self))
             res = check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
@@ -1016,7 +1015,7 @@ class Model(object):
 
 
         diag = Diagram(vs, ineqs, rels, consts, funcs)
-        if args.simplify_diagram:
+        if utils.args.simplify_diagram:
             diag.simplify_consts()
         assert self.prog.scope is not None
         diag.resolve(self.prog.scope)
@@ -1032,7 +1031,7 @@ class GaveUp(object):
 
 
 def phase_safety(p: Phase) -> Sequence[InvariantDecl]:
-    if args.sketch:
+    if utils.args.sketch:
         return p.safety + p.sketch_invs
     return p.safety
 
@@ -1056,7 +1055,7 @@ class Frames(object):
         self.solver = solver
         self.prog = prog
 
-        if args.automaton:
+        if utils.args.automaton:
             automaton = prog.the_automaton()
             if automaton is None:
                 syntax.error(None, 'updr --automaton requires the file to declare an automaton')
@@ -1231,7 +1230,7 @@ class Frames(object):
                 if res is None:
                     logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
 
-                    if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
+                    if utils.args.smoke_test and logger.isEnabledFor(logging.DEBUG):
                         logger.debug('jrw smoke testing...')
                         # TODO: phases
                         om = check_bmc(self.solver, self.prog, c, frame_no + 1)
@@ -1256,7 +1255,7 @@ class Frames(object):
                     logger.debug('note: current clause is safety condition')
                     self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=True)
                 else:
-                    if not args.dont_block_may_cexs:
+                    if not utils.args.dont_block_may_cexs:
                         ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=False)
                         if isinstance(ans, CexFound):
                             break
@@ -1267,8 +1266,8 @@ class Frames(object):
     def push_forward_frames(self) -> None:
         self.assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
-            if ((args.push_frame_zero == 'if_trivial' and self.automaton.nontrivial) or \
-                (args.push_frame_zero == 'never')) and i == 0:
+            if ((utils.args.push_frame_zero == 'if_trivial' and self.automaton.nontrivial) or \
+                (utils.args.push_frame_zero == 'never')) and i == 0:
                 continue
             with LogTag('pushing-frame', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
@@ -1279,7 +1278,7 @@ class Frames(object):
         self.assert_inductive_trace()
 
     def assert_inductive_trace(self) -> None:
-        if not args.assert_inductive_trace:
+        if not utils.args.assert_inductive_trace:
             return
 
         for i, f in enumerate(self.fs[:-1]):
@@ -1387,7 +1386,7 @@ class Frames(object):
 
 
     def augment_core_for_init(self, p: Phase, diag: Diagram, core: Optional[MySet[int]]) -> None:
-        if core is None or not args.use_z3_unsat_cores:
+        if core is None or not utils.args.use_z3_unsat_cores:
             return
 
         t = self.solver.get_translator(KEY_ONE)
@@ -1427,7 +1426,7 @@ class Frames(object):
         if depth is None:
             depth = len(self)
 
-        if args.smoke_test and logger.isEnabledFor(logging.DEBUG):
+        if utils.args.smoke_test and logger.isEnabledFor(logging.DEBUG):
             logger.debug('smoke testing at depth %s...' % (depth,))
             res = check_bmc(self.solver, self.prog, e, depth)
             if res is not None:
@@ -1451,7 +1450,7 @@ class Frames(object):
     ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
         t = self.solver.get_translator(KEY_NEW, KEY_OLD)
 
-        if args.use_z3_unsat_cores:
+        if utils.args.use_z3_unsat_cores:
             core: Optional[MySet[int]] = MySet()
         else:
             core = None
@@ -1470,7 +1469,7 @@ class Frames(object):
                         continue
                     return (sat_res, pre_diag)
 
-                if args.use_z3_unsat_cores:
+                if utils.args.use_z3_unsat_cores:
                     assert core is not None
                     ret_core: Optional[MySet[int]] = MySet(sorted(core))
                 else:
@@ -1516,7 +1515,7 @@ class Frames(object):
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
-                        elif args.use_z3_unsat_cores:
+                        elif utils.args.use_z3_unsat_cores:
                             assert core is not None
                             uc = solver.unsat_core()
                             # if logger.isEnabledFor(logging.DEBUG):
@@ -1616,13 +1615,13 @@ class Frames(object):
                 self.new_frame()
 
 def get_safety(prog: Program) -> List[Expr]:
-    if args.safety is not None:
+    if utils.args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
         for inv in prog.invs():
-            if inv.name == args.safety:
+            if inv.name == utils.args.safety:
                 the_inv = inv
         if the_inv is None:
-            raise Exception('No safety invariant named %s' % args.safety)
+            raise Exception('No safety invariant named %s' % utils.args.safety)
         safety: List[Expr] = [the_inv.expr]
     else:
         safety = [inv.expr for inv in prog.invs()]
@@ -1633,7 +1632,7 @@ def get_safety(prog: Program) -> List[Expr]:
 @log_start_end_xml(logging.INFO)
 @log_start_end_time(logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
-    if args.use_z3_unsat_cores:
+    if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
 
     check_init(s, prog)
@@ -1752,12 +1751,12 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 def verify(s: Solver, prog: Program) -> None:
     a = prog.the_automaton()
     if a is None:
-        if args.automaton == 'only':
+        if utils.args.automaton == 'only':
             syntax.error(None, "--automaton='only' requires the file to declare an automaton")
-    elif args.automaton != 'no':
+    elif utils.args.automaton != 'no':
         check_automaton_full(s, prog, a)
 
-    if args.automaton != 'only':
+    if utils.args.automaton != 'only':
         check_init(s, prog)
         check_transitions(s, prog)
 
@@ -1810,7 +1809,7 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3
 def bmc(s: Solver, prog: Program) -> None:
     safety = syntax.And(*get_safety(prog))
 
-    n = args.depth
+    n = utils.args.depth
 
     logger.always_print('bmc checking the following property to depth %d' % n)
     logger.always_print('  ' + str(safety))
@@ -1957,50 +1956,49 @@ class MyFormatter(logging.Formatter):
         return str((datetime.now() - start).total_seconds())
 
 def main() -> None:
-    global args
-    args = parse_args()
+    utils.args = parse_args()
 
-    if args.log_xml:
+    if utils.args.log_xml:
         fmt = '%(message)s'
-    elif args.log_time:
+    elif utils.args.log_time:
         fmt = '%(asctime)s %(filename)s:%(lineno)d: %(message)s'
     else:
         fmt = '%(filename)s:%(lineno)d: %(message)s'
 
-    logger.setLevel(getattr(logging, args.log.upper(), None))
+    logger.setLevel(getattr(logging, utils.args.log.upper(), None))
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(MyFormatter(fmt))
     logging.root.addHandler(handler)
     # logger.addHandler(handler)
 
-    if args.key_prefix is not None:
+    if utils.args.key_prefix is not None:
         global KEY_ONE
         global KEY_NEW
         global KEY_OLD
 
-        KEY_ONE = args.key_prefix + '_' + KEY_ONE
-        KEY_NEW = args.key_prefix + '_' + KEY_NEW
-        KEY_OLD = args.key_prefix + '_' + KEY_OLD
+        KEY_ONE = utils.args.key_prefix + '_' + KEY_ONE
+        KEY_NEW = utils.args.key_prefix + '_' + KEY_NEW
+        KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
 
     with LogTag('main', lvl=logging.INFO):
         logger.always_print(' '.join(['python3'] + sys.argv))
 
 
-        logger.info('setting seed to %d' % args.seed)
-        z3.set_param('smt.random_seed', args.seed)
+        logger.info('setting seed to %d' % utils.args.seed)
+        z3.set_param('smt.random_seed', utils.args.seed)
 
-        if args.timeout is not None:
-            logger.info('setting z3 timeout to %s' % args.timeout)
-            z3.set_param('timeout', args.timeout)
+        if utils.args.timeout is not None:
+            logger.info('setting z3 timeout to %s' % utils.args.timeout)
+            z3.set_param('timeout', utils.args.timeout)
 
-        with open(args.filename) as f:
+        with open(utils.args.filename) as f:
             l = parser.get_lexer()
-            p = parser.get_parser(forbid_rebuild=args.forbid_parser_rebuild)
-            prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=args.filename)
+            p = parser.get_parser(forbid_rebuild=utils.args.forbid_parser_rebuild)
+            prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=utils.args.filename)
 
-        if args.print_program_repr:
+        if utils.args.print_program_repr:
             logger.always_print(repr(prog))
-        if args.print_program:
+        if utils.args.print_program:
             logger.always_print(str(prog))
 
         prog.resolve()
@@ -2019,7 +2017,7 @@ def main() -> None:
 
         add_derived_relation_axioms(ALL_KEYS, prog, s)
 
-        args.main(s, prog)
+        utils.args.main(s, prog)
 
         logger.info('total number of queries: %s' % s.nqueries)
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+
 from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar
 
 T = TypeVar('T')
@@ -42,3 +44,6 @@ class OrderedSet(Generic[T], Iterable[T]):
         return iter(self.l)
 
 MySet = OrderedSet
+
+args: argparse.Namespace
+
