@@ -71,40 +71,11 @@ transition recv(sender: node, n: node, next: node)
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
         (pending(N1, N2) <-> old(pending(N1, N2))))))
 
-twostate theorem [recv_alt]
 
-  forall sender: node, n: node, next: node.
-
-    (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
-    old(pending(sender, n)) &
-    (sender = n ->
-      (forall N. leader(N) <-> old(leader(N)) | N = n) &
-      (forall N1, N2.
-        !(N1 = sender & N2 = n) ->  # message may or may not be removed
-        (pending(N1, N2) <-> old(pending(N1, N2))))) &
-    (sender != n ->
-      (forall N. leader(N) <-> old(leader(N))) &
-      (le(n, sender) ->
-        (forall N1, N2.
-          !(N1 = sender & N2 = n) ->  # message may or may not be removed
-          (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next))) &
-      (!le(n, sender) ->
-        (forall N1, N2.
-          !(N1 = sender & N2 = n) ->  # message may or may not be removed
-          (pending(N1, N2) <-> old(pending(N1, N2))))))
-
-  <->
-
-    (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
-    old(pending(sender, n)) &
-    (forall N. leader(N) <-> old(leader(N)) | N = n & sender = n) &
-    (forall N1, N2.
-        !(N1 = sender & N2 = n) ->  # message may or may not be removed
-        (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next & sender != n & le(n, sender)))
-
-invariant pending(S, D) & btw(S, N, D) -> le(N, S)
 safety [leader_max] leader(L) -> le(N, L)
+invariant pending(S, D) & btw(S, N, D) -> le(N, S)
 invariant pending(L, L) -> le(N, L)
+
 
 
 immutable constant qn1: node
