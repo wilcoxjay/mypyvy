@@ -264,8 +264,8 @@ automaton {
     invariant !modified(C)
     invariant !exclusive(C)
     invariant !(invalid(C) & shared(C))
-    invariant invalid(C) | shared(C)
-    invariant !bus_in_use
+    sketch invariant invalid(C) | shared(C)
+    sketch invariant !bus_in_use
     invariant !proc_read(C)
     invariant !proc_write(C,V)
     invariant !bus_read(C)
@@ -282,14 +282,14 @@ automaton {
     invariant !modified(C)
     invariant !exclusive(C)
     invariant !(invalid(C) & shared(C))
-    invariant invalid(C) | shared(C)
+    sketch invariant invalid(C) | shared(C)
 
     invariant bus_in_use
     invariant !bus_read_for_ownership(C)
     invariant !bus_upgrade(C)
     invariant !proc_write(C, V)
 
-    invariant proc_read(C1) & proc_read(C2) -> C1 = C2
+    sketch invariant proc_read(C1) & proc_read(C2) -> C1 = C2
     invariant bus_transfer(V) -> memory = V
 
     invariant proc_read(C1) & !bus_read(C2) & C1 != C2 & shared(C2) -> bus_transfer(cache(C2))
@@ -302,7 +302,7 @@ automaton {
     invariant !modified(C)
     invariant !exclusive(C)
     invariant !(invalid(C) & shared(C))
-    invariant invalid(C) | shared(C)
+    sketch invariant invalid(C) | shared(C)
 
     invariant proc_write(C, V) -> invalid(C)
     invariant bus_in_use
@@ -310,7 +310,7 @@ automaton {
     invariant !bus_upgrade(C)
     invariant !proc_read(C)
 
-    invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
+    sketch invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
 
     invariant proc_write(C1, V) & !bus_read_for_ownership(C2) & C1 != C2 -> invalid(C2)
 
@@ -322,7 +322,7 @@ automaton {
     invariant !modified(C)
     invariant !exclusive(C)
     invariant !(invalid(C) & shared(C))
-    invariant invalid(C) | shared(C)
+    sketch invariant invalid(C) | shared(C)
 
     invariant proc_write(C, V) -> !bus_upgrade(C)
     invariant proc_write(C, V) -> shared(C)
@@ -333,7 +333,7 @@ automaton {
     invariant !proc_read(C)
     invariant !bus_transfer(V)
 
-    invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
+    sketch invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
 
     invariant proc_write(C1, V) & !bus_upgrade(C2) & C1 != C2 -> invalid(C2)
 
@@ -342,13 +342,13 @@ automaton {
     transition issue_proc_write_invalid -> phase modified_bus_read_for_ownership
     transition evict_modified -> phase shared
 
-    invariant modified(C1) & modified(C2) -> C1 = C2
+    sketch invariant modified(C1) & modified(C2) -> C1 = C2
     invariant !exclusive(C)
     invariant !shared(C)
     invariant modified(C) | invalid(C)
     invariant !(modified(C) & invalid(C))
 
-    invariant !bus_in_use
+    sketch invariant !bus_in_use
     invariant !proc_read(C)
     invariant !proc_write(C,V)
     invariant !bus_read(C)
@@ -363,7 +363,7 @@ automaton {
     transition complete_proc_read_invalid_shared -> phase shared
     transition complete_proc_read_invalid_exclusive -> phase exclusive
 
-    invariant modified(C1) & modified(C2) -> C1 = C2
+    sketch invariant modified(C1) & modified(C2) -> C1 = C2
     invariant !exclusive(C)
     invariant !shared(C)
     invariant modified(C) | invalid(C)
@@ -374,7 +374,7 @@ automaton {
     invariant !bus_upgrade(C)
     invariant !proc_write(C, V)
 
-    invariant proc_read(C1) & proc_read(C2) -> C1 = C2
+    sketch invariant proc_read(C1) & proc_read(C2) -> C1 = C2
     invariant !bus_transfer(V)
 
     invariant !bus_read(C) -> invalid(C)
@@ -385,7 +385,7 @@ automaton {
     transition do_bus_read_for_ownership_invalid -> self
     transition complete_proc_write_invalid -> phase modified
 
-    invariant modified(C1) & modified(C2) -> C1 = C2
+    sketch invariant modified(C1) & modified(C2) -> C1 = C2
     invariant !exclusive(C)
     invariant !shared(C)
     invariant modified(C) | invalid(C)
@@ -397,7 +397,7 @@ automaton {
     invariant !bus_upgrade(C)
     invariant !proc_read(C)
 
-    invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
+    sketch invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
     invariant !bus_read_for_ownership(C) -> invalid(C)
 
   phase exclusive
@@ -406,13 +406,13 @@ automaton {
     transition evict_exclusive_or_shared -> phase shared
     transition proc_write_exclusive -> phase modified
 
-    invariant exclusive(C1) & exclusive(C2) -> C1 = C2
+    sketch invariant exclusive(C1) & exclusive(C2) -> C1 = C2
     invariant !modified(C)
     invariant !shared(C)
     invariant exclusive(C) | invalid(C)
     invariant !(exclusive(C) & invalid(C))
 
-    invariant !bus_in_use
+    sketch invariant !bus_in_use
     invariant !proc_read(C)
     invariant !proc_write(C,V)
     invariant !bus_read(C)
@@ -427,7 +427,7 @@ automaton {
     transition complete_proc_read_invalid_shared -> phase shared
     transition complete_proc_read_invalid_exclusive -> phase exclusive
 
-    invariant exclusive(C1) & exclusive(C2) -> C1 = C2
+    sketch invariant exclusive(C1) & exclusive(C2) -> C1 = C2
     invariant !modified(C)
     invariant !shared(C)
     invariant exclusive(C) | invalid(C)
@@ -438,7 +438,7 @@ automaton {
     invariant !bus_upgrade(C)
     invariant !proc_write(C, V)
 
-    invariant proc_read(C1) & proc_read(C2) -> C1 = C2
+    sketch invariant proc_read(C1) & proc_read(C2) -> C1 = C2
     invariant bus_transfer(V) -> memory = V
 
     invariant !bus_transfer(V)
@@ -451,7 +451,7 @@ automaton {
     transition do_bus_read_for_ownership_invalid -> self
     transition complete_proc_write_invalid -> phase modified
 
-    invariant exclusive(C1) & exclusive(C2) -> C1 = C2
+    sketch invariant exclusive(C1) & exclusive(C2) -> C1 = C2
     invariant !modified(C)
     invariant !shared(C)
     invariant exclusive(C) | invalid(C)
@@ -463,6 +463,6 @@ automaton {
     invariant !bus_upgrade(C)
     invariant !proc_read(C)
 
-    invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
+    sketch invariant proc_write(C1, V1) & proc_write(C2, V2) -> C1 = C2 & V1 = V2
     invariant !bus_read_for_ownership(C) -> invalid(C)
 }
