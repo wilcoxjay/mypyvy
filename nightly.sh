@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 
-LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-phase-consensus-long-timeout
+LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-phase-lockserv-multi-no-disabled
 echo "$LOGDIR"
-time python3 benchmark.py -n 16 -j 16 --benchmark test/consensus.pyv --timeout 3600 --keep-logs "$LOGDIR" --args --automaton --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
+time python3 benchmark.py -n 16 -j 16 --benchmark test/lockserv_multi_no_disabled.pyv  --timeout 3600 --keep-logs "$LOGDIR" --args --automaton --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
 
 
 # for AUTOMATON in '' --automaton '--automaton --sketch'; do
