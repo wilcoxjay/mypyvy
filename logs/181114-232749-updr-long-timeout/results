@@ -1,0 +1,29 @@
+python3 benchmark.py -n 16 -j 16 --benchmark test/sharded-kv-retransmit.pyv test/cache_one.pyv --timeout 14400 --keep-logs logs/181114-232749-updr-long-timeout --args --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
+dump_version_info: dumping information about the current commit and working directory
+c1b9fee64aca0fbf3526194a8da2729dc03be46b
+On branch master
+Your branch is ahead of 'origin/master' by 1 commit.
+  (use "git push" to publish your local commits)
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+
+	logs/181114-232749-updr-long-timeout/
+
+nothing added to commit but untracked files present (use "git add" to track)
+dump_version_info: done.
+--------------------------------------------------------------------------------
+Benchmark('test/sharded-kv-retransmit.pyv')
+[(7189.282316, 94794), (8145.938489, 102683), None, (2542.759431, 54482), (1640.054872, 54989), (8464.820716, 90902), (3719.84014, 73731), None, (4042.171927, 78045), (11707.032396, 116986), (12780.131134, 137670), (4654.247209, 78118), (2027.751629, 45993), None, None, None]
+avg_time: 6083.093659909091
+stdev_time: 3848.9335373396
+avg_nqueries: 84399.36363636363
+stdev_nqueries: 27951.72270996093
+# timeouts: 5
+Benchmark('test/cache_one.pyv')
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+avg_time: 0.0
+stdev_time: 0.0
+avg_nqueries: 0.0
+stdev_nqueries: 0.0
+# timeouts: 16
