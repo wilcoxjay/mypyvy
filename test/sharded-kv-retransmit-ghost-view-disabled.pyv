@@ -84,53 +84,10 @@ transition put(n: node, k: key, v: value)
   (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) & 
   (table(n, k, V) <-> V = v)
 
-safety [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
-
-invariant owner(N1, K) & owner(N2, K) -> N1 = N2
-invariant table(N, K, V) -> owner(N, K)
-
-invariant !(transfer_msg(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S) & owner(N, K))
-invariant !(unacked(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S) & owner(N, K))
-
-invariant
-  transfer_msg(SRC1, DST1, K, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) &
-  transfer_msg(SRC2, DST2, K, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) ->
-  SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
-
-invariant
-  unacked(SRC1, DST1, K, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) &
-  unacked(SRC2, DST2, K, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) ->
-  SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
-
-invariant
-  unacked(SRC1, DST1, K, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) &
-  transfer_msg(SRC2, DST2, K, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) ->
-  SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
-
-
-# invariant [keys_never_lost]
-#     forall K.
-#         (exists N. owner(N, K)) |
-#         (exists SRC, DST, V, S. unacked(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S))
-# invariant ack_msg(SRC, DST, S) -> seqnum_recvd(DST, SRC, S)
-# 
-# invariant transfer_msg(SRC, DST1, K1, V1, S) & transfer_msg(SRC, DST2, K2, V2, S) ->
-#     DST1 = DST2 & K1 = K2 & V1 = V2
-# 
-# invariant unacked(SRC, DST1, K1, V1, S) & unacked(SRC, DST2, K2, V2, S) ->
-#     DST1 = DST2 & K1 = K2 & V1 = V2
-# 
-# invariant transfer_msg(SRC, DST1, K1, V1, S) & unacked(SRC, DST2, K2, V2, S) ->
-#     DST1 = DST2 & K1 = K2 & V1 = V2
-# 
-# 
-# 
-# invariant seqnum_recvd(DST, SRC, S) -> seqnum_sent(SRC, S)
-# invariant transfer_msg(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
-# invariant unacked(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
 
 immutable constant qk: key
 
+safety owned(qk) | transferring(qk)
 safety table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
 
 invariant owned(qk) -> (owner(N1, qk) & owner(N2, qk) -> N1 = N2)
