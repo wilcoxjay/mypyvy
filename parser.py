@@ -93,7 +93,9 @@ def t_newline(t: ply.lex.LexToken) -> None:
 t_ignore  = ' \t'
 
 def t_error(t: Any) -> None:
-    pass
+    print('error: %s: lexical error near %s' %
+          ('%s:%s:%s' % (t.filename, t.lineno, t.col), t.value[0]))
+    t.lexer.skip(1)
 
 lexer = None
 def get_lexer(forbid_rebuild: bool=False) -> ply.lex.Lexer:
