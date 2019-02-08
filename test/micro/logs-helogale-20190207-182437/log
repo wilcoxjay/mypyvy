@@ -1,0 +1,264 @@
++ TAIL_PID=77631
++ disown 77631
++ cp micro.py logs-helogale-20190207-182437
++ tail -f logs-helogale-20190207-182437/log
++ pushd logs-helogale-20190207-182437
+~/build/mypyvy/test/micro/logs-helogale-20190207-182437 ~/build/mypyvy/test/micro
++ OPTIONS='--log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex'
++ (( i = 2  ))
++ (( i <= 10  ))
++ echo 2
+2
++ python3 micro.py --mode=short 2
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.2.pvy
+
+real	0m0.872s
+user	0m1.008s
+sys	0m0.150s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.2.pvy
+
+real	0m1.209s
+user	0m1.346s
+sys	0m0.150s
++ python3 micro.py --mode=long 2
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.2.pvy
+
+real	0m1.246s
+user	0m1.379s
+sys	0m0.154s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 3
+3
++ python3 micro.py --mode=short 3
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.3.pvy
+
+real	0m1.650s
+user	0m1.790s
+sys	0m0.147s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.3.pvy
+
+real	0m3.314s
+user	0m3.442s
+sys	0m0.157s
++ python3 micro.py --mode=long 3
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.3.pvy
+
+real	0m2.812s
+user	0m2.919s
+sys	0m0.166s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 4
+4
++ python3 micro.py --mode=short 4
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.4.pvy
+
+real	0m3.495s
+user	0m3.616s
+sys	0m0.160s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.4.pvy
+
+real	0m8.270s
+user	0m8.393s
+sys	0m0.156s
++ python3 micro.py --mode=long 4
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.4.pvy
+
+real	0m5.883s
+user	0m6.002s
+sys	0m0.160s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 5
+5
++ python3 micro.py --mode=short 5
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.5.pvy
+
+real	0m6.936s
+user	0m7.067s
+sys	0m0.157s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.5.pvy
+
+real	0m19.146s
+user	0m19.228s
+sys	0m0.182s
++ python3 micro.py --mode=long 5
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.5.pvy
+
+real	0m12.063s
+user	0m12.154s
+sys	0m0.172s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 6
+6
++ python3 micro.py --mode=short 6
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.6.pvy
+
+real	0m12.951s
+user	0m13.044s
+sys	0m0.187s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.6.pvy
+
+real	0m38.784s
+user	0m38.841s
+sys	0m0.185s
++ python3 micro.py --mode=long 6
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.6.pvy
+
+real	0m21.957s
+user	0m22.061s
+sys	0m0.167s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 7
+7
++ python3 micro.py --mode=short 7
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.7.pvy
+
+real	0m23.109s
+user	0m23.214s
+sys	0m0.167s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.7.pvy
+
+real	1m13.533s
+user	1m13.570s
+sys	0m0.210s
++ python3 micro.py --mode=long 7
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.7.pvy
+
+real	0m38.823s
+user	0m38.845s
+sys	0m0.206s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 8
+8
++ python3 micro.py --mode=short 8
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.8.pvy
+
+real	0m39.049s
+user	0m39.066s
+sys	0m0.207s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.8.pvy
+
+real	2m11.849s
+user	2m11.674s
+sys	0m0.316s
++ python3 micro.py --mode=long 8
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.8.pvy
+
+real	1m3.908s
+user	1m3.844s
+sys	0m0.252s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 9
+9
++ python3 micro.py --mode=short 9
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.9.pvy
+
+real	1m2.554s
+user	1m2.547s
+sys	0m0.220s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.9.pvy
+
+real	3m42.962s
+user	3m42.450s
+sys	0m0.473s
++ python3 micro.py --mode=long 9
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.9.pvy
+
+real	1m40.933s
+user	1m40.733s
+sys	0m0.317s
++ (( i++  ))
++ (( i <= 10  ))
++ echo 10
+10
++ python3 micro.py --mode=short 10
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex micro.10.pvy
+
+real	1m40.901s
+user	1m40.610s
+sys	0m0.356s
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.10.pvy
+
+real	5m49.520s
+user	5m48.555s
+sys	0m0.629s
++ python3 micro.py --mode=long 10
++ mypyvy updr --log=info --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex --automaton micro.10.pvy
+
+real	2m30.331s
+user	2m30.223s
+sys	0m0.287s
++ (( i++  ))
++ (( i <= 10  ))
++ popd
+~/build/mypyvy/test/micro
++ ./analyze.sh logs-helogale-20190207-182437
++ LOGDIR=logs-helogale-20190207-182437
++ pushd logs-helogale-20190207-182437
+~/build/mypyvy/test/micro/logs-helogale-20190207-182437 ~/build/mypyvy/test/micro
++ go updr
++ PATTERN=updr
++ wc -l log.10.updr log.2.updr log.3.updr log.4.updr log.5.updr log.6.updr log.7.updr log.8.updr log.9.updr
+    4714 log.10.updr
+     162 log.2.updr
+     325 log.3.updr
+     572 log.4.updr
+     919 log.5.updr
+    1382 log.6.updr
+    1977 log.7.updr
+    2720 log.8.updr
+    3627 log.9.updr
+   16398 total
++ egrep -Hni 'updr ended' log.10.updr log.2.updr log.3.updr log.4.updr log.5.updr log.6.updr log.7.updr log.8.updr log.9.updr
++ sed -e 's/^log\.\([0-9]*\)[^ ]*INFO/\1 INFO/' -e 's/INFO.*took //' -e 's/ seconds)//'
++ sort -n
++ awk '{printf "%s,%s\n", $1, $2}'
++ go automaton_short
++ PATTERN=automaton_short
++ wc -l log.10.automaton_short log.2.automaton_short log.3.automaton_short log.4.automaton_short log.5.automaton_short log.6.automaton_short log.7.automaton_short log.8.automaton_short log.9.automaton_short
+   11184 log.10.automaton_short
+     332 log.2.automaton_short
+     693 log.3.automaton_short
+    1248 log.4.automaton_short
+    2047 log.5.automaton_short
+    3134 log.6.automaton_short
+    4553 log.7.automaton_short
+    6348 log.8.automaton_short
+    8563 log.9.automaton_short
+   38102 total
++ egrep -Hni 'updr ended' log.10.automaton_short log.2.automaton_short log.3.automaton_short log.4.automaton_short log.5.automaton_short log.6.automaton_short log.7.automaton_short log.8.automaton_short log.9.automaton_short
++ sed -e 's/^log\.\([0-9]*\)[^ ]*INFO/\1 INFO/' -e 's/INFO.*took //' -e 's/ seconds)//'
++ sort -n
++ awk '{printf "%s,%s\n", $1, $2}'
++ go automaton_long
++ PATTERN=automaton_long
++ wc -l log.10.automaton_long log.2.automaton_long log.3.automaton_long log.4.automaton_long log.5.automaton_long log.6.automaton_long log.7.automaton_long log.8.automaton_long log.9.automaton_long
+   31678 log.10.automaton_long
+     332 log.2.automaton_long
+     869 log.3.automaton_long
+    1865 log.4.automaton_long
+    3525 log.5.automaton_long
+    6094 log.6.automaton_long
+    9857 log.7.automaton_long
+   15139 log.8.automaton_long
+   22305 log.9.automaton_long
+   91664 total
++ egrep -Hni 'updr ended' log.10.automaton_long log.2.automaton_long log.3.automaton_long log.4.automaton_long log.5.automaton_long log.6.automaton_long log.7.automaton_long log.8.automaton_long log.9.automaton_long
++ sed -e 's/^log\.\([0-9]*\)[^ ]*INFO/\1 INFO/' -e 's/INFO.*took //' -e 's/ seconds)//'
++ sort -n
++ awk '{printf "%s,%s\n", $1, $2}'
++ popd
+~/build/mypyvy/test/micro
++ python3 plot.py logs-helogale-20190207-182437
++ pushd logs-helogale-20190207-182437
+~/build/mypyvy/test/micro/logs-helogale-20190207-182437 ~/build/mypyvy/test/micro
++ pdflatex plot
++ popd
+~/build/mypyvy/test/micro
++ kill -9 77631
