@@ -166,6 +166,7 @@ class Z3Translator(object):
                 app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
                 translated_app = R(*app_translated_args)
                 if d.is_derived():
+                    assert isinstance(d, RelationDecl)
                     translated_app = self.translate_derived(d, app_translated_args, old)
                 self.expr_cache[t] = translated_app
             elif isinstance(expr, QuantifierExpr):
@@ -1106,7 +1107,7 @@ class RelationDecl(Decl):
         return self.derived_axiom is not None
 
     # TODO: rename
-    def substitute_derived(self, args: Sequence[z3.ExprRef]) -> Tuple[List[Tuple[Expr, z3.ExprRef]], Expr]:
+    def substitute_derived(self, args: Sequence[z3.ExprRef]) -> Tuple[List[Tuple[Expr, z3.ExprRef]], Expr, Binder]:
         assert isinstance(self.derived_axiom, QuantifierExpr) and self.derived_axiom.quant == 'FORALL', self.derived_axiom
         body = self.derived_axiom.body
         assert isinstance(body, BinaryExpr) and body.op == 'IFF', body
