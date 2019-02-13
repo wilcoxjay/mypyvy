@@ -1,7 +1,6 @@
 from collections import OrderedDict
 from syntax import AutomatonDecl, PhaseDecl, PhaseTransitionDecl, Expr, TrueExpr
-from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
+from typing import List, Optional, Dict, Sequence
 from utils import MySet
 
 class Phase(object):

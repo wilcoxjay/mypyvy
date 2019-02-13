@@ -10,10 +10,9 @@ import functools
 import io
 import itertools
 import logging
-import networkx  # type: ignore
 import sys
 from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, overload, Generic, Iterator, cast
+    Dict, TypeVar, Sequence, Iterator, cast
 import xml
 import xml.sax
 import xml.sax.saxutils
@@ -24,7 +23,7 @@ import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
 import utils
-from utils import MySet, OrderedSet
+from utils import MySet
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
@@ -1135,14 +1134,13 @@ class Frames(object):
         self.assert_inductive_trace()
 
         frame_no = len(self.fs) - 1
-        f = self.fs[-1]
 
         while True:
             with LogTag('establish-safety-attempt'):
                 res = self._get_some_cex_to_safety()
 
                 if res is None:
-                    return
+                    break
 
                 (violating, diag) = res
                 self.block(diag, frame_no, violating, [(None, diag)], True)
@@ -1225,7 +1223,6 @@ class Frames(object):
 
     def push_conjunct(self, frame_no: int, c: Expr, p: Phase, frame_old_count: Optional[int]=None) -> None:
         is_safety = c in phase_safety(p)
-        conjunct_old_count = self.counter
 
         f = self.fs[frame_no]
         while True:
@@ -1326,9 +1323,11 @@ class Frames(object):
             diag: Diagram,
             j: int,
             p: Phase,
-            trace: List[Tuple[Optional[PhaseTransition],Union[Diagram, Expr]]]=[],
+            trace: Optional[List[Tuple[Optional[PhaseTransition],Union[Diagram, Expr]]]]=None,
             safety_goal: bool=True
     ) -> Union[Blocked, CexFound]:
+        if trace is None:
+            trace = []
         if j == 0 or (j == 1 and self.valid_in_initial_frame(self.solver, p, diag) is not None):
             if safety_goal:
                 logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') + str(diag) for t, diag in trace))
@@ -1338,8 +1337,6 @@ class Frames(object):
                     logger.debug('failed to block diagram')
                     # logger.debug(str(diag))
                 return CexFound()
-
-        old_count = self.counter
 
         # print fs
         while True:
@@ -1554,8 +1551,6 @@ class Frames(object):
     ) -> Optional[Tuple[Phase, Tuple[z3.ModelRef, PhaseTransition]]]:
         if solver is None:
             solver = self.solver
-        t = solver.get_translator(KEY_NEW, KEY_OLD)
-
         for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
             logger.debug("check transition from %s by %s" % (src.name(), str(list(transitions))))
 

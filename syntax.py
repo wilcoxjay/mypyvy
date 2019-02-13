@@ -11,7 +11,6 @@ from typing_extensions import Protocol
 import utils
 import z3
 
-import logging
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.DEBUG)
 
@@ -210,10 +209,9 @@ class Z3Translator(object):
 
     def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
         frame = []
-        T = Iterator[Union[RelationDecl, ConstantDecl, FunctionDecl]]
-        R: T = iter(self.scope.relations.values())
-        C: T = iter(self.scope.constants.values())
-        F: T = iter(self.scope.functions.values())
+        R: Iterator[StateDecl] = iter(self.scope.relations.values())
+        C: Iterator[StateDecl] = iter(self.scope.constants.values())
+        F: Iterator[StateDecl] = iter(self.scope.functions.values())
         for d in itertools.chain(R, C, F):
             if not d.mutable or (isinstance(d, RelationDecl) and d.derived_axiom is not None) or any(mc.name == d.name for mc in mods):
                 continue
@@ -1640,6 +1638,7 @@ class Scope(Generic[B]):
         self.pop()
         assert n == len(self.stack)
 
+StateDecl = Union[RelationDecl, ConstantDecl, FunctionDecl]
 
 class Program(object):
     def __init__(self, decls: List[Decl]) -> None:
@@ -1681,7 +1680,7 @@ class Program(object):
             if isinstance(d, TheoremDecl):
                 yield d
 
-    def relations_constants_and_functions(self) -> Iterator[Union[RelationDecl, ConstantDecl, FunctionDecl]]:
+    def relations_constants_and_functions(self) -> Iterator[StateDecl]:
         for d in self.decls:
             if isinstance(d, RelationDecl) or \
                isinstance(d, ConstantDecl) or \

@@ -1,5 +1,4 @@
 import argparse
-import datetime
 import os
 import os.path
 import queue
