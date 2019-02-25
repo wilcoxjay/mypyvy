@@ -164,9 +164,6 @@ class Z3Translator(object):
                 assert isinstance(R, z3.FuncDeclRef)
                 app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
                 translated_app = R(*app_translated_args)
-                if d.is_derived():
-                    assert isinstance(d, RelationDecl)
-                    translated_app = self.translate_derived(d, app_translated_args, old)
                 self.expr_cache[t] = translated_app
             elif isinstance(expr, QuantifierExpr):
                 bs = self.bind(expr.binder)
@@ -196,16 +193,6 @@ class Z3Translator(object):
 
         return self.expr_cache[t]
 
-    def translate_derived(self, d: RelationDecl, z3_apps: Sequence[z3.ExprRef], old: bool) -> z3.ExprRef:
-        subst_pairs, rel_axiom, binder = d.substitute_derived(z3_apps)
-        # TODO: handle vocabulary conflicts wrt to the entire formula related to quantified variables
-        bs = self.bind(binder)
-        with self.scope.in_scope(binder, bs):
-            rel_axiom_translated = self.translate_expr(rel_axiom, old)
-            tranlsted_subst_pairs = [(self.translate_expr(formal_param, old), actual_param) for
-                                     (formal_param, actual_param) in subst_pairs]
-        translated_app = z3.substitute(rel_axiom_translated, *tranlsted_subst_pairs)
-        return translated_app
 
     def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
         frame = []
@@ -213,7 +200,7 @@ class Z3Translator(object):
         C: Iterator[StateDecl] = iter(self.scope.constants.values())
         F: Iterator[StateDecl] = iter(self.scope.functions.values())
         for d in itertools.chain(R, C, F):
-            if not d.mutable or (isinstance(d, RelationDecl) and d.derived_axiom is not None) or any(mc.name == d.name for mc in mods):
+            if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or any(mc.name == d.name for mc in mods):
                 continue
 
             if isinstance(d, ConstantDecl) or len(d.arity) == 0:
@@ -1045,11 +1032,6 @@ class FunctionDecl(Decl):
 
             return self.immut_z3
 
-    def is_derived(self) -> bool:
-        return False
-
-    def substitute_derived(self, args: Sequence[z3.ExprRef]) -> z3.ExprRef:
-        raise Exception("Derived functions not supported")
 
 class RelationDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool, derived: Optional[Expr]=None) -> None:
@@ -1103,20 +1085,6 @@ class RelationDecl(Decl):
 
     def is_derived(self) -> bool:
         return self.derived_axiom is not None
-
-    # TODO: rename
-    def substitute_derived(self, args: Sequence[z3.ExprRef]) -> Tuple[List[Tuple[Expr, z3.ExprRef]], Expr, Binder]:
-        assert isinstance(self.derived_axiom, QuantifierExpr) and self.derived_axiom.quant == 'FORALL', self.derived_axiom
-        body = self.derived_axiom.body
-        assert isinstance(body, BinaryExpr) and body.op == 'IFF', body
-        rel_def = body.arg1
-        rel_axiom = body.arg2
-        assert isinstance(rel_def, AppExpr)
-        assert rel_def.callee == self.name
-        assert all(isinstance(applied, Id) for applied in rel_def.args)
-
-        subst_map = list(zip(rel_def.args, args))
-        return subst_map, rel_axiom, self.derived_axiom.binder
 
 
 

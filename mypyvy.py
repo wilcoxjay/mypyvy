@@ -839,25 +839,18 @@ class Model(object):
 
         return '\n'.join(l)
 
-    def _derived_relations_z3_decls(self):
-        res = []
-        for r in self.prog.derived_relations():
-            for k in [self.key, self.key_old]:
-                if k is None:
-                    continue
-                res.append(r.to_z3(k))
-        return res
 
     def _eval(self, expr):
         ans = self.z3model.eval(expr, model_completion=True)
         if not (ans == True or ans == False):
             # when expr is quantified sometimes Z3 retains the quantifier, and ans is an expression.
+            raise Exception("Evaluating quantified expressions in model not supported")
+            # potential workaround commented out here, currently just for a single universally quantified variable
             # try to circumvent this by evaluating the quantified expression directly (by enumerating
             #  domain elements).
-            # TODO: currently works for single universally quantified variable only
-            assert isinstance(ans, z3.QuantifierRef) and ans.is_forall() and ans.num_vars() == 1, ans
-            ans = all(self._eval(z3.substitute_vars(ans.body(), el))
-                      for el in self.z3model.get_universe(ans.var_sort(0)))
+            # assert isinstance(ans, z3.QuantifierRef) and ans.is_forall() and ans.num_vars() == 1, ans
+            # ans = all(self._eval(z3.substitute_vars(ans.body(), el))
+            #          for el in self.z3model.get_universe(ans.var_sort(0)))
         assert ans == True or ans == False, (expr, ans)
         return ans
 
@@ -895,8 +888,7 @@ class Model(object):
             self.old_func_interps: FT = OrderedDict()
 
         model_decls = self.z3model.decls()
-        derived_decls = self._derived_relations_z3_decls()
-        all_decls = model_decls + derived_decls
+        all_decls = model_decls
         for z3decl in sorted(all_decls, key=str):
             z3name = str(z3decl)
             if z3name.startswith(self.key):
@@ -932,12 +924,7 @@ class Model(object):
                             # It's not entirely clear that this is an ok thing to do.
                             g = itertools.product(*domains)
                             for row in g:
-                                if not decl.is_derived():
-                                    relation_expr = z3decl(*row)
-                                else:
-                                    translator = self.solver.get_translator(self.key, self.key_old)
-                                    is_old_decl = self.key_old is not None and z3name.startswith(self.key_old)
-                                    relation_expr = translator.translate_derived(decl, row, old=is_old_decl)
+                                relation_expr = z3decl(*row)
                                 ans = self._eval(relation_expr)
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
@@ -1992,6 +1979,9 @@ def main() -> None:
         logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)
 
+        logger.info('enable z3 macro finder')
+        z3.set_param('smt.macro_finder', True)
+
         if utils.args.timeout is not None:
             logger.info('setting z3 timeout to %s' % utils.args.timeout)
             z3.set_param('timeout', utils.args.timeout)
@@ -2028,7 +2018,6 @@ def main() -> None:
 
 
 def add_derived_relation_axioms(vocab_keys: Sequence[str], prog: Program, s: Solver) -> None:
-    # TODO: I'm so sorry
     for r in prog.derived_relations():
         for k in vocab_keys:
             t = s.get_translator(k)
