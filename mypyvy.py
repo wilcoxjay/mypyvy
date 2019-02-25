@@ -925,7 +925,6 @@ class Model(object):
                             g = itertools.product(*domains)
                             for row in g:
                                 relation_expr = z3decl(*row)
-                                print(relation_expr)
                                 ans = self._eval(relation_expr)
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
