@@ -840,7 +840,7 @@ class Model(object):
         return '\n'.join(l)
 
 
-    def _eval(self, expr):
+    def _eval(self, expr: z3.ExprRef) -> z3.ExprRef:
         ans = self.z3model.eval(expr, model_completion=True)
         if not (ans == True or ans == False):
             # when expr is quantified sometimes Z3 retains the quantifier, and ans is an expression.
@@ -849,8 +849,8 @@ class Model(object):
             #  domain elements).
             # TODO: currently just for a single universally quantified variable
             assert isinstance(ans, z3.QuantifierRef) and ans.is_forall() and ans.num_vars() == 1, ans
-            ans = all(self._eval(z3.substitute_vars(ans.body(), el))
-                     for el in self.z3model.get_universe(ans.var_sort(0)))
+            ans = z3.BoolVal(all(self._eval(z3.substitute_vars(ans.body(), el))
+                                 for el in self.z3model.get_universe(ans.var_sort(0))))
         assert ans == True or ans == False, (expr, ans)
         return ans
 
