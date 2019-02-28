@@ -23,10 +23,8 @@ mutable relation vote(node, round, value)
 mutable relation decision(round, value)
 
 mutable function decision_quorum(round, value): quorum
-derived relation choosable(round, value, quorum):
-    (choosable(R, V, Q) <-> ((forall N. (member(N, Q) -> (!left_round(N, R) | vote(N, R, V))))))
 
-mutable function highest_proposal(value): round
+# mutable function highest_proposal(value): round
 
 init !one_a(R)
 init !one_b(N, R)
@@ -35,7 +33,7 @@ init !proposal(R, V)
 init !vote(N, R, V)
 init !decision(R, V)
 # init choosable(R, V, Q)
-init highest_proposal(V) = none
+# init highest_proposal(V) = none
 
 transition send_1a(r: round)
   modifies one_a
@@ -51,7 +49,7 @@ transition join_round(n: node, r: round)
   (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
 
 transition propose(r: round, q: quorum, maxr: round, v: value)
-  modifies proposal, highest_proposal
+  modifies proposal #, highest_proposal
   r != none &
   (forall V. !old(proposal(r, V))) &
   (forall N. member(N, q) -> old(one_b(N, r))) &
@@ -59,11 +57,11 @@ transition propose(r: round, q: quorum, maxr: round, v: value)
    (maxr != none &
     (exists N. member(N, q) & !le(r,maxr) & old(vote(N,maxr,v))) &
     (forall N,MAXR,V. (member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V))) -> le(MAXR,maxr)))) &
-  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v)) &
+  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v)) # &
   # highest proposal update
-  (forall V. V != v -> highest_proposal(V) = old(highest_proposal(V))) & 
-  (!le(r, old(highest_proposal(v))) | old(highest_proposal(v)=none) -> highest_proposal(v)=r) & 
-  (le(r, old(highest_proposal(v))) & old(highest_proposal(v)!=none)-> highest_proposal(v) = old(highest_proposal(v)))
+  #(forall V. V != v -> highest_proposal(V) = old(highest_proposal(V))) & 
+  #(!le(r, old(highest_proposal(v))) | old(highest_proposal(v)=none) -> highest_proposal(v)=r) & 
+  #(le(r, old(highest_proposal(v))) & old(highest_proposal(v)!=none)-> highest_proposal(v) = old(highest_proposal(v)))
 
 transition cast_vote(n: node, v: value, r: round)
   modifies vote
@@ -100,12 +98,12 @@ invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
 #  choosable(R, V, Q) <->
 #  (forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V))
 
-safety
-  forall R1, V1, R2, V2, Q.
-    choosable(R1, V1, Q) ->
-    !le(R2, R1) &
-    proposal(R2, V2) ->
-    V1 = V2
+#invariant
+#  forall R1, V1, R2, V2, Q.
+#    choosable(R1, V1, Q) ->
+#    !le(R2, R1) &
+#    proposal(R2, V2) ->
+#    V1 = V2
 
 
 invariant
@@ -118,76 +116,3 @@ invariant
 #     decision(R, V) ->
 #     exists Q.
 #       forall N. member(N, Q) -> vote(N, R, V)
-
-
-immutable constant qv1: value
-immutable constant qv2: value
-axiom qv1 != qv2
-
-automaton {
-  init phase beginning
-
-  global
-    safety !(decision(R1,qv1) & decision(R2,qv2))
-
-    transition send_1a -> self
-    transition join_round -> self
-    transition propose -> self assume v != qv1 & v != qv2
-    transition cast_vote -> self assume v != qv1 & v != qv2
-    transition decide -> self assume v != qv1 & v != qv2
-
-    # full characterizations
-    # invariant proposal(R,V) -> proposed(R)
-    invariant decision(R,V) & member(N, decision_quorum(R, V)) -> vote(N,R,V)
-    invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
-    invariant vote(N,R,V) -> proposal(R,V)
-    invariant !proposal(none,V)
-    invariant highest_proposal(V)!=none -> proposal(highest_proposal(V), V)
-    invariant highest_proposal(V)=none -> !proposal(R, V)
-    invariant proposal(R,V) -> le(R, highest_proposal(V))
-    invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
-
-
-  phase beginning
-    transition propose -> phase V1P assume v = qv1
-    transition propose -> phase V2P assume v = qv2
-
-    invariant !proposal(R,qv1)
-    invariant !proposal(R,qv2)
-
-  phase V1P
-    transition propose -> self assume v = qv1
-    transition propose -> phase V2P assume v = qv2 & !le(r, highest_proposal(qv1))
-    transition propose -> self assume v = qv2 & le(r, highest_proposal(qv1))
-    transition cast_vote -> self
-    transition decide -> self assume v = qv1 # but impossible for v = qv2
-
-    # partial characterizations
-    sketch invariant proposal(R, qv2) -> le(R, highest_proposal(qv1))
-    sketch invariant proposal(highest_proposal(qv1), qv1)
-
-    sketch invariant !le(highest_proposal(qv1), R) -> !choosable(R, qv2, Q)
-
-    # full characterizations
-    invariant highest_proposal(qv2)!=none & !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
-    invariant !le(highest_proposal(qv1), R) -> !choosable(R, qv2, Q)
-    invariant !(decision(R1,qv1) & decision(R2,qv2))
-
-  phase V2P
-    transition propose -> self assume v = qv2
-    transition propose -> phase V1P assume v = qv1 & !le(r, highest_proposal(qv2))
-    transition propose -> self assume v = qv1 & le(r, highest_proposal(qv2))
-    transition cast_vote -> self
-    transition decide -> self assume v = qv2 # but impossible for v = qv1
-
-    # partial characterizations
-    sketch invariant proposal(R, qv1) -> le(R, highest_proposal(qv2))
-    sketch invariant proposal(highest_proposal(qv2), qv2)
-
-    sketch invariant !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
-
-    # full characterizations
-    invariant highest_proposal(qv1)!=none & !le(highest_proposal(qv1), R) -> !choosable(R,qv2,Q)
-    invariant !le(highest_proposal(qv2), R) -> !choosable(R, qv1, Q)
-    invariant !(decision(R1,qv1) & decision(R2,qv2))
-}
