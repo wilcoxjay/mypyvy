@@ -1,0 +1,719 @@
+exists node0, node1, node2, quorum0, quorum1, quorum2, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  node0 != node2 &
+  node1 != node2 &
+  quorum0 != quorum1 &
+  quorum0 != quorum2 &
+  quorum1 != quorum2 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node2, round1) &
+  !left_round(node2, round0) &
+  !left_round(node2, round2) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  !one_a(round1) &
+  !one_a(round0) &
+  !one_a(round2) &
+  !one_b(node2, round1) &
+  !one_b(node2, round0) &
+  !one_b(node2, round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  !one_b(node1, round2) &
+  !proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node2, round1, value0) &
+  !vote(node2, round1, value1) &
+  !vote(node2, round0, value0) &
+  !vote(node2, round0, value1) &
+  !vote(node2, round2, value0) &
+  !vote(node2, round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  !vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  le(round1, round0) &
+  le(round1, round2) &
+  !le(round0, round1) &
+  le(round0, round2) &
+  !le(round2, round1) &
+  !le(round2, round0) &
+  member(node2, quorum0) &
+  member(node2, quorum2) &
+  member(node2, quorum1) &
+  member(node0, quorum0) &
+  !member(node0, quorum2) &
+  member(node0, quorum1) &
+  !member(node1, quorum0) &
+  !member(node1, quorum2) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+send_1a(round2) 
+
+exists node0, node1, node2, quorum0, quorum1, quorum2, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  node0 != node2 &
+  node1 != node2 &
+  quorum0 != quorum1 &
+  quorum0 != quorum2 &
+  quorum1 != quorum2 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node2, round1) &
+  !left_round(node2, round0) &
+  !left_round(node2, round2) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  !one_a(round1) &
+  !one_a(round0) &
+  one_a(round2) &
+  !one_b(node2, round1) &
+  !one_b(node2, round0) &
+  !one_b(node2, round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  !one_b(node1, round2) &
+  !proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node2, round1, value0) &
+  !vote(node2, round1, value1) &
+  !vote(node2, round0, value0) &
+  !vote(node2, round0, value1) &
+  !vote(node2, round2, value0) &
+  !vote(node2, round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  !vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  le(round1, round0) &
+  le(round1, round2) &
+  !le(round0, round1) &
+  le(round0, round2) &
+  !le(round2, round1) &
+  !le(round2, round0) &
+  member(node2, quorum0) &
+  member(node2, quorum2) &
+  member(node2, quorum1) &
+  member(node0, quorum0) &
+  !member(node0, quorum2) &
+  member(node0, quorum1) &
+  !member(node1, quorum0) &
+  !member(node1, quorum2) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+join_round(node2, round2)
+
+exists node0, node1, node2, quorum0, quorum1, quorum2, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  node0 != node2 &
+  node1 != node2 &
+  quorum0 != quorum1 &
+  quorum0 != quorum2 &
+  quorum1 != quorum2 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  left_round(node2, round1) &
+  left_round(node2, round0) &
+  !left_round(node2, round2) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  !one_a(round1) &
+  !one_a(round0) &
+  one_a(round2) &
+  !one_b(node2, round1) &
+  !one_b(node2, round0) &
+  one_b(node2, round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  !one_b(node1, round2) &
+  !proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node2, round1, value0) &
+  !vote(node2, round1, value1) &
+  !vote(node2, round0, value0) &
+  !vote(node2, round0, value1) &
+  !vote(node2, round2, value0) &
+  !vote(node2, round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  !vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  le(round1, round0) &
+  le(round1, round2) &
+  !le(round0, round1) &
+  le(round0, round2) &
+  !le(round2, round1) &
+  !le(round2, round0) &
+  member(node2, quorum0) &
+  member(node2, quorum2) &
+  member(node2, quorum1) &
+  member(node0, quorum0) &
+  !member(node0, quorum2) &
+  member(node0, quorum1) &
+  !member(node1, quorum0) &
+  !member(node1, quorum2) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+propose(round2, quorum2, none, value0)
+
+exists node0, node1, quorum0, quorum1, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  quorum0 != quorum1 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  !one_a(round1) &
+  !one_a(round0) &
+  one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  !one_b(node1, round2) &
+  !proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  !vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  le(round1, round0) &
+  le(round1, round2) &
+  !le(round0, round1) &
+  le(round0, round2) &
+  !le(round2, round1) &
+  !le(round2, round0) &
+  member(node0, quorum0) &
+  member(node0, quorum1) &
+  !member(node1, quorum0) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+cast_vote
+
+exists node0, node1, quorum0, quorum1, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  quorum0 != quorum1 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  one_a(round1) &
+  !one_a(round0) &
+  !one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  !one_b(node1, round2) &
+  proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  !le(round1, round0) &
+  !le(round1, round2) &
+  le(round0, round1) &
+  !le(round0, round2) &
+  le(round2, round1) &
+  le(round2, round0) &
+  member(node0, quorum0) &
+  member(node0, quorum1) &
+  !member(node1, quorum0) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+send_1a
+
+exists node0, node1, quorum0, quorum1, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  quorum0 != quorum1 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  one_a(round1) &
+  !one_a(round0) &
+  one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  !one_b(node1, round2) &
+  proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  !le(round1, round0) &
+  !le(round1, round2) &
+  le(round0, round1) &
+  !le(round0, round2) &
+  le(round2, round1) &
+  le(round2, round0) &
+  member(node0, quorum0) &
+  member(node0, quorum1) &
+  !member(node1, quorum0) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+join_round
+
+exists node0, node1, quorum0, quorum1, round0, round1, round2, value0, value1.
+  node0 != node1 &
+  quorum0 != quorum1 &
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !left_round(node1, round1) &
+  !left_round(node1, round0) &
+  !left_round(node1, round2) &
+  one_a(round1) &
+  !one_a(round0) &
+  one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !one_b(node1, round1) &
+  !one_b(node1, round0) &
+  one_b(node1, round2) &
+  proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  !vote(node1, round1, value0) &
+  !vote(node1, round1, value1) &
+  !vote(node1, round0, value0) &
+  !vote(node1, round0, value1) &
+  !vote(node1, round2, value0) &
+  !vote(node1, round2, value1) &
+  !le(round1, round0) &
+  !le(round1, round2) &
+  le(round0, round1) &
+  !le(round0, round2) &
+  le(round2, round1) &
+  le(round2, round0) &
+  !member(node0, quorum0) &
+  member(node0, quorum1) &
+  member(node1, quorum0) &
+  member(node1, quorum1) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum1 &
+  decision_quorum(round1, value1) = quorum1 &
+  decision_quorum(round0, value0) = quorum1 &
+  decision_quorum(round0, value1) = quorum1 &
+  decision_quorum(round2, value0) = quorum1 &
+  decision_quorum(round2, value1) = quorum1
+
+propose
+
+exists node0, quorum0, round0, round1, round2, value0, value1.
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  !decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  one_a(round1) &
+  !one_a(round0) &
+  one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  proposal(round1, value0) &
+  !proposal(round1, value1) &
+  !proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  !vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  vote(node0, round2, value1) &
+  le(round1, round0) &
+  le(round1, round2) &
+  !le(round0, round1) &
+  le(round0, round2) &
+  !le(round2, round1) &
+  !le(round2, round0) &
+  member(node0, quorum0) &
+  none = round0 &
+  decision_quorum(round1, value0) = quorum0 &
+  decision_quorum(round1, value1) = quorum0 &
+  decision_quorum(round0, value0) = quorum0 &
+  decision_quorum(round0, value1) = quorum0 &
+  decision_quorum(round2, value0) = quorum0 &
+  decision_quorum(round2, value1) = quorum0
+
+decide
+
+exists node0, quorum0, round0, round1, round2, value0, value1.
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !one_a(round1) &
+  one_a(round0) &
+  one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !proposal(round1, value0) &
+  !proposal(round1, value1) &
+  proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  le(round1, round0) &
+  !le(round1, round2) &
+  !le(round0, round1) &
+  !le(round0, round2) &
+  le(round2, round1) &
+  le(round2, round0) &
+  member(node0, quorum0) &
+  none = round1 &
+  decision_quorum(round1, value0) = quorum0 &
+  decision_quorum(round1, value1) = quorum0 &
+  decision_quorum(round0, value0) = quorum0 &
+  decision_quorum(round0, value1) = quorum0 &
+  decision_quorum(round2, value0) = quorum0 &
+  decision_quorum(round2, value1) = quorum0
+
+cast_vote
+
+exists node0, quorum0, round0, round1, round2, value0, value1.
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  !decision(round1, value1) &
+  decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  !one_a(round1) &
+  one_a(round0) &
+  one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !proposal(round1, value0) &
+  !proposal(round1, value1) &
+  proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  !vote(node0, round1, value1) &
+  vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  vote(node0, round2, value1) &
+  le(round1, round0) &
+  !le(round1, round2) &
+  !le(round0, round1) &
+  !le(round0, round2) &
+  le(round2, round1) &
+  le(round2, round0) &
+  member(node0, quorum0) &
+  none = round1 &
+  decision_quorum(round1, value0) = quorum0 &
+  decision_quorum(round1, value1) = quorum0 &
+  decision_quorum(round0, value0) = quorum0 &
+  decision_quorum(round0, value1) = quorum0 &
+  decision_quorum(round2, value0) = quorum0 &
+  decision_quorum(round2, value1) = quorum0
+
+decide
+
+exists node0, quorum0, round0, round1, round2, value0, value1.
+  round0 != round1 &
+  round0 != round2 &
+  round1 != round2 &
+  value0 != value1 &
+  !decision(round1, value0) &
+  decision(round1, value1) &
+  decision(round0, value0) &
+  !decision(round0, value1) &
+  !decision(round2, value0) &
+  !decision(round2, value1) &
+  !left_round(node0, round1) &
+  !left_round(node0, round0) &
+  !left_round(node0, round2) &
+  one_a(round1) &
+  one_a(round0) &
+  !one_a(round2) &
+  !one_b(node0, round1) &
+  !one_b(node0, round0) &
+  !one_b(node0, round2) &
+  !proposal(round1, value0) &
+  proposal(round1, value1) &
+  proposal(round0, value0) &
+  !proposal(round0, value1) &
+  !proposal(round2, value0) &
+  !proposal(round2, value1) &
+  !vote(node0, round1, value0) &
+  vote(node0, round1, value1) &
+  vote(node0, round0, value0) &
+  !vote(node0, round0, value1) &
+  !vote(node0, round2, value0) &
+  !vote(node0, round2, value1) &
+  !le(round1, round0) &
+  !le(round1, round2) &
+  le(round0, round1) &
+  le(round0, round2) &
+  le(round2, round1) &
+  !le(round2, round0) &
+  member(node0, quorum0) &
+  none = round2 &
+  decision_quorum(round1, value0) = quorum0 &
+  decision_quorum(round1, value1) = quorum0 &
+  decision_quorum(round0, value0) = quorum0 &
+  decision_quorum(round0, value1) = quorum0 &
+  decision_quorum(round2, value0) = quorum0 &
+  decision_quorum(round2, value1) = quorum0
+
