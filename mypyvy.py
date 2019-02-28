@@ -1627,7 +1627,7 @@ def get_safety(prog: Program) -> List[Expr]:
             raise Exception('No safety invariant named %s' % utils.args.safety)
         safety: List[Expr] = [the_inv.expr]
     else:
-        safety = [inv.expr for inv in prog.invs()]
+        safety = [s.expr for s in prog.safeties()]
 
     return safety
 
