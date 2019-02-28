@@ -123,7 +123,6 @@ z3.Forall = z3.ForAll
 KEY_ONE = 'one'
 KEY_NEW = 'new'
 KEY_OLD = 'old'
-ALL_KEYS = [KEY_ONE, KEY_OLD, KEY_NEW]
 
 class Solver(object):
     def __init__(self, scope: Scope[z3.ExprRef]) -> None:
@@ -132,13 +131,29 @@ class Solver(object):
         self.translators: Dict[Tuple[Optional[str], Optional[str]], syntax.Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
+        self.known_keys: Set[str] = set()
+        self.mutable_axioms: List[Expr] = []
+
+    def register_mutable_axioms(self, axioms: Iterable[Expr]) -> None:
+        assert len(self.known_keys) == 0, "mutable axioms must be registered before any keys are known to the solver!"
+        self.mutable_axioms.extend(axioms)
+
+    def _initialize_key(self, key: Optional[str]) -> None:
+        if key is not None and key not in self.known_keys:
+            self.known_keys.add(key)
+
+            assert self.z3solver.num_scopes() == 0, "the first time get_translator is called with a particular key, there must be no scopes pushed on the Z3 stack!"
+
+            t = self.get_translator(key)
+            for a in self.mutable_axioms:
+                self.add(t.translate_expr(a))
 
     def get_translator(self, key: Optional[str]=None, key_old: Optional[str]=None) \
         -> syntax.Z3Translator:
         t = (key, key_old)
-        assert key is None or key in ALL_KEYS, key
-        assert key_old is None or key_old in ALL_KEYS, key_old
         if t not in self.translators:
+            self._initialize_key(key)
+            self._initialize_key(key_old)
             self.translators[t] = syntax.Z3Translator(self.scope, key, key_old)
         return self.translators[t]
 
@@ -840,7 +855,7 @@ class Model(object):
         return '\n'.join(l)
 
 
-    def _eval(self, expr):
+    def _eval(self, expr: z3.ExprRef) -> z3.ExprRef:
         ans = self.z3model.eval(expr, model_completion=True)
         if not (ans == True or ans == False):
             # when expr is quantified sometimes Z3 retains the quantifier, and ans is an expression.
@@ -849,8 +864,8 @@ class Model(object):
             #  domain elements).
             # TODO: currently just for a single universally quantified variable
             assert isinstance(ans, z3.QuantifierRef) and ans.is_forall() and ans.num_vars() == 1, ans
-            ans = all(self._eval(z3.substitute_vars(ans.body(), el))
-                     for el in self.z3model.get_universe(ans.var_sort(0)))
+            ans = z3.BoolVal(all(self._eval(z3.substitute_vars(ans.body(), el))
+                                 for el in self.z3model.get_universe(ans.var_sort(0))))
         assert ans == True or ans == False, (expr, ans)
         return ans
 
@@ -1765,6 +1780,9 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3
         logger.debug('check_bmc property: %s' % safety)
         logger.debug('check_bmc depth: %s' % depth)
 
+    for k in keys:
+        s.get_translator(k)  # initialize all the keys before pushing a solver stack frame
+
     with s:
         t = s.get_translator(keys[0])
         for init in prog.inits():
@@ -2010,21 +2028,11 @@ def main() -> None:
         for a in prog.axioms():
             s.add(t.translate_expr(a.expr))
 
-        add_derived_relation_axioms(ALL_KEYS, prog, s)
+        s.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations() if r.derived_axiom is not None)
 
         utils.args.main(s, prog)
 
         logger.info('total number of queries: %s' % s.nqueries)
-
-
-def add_derived_relation_axioms(vocab_keys: Sequence[str], prog: Program, s: Solver) -> None:
-    for r in prog.derived_relations():
-        for k in vocab_keys:
-            t = s.get_translator(k)
-            a = r.derived_axiom
-            assert a is not None
-            s.add(t.translate_expr(a))
-
 
 if __name__ == '__main__':
     main()
