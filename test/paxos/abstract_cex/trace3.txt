@@ -1,0 +1,177 @@
+After observing trace2.txt, I decided to add the decision quorum
+instrumentation.  Then UPDR found this trace in about 20 seconds
+(still using the axiom <= 2 nodes).
+
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+
+join_round
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+* one_b(node0, round0)
+
+join_round
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+* left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+* one_b(node0, round1)
+
+propose
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+  one_b(node0, round1)
+* proposal(round1, value0)
+
+cast_vote
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+  one_b(node0, round1)
+  proposal(round1, value0)
+* vote(node1, round1, value0)
+
+--------------------------------------------------------------------------------
+*** remove node0 and quorum1
+--------------------------------------------------------------------------------
+(manually constructed state after relaxation but before next action)
+exists node1, quorum0, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node1, quorum0)
+  proposal(round1, value0)
+  vote(node1, round1, value0)
+
+propose
+
+exists node1, quorum0, round0, round1, value0, value1.
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node1, quorum0)
+* proposal(round0, value1)
+  proposal(round1, value0)
+  vote(node1, round1, value0)
+
+decide
+
+exists node1, quorum0, round0, round1, value0, value1.
+* decision(round1, value0)
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node1, quorum0)
+  proposal(round0, value1)
+  proposal(round1, value0)
+  vote(node1, round1, value0)
+
+cast_vote
+
+exists node1, quorum0, round0, round1, value0, value1.
+  decision(round1, value0)
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node1, quorum0)
+  proposal(round0, value1)
+  proposal(round1, value0)
+* vote(node1, round0, value1)
+  vote(node1, round1, value0)
+
+decide
+
+exists node1, quorum0, round0, round1, value0, value1.
+* decision(round0, value1)
+  decision(round1, value0)
+  decision_quorum(none, value0) = quorum0
+  decision_quorum(none, value1) = quorum0
+  decision_quorum(round0, value0) = quorum0
+  decision_quorum(round0, value1) = quorum0
+  decision_quorum(round1, value0) = quorum0
+  decision_quorum(round1, value1) = quorum0
+  le(round0, round1)
+  le(round1, none)
+  member(node1, quorum0)
+  proposal(round0, value1)
+  proposal(round1, value0)
+  vote(node1, round0, value1)
+  vote(node1, round1, value0)
