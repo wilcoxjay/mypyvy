@@ -1,0 +1,120 @@
+In this version of paxos, there is no ghost instrumentation (neither
+choosable, nor decision quorum). Also, the 1a message and action has
+been eliminated for simplicity. This trace was found by UPDR in about
+1 minute, using an additional axiom that there are at most 2 nodes. It
+was then cleaned using postprocess.py and some manual work.
+
+
+
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  le(none, round1)
+  le(round0, none)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+
+join_round
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  le(none, round1)
+  le(round0, none)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+* one_b(node0, round0)
+
+join_round
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  le(none, round1)
+  le(round0, none)
+* left_round(node0, none)
+* left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+* one_b(node0, round1)
+
+propose in round1 with quorum1
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  le(none, round1)
+  le(round0, none)
+  left_round(node0, none)
+  left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+  one_b(node0, round1)
+* proposal(round1, value1)
+
+cast_vote
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  le(none, round1)
+  le(round0, none)
+  left_round(node0, none)
+  left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+  one_b(node0, round1)
+  proposal(round1, value1)
+* vote(node0, round1, value1)
+
+decide with quorum1
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+* decision(round1, value1)
+  le(none, round1)
+  le(round0, none)
+  left_round(node0, none)
+  left_round(node0, round0)
+  member(node0, quorum0)
+  member(node0, quorum1)
+  member(node1, quorum0)
+  one_b(node0, round0)
+  one_b(node0, round1)
+  proposal(round1, value1)
+  vote(node0, round1, value1)
+
+--------------------------------------------------------------------------------
+*** remove node0 and quorum1
+--------------------------------------------------------------------------------
+
+propose
+
+exists node1, quorum0, round0, round1, value0, value1.
+  decision(round1, value1)
+  le(none, round1)
+  le(round0, none)
+  member(node1, quorum0)
+* proposal(round0, value0)
+  proposal(round1, value1)
+
+cast_vote
+
+exists node1, quorum0, round0, round1, value0, value1.
+  decision(round1, value1)
+  le(none, round1)
+  le(round0, none)
+  member(node1, quorum0)
+  proposal(round0, value0)
+  proposal(round1, value1)
+* vote(node1, round0, value0)
+
+decide
+
+exists node1, quorum0, round0, round1, value0, value1.
+* decision(round0, value0)
+  decision(round1, value1)
+  le(none, round1)
+  le(round0, none)
+  member(node1, quorum0)
+  proposal(round0, value0)
+  proposal(round1, value1)
+  vote(node1, round0, value0)
