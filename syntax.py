@@ -427,6 +427,8 @@ class UnaryExpr(Expr):
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         if self.op == 'OLD':
+            if not scope.in_two_state_context:
+                print_error(self.tok, 'old can only be used in a two-state context')
             return self.arg.resolve(scope, sort)
         else:
             assert self.op == 'NOT'
@@ -1196,7 +1198,8 @@ class TransitionDecl(Decl):
         self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-            self.expr.resolve(scope, BoolSort)
+            with scope.two_state():
+                self.expr.resolve(scope, BoolSort)
 
         self.binder.post_resolve()
 
@@ -1511,6 +1514,7 @@ class Scope(Generic[B]):
         self.functions: Dict[str, FunctionDecl] = {}
         self.transitions: Dict[str, TransitionDecl] = {}
         self.phases: Dict[str, PhaseDecl] = {}
+        self.in_two_state_context = False
 
     def push(self, l: List[Tuple[SortedVar, B]]) -> None:
         self.stack.append(l)
@@ -1596,6 +1600,13 @@ class Scope(Generic[B]):
 
     def get_transition(self, transition: str) -> Optional[TransitionDecl]:
         return self.transitions.get(transition)
+
+    @contextmanager
+    def two_state(self) -> Iterator[None]:
+        assert not self.in_two_state_context
+        self.in_two_state_context = True
+        yield None
+        self.in_two_state_context = False
 
     @contextmanager
     def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:
