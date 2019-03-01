@@ -67,7 +67,7 @@ def remove_equalities(state: State) -> List[Tuple[str, str]]:
     new_conjuncts = []
     eqs = []
     for c in state.conjuncts:
-        if '=' in c:
+        if '=' in c and '(' not in c:
             l = c.split(' = ')
             assert len(l) == 2
             a, b = l
@@ -190,6 +190,7 @@ def pretty_trace(trace: Trace) -> str:
 
     return '\n'.join(lines)
 
+trace: Trace
 def main() -> None:
     # open the log
     # split abstract trace into states
@@ -198,10 +199,12 @@ def main() -> None:
     # substitute constants
     # some kind of smart matching for alpha renaming?
 
-    with open('log.no1a.nodq.2nodes') as f:
+    global trace
+
+    with open('log.no1a.yesdq.2nodes') as f:
         trace = parse_trace(f)
 
-
+    filter_trace(trace)
 
 if __name__ == '__main__':
     main()
