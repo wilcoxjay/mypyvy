@@ -429,7 +429,10 @@ class UnaryExpr(Expr):
         if self.op == 'OLD':
             if not scope.in_two_state_context:
                 print_error(self.tok, 'old can only be used in a two-state context')
-            return self.arg.resolve(scope, sort)
+            if scope.in_old_context:
+                print_error(self.tok, 'old() expression cannot be nested inside another old!')
+            with scope.old_context():
+                return self.arg.resolve(scope, sort)
         else:
             assert self.op == 'NOT'
             check_constraint(self.tok, sort, BoolSort)
@@ -1515,6 +1518,7 @@ class Scope(Generic[B]):
         self.transitions: Dict[str, TransitionDecl] = {}
         self.phases: Dict[str, PhaseDecl] = {}
         self.in_two_state_context = False
+        self.in_old_context = False
 
     def push(self, l: List[Tuple[SortedVar, B]]) -> None:
         self.stack.append(l)
@@ -1600,6 +1604,13 @@ class Scope(Generic[B]):
 
     def get_transition(self, transition: str) -> Optional[TransitionDecl]:
         return self.transitions.get(transition)
+
+    @contextmanager
+    def old_context(self) -> Iterator[None]:
+        old = self.in_old_context
+        self.in_old_context = True
+        yield None
+        self.in_old_context = old
 
     @contextmanager
     def two_state(self) -> Iterator[None]:
