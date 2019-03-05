@@ -59,6 +59,8 @@ tokens = [
 ] + list(reserved.values())
 
 
+errored = False
+
 def t_ID(t: Any) -> Any:
     r'[a-zA-Z_][a-zA-Z_0-9]*'
     t.type = reserved.get(t.value, 'ID')    # Check for reserved words
@@ -93,6 +95,8 @@ def t_newline(t: ply.lex.LexToken) -> None:
 t_ignore  = ' \t'
 
 def t_error(t: Any) -> None:
+    global errored
+    errored = True
     print('error: %s: lexical error near %s' %
           ('%s:%s:%s' % (t.filename, t.lineno, t.col), t.value[0]))
     t.lexer.skip(1)
@@ -459,6 +463,9 @@ def p_empty(p: Any) -> None:
     pass
 
 def p_error(t: Any) -> None:
+    global errored
+    errored = True
+
     if t is not None:
         print('error: %s: syntax error near %s' %
               ('%s:%s:%s' % (t.filename, t.lineno, t.col), t.value))
@@ -470,7 +477,8 @@ def p_error(t: Any) -> None:
         print('error: %s: syntax error near EOF' %
               ('%s:%s:%s' % (l.filename, l.lineno, l.lexpos - l.bol), ))
 
-    sys.exit(1)
+    assert program_parser is not None
+    program_parser.errok()
 
 program_parser = None
 def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:

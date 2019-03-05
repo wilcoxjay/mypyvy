@@ -2016,6 +2016,10 @@ def main() -> None:
         if utils.args.print_program:
             logger.always_print(str(prog))
 
+        if parser.errored:
+            logger.always_print('program has syntax errors.')
+            return
+
         prog.resolve()
         if syntax.errored:
             logger.always_print('program has resolution errors.')
