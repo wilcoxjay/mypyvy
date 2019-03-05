@@ -845,11 +845,13 @@ class Model(object):
 
         for R in Rs:
             for tup, b in sorted(Rs[R]):
-                l.append('%s%s(%s)' % ('' if b else '!', R.name, ','.join(tup)))
+                if b:
+                    l.append('%s%s(%s)' % ('' if b else '!', R.name, ','.join(tup)))
 
         for F in Fs:
             for tup, res in sorted(Fs[F]):
-                l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
+                if False:
+                    l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
 
 
         return '\n'.join(l)
