@@ -121,8 +121,6 @@ class Z3Translator(object):
         self.scope = scope
         self.key = key
         self.key_old = key_old
-        self.expr_cache: Dict[Tuple[Expr, bool], z3.ExprRef] = {}
-        self.transition_cache: Dict[Tuple[TransitionDecl, Optional[Expr], bool], z3.ExprRef] = {}
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []
@@ -133,65 +131,61 @@ class Z3Translator(object):
         return bs
 
     def translate_expr(self, expr: Expr, old: bool=False) -> z3.ExprRef:
-        t = (expr, old)
-        if t not in self.expr_cache:
-            if isinstance(expr, Bool):
-                self.expr_cache[t] = z3.BoolVal(expr.val)
-            elif isinstance(expr, UnaryExpr):
-                if expr.op == 'OLD':
-                    assert not old and self.key_old is not None
-                    self.expr_cache[t] = self.translate_expr(expr.arg, old=True)
-                else:
-                    unop = z3_UNOPS[expr.op]
-                    assert unop is not None
-                    self.expr_cache[t] = unop(self.translate_expr(expr.arg, old))
-            elif isinstance(expr, BinaryExpr):
-                binop = z3_BINOPS[expr.op]
-                self.expr_cache[t] = binop(self.translate_expr(expr.arg1, old), self.translate_expr(expr.arg2, old))
-            elif isinstance(expr, NaryExpr):
-                nop = z3_NOPS[expr.op]
-                self.expr_cache[t] = nop([self.translate_expr(arg, old) for arg in expr.args])
-            elif isinstance(expr, AppExpr):
+        if isinstance(expr, Bool):
+            return z3.BoolVal(expr.val)
+        elif isinstance(expr, UnaryExpr):
+            if expr.op == 'OLD':
+                assert not old and self.key_old is not None
+                return self.translate_expr(expr.arg, old=True)
+            else:
+                unop = z3_UNOPS[expr.op]
+                assert unop is not None
+                return unop(self.translate_expr(expr.arg, old))
+        elif isinstance(expr, BinaryExpr):
+            binop = z3_BINOPS[expr.op]
+            return binop(self.translate_expr(expr.arg1, old), self.translate_expr(expr.arg2, old))
+        elif isinstance(expr, NaryExpr):
+            nop = z3_NOPS[expr.op]
+            return nop([self.translate_expr(arg, old) for arg in expr.args])
+        elif isinstance(expr, AppExpr):
+            if not old:
+                k = self.key
+            else:
+                assert self.key_old is not None
+                k = self.key_old
+            d = self.scope.get(expr.callee)
+            assert d is not None
+            assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
+            R = d.to_z3(k)
+            assert isinstance(R, z3.FuncDeclRef)
+            app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
+            translated_app = R(*app_translated_args)
+            return translated_app
+        elif isinstance(expr, QuantifierExpr):
+            bs = self.bind(expr.binder)
+            with self.scope.in_scope(expr.binder, bs):
+                e = self.translate_expr(expr.body, old)
+            q = z3.ForAll if expr.quant == 'FORALL' else z3.Exists
+            return q(bs, e)
+        elif isinstance(expr, Id):
+            d = self.scope.get(expr.name)
+            assert d is not None
+            if isinstance(d, RelationDecl) or \
+               isinstance(d, ConstantDecl) or \
+               isinstance(d, FunctionDecl):
                 if not old:
                     k = self.key
                 else:
-                    assert self.key_old is not None
+                    assert not d.mutable or self.key_old is not None
                     k = self.key_old
-                d = self.scope.get(expr.callee)
-                assert d is not None
-                assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
-                R = d.to_z3(k)
-                assert isinstance(R, z3.FuncDeclRef)
-                app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
-                translated_app = R(*app_translated_args)
-                self.expr_cache[t] = translated_app
-            elif isinstance(expr, QuantifierExpr):
-                bs = self.bind(expr.binder)
-                with self.scope.in_scope(expr.binder, bs):
-                    e = self.translate_expr(expr.body, old)
-                q = z3.ForAll if expr.quant == 'FORALL' else z3.Exists
-                self.expr_cache[t] = q(bs, e)
-            elif isinstance(expr, Id):
-                d = self.scope.get(expr.name)
-                assert d is not None
-                if isinstance(d, RelationDecl) or \
-                   isinstance(d, ConstantDecl) or \
-                   isinstance(d, FunctionDecl):
-                    if not old:
-                        k = self.key
-                    else:
-                        assert not d.mutable or self.key_old is not None
-                        k = self.key_old
-                    x = d.to_z3(k)
-                    assert isinstance(x, z3.ExprRef)
-                    self.expr_cache[t] = x
-                else:
-                    _, e = d
-                    self.expr_cache[t] = e
+                x = d.to_z3(k)
+                assert isinstance(x, z3.ExprRef)
+                return x
             else:
-                assert False
-
-        return self.expr_cache[t]
+                _, e = d
+                return e
+        else:
+            assert False
 
 
     def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
@@ -226,38 +220,27 @@ class Z3Translator(object):
         return frame
 
     def translate_transition(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
-        cache_key = (t, precond, True)
-        if cache_key not in self.transition_cache:
+        bs = self.bind(t.binder)
+        with self.scope.in_scope(t.binder, bs):
+            body = z3.And(self.translate_expr(t.expr),
+                          *self.frame(t.mods),
+                          self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
 
-            bs = self.bind(t.binder)
-            with self.scope.in_scope(t.binder, bs):
-                body = z3.And(self.translate_expr(t.expr),
-                              *self.frame(t.mods),
-                              self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
-
-                if len(bs) > 0:
-                    tr_formula = z3.Exists(bs, body)
-                else:
-                    tr_formula = body
-                self.transition_cache[cache_key] = tr_formula
-
-        return self.transition_cache[cache_key]
+            if len(bs) > 0:
+                return z3.Exists(bs, body)
+            else:
+                return body
 
     def translate_precond_of_transition(self, precond: Optional[Expr], t: TransitionDecl) -> z3.ExprRef:
-        cache_key = (t, precond, False)
-        if cache_key not in self.transition_cache:
+        bs = self.bind(t.binder)
+        with self.scope.in_scope(t.binder, bs):
+            body = self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True)
 
-            bs = self.bind(t.binder)
-            with self.scope.in_scope(t.binder, bs):
-                body = self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True)
+            if len(bs) > 0:
+                return z3.Exists(bs, body)
+            else:
+                return body
 
-                if len(bs) > 0:
-                    tr_formula = z3.Exists(bs, body)
-                else:
-                    tr_formula = body
-                self.transition_cache[cache_key] = tr_formula
-
-        return self.transition_cache[cache_key]
 
 def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, Optional[Token], str]]:
     if isinstance(expr, Bool):
