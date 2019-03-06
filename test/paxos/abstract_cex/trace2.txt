@@ -75,10 +75,27 @@ exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
   left_round(node0, none)
   left_round(node0, round0)
   member(node0, quorum0)
-  member(node0, quorum1)
   member(node1, quorum0)
+  member(node0, quorum1)
   one_b(node0, round0)
   one_b(node0, round1)
+  proposal(round1, value1)
+  vote(node0, round1, value1)
+
+propose(..., quorum0, ...)
+
+exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
+  decision(round1, value1)
+  le(none, round1)
+  le(round0, none)
+  left_round(node0, none)
+  left_round(node0, round0)
+  member(node0, quorum0)
+  member(node1, quorum0)
+  member(node0, quorum1)
+  one_b(node0, round0)
+  one_b(node0, round1)
+* proposal(round0, value0)
   proposal(round1, value1)
   vote(node0, round1, value1)
 
@@ -86,14 +103,12 @@ exists node0, node1, quorum0, quorum1, round0, round1, value0, value1.
 *** remove node0 and quorum1
 --------------------------------------------------------------------------------
 
-propose
-
 exists node1, quorum0, round0, round1, value0, value1.
   decision(round1, value1)
   le(none, round1)
   le(round0, none)
   member(node1, quorum0)
-* proposal(round0, value0)
+  proposal(round0, value0)
   proposal(round1, value1)
 
 cast_vote
