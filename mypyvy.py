@@ -680,11 +680,7 @@ class Diagram(object):
         if utils.args.smoke_test and depth is not None:
             logger.debug('smoke testing at depth %s...' % (depth,))
             logger.debug(str(self))
-            res = check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
-            if res is not None:
-                logger.debug('no!')
-                verbose_print_z3_model(res)
-            logger.debug('ok.')
+            check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
 
     # TODO: merge similarities with clause_implied_by_transitions_from_frame...
     def check_valid_in_phase_from_frame(self, s: Solver, prog: Program, f: Frame,
@@ -1211,11 +1207,7 @@ class Frames(object):
                     if utils.args.smoke_test and logger.isEnabledFor(logging.DEBUG):
                         logger.debug('jrw smoke testing...')
                         # TODO: phases
-                        om = check_bmc(self.solver, self.prog, c, frame_no + 1)
-                        if om is not None:
-                            logger.debug('no!')
-                            verbose_print_z3_model(om)
-                        logger.debug('ok.')
+                        check_bmc(self.solver, self.prog, c, frame_no + 1)
 
                     # assert self.clause_implied_by_transitions_from_frame(f, p, c) is None
                     self[frame_no + 1].strengthen(p, c)
@@ -1406,11 +1398,7 @@ class Frames(object):
 
         if utils.args.smoke_test and logger.isEnabledFor(logging.DEBUG):
             logger.debug('smoke testing at depth %s...' % (depth,))
-            res = check_bmc(self.solver, self.prog, e, depth)
-            if res is not None:
-                logger.debug('no!')
-                verbose_print_z3_model(res)
-            logger.debug('ok.')
+            check_bmc(self.solver, self.prog, e, depth)
 
         self.assert_inductive_trace()
         for i in range(depth+1):
@@ -1746,7 +1734,7 @@ def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_inductiveness(s, prog, a)
     check_automaton_edge_covering(s, prog, a)
 
-def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3.ModelRef]:
+def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
     keys = ['state%d' % i for i in range(depth+1)]
 
     if logger.isEnabledFor(logging.DEBUG):
@@ -1780,9 +1768,8 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> Optional[z3
         #     logger.debug('assertions')
         #     logger.debug(str(s.assertions()))
 
-        if s.check() != z3.unsat:
-            return s.model()
-        return None
+        check_unsat([(None, 'found concrete trace violating safety')],
+                    s, prog, keys)
 
 @log_start_end_time()
 def bmc(s: Solver, prog: Program) -> None:
@@ -1795,15 +1782,8 @@ def bmc(s: Solver, prog: Program) -> None:
 
     start = datetime.now()
 
-    res = check_bmc(s, prog, safety, n)
+    check_bmc(s, prog, safety, n)
 
-    if res is None:
-        logger.always_print('ok. (%s)' % (datetime.now() - start))
-        sys.stdout.flush()
-    else:
-        logger.always_print('no! (%s)' % (datetime.now() - start))
-        sys.stdout.flush()
-        verbose_print_z3_model(res)
 
 @log_start_end_time()
 def theorem(s: Solver, prog: Program) -> None:
