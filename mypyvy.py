@@ -817,6 +817,9 @@ class Model(object):
         l.extend(self.univ_str())
         l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
         for i, k in enumerate(self.keys):
+            t = self.transitions[i-1]
+            if i > 0 and t != '':
+                l.append('\ntransition %s' % (t,))
             l.append('\nstate %s:' % (i,))
             l.append(Model._state_str(self.const_interps[i], self.rel_interps[i], self.func_interps[i]))
 
@@ -876,6 +879,8 @@ class Model(object):
         self.rel_interps: List[RT] = [OrderedDict() for i in range(len(self.keys))]
         self.const_interps: List[CT] = [OrderedDict() for i in range(len(self.keys))]
         self.func_interps: List[FT] = [OrderedDict() for i in range(len(self.keys))]
+
+        self.transitions: List[str] = ['' for i in range(len(self.keys) - 1)]
 
         model_decls = self.z3model.decls()
         all_decls = model_decls
@@ -939,9 +944,13 @@ class Model(object):
                     assert decl not in C
                     C[decl] = rename(v)
             else:
-                pass
 #                 if logger.isEnabledFor(logging.DEBUG):
 #                     logger.debug('extra constant: ' + str(z3decl))
+                if name.startswith('p_') and self.z3model.eval(z3decl()):
+                    name = name[len('p_'):]
+                    istr, name = name.split('_', maxsplit=1)
+                    i = int(istr)
+                    self.transitions[i] = name
 
     def as_diagram(self, i: Optional[int]=None) -> Diagram:
         assert len(self.keys) == 1 or i is not None, 'to generate a diagram from a multi-state model, you must specify which state you want'
