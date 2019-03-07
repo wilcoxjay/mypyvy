@@ -271,8 +271,7 @@ def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
         prog: Program,
-        key: str,
-        key_old: Optional[str]=None
+        keys: List[str]
 ) -> None:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
@@ -282,7 +281,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Model(prog, s.model(), s, key, key_old)
+            m = Model(prog, s.model(), s, keys)
 
             logger.always_print('')
             logger.always_print(str(m))
@@ -318,7 +317,7 @@ def check_init(s: Solver, prog: Program) -> None:
                 logger.always_print('  implies invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)], s, prog, KEY_ONE)
+                check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)], s, prog, [KEY_ONE])
 
 
 def check_transitions(s: Solver, prog: Program) -> None:
@@ -349,7 +348,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
                         check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s' %
                                       (msg, trans.name)),
                                      (trans.tok, 'this transition may not preserve invariant%s' % (msg,))],
-                                    s, prog, KEY_NEW, KEY_OLD)
+                                    s, prog, [KEY_OLD, KEY_NEW])
 
 def check_implication(
         s: Solver,
@@ -800,13 +799,11 @@ class Model(object):
             prog: Program,
             m: z3.ModelRef,
             solver: Solver,
-            key: str,
-            key_old: Optional[str]=None,
+            keys: List[str],
     ) -> None:
         self.prog = prog
         self.z3model = m
-        self.key = key
-        self.key_old = key_old
+        self.keys = keys
         self.solver = solver
 
         self.read_out()
@@ -823,13 +820,9 @@ class Model(object):
         l = []
         l.extend(self.univ_str())
         l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
-        if self.key_old is not None:
-            l.append('\nold state:')
-            l.append(Model._state_str(self.old_const_interps, self.old_rel_interps, self.old_func_interps))
-            l.append('\nnew state:')
-        else:
-            l.append('')
-        l.append(Model._state_str(self.const_interps, self.rel_interps, self.func_interps))
+        for i, k in enumerate(self.keys):
+            l.append('\nstate %s:' % (i,))
+            l.append(Model._state_str(self.const_interps[i], self.rel_interps[i], self.func_interps[i]))
 
         return '\n'.join(l)
 
@@ -851,7 +844,6 @@ class Model(object):
         for F in Fs:
             for tup, res in sorted(Fs[F]):
                 l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
-
 
         return '\n'.join(l)
 
@@ -885,35 +877,26 @@ class Model(object):
         self.immut_const_interps: CT = OrderedDict()
         self.immut_func_interps: FT = OrderedDict()
 
-        self.rel_interps: RT = OrderedDict()
-        self.const_interps: CT = OrderedDict()
-        self.func_interps: FT = OrderedDict()
-
-        if self.key_old is not None:
-            self.old_rel_interps: RT = OrderedDict()
-            self.old_const_interps: CT = OrderedDict()
-            self.old_func_interps: FT = OrderedDict()
+        self.rel_interps: List[RT] = [OrderedDict() for i in range(len(self.keys))]
+        self.const_interps: List[CT] = [OrderedDict() for i in range(len(self.keys))]
+        self.func_interps: List[FT] = [OrderedDict() for i in range(len(self.keys))]
 
         model_decls = self.z3model.decls()
         all_decls = model_decls
         for z3decl in sorted(all_decls, key=str):
             z3name = str(z3decl)
-            if z3name.startswith(self.key):
-                name = z3name[len(self.key)+1:]
-                R: RT = self.rel_interps
-                C: CT = self.const_interps
-                F: FT = self.func_interps
-            elif self.key_old is not None and z3name.startswith(self.key_old):
-                name = z3name[len(self.key_old)+1:]
-                R = self.old_rel_interps
-                C = self.old_const_interps
-                F = self.old_func_interps
+            for i, k in enumerate(self.keys):
+                if z3name.startswith(k):
+                    name = z3name[len(k + '_'):]
+                    R: RT = self.rel_interps[i]
+                    C: CT = self.const_interps[i]
+                    F: FT = self.func_interps[i]
+                    break
             else:
                 name = z3name
                 R = self.immut_rel_interps
                 C = self.immut_const_interps
                 F = self.immut_func_interps
-
 
             decl = self.prog.scope.get(name)
             assert not isinstance(decl, syntax.Sort) and \
@@ -964,18 +947,16 @@ class Model(object):
 #                 if logger.isEnabledFor(logging.DEBUG):
 #                     logger.debug('extra constant: ' + str(z3decl))
 
-    def as_diagram(self, old: Optional[bool]=None) -> Diagram:
-        assert self.key_old is None or old is not None, 'to generate a diagram from a 2-state model, you must specify whether you want the pre-diagram or the post-diagram'
-        assert old is None or self.key_old is not None, 'specifying pre- or post- diagram makes no sense in a 1-state model'
+    def as_diagram(self, i: Optional[int]=None) -> Diagram:
+        assert len(self.keys) == 1 or i is not None, 'to generate a diagram from a multi-state model, you must specify which state you want'
+        assert i is None or (0 <= i and i < len(self.keys))
 
-        if old:
-            mut_rel_interps = self.old_rel_interps
-            mut_const_interps = self.old_const_interps
-            mut_func_interps = self.old_func_interps
-        else:
-            mut_rel_interps = self.rel_interps
-            mut_const_interps = self.const_interps
-            mut_func_interps = self.func_interps
+        if i is None:
+            i = 0
+
+        mut_rel_interps = self.rel_interps[i]
+        mut_const_interps = self.const_interps[i]
+        mut_func_interps = self.func_interps[i]
 
         vs: List[syntax.SortedVar] = []
         ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
@@ -1153,7 +1134,7 @@ class Frames(object):
 
             logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Model(self.prog, z3m, self.solver, KEY_ONE)
+            mod = Model(self.prog, z3m, self.solver, [KEY_ONE])
             diag = mod.as_diagram()
             return (p, diag)
 
@@ -1184,8 +1165,8 @@ class Frames(object):
                         if self.solver.check() != z3.unsat:
                             logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Model(self.prog, z3m, self.solver, KEY_NEW, KEY_OLD)
-                            diag = mod.as_diagram(old=True)
+                            mod = Model(self.prog, z3m, self.solver, [KEY_OLD, KEY_NEW])
+                            diag = mod.as_diagram(i=0)
                             return (p, diag)
 
                         logger.debug('transition %s is covered non-trivially by %s' % (trans.name, p.name()))
@@ -1242,8 +1223,8 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Model(self.prog, m, self.solver, KEY_NEW, KEY_OLD)
-                diag = mod.as_diagram(old=True)
+                mod = Model(self.prog, m, self.solver, [KEY_OLD, KEY_NEW])
+                diag = mod.as_diagram(i=0)
 
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.pp()))
@@ -1508,10 +1489,10 @@ class Frames(object):
 
                         if res != z3.unsat:
                             logger.debug('found predecessor via %s' % trans.name)
-                            m = Model(self.prog, solver.model(diag.trackers), self.solver, KEY_NEW, KEY_OLD)
+                            m = Model(self.prog, solver.model(diag.trackers), self.solver, [KEY_OLD, KEY_NEW])
                             # if logger.isEnabledFor(logging.DEBUG):
                             #     logger.debug(str(m))
-                            return (res, (phase_transition, (src_phase, m.as_diagram(old=True))))
+                            return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
                         elif utils.args.use_z3_unsat_cores:
                             assert core is not None
                             uc = solver.unsat_core()
@@ -1671,7 +1652,7 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
                 logger.always_print('  implies phase invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, prog, KEY_ONE)
+                check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, prog, [KEY_ONE])
 
 def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     logger.always_print('checking automaton edge covering:')
@@ -1699,7 +1680,7 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
                     check_unsat([(phase.tok, 'transition %s is not covered by this phase' %
                                   (trans.name, )),
                                  (trans.tok, 'this transition misses transitions from phase %s' % (phase.name,))],
-                                s, prog, KEY_NEW, KEY_OLD)
+                                s, prog, [KEY_OLD, KEY_NEW])
 
 
 def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) -> None:
@@ -1740,7 +1721,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                             check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
                                           (msg, trans_pretty, phase.name)),
                                          (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
-                                        s, prog, KEY_NEW, KEY_OLD)
+                                        s, prog, [KEY_OLD, KEY_NEW])
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
@@ -1830,7 +1811,7 @@ def theorem(s: Solver, prog: Program) -> None:
 
     for th in prog.theorems():
         if th.twostate:
-            keys = [KEY_NEW, KEY_OLD]
+            keys = [KEY_OLD, KEY_NEW]
         else:
             keys = [KEY_ONE]
 
@@ -1849,7 +1830,7 @@ def theorem(s: Solver, prog: Program) -> None:
         with s:
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, prog, *keys)
+            check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, prog, keys)
 
 def generate_parser(s: Solver, prog: Program) -> None:
     pass  # parser is generated implicitly by main when it parses the program
