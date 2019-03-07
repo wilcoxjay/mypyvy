@@ -6,12 +6,14 @@ sort quorum
 sort node
 
 immutable relation le(round, round)
+immutable constant round_zero: round
 
 # instantiate total_order(round, le)
 axiom le(X,X)
 axiom le(X, Y) & le(Y, Z) -> le(X, Z)
 axiom le(X, Y) & le(Y, X) -> X = Y
 axiom le(X, Y) | le(Y, X)
+axiom le(round_zero, X)
 
 immutable relation member(node, quorum)
 axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
@@ -19,20 +21,15 @@ axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
 mutable relation one_a(round)
 mutable relation one_b_never_voted(node, round)
 mutable relation one_b_with_max_vote(node, round, round, value)  # first round is "now", second round is max round sender voted in
-mutable relation left_round(node, round)
+mutable function current_round(node): round
 mutable relation proposal(round, value)
 mutable relation vote(node, round, value)
 mutable relation decision(round, value)
 
-mutable function decision_quorum(round, value): quorum
-derived relation choosable(round, value, quorum):
-    choosable(R, V, Q) <->
-      forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V)
-
 init !one_a(R)
 init !one_b_never_voted(N, R)
 init !one_b_with_max_vote(N, R1, R2, V)
-init !left_round(N, R)
+init current_round(N) = round_zero
 init !proposal(R, V)
 init !vote(N, R, V)
 init !decision(R, V)
@@ -42,23 +39,25 @@ transition send_1a(r: round)
   (forall R. one_a(R) <-> old(one_a(R)) | R = r)
 
 transition join_round_never_voted(n: node, r: round)
-  modifies one_b_never_voted, left_round
+  modifies one_b_never_voted, current_round
   old(one_a(r)) &
-  !old(left_round(n, r)) &
+  old(!le(r, current_round(n))) &
   (forall R. !le(r, R) -> !old(vote(n, R, V))) &
   (forall N, R. one_b_never_voted(N, R) <-> old(one_b_never_voted(N,R)) | N = n & R = r) &
-  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
+  (forall N. N != n -> current_round(N) = old(current_round(N))) &
+  current_round(n) = r
 
-transition join_round_with_max_vote(n: node, r: round, maxr: round, v: value)
-  modifies one_b_with_max_vote, left_round
+transition join_round_with_max_vote(n: node, r: round, cr: round, maxr: round, v: value)
+  modifies one_b_with_max_vote, current_round
   old(one_a(r)) &
-  !old(left_round(n, r)) &
+  old(!le(r, current_round(n))) &
   !le(r, maxr) &
   old(vote(n, maxr, v)) &
   (forall R, V. !le(r, R) & old(vote(n, R, V)) -> le(R, maxr)) &
   (forall N, R, MAXR, V.
     one_b_with_max_vote(N, R, MAXR, V) <-> old(one_b_with_max_vote(N,R,MAXR,V)) | N = n & R = r & MAXR = maxr & V = v) &
-  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
+  (forall N. N != n -> current_round(N) = old(current_round(N))) &
+  current_round(n) = r
 
 transition propose_without_votes(r: round, q: quorum, v: value)
   modifies proposal
@@ -69,50 +68,37 @@ transition propose_without_votes(r: round, q: quorum, v: value)
 transition propose_with_votes(r: round, q: quorum, maxr: round, v: value)
   modifies proposal
   (forall V. !old(proposal(r, V))) &
-  # the `exists` on the following line is non-EPR, since we are saying "forall nodes, exists round/value",
-  # while we also say:
-  #   (decision quorum) "forall rounds/values, exists quorum" and
-  #   (quorum intersection axiom) "forall quorum, exists node"
-  (forall N. member(N, q) -> old(one_b_never_voted(N, r)) | exists R,V. old(one_b_with_max_vote(N, r, R, V))) &  
+  (forall N. member(N, q) -> old(one_b_never_voted(N, r)) | exists R,V. old(one_b_with_max_vote(N, r, R, V))) &
   (exists N. member(N, q) & old(one_b_with_max_vote(N, r, maxr, v))) &
   (forall N,MAXR,V. member(N, q) & old(one_b_with_max_vote(N, r, MAXR, V)) -> le(MAXR, maxr)) &
   (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
 
-transition cast_vote(n: node, v: value, r: round)
+transition cast_vote(n: node, v: value, r: round, cr: round)
   modifies vote
-  !old(left_round(n, r)) &
+  le(current_round(n), r) &
   old(proposal(r, v)) &
   (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
 
 transition decide(r: round, v: value, q: quorum)
-  modifies decision, decision_quorum
+  modifies decision
   (forall N. member(N, q) -> old(vote(N, r, v))) &
-  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v) &
-  (forall R, V.
-    !(R = r & V = v) -> decision_quorum(R, V) = old(decision_quorum(R, V))) &
-  decision_quorum(r, v) = q
+  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v)
 
-safety
+safety [decisions_unique]
   decision(R1, V1) & decision(R2, V2) -> V1 = V2
- 
-invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
-invariant vote(N,R,V) -> proposal(R,V)
-invariant one_b_never_voted(N,R2) & !le(R2,R1) -> left_round(N,R1)
-invariant one_b_never_voted(N,R1) & !le(R1,R2) -> !vote(N, R2, V)
-invariant one_b_with_max_vote(N,R2,R3,V3) & !le(R2,R1) -> left_round(N,R1)
-invariant one_b_with_max_vote(N,R1,R2,V2) & vote(N,R3,V3) & !le(R1,R3) -> le(R3, R2)
-invariant one_b_with_max_vote(N,R1,R2,V2) -> vote(N, R2, V2) & !le(R1, R2)
 
-invariant
-  forall R1, V1, R2, V2, Q.
-    choosable(R1, V1, Q) ->
-    !le(R2, R1) &
-    proposal(R2, V2) ->
-    V1 = V2
-
-invariant
-  forall R, V.
-    decision(R, V) ->
-    forall N. member(N, decision_quorum(R, V)) -> vote(N, R, V)
-
-
+invariant [proposal_partial_function] proposal(R,V1) & proposal(R,V2) -> V1 = V2
+invariant [votes_proposed] vote(N,R,V) -> proposal(R,V)
+invariant [decision_quorum] decision(R,V) -> exists Q. forall N. member(N,Q) -> vote(N,R,V)
+invariant [proposals_choosable]
+  (forall N. member(N,Q) -> le(current_round(N),R1) | vote(N,R1,V1)) &
+  proposal(R2,V2) &
+  !le(R2, R1) ->
+  V1 = V2
+invariant [oneb_vote] one_b_with_max_vote(N,R1,R2,V2) -> vote(N,R2,V2)
+invariant [oneb_never_vote] !(!le(R2,R1) & vote(N,R1,V) & one_b_never_voted(N,R2))
+invariant [oneb_vote_max] one_b_with_max_vote(N,R1,R2,V2) & vote(N,R3,V3) & !le(R1,R3) -> le(R3,R2)
+invariant [oneb_never_vote_current_round]
+  one_b_never_voted(N,R1) -> le(R1, current_round(N))
+invariant [oneb_vote_current_round]
+  one_b_with_max_vote(N,R1,R2,V) -> le(R1, current_round(N))
