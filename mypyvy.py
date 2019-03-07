@@ -859,15 +859,6 @@ class Model(object):
 
     def _eval(self, expr: z3.ExprRef) -> z3.ExprRef:
         ans = self.z3model.eval(expr, model_completion=True)
-        if not (ans == True or ans == False):
-            # when expr is quantified sometimes Z3 retains the quantifier, and ans is an expression.
-            # raise Exception("Evaluating quantified expressions in model not supported")
-            # try to circumvent this by evaluating the quantified expression directly (by enumerating
-            #  domain elements).
-            # TODO: currently just for a single universally quantified variable
-            assert isinstance(ans, z3.QuantifierRef) and ans.is_forall() and ans.num_vars() == 1, ans
-            ans = z3.BoolVal(all(self._eval(z3.substitute_vars(ans.body(), el))
-                                 for el in self.z3model.get_universe(ans.var_sort(0))))
         assert ans == True or ans == False, (expr, ans)
         return ans
 
@@ -1999,8 +1990,8 @@ def main() -> None:
         logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)
 
-        logger.info('enable z3 macro finder')
-        z3.set_param('smt.macro_finder', True)
+        # logger.info('enable z3 macro finder')
+        # z3.set_param('smt.macro_finder', True)
 
         if utils.args.timeout is not None:
             logger.info('setting z3 timeout to %s' % utils.args.timeout)
