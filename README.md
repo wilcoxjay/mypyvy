@@ -67,7 +67,7 @@ all ok!
 - `updr`: search for a strengthening that proves the invariant named by the `--safety=NAME` flag.
   For example, we can ask it to strengthen the mutex property of the lock service:
 ```
-python3 mypyvy.py updr --safet=mutex test/lockserv.pyv
+python3 mypyvy.py updr --safety=mutex test/lockserv.pyv
 checking init:
   implies invariant mutex...ok. (0:00:00.000541)
   implies invariant on line 109...ok. (0:00:00.000423)
