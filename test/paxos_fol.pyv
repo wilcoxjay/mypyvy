@@ -1,5 +1,3 @@
-# These types are listed in an order consistent with the stratification graph.
-# To remain EPR, there should be no quantifier or function edges from a later sort to an earlier one.
 sort round
 sort value
 sort quorum
@@ -47,7 +45,7 @@ transition join_round_never_voted(n: node, r: round)
   (forall N. N != n -> current_round(N) = old(current_round(N))) &
   current_round(n) = r
 
-transition join_round_with_max_vote(n: node, r: round, cr: round, maxr: round, v: value)
+transition join_round_with_max_vote(n: node, r: round, maxr: round, v: value)
   modifies one_b_with_max_vote, current_round
   old(one_a(r)) &
   old(!le(r, current_round(n))) &
@@ -73,7 +71,7 @@ transition propose_with_votes(r: round, q: quorum, maxr: round, v: value)
   (forall N,MAXR,V. member(N, q) & old(one_b_with_max_vote(N, r, MAXR, V)) -> le(MAXR, maxr)) &
   (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
 
-transition cast_vote(n: node, v: value, r: round, cr: round)
+transition cast_vote(n: node, v: value, r: round)
   modifies vote
   le(current_round(n), r) &
   old(proposal(r, v)) &
