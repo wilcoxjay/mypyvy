@@ -850,8 +850,7 @@ class Model(object):
 
         for F in Fs:
             for tup, res in sorted(Fs[F]):
-                if False:
-                    l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
+                l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
 
 
         return '\n'.join(l)
