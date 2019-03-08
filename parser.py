@@ -469,6 +469,9 @@ def p_error(t: Any) -> None:
     if t is not None:
         print('error: %s: syntax error near %s' %
               ('%s:%s:%s' % (t.filename, t.lineno, t.col), t.value))
+
+        assert program_parser is not None
+        program_parser.errok()
     else:
         l = get_lexer(forbid_rebuild=True)
         print('lexer is None? %s' % l is None)
@@ -477,8 +480,6 @@ def p_error(t: Any) -> None:
         print('error: %s: syntax error near EOF' %
               ('%s:%s:%s' % (l.filename, l.lineno, l.lexpos - l.bol), ))
 
-    assert program_parser is not None
-    program_parser.errok()
 
 program_parser = None
 def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:
