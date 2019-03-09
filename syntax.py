@@ -219,13 +219,15 @@ class Z3Translator(object):
 
         return frame
 
+    def translate_transition_body(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
+        return z3.And(self.translate_expr(t.expr),
+                      *self.frame(t.mods),
+                      self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
+
     def translate_transition(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
-            body = z3.And(self.translate_expr(t.expr),
-                          *self.frame(t.mods),
-                          self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
-
+            body = self.translate_transition_body(t, precond)
             if len(bs) > 0:
                 return z3.Exists(bs, body)
             else:
