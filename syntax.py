@@ -1165,6 +1165,10 @@ class TransitionDecl(Decl):
         self.name = name
         self.binder = Binder(params)
         self.body = body
+        if isinstance(self.body, BlockStatement):
+            self.mods, self.expr = translate_block(self.body)
+        else:
+            self.mods, self.expr = self.body
 
     def resolve(self, scope: Scope) -> None:
         assert len(scope.stack) == 0
@@ -1172,11 +1176,6 @@ class TransitionDecl(Decl):
         scope.add_transition(self)
 
         self.binder.pre_resolve(scope)
-
-        if isinstance(self.body, BlockStatement):
-            self.mods, self.expr = translate_block(self.body)
-        else:
-            self.mods, self.expr = self.body
 
         for mod in self.mods:
             mod.resolve(scope)
