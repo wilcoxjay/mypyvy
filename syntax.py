@@ -1498,7 +1498,7 @@ class AutomatonDecl(Decl):
 
 class Scope(Generic[B]):
     def __init__(self) -> None:
-        self.stack: List[List[Tuple[SortedVar, B]]] = []
+        self.stack: List[List[Tuple[str, B]]] = []
         self.sorts: Dict[str, SortDecl] = {}
         self.relations: Dict[str, RelationDecl] = {}
         self.constants: Dict[str, ConstantDecl] = {}
@@ -1508,18 +1508,18 @@ class Scope(Generic[B]):
         self.in_two_state_context = False
         self.in_old_context = False
 
-    def push(self, l: List[Tuple[SortedVar, B]]) -> None:
+    def push(self, l: List[Tuple[str, B]]) -> None:
         self.stack.append(l)
 
     def pop(self) -> None:
         self.stack.pop()
 
-    def get(self, name: str) -> Union[RelationDecl, ConstantDecl, FunctionDecl, Tuple[SortedVar, B], None]:
+    def get(self, name: str) -> Union[RelationDecl, ConstantDecl, FunctionDecl, Tuple[B], None]:
         # first, check for bound variables in scope
         for l in reversed(self.stack):
             for v, b in l:
-                if v.name == name:
-                    return (v, b)
+                if v == name:
+                    return (b,)
 
         # otherwise, check for constants/relations/functions (whose domains are disjoint)
         d = self.constants.get(name) or self.relations.get(name) or self.functions.get(name)
@@ -1611,7 +1611,7 @@ class Scope(Generic[B]):
     def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:
         n = len(self.stack)
         assert len(b.vs) == len(annots)
-        self.push(list(zip(b.vs, annots)))
+        self.push(list(zip((v.name for v in b.vs), annots)))
         yield
         self.pop()
         assert n == len(self.stack)
