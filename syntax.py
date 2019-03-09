@@ -182,7 +182,7 @@ class Z3Translator(object):
                 assert isinstance(x, z3.ExprRef)
                 return x
             else:
-                _, e = d
+                e, = d
                 return e
         else:
             assert False
@@ -387,20 +387,24 @@ z3_UNOPS: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]] = {
     'OLD': None
 }
 
-def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: InferenceSort) -> None:
+def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: InferenceSort) -> InferenceSort:
     if expected is None or actual is None:
-        pass
+        return None
     elif isinstance(expected, Sort):
         if isinstance(actual, Sort):
             if expected != actual:
                 print_error(tok, 'expected sort %s but got %s' % (expected, actual))
+            return actual  # either would be fine
         else:
             actual.solve(expected)
+            return expected
     else:
         if isinstance(actual, Sort):
             expected.solve(actual)
+            return actual
         else:
             expected.merge(actual)
+            return expected
 
 
 class UnaryExpr(Expr):
@@ -672,8 +676,8 @@ class AppExpr(Expr):
             check_constraint(self.tok, sort, BoolSort)
             return BoolSort
         else:
-            check_constraint(self.tok, sort, d.sort)
-            return d.sort
+            sort = check_constraint(self.tok, sort, d.sort)
+            return sort
 
     def _denote(self) -> object:
         return (AppExpr, self.callee, tuple(self.args))
@@ -822,12 +826,12 @@ class Id(Expr):
             check_constraint(self.tok, sort, BoolSort)
             return BoolSort
         elif isinstance(d, ConstantDecl):
-            check_constraint(self.tok, sort, d.sort)
-            return d.sort
+            sort = check_constraint(self.tok, sort, d.sort)
+            return sort
         else:
-            v, _ = d
-            check_constraint(self.tok, sort, v.sort)
-            return v.sort
+            vsort, = d
+            vsort = check_constraint(self.tok, sort, vsort)
+            return vsort
 
     def _denote(self) -> object:
         return (Id, self.name)
