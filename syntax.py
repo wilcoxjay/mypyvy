@@ -73,21 +73,38 @@ class HasSortField(Protocol):
 class SortInferencePlaceholder(object):
     def __init__(self, d: Optional[HasSortField]=None) -> None:
         self.backpatches: List[HasSortField] = []
+        self.sort: Optional[Sort] = None
+        self.parent: Optional[SortInferencePlaceholder] = None
+
         if d is not None:
             self.add(d)
 
     def add(self, d: HasSortField) -> None:
         self.backpatches.append(d)
 
+    def root(self) -> SortInferencePlaceholder:
+        if self.parent is not None:
+            return self.parent.root()
+        else:
+            return self
+
     def solve(self, sort: Sort) -> None:
+        assert self.parent is None
+        assert self.sort is None
+
+        self.sort = sort
+
         for d in self.backpatches:
             d.sort = sort
 
     def merge(self, other: SortInferencePlaceholder) -> None:
-        for d in other.backpatches:
-            assert d.sort is other, (repr(d), repr(other))
-            d.sort = self
-            self.backpatches.append(d)
+        assert self.parent is None
+        assert other.parent is None
+        assert self.sort is None
+        assert other.sort is None
+
+        other.parent = self
+        self.backpatches.extend(other.backpatches)
 
 InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
@@ -389,9 +406,20 @@ z3_UNOPS: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]] = {
 }
 
 def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: InferenceSort) -> InferenceSort:
+    def normalize(s: Union[Sort, SortInferencePlaceholder]) -> Union[Sort, SortInferencePlaceholder]:
+        if isinstance(s, SortInferencePlaceholder):
+            s = s.root()
+            if s.sort is not None:
+                s = s.sort
+        return s
+
     if expected is None or actual is None:
-        return None
-    elif isinstance(expected, Sort):
+        return expected or actual
+
+    expected = normalize(expected)
+    actual = normalize(actual)
+
+    if isinstance(expected, Sort):
         if isinstance(actual, Sort):
             if expected != actual:
                 print_error(tok, 'expected sort %s but got %s' % (expected, actual))
