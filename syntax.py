@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import itertools
 import logging
 import ply.lex
@@ -1495,6 +1496,103 @@ class AutomatonDecl(Decl):
             msg
         )
 
+@dataclass
+class AnyTransition(object):
+    def __str__(self) -> str:
+        return 'any transition'
+
+    def resolve(self, scope: Scope) -> None:
+        pass
+
+@dataclass
+class Star(object):
+    def __str__(self) -> str:
+        return '*'
+
+@dataclass
+class TransitionCall(object):
+    tok: Optional[Token]
+    target: str
+    args: Optional[List[Union[Star, Expr]]]
+
+    def __str__(self) -> str:
+        return '%s%s' % (
+            self.target,
+            '' if self.args is None
+            else '(%s)' % ', '.join(str(a) for a in self.args)
+        )
+
+    def resolve(self, scope: Scope) -> None:
+        ition = scope.get_transition(self.target)
+        if ition is None:
+            print_error(self.tok, 'could not find transition %s' % (self.target,))
+            return
+
+        if self.args is not None:
+            if len(self.args) != len(ition.binder.vs):
+                print_error(self.tok, 'transition applied to the wrong number of arguments (expected %s, got %s)' % (len(ition.binder.vs), len(self.args)))
+                return
+
+            for a, sort in zip(self.args, (v.sort for v in ition.binder.vs)):
+                if isinstance(a, Expr):
+                    a.resolve(scope, sort)
+
+@dataclass
+class TransitionCalls(object):
+    calls: List[TransitionCall]
+
+    def __str__(self) -> str:
+        return ' | '.join(str(c) for c in self.calls)
+
+    def resolve(self, scope: Scope) -> None:
+        for c in self.calls:
+            c.resolve(scope)
+
+TransitionExpr = Union[AnyTransition, TransitionCalls]
+
+@dataclass
+class TraceTransitionDecl(object):
+    transition: TransitionExpr
+
+    def __str__(self) -> str:
+        return str(self.transition)
+
+    def resolve(self, scope: Scope) -> None:
+        self.transition.resolve(scope)
+
+
+@dataclass
+class AssertDecl(object):
+    tok: Optional[Token]
+    expr: Expr
+
+    def __str__(self) -> str:
+        return 'assert %s' % (str(self.expr),)
+
+    def resolve(self, scope: Scope) -> None:
+        self.expr = close_free_vars(self.tok, self.expr)
+        self.expr.resolve(scope, BoolSort)
+
+
+TraceComponent = Union[TraceTransitionDecl, AssertDecl] # , AxiomDecl, ConstantDecl]
+
+@dataclass
+class TraceDecl(Decl):
+    components: List[TraceComponent]
+
+    def __str__(self) -> str:
+        return 'trace {%s\n}' % (
+            '\n  '.join([''] + [str(c) for c in self.components])
+        )
+
+    def transitions(self) -> Iterator[TraceTransitionDecl]:
+        for c in self.components:
+            if isinstance(c, TraceTransitionDecl):
+                yield c
+
+    def resolve(self, scope: Scope) -> None:
+        for c in self.components:
+            c.resolve(scope)
 
 class Scope(Generic[B]):
     def __init__(self) -> None:
@@ -1690,6 +1788,11 @@ class Program(object):
             return d
         return None
 
+    def traces(self) -> Iterator[TraceDecl]:
+        for d in self.decls:
+            if isinstance(d, TraceDecl):
+                yield d
+
     def resolve(self) -> None:
         self.scope = scope = Scope[InferenceSort]()
 
@@ -1701,6 +1804,9 @@ class Program(object):
 
         for d in self.decls_containing_exprs():
             d.resolve(scope)
+
+        for tr in self.traces():
+            tr.resolve(scope)
 
         automata = list(self.automata())
         if len(automata) > 1:

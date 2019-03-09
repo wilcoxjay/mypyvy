@@ -29,11 +29,14 @@ reserved = {
     'twostate': 'TWOSTATE',
     'theorem': 'THEOREM',
     'assume': 'ASSUME',
+    'assert': 'ASSERT',
     'automaton': 'AUTOMATON',
     'global': 'GLOBAL',
     'safety': 'SAFETY',
     'phase': 'PHASE',
     'self': 'SELF',
+    'any': 'ANY',
+    'trace': 'TRACE',
 }
 
 tokens = [
@@ -55,6 +58,7 @@ tokens = [
     'NOTEQ',
     'COMMA',
     'AMPERSAND',
+    'STAR',
     'ID'
 ] + list(reserved.values())
 
@@ -84,6 +88,7 @@ t_EQUAL = r'='
 t_NOTEQ = r'\!='
 t_COMMA = r','
 t_AMPERSAND = r'&'
+t_STAR = r'\*'
 t_ignore_COMMENT = r'\#.*'
 
 # Define a rule so we can track line numbers
@@ -175,17 +180,25 @@ def p_decl_relation_derived(p: Any) -> None:
     'decl : DERIVED RELATION id arity COLON expr'
     p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], mutable=True, derived=p[6])
 
-def p_decl_constant(p: Any) -> None:
-    'decl : mut CONSTANT id COLON sort'
+def p_constant_decl(p: Any) -> None:
+    'constant_decl : mut CONSTANT id COLON sort'
     p[0] = syntax.ConstantDecl(p.slice[2], p[3].value, p[5], p[1])
+
+def p_decl_constant_decl(p: Any) -> None:
+    'decl : constant_decl'
+    p[0] = p[1]
 
 def p_decl_function(p: Any) -> None:
     'decl : mut FUNCTION id LPAREN arity_nonempty RPAREN COLON sort'
     p[0] = syntax.FunctionDecl(p.slice[2], p[3].value, p[5], p[8], p[1])
 
-def p_decl_axiom(p: Any) -> None:
-    'decl : AXIOM opt_name expr'
+def p_axiom_decl(p: Any) -> None:
+    'axiom_decl : AXIOM opt_name expr'
     p[0] = syntax.AxiomDecl(p.slice[1], p[2], p[3])
+
+def p_decl_axiom_decl(p: Any) -> None:
+    'decl : axiom_decl'
+    p[0] = p[1]
 
 def p_decl_init(p: Any) -> None:
     'decl : INIT opt_name expr'
@@ -457,6 +470,78 @@ def p_automaton_decls_decl(p: Any) -> None:
 def p_decl_automaton(p: Any) -> None:
     'decl : AUTOMATON LBRACE automaton_decls RBRACE'
     p[0] = syntax.AutomatonDecl(p.slice[1], p[3])
+
+def p_trace_transition_any(p: Any) -> None:
+    'trace_transition : ANY TRANSITION'
+    p[0] = syntax.AnyTransition()
+
+def p_optional_tcall_args_none(p: Any) -> None:
+    'optional_tcall_args : empty'
+    p[0] = None
+
+def p_tcall_args_empty(p: Any) -> None:
+    'tcall_args : empty'
+    p[0] = []
+
+def p_tcall_args_nonempty(p: Any) -> None:
+    'tcall_args : tcall_args1'
+    p[0] = p[1]
+
+def p_tcall_arg_star(p: Any) -> None:
+    'tcall_arg : STAR'
+    p[0] = syntax.Star()
+
+def p_tcall_arg_expr(p: Any) -> None:
+    'tcall_arg : expr'
+    p[0] = p[1]
+
+def p_tcall_args1_arg(p: Any) -> None:
+    'tcall_args1 : tcall_arg'
+    p[0] = [p[1]]
+
+def p_tcall_args1_more(p: Any) -> None:
+    'tcall_args1 : tcall_args1 COMMA tcall_arg'
+    p[0] = p[1] + [p[3]]
+
+def p_optional_tcall_args_some(p: Any) -> None:
+    'optional_tcall_args : LPAREN tcall_args RPAREN'
+    p[0] = p[2]
+
+def p_trace_transition_calls(p: Any) -> None:
+    'trace_transition : trace_transition_calls'
+    p[0] = syntax.TransitionCalls(p[1])
+
+def p_trace_transition_calls_one(p: Any) -> None:
+    'trace_transition_calls : trace_transition_call'
+    p[0] = [p[1]]
+
+def p_trace_transition_calls_more(p: Any) -> None:
+    'trace_transition_calls : trace_transition_calls PIPE trace_transition_call'
+    p[0] = p[1] + [p[3]]
+
+def p_trace_transition_call(p: Any) -> None:
+    'trace_transition_call : ID optional_tcall_args'
+    p[0] = syntax.TransitionCall(p.slice[1], p[1], p[2])
+
+def p_trace_component_assert(p: Any) -> None:
+    'trace_component : ASSERT expr'
+    p[0] = syntax.AssertDecl(p.slice[1], p[2])
+
+def p_trace_component_transition(p: Any) -> None:
+    'trace_component : trace_transition'
+    p[0] = syntax.TraceTransitionDecl(p[1])
+
+def p_trace_components_empty(p: Any) -> None:
+    'trace_components : empty'
+    p[0] = []
+
+def p_trace_components_component(p: Any) -> None:
+    'trace_components : trace_components trace_component'
+    p[0] = p[1] + [p[2]]
+
+def p_decl_trace(p: Any) -> None:
+    'decl : TRACE LBRACE trace_components RBRACE'
+    p[0] = syntax.TraceDecl(p[3])
 
 def p_empty(p: Any) -> None:
     'empty :'

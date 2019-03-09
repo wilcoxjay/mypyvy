@@ -1834,6 +1834,65 @@ def theorem(s: Solver, prog: Program) -> None:
 def generate_parser(s: Solver, prog: Program) -> None:
     pass  # parser is generated implicitly by main when it parses the program
 
+def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
+    ition = prog.scope.get_transition(c.target)
+    assert ition is not None
+    lator = s.get_translator(key, key_old)
+    bs = lator.bind(ition.binder)
+    qs: List[Optional[z3.ExprRef]] = [b for b in bs]
+    if c.args is not None:
+        for j, a in enumerate(c.args):
+            if isinstance(a, Expr):
+                bs[j] = lator.translate_expr(a)
+                qs[j] = None
+            else:
+                assert isinstance(a, syntax.Star)
+                pass
+    qs1 = [q for q in qs if q is not None]
+    with lator.scope.in_scope(ition.binder, bs):
+        body = lator.translate_transition_body(ition)
+    if len(qs1) > 0:
+        return z3.Exists(qs1, body)
+    else:
+        return body
+
+def trace(s: Solver, prog: Program) -> None:
+    logger.always_print('finding traces:')
+
+    for trace in prog.traces():
+        n_states = len(list(trace.transitions())) + 1
+        print('%s states' % (n_states,))
+
+        keys = ['state%2d' % i for i in range(n_states)]
+
+        for k in keys:
+            s.get_translator(k)  # initialize all the keys before pushing a solver stack frame
+
+        with s:
+            lator = s.get_translator(keys[0])
+            for init in prog.inits():
+                s.add(lator.translate_expr(init.expr))
+
+            i = 0
+            for c in trace.components:
+                if isinstance(c, syntax.AssertDecl):
+                    s.add(s.get_translator(keys[i]).translate_expr(c.expr))
+                else:
+                    te: syntax.TransitionExpr = c.transition
+                    if isinstance(te, syntax.AnyTransition):
+                        assert_any_transition(s, prog, str(i), keys[i+1], keys[i], allow_stutter=True)
+                    else:
+                        l = []
+                        for call in te.calls:
+                            tid = z3.Bool(get_transition_indicator(str(i), call.target))
+                            l.append(tid)
+                            s.add(tid == translate_transition_call(s, prog, keys[i+1], keys[i], call))
+                        s.add(z3.Or(*l))
+
+                    i += 1
+
+            check_unsat([(None, 'found trace!')], s, prog, keys)
+
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
@@ -1855,6 +1914,10 @@ def parse_args() -> argparse.Namespace:
     theorem_subparser = subparsers.add_parser('theorem')
     theorem_subparser.set_defaults(main=theorem)
     all_subparsers.append(theorem_subparser)
+
+    trace_subparser = subparsers.add_parser('trace')
+    trace_subparser.set_defaults(main=trace)
+    all_subparsers.append(trace_subparser)
 
     generate_parser_subparser = subparsers.add_parser('generate-parser')
     generate_parser_subparser.set_defaults(main=generate_parser)
