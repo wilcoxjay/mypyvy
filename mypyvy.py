@@ -1743,7 +1743,7 @@ def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_edge_covering(s, prog, a)
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
-    keys = ['state%d' % i for i in range(depth+1)]
+    keys = ['state%2d' % i for i in range(depth+1)]
 
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug('check_bmc property: %s' % safety)
