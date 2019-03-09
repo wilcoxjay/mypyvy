@@ -123,6 +123,7 @@ z3.Forall = z3.ForAll
 KEY_ONE = 'one'
 KEY_NEW = 'new'
 KEY_OLD = 'old'
+TRANSITION_INDICATOR = 'tid'
 
 class Solver(object):
     def __init__(self, scope: Scope[z3.ExprRef]) -> None:
@@ -945,8 +946,8 @@ class Model(object):
             else:
 #                 if logger.isEnabledFor(logging.DEBUG):
 #                     logger.debug('extra constant: ' + str(z3decl))
-                if name.startswith('p_') and self.z3model.eval(z3decl()):
-                    name = name[len('p_'):]
+                if name.startswith(TRANSITION_INDICATOR + '_') and self.z3model.eval(z3decl()):
+                    name = name[len(TRANSITION_INDICATOR + '_'):]
                     istr, name = name.split('_', maxsplit=1)
                     i = int(istr)
                     self.transitions[i] = name
@@ -1742,6 +1743,25 @@ def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_inductiveness(s, prog, a)
     check_automaton_edge_covering(s, prog, a)
 
+def get_transition_indicator(uid: str, name: str) -> str:
+    return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
+
+def assert_any_transition(s: Solver, prog: Program, uid: str, key: str, key_old: str, allow_stutter: bool=False) -> None:
+    t = s.get_translator(key, key_old)
+
+    l = []
+    for transition in prog.transitions():
+        tid = z3.Bool(get_transition_indicator(uid, transition.name))
+        l.append(tid)
+        s.add(tid == t.translate_transition(transition))
+
+    if allow_stutter:
+        tid = z3.Bool(get_transition_indicator(uid, 'stutter'))
+        l.append(tid)
+        s.add(tid == z3.And(*t.frame([])))
+
+    s.add(z3.Or(*l))
+
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
     keys = ['state%2d' % i for i in range(depth+1)]
 
@@ -1761,16 +1781,7 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
         s.add(t.translate_expr(syntax.Not(safety)))
 
         for i in range(depth):
-            t = s.get_translator(keys[i+1], keys[i])
-            l = []
-            for transition in prog.transitions():
-                p = z3.Bool('p_%s_%s' % (i, transition.name))
-                l.append(p)
-                s.add(p == t.translate_transition(transition))
-            p = z3.Bool('p_%s_%s' % (i, 'stutter'))
-            l.append(p)
-            s.add(p == z3.And(*t.frame([])))
-            s.add(z3.Or(*l))
+            assert_any_transition(s, prog, str(i), keys[i+1], keys[i], allow_stutter=True)
 
         # if logger.isEnabledFor(logging.DEBUG):
         #     logger.debug('assertions')
