@@ -817,9 +817,8 @@ class Model(object):
         l.extend(self.univ_str())
         l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
         for i, k in enumerate(self.keys):
-            t = self.transitions[i-1]
-            if i > 0 and t != '':
-                l.append('\ntransition %s' % (t,))
+            if i > 0 and self.transitions[i-1] != '':
+                l.append('\ntransition %s' % (self.transitions[i-1],))
             l.append('\nstate %s:' % (i,))
             l.append(Model._state_str(self.const_interps[i], self.rel_interps[i], self.func_interps[i]))
 
