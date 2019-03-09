@@ -1,0 +1,155 @@
+sort round
+sort value
+sort quorum
+sort node
+
+immutable relation le(round, round)
+immutable constant round_zero: round
+
+# instantiate total_order(round, le)
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+axiom le(round_zero, X)
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation one_a(round)
+mutable relation one_b_never_voted(node, round)
+mutable relation one_b_with_max_vote(node, round, round, value)  # first round is "now", second round is max round sender voted in
+mutable function current_round(node): round
+mutable relation proposal(round, value)
+mutable relation vote(node, round, value)
+mutable relation decision(round, value)
+
+mutable relation node_active(node)
+mutable relation value_active(value)
+mutable relation quorum_active(quorum)
+mutable relation round_active(round)
+
+# WLOG, the active domain includes everything in the inital state
+init node_active(N)
+init value_active(V)
+init quorum_active(Q)
+init round_active(R)
+
+init !one_a(R)
+init !one_b_never_voted(N, R)
+init !one_b_with_max_vote(N, R1, R2, V)
+init current_round(N) = round_zero
+init !proposal(R, V)
+init !vote(N, R, V)
+init !decision(R, V)
+
+transition send_1a(r: round)
+  modifies one_a
+  old(round_active(r)) & 
+  (forall R. one_a(R) <-> old(one_a(R)) | R = r)
+
+transition join_round_never_voted(n: node, r: round)
+  modifies one_b_never_voted, current_round
+  old(node_active(n)) & 
+  old(round_active(r)) & 
+  old(one_a(r)) &
+  old(!le(r, current_round(n))) &
+  (forall R. old(round_active(R)) & old(value_active(V)) & !le(r, R) -> !old(vote(n, R, V))) &
+  (forall N, R. one_b_never_voted(N, R) <-> old(one_b_never_voted(N,R)) | N = n & R = r) &
+  (forall N. N != n -> current_round(N) = old(current_round(N))) &
+  current_round(n) = r
+
+transition join_round_with_max_vote(n: node, r: round, maxr: round, v: value)
+  modifies one_b_with_max_vote, current_round
+  old(node_active(n)) & 
+  old(round_active(r)) & 
+  old(round_active(maxr)) & 
+  old(value_active(v)) & 
+  old(one_a(r)) &
+  old(!le(r, current_round(n))) &
+  !le(r, maxr) &
+  old(vote(n, maxr, v)) &
+  (forall R, V. old(round_active(R)) & old(value_active(V)) & !le(r, R) & old(vote(n, R, V)) -> le(R, maxr)) &
+  (forall N, R, MAXR, V.
+    one_b_with_max_vote(N, R, MAXR, V) <-> old(one_b_with_max_vote(N,R,MAXR,V)) | N = n & R = r & MAXR = maxr & V = v) &
+  (forall N. N != n -> current_round(N) = old(current_round(N))) &
+  current_round(n) = r
+
+transition propose_without_votes(r: round, q: quorum, v: value)
+  modifies proposal
+  old(round_active(r)) &
+  old(quorum_active(q)) &
+  old(value_active(v)) & 
+  (forall V. old(value_active(V)) -> !old(proposal(r, V))) &
+  (forall N. old(node_active(N)) & member(N, q) -> old(one_b_never_voted(N, r))) &
+  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+
+transition propose_with_votes(r: round, q: quorum, maxr: round, v: value)
+  modifies proposal
+  old(round_active(r)) &
+  old(quorum_active(q)) &
+  old(round_active(maxr)) &
+  old(value_active(v)) & 
+  (forall V. old(value_active(V)) -> !old(proposal(r, V))) &
+  (forall N. old(node_active(N)) & member(N, q) -> old(one_b_never_voted(N, r)) | exists R,V. old(round_active(R)) & old(value_active(V)) & old(one_b_with_max_vote(N, r, R, V))) &
+  (exists N. old(node_active(N)) & member(N, q) & old(one_b_with_max_vote(N, r, maxr, v))) &
+  (forall N,MAXR,V. old(node_active(N)) & old(round_active(MAXR)) & old(value_active(V)) & member(N, q) & old(one_b_with_max_vote(N, r, MAXR, V)) -> le(MAXR, maxr)) &
+  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+
+transition cast_vote(n: node, v: value, r: round)
+  modifies vote
+  old(node_active(n)) &
+  old(value_active(v)) &
+  old(round_active(r)) & 
+  le(current_round(n), r) &
+  old(proposal(r, v)) &
+  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
+
+transition decide(r: round, v: value, q: quorum)
+  modifies decision
+  old(round_active(r)) & 
+  old(value_active(v)) &
+  old(quorum_active(q)) &
+  (forall N. old(node_active(N)) & member(N, q) -> old(vote(N, r, v))) &
+  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v)
+
+transition decrease_domain()
+  modifies node_active, value_active, quorum_active, round_active
+  (forall N. node_active(N) -> old(node_active(N))) &
+  (forall V. value_active(V) -> old(value_active(V))) &
+  (forall Q. quorum_active(Q) -> old(quorum_active(Q))) &
+  (forall R. round_active(R) -> old(round_active(R)))
+  & (forall Q1, Q2. quorum_active(Q1) & quorum_active(Q2) ->
+       exists N. node_active(N) & member(N, Q1) & member(N, Q2))
+  & round_active(round_zero)
+  & (forall N. node_active(N) -> round_active(old(current_round(N))))
+
+safety [decisions_unique]
+  round_active(R1) & round_active(R2) &
+  value_active(V1) & value_active(V2) &
+  decision(R1, V1) & decision(R2, V2) -> V1 = V2
+
+immutable constant r1: round
+immutable constant r2: round
+axiom r1 != r2 & le(r1, r2)
+
+trace {
+  send_1a(r2)
+  join_round_never_voted(*, r2) 
+  propose_without_votes(r2, *, *)
+  cast_vote(*, *, r2)
+  decide(r2, *, *)
+
+  decrease_domain
+
+  send_1a(r1)
+  join_round_never_voted(*, r1)
+  propose_without_votes(r1, *, *)
+  cast_vote(*, *, r1)
+  decide(r1, *, *)
+  assert
+    !(forall R1,V1,R2,V2.
+        round_active(R1) & round_active(R2) &
+        value_active(V1) & value_active(V2) &
+        decision(R1, V1) & decision(R2, V2) -> V1 = V2)
+}
