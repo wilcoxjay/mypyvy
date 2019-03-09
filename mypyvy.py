@@ -329,11 +329,18 @@ def check_transitions(s: Solver, prog: Program) -> None:
             s.add(t.translate_expr(inv.expr, old=True))
 
         for trans in prog.transitions():
+            if utils.args.check_transition is not None and trans.name not in utils.args.check_transition:
+                continue
+
             logger.always_print('checking transation %s:' % (trans.name,))
 
             with s:
                 s.add(t.translate_transition(trans))
                 for inv in prog.invs():
+                    if utils.args.check_invariant is not None and \
+                       inv.name not in utils.args.check_invariant:
+                        continue
+
                     with s:
                         s.add(z3.Not(t.translate_expr(inv.expr)))
 
@@ -1977,6 +1984,10 @@ def parse_args() -> argparse.Namespace:
                                   help="whether to use phase automata during verification. by default ('yes'), both non-automaton "
                                   "and autotomaton proofs are checked. 'no' means ignore automaton proofs. "
                                   "'only' means ignore non-automaton proofs.")
+    verify_subparser.add_argument('--check-transition', default=None, nargs='+',
+                                  help="when verifying inductiveness, check only these transitions")
+    verify_subparser.add_argument('--check-invariant', default=None, nargs='+',
+                                  help="when verifying inductiveness, check only these invariants")
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
