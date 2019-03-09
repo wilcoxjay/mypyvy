@@ -1831,8 +1831,8 @@ def theorem(s: Solver, prog: Program) -> None:
 
             check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, prog, keys)
 
-def generate_parser(s: Solver, prog: Program) -> None:
-    pass  # parser is generated implicitly by main when it parses the program
+def nop(s: Solver, prog: Program) -> None:
+    pass
 
 def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
     ition = prog.scope.get_transition(c.target)
@@ -1920,8 +1920,13 @@ def parse_args() -> argparse.Namespace:
     all_subparsers.append(trace_subparser)
 
     generate_parser_subparser = subparsers.add_parser('generate-parser')
-    generate_parser_subparser.set_defaults(main=generate_parser)
+    generate_parser_subparser.set_defaults(main=nop)  # parser is generated implicitly by main when it parses the program
     all_subparsers.append(generate_parser_subparser)
+
+    typecheck_subparser = subparsers.add_parser('typecheck')
+    typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
+    all_subparsers.append(typecheck_subparser)
+
 
     for s in all_subparsers:
         s.add_argument('--forbid-parser-rebuild', action='store_true',
