@@ -291,7 +291,7 @@ def check_unsat(
             logger.always_print('unknown!')
             logger.always_print('reason unknown: ' + s.reason_unknown())
         for tok, msg in errmsgs:
-            syntax.print_error(tok, msg)
+            utils.print_error(tok, msg)
     logger.always_print('ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
 
@@ -1050,7 +1050,7 @@ class Frames(object):
         if utils.args.automaton:
             automaton = prog.the_automaton()
             if automaton is None:
-                syntax.error(None, 'updr --automaton requires the file to declare an automaton')
+                utils.print_error_and_exit(None, 'updr --automaton requires the file to declare an automaton')
         else:
             the_phase = 'the_phase'
             pcs: List[syntax.PhaseComponent] = []
@@ -1638,8 +1638,10 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
 
     t = s.get_translator(KEY_ONE)
 
-    init_phase = prog.scope.get_phase(a.the_init().phase)
-    assert init_phase is not None
+    init_decl = a.the_init()
+    assert init_decl is not None  # checked by resolver
+    init_phase = prog.scope.get_phase(init_decl.phase)
+    assert init_phase is not None  # checked by resolver
 
     with s:
         for init in prog.inits():
@@ -1729,10 +1731,11 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
+    old_count = utils.error_count
     a = prog.the_automaton()
     if a is None:
         if utils.args.automaton == 'only':
-            syntax.error(None, "--automaton='only' requires the file to declare an automaton")
+            utils.print_error_and_exit(None, "--automaton='only' requires the file to declare an automaton")
     elif utils.args.automaton != 'no':
         check_automaton_full(s, prog, a)
 
@@ -1740,7 +1743,7 @@ def verify(s: Solver, prog: Program) -> None:
         check_init(s, prog)
         check_transitions(s, prog)
 
-    if not syntax.errored:
+    if utils.error_count == old_count:
         logger.always_print('all ok!')
     else:
         logger.always_print('program has errors.')
@@ -2055,6 +2058,8 @@ def main() -> None:
             logger.info('setting z3 timeout to %s' % utils.args.timeout)
             z3.set_param('timeout', utils.args.timeout)
 
+        pre_parse_error_count = utils.error_count
+
         with open(utils.args.filename) as f:
             l = parser.get_lexer()
             p = parser.get_parser(forbid_rebuild=utils.args.forbid_parser_rebuild)
@@ -2065,12 +2070,14 @@ def main() -> None:
         if utils.args.print_program:
             logger.always_print(str(prog))
 
-        if parser.errored:
+        if utils.error_count > pre_parse_error_count:
             logger.always_print('program has syntax errors.')
             return
 
+        pre_resolve_error_count = utils.error_count
+
         prog.resolve()
-        if syntax.errored:
+        if utils.error_count > pre_resolve_error_count:
             logger.always_print('program has resolution errors.')
             return
 

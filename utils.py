@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ply
+import sys
 
-from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar
+from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
+                   Any
 
 T = TypeVar('T')
 
@@ -47,3 +50,22 @@ MySet = OrderedSet
 
 args: argparse.Namespace
 
+Token = ply.lex.LexToken
+def tok_to_string(tok: Optional[Token]) -> str:
+    if tok is not None:
+        return '%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
+    else:
+        return 'None'
+
+error_count = 0
+
+def print_error(tok: Optional[Token], msg: str) -> None:
+    global error_count
+    error_count += 1
+    print('error: %s: %s' % (tok_to_string(tok), msg))
+    if args.exit_on_error:
+        sys.exit(1)
+
+def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
+    print_error(tok, msg)
+    sys.exit(1)
