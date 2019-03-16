@@ -44,7 +44,20 @@
   "Major mode for editing Mypyvy proof files"
   :syntax-table mypyvy-mode-syntax-table
   (set (make-local-variable 'font-lock-defaults) '(mypyvy-font-lock-keywords))
-  (font-lock-fontify-buffer))
+  (font-lock-fontify-buffer)
+  (set (make-local-variable 'compile-command)
+       (string-join (list "mypyvy verify"
+                          (string-join flycheck-mypyvy-args " ")
+                          buffer-file-name)
+                    " "))
+  (local-set-key (kbd "C-c C-c") compile))
+
+
+(defun mypyvy-toggle-flycheck-verify ()
+  (interactive)
+  (if (equal flycheck-mypyvy-subcommand "verify")
+      (set (make-local-variable 'flycheck-mypyvy-subcommand) "typecheck")
+    (set (make-local-variable 'flycheck-mypyvy-subcommand) "verify")))
 
 (defun mypyvy-infer-invariant ()
   (interactive)
