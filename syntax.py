@@ -1219,6 +1219,12 @@ class TransitionDecl(Decl):
                     else:
                         utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
 
+            for mod in self.mods:
+                for is_old, tok, sym in syms:
+                    if mod.name == sym and not is_old:
+                        break
+                else:
+                    utils.print_error(mod.tok, 'symbol %s is mentioned by the modifies clause, but is not referred to in the new state, so it will be havoced. supress this error by using %s in a no-op.' % (mod.name, mod.name))
 
     def __repr__(self) -> str:
         return 'TransitionDecl(tok=None, name=%s, params=%s, mods=%s, expr=%s)' % (
