@@ -28,5 +28,7 @@ safety table(T,X,Y) & table(T,Y,Z) -> table(T,X,Z)
 safety table(T,X,Y) & table(T,Y,X) -> X = Y
 safety table(T,X,Y) & table(T,X,Z) -> table(T,Y,Z) | table(T,Z,Y)
 
-invariant pending(PS,PD,S,D) & PS != S -> exists W. table(PS,S,W) & W != S
-invariant table(T,X,Y) & T != Y & X != Y -> exists W. table(T,Y,W) & W != Y
+invariant pending(PS,PD,S,D) & PS != S -> table(PS,S,PS)
+invariant table(T,X,Y) & T != Y & X != Y -> table(T,Y,T)
+# invariant pending(PS,PD,S,D) & PS != S -> exists W. table(PS,S,W) & W != S
+# invariant table(T,X,Y) & T != Y & X != Y -> exists W. table(T,Y,W) & W != Y
