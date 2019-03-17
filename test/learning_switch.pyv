@@ -10,11 +10,11 @@ transition new_packet(ps: node, pd: node)
   modifies pending
   pending(PS, PD, S, D) <-> old(pending(PS, PD, S, D)) | PS = ps & PD = pd & S = ps & D = ps
 
-transition forward(ps: node, pd: node, sw0: node, sw1: node)
+transition forward(ps: node, pd: node, sw0: node, sw1: node, nondet: node)
   modifies pending, table
   old(pending(ps, pd, sw0, sw1)) &
   (forall PS,PD,S,D.
-    pending(PS,PD,S,D) <-> old(pending(PS,PD,S,D)) | (PS = ps & PD = pd & S = sw1)) &
+    pending(PS,PD,S,D) <-> old(pending(PS,PD,S,D)) & PS = nondet | (PS = ps & PD = pd & S = sw1)) &
   (forall T,N1,N2.
     table(T,N1,N2) <->
       old(table(T,N1,N2)) |
