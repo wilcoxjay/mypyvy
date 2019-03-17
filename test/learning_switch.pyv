@@ -1,0 +1,33 @@
+sort packet
+sort node
+
+mutable relation table(node, node, node)
+mutable relation pending(node, node, node, node)
+
+init table(T, N1, N2) <-> N1 = N2
+init !pending(PS, PD, S, D)
+
+transition new_packet(ps: node, pd: node)
+  modifies pending
+  pending(PS, PD, S, D) <-> old(pending(PS, PD, S, D)) | PS = ps & PD = pd & S = ps & D = ps
+
+transition forward(ps: node, pd: node, sw0: node, sw1: node)
+  modifies pending, table
+  old(pending(ps, pd, sw0, sw1)) &
+  (forall PS,PD,S,D.
+    pending(PS,PD,S,D) <-> old(pending(PS,PD,S,D)) | (PS = ps & PD = pd & S = sw1)) &
+  (forall T,N1,N2.
+    table(T,N1,N2) <->
+      old(table(T,N1,N2)) |
+      T = ps & ps != sw1 &
+      (forall W. W != sw1 -> !old(table(T, sw1, W))) &
+      old(table(T, N1, sw1)) &
+      old(table(T, sw0, N2)))
+
+invariant table(T,X,X)
+invariant table(T,X,Y) & table(T,Y,Z) -> table(T,X,Z)
+invariant table(T,X,Y) & table(T,Y,X) -> X = Y
+invariant table(T,X,Y) & table(T,X,Z) -> table(T,Y,Z) | table(T,Z,Y)
+
+invariant pending(PS,PD,S,D) & PS != S -> exists W. table(PS,S,W) & W != S
+invariant table(T,X,Y) & T != Y & X != Y -> exists W. table(T,Y,W) & W != Y
