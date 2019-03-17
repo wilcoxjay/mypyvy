@@ -1,4 +1,3 @@
-sort packet
 sort node
 
 mutable relation table(node, node, node)

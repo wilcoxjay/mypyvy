@@ -1,4 +1,3 @@
-sort packet
 sort node
 
 immutable constant ps: node
