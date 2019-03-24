@@ -154,12 +154,19 @@ class Z3Translator(object):
                 k = self.key_old
             d = self.scope.get(expr.callee)
             assert d is not None
-            assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
-            R = d.to_z3(k)
-            assert isinstance(R, z3.FuncDeclRef)
-            app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
-            translated_app = R(*app_translated_args)
-            return translated_app
+            if isinstance(d, DefinitionDecl):
+                assert not (old and d.twostate)  # XXX check in resolver
+                translated_args = [self.translate_expr(arg, old) for arg in expr.args]  # translate args in the scope of caller
+                with self.scope.fresh_stack():
+                    with self.scope.in_scope(d.binder, translated_args):
+                        return self.translate_expr(d.expr, old)  # translate body of def in fresh scope
+            else:
+                assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
+                R = d.to_z3(k)
+                assert isinstance(R, z3.FuncDeclRef)
+                app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
+                translated_app = R(*app_translated_args)
+                return translated_app
         elif isinstance(expr, QuantifierExpr):
             bs = self.bind(expr.binder)
             with self.scope.in_scope(expr.binder, bs):
@@ -180,9 +187,21 @@ class Z3Translator(object):
                 x = d.to_z3(k)
                 assert isinstance(x, z3.ExprRef)
                 return x
+            elif isinstance(d, DefinitionDecl):
+                assert not (old and d.twostate)  # XXX check in resolver
+                with self.scope.fresh_stack():
+                    return self.translate_expr(d.expr, old)
             else:
                 e, = d
                 return e
+        elif isinstance(expr, IfThenElse):
+            return z3.If(self.translate_expr(expr.branch, old),
+                         self.translate_expr(expr.then, old),
+                         self.translate_expr(expr.els, old))
+        elif isinstance(expr, Let):
+            val = self.translate_expr(expr.val, old)
+            with self.scope.in_scope(expr.binder, [val]):
+                return self.translate_expr(expr.body, old)
         else:
             assert False
 
@@ -218,12 +237,12 @@ class Z3Translator(object):
 
         return frame
 
-    def translate_transition_body(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
+    def translate_transition_body(self, t: DefinitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
         return z3.And(self.translate_expr(t.expr),
                       *self.frame(t.mods),
                       self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
 
-    def translate_transition(self, t: TransitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
+    def translate_transition(self, t: DefinitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
             body = self.translate_transition_body(t, precond)
@@ -232,7 +251,7 @@ class Z3Translator(object):
             else:
                 return body
 
-    def translate_precond_of_transition(self, precond: Optional[Expr], t: TransitionDecl) -> z3.ExprRef:
+    def translate_precond_of_transition(self, precond: Optional[Expr], t: DefinitionDecl) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
             body = self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True)
@@ -262,7 +281,12 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
     elif isinstance(expr, AppExpr):
         d = scope.get(expr.callee)
         assert d is not None and not isinstance(d, tuple)
-        if d.mutable:
+        if isinstance(d, DefinitionDecl):
+            assert not (old and d.twostate)
+            with scope.fresh_stack():
+                with scope.in_scope(d.binder, [None for i in range(len(d.binder.vs))]):
+                    return symbols_used(scope, d.expr, old)
+        elif d.mutable:
             return {(old, expr.tok, expr.callee)}
         else:
             return set()
@@ -279,6 +303,14 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
             return {(old, expr.tok, expr.name)}
         else:
             return set()
+    elif isinstance(expr, IfThenElse):
+        return symbols_used(scope, expr.branch, old) | \
+               symbols_used(scope, expr.then, old) | \
+               symbols_used(scope, expr.els, old)
+    elif isinstance(expr, Let):
+        s1 = symbols_used(scope, expr.val, old)
+        with scope.in_scope(expr.binder, [None for i in range(len(expr.binder.vs))]):
+            return s1 | symbols_used(scope, expr.body, old)
     else:
         assert False
 
@@ -673,8 +705,8 @@ class AppExpr(Expr):
             utils.print_error(self.tok, 'Unresolved relation or function name %s' % self.callee)
             return sort  # bogus
 
-        if not (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)):
-            utils.print_error(self.tok, 'Only relations or functions can be applied, not %s' % self.callee)
+        if not (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl) or isinstance(d, DefinitionDecl)):
+            utils.print_error(self.tok, 'Only relations, functions, or definitions can be applied, not %s' % self.callee)
             return sort  # bogus
 
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
@@ -838,6 +870,12 @@ class Id(Expr):
         elif isinstance(d, ConstantDecl):
             sort = check_constraint(self.tok, sort, d.sort)
             return sort
+        elif isinstance(d, DefinitionDecl):
+            if len(d.arity) > 0:
+                utils.print_error(self.tok, 'Definition %s must be applied to arguments' % (self.name,))
+                return sort  # bogus
+            check_constraint(self.tok, sort, d.sort)
+            return BoolSort
         else:
             vsort, = d
             vsort = check_constraint(self.tok, sort, vsort)
@@ -857,6 +895,84 @@ class Id(Expr):
 
     def free_ids(self) -> List[str]:
         return [self.name]
+
+class IfThenElse(Expr):
+    def __init__(self, tok: Optional[Token], branch: Expr, then: Expr, els: Expr) -> None:
+        self.tok = tok
+        self.branch = branch
+        self.then = then
+        self.els = els
+
+    def __repr__(self) -> str:
+        return 'IfThenElse(%s, %s, %s)' % (self.branch, self.then, self.els)
+
+    def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
+        self.branch.resolve(scope, BoolSort)
+        sort = self.then.resolve(scope, sort)
+        return self.els.resolve(scope, sort)
+
+    def _denote(self) -> object:
+        return (IfThenElse, self.branch, self.then, self.els)
+
+    def prec(self) -> int:
+        return PREC_TOP
+
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
+        buf.append('if ')
+        self.branch.pretty(buf, PREC_TOP, 'NONE')
+        buf.append(' then ')
+        self.then.pretty(buf, PREC_TOP, 'NONE')
+        buf.append(' else ')
+        self.els.pretty(buf, PREC_TOP, 'NONE')
+
+    def free_ids(self) -> List[str]:
+        l1 = self.branch.free_ids()
+        s1 = set(l1)
+        l2 = [x for x in self.then.free_ids() if x not in s1]
+        s2 = set(l2)
+        l3 = [x for x in self.els.free_ids() if x not in s1 and x not in s2]
+        return l1 + l2 + l3
+
+class Let(Expr):
+    def __init__(self, tok: Optional[Token], var: SortedVar, val: Expr, body: Expr) -> None:
+        self.tok = tok
+        self.binder = Binder([var])
+        self.val = val
+        self.body = body
+
+    def __repr__(self) -> str:
+        return 'Let(%s, %s, %s)' % (self.binder, self.val, self.body)
+
+    def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
+        self.binder.pre_resolve(scope)
+
+        self.val.resolve(scope, self.binder.vs[0].sort)
+
+        with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
+            sort = self.body.resolve(scope, sort)
+
+        self.binder.post_resolve()
+
+        return sort
+
+    def _denote(self) -> object:
+        return (Let, self.binder, self.val, self.body)
+
+    def prec(self) -> int:
+        return PREC_TOP
+
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
+        buf.append('let ')
+        buf.append(str(self.binder.vs[0]))
+        buf.append(' = ')
+        self.val.pretty(buf, PREC_TOP, 'NONE')
+        buf.append(' in ')
+        self.body.pretty(buf, PREC_TOP, 'NONE')
+
+    def free_ids(self) -> List[str]:
+        l1 = self.val.free_ids()
+        l2 = [x for x in self.body.free_ids() if x != self.binder.vs[0].name]
+        return l1 + l2
 
 Arity = List[Sort]
 
@@ -1174,12 +1290,23 @@ class ModifiesClause(object):
     def __str__(self) -> str:
         return self.name
 
-class TransitionDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: str, params: List[SortedVar],
+class DefinitionDecl(Decl):
+    def __init__(self, tok: Optional[Token], public: bool, twostate: bool, name: str,
+                 params: List[SortedVar],
                  body: Union[BlockStatement, Tuple[List[ModifiesClause], Expr]]) -> None:
+        def implies(a: bool, b: bool) -> bool:
+            return not a or b
+        # these asserts are enforced by the parser
+        assert implies(public, twostate)
+        assert isinstance(body, BlockStatement) or len(body[0]) == 0 or twostate
+
         self.tok = tok
+        self.public = public
+        self.twostate = twostate
         self.name = name
         self.binder = Binder(params)
+        self.arity = [sv.sort for sv in params]
+        self.sort = BoolSort
         self.body = body
         if isinstance(self.body, BlockStatement):
             self.mods, self.expr = translate_block(self.body)
@@ -1191,7 +1318,7 @@ class TransitionDecl(Decl):
 
         old_error_count = 0
 
-        scope.add_transition(self)
+        scope.add_definition(self)
 
         self.binder.pre_resolve(scope)
 
@@ -1201,7 +1328,7 @@ class TransitionDecl(Decl):
         self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-            with scope.two_state():
+            with scope.two_state(self.twostate):
                 self.expr.resolve(scope, BoolSort)
 
         self.binder.post_resolve()
@@ -1209,22 +1336,23 @@ class TransitionDecl(Decl):
         if utils.error_count > old_error_count:
             return
 
-        with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-            syms = symbols_used(scope, self.expr)
-            for is_old, tok, sym in syms:
-                if not is_old:
-                    for mod in self.mods:
-                        if mod.name == sym:
+        if self.twostate:
+            with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
+                syms = symbols_used(scope, self.expr)
+                for is_old, tok, sym in syms:
+                    if not is_old:
+                        for mod in self.mods:
+                            if mod.name == sym:
+                                break
+                        else:
+                            utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
+
+                for mod in self.mods:
+                    for is_old, tok, sym in syms:
+                        if mod.name == sym and not is_old:
                             break
                     else:
-                        utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
-
-            for mod in self.mods:
-                for is_old, tok, sym in syms:
-                    if mod.name == sym and not is_old:
-                        break
-                else:
-                    utils.print_error(mod.tok, 'symbol %s is mentioned by the modifies clause, but is not referred to in the new state, so it will be havoced. supress this error by using %s in a no-op.' % (mod.name, mod.name))
+                        utils.print_error(mod.tok, 'symbol %s is mentioned by the modifies clause, but is not referred to in the new state, so it will be havoced. supress this error by using %s in a no-op.' % (mod.name, mod.name))
 
     def __repr__(self) -> str:
         return 'TransitionDecl(tok=None, name=%s, params=%s, mods=%s, expr=%s)' % (
@@ -1335,7 +1463,7 @@ class PhaseTransitionDecl(object):
         )
 
     def resolve(self, scope: Scope) -> None:
-        transition = scope.get_transition(self.transition)
+        transition = scope.get_definition(self.transition)
         if transition is None:
             utils.print_error(self.tok, 'unknown transition %s' % (self.transition,))
             return
@@ -1544,7 +1672,7 @@ class TransitionCall(object):
         )
 
     def resolve(self, scope: Scope) -> None:
-        ition = scope.get_transition(self.target)
+        ition = scope.get_definition(self.target)
         if ition is None:
             utils.print_error(self.tok, 'could not find transition %s' % (self.target,))
             return
@@ -1622,7 +1750,7 @@ class Scope(Generic[B]):
         self.relations: Dict[str, RelationDecl] = {}
         self.constants: Dict[str, ConstantDecl] = {}
         self.functions: Dict[str, FunctionDecl] = {}
-        self.transitions: Dict[str, TransitionDecl] = {}
+        self.definitions: Dict[str, DefinitionDecl] = {}
         self.phases: Dict[str, PhaseDecl] = {}
         self.in_two_state_context = False
         self.in_old_context = False
@@ -1633,29 +1761,29 @@ class Scope(Generic[B]):
     def pop(self) -> None:
         self.stack.pop()
 
-    def get(self, name: str) -> Union[RelationDecl, ConstantDecl, FunctionDecl, Tuple[B], None]:
+    def get(self, name: str) -> Union[DefinitionDecl, RelationDecl, ConstantDecl, FunctionDecl, Tuple[B], None]:
         # first, check for bound variables in scope
         for l in reversed(self.stack):
             for v, b in l:
                 if v == name:
                     return (b,)
 
-        # otherwise, check for constants/relations/functions (whose domains are disjoint)
-        d = self.constants.get(name) or self.relations.get(name) or self.functions.get(name)
+        # otherwise, check for constants/relations/functions/definitions (whose domains are disjoint)
+        d = self.constants.get(name) or self.relations.get(name) or self.functions.get(name) or self.definitions.get(name)
         return d
 
     def _check_duplicate_name(self, tok: Optional[Token], name: str) -> None:
         if name in self.constants:
-            utils.print_error(tok, 'Name %s is already declared as a constant' %
-                        (name,))
+            utils.print_error(tok, 'Name %s is already declared as a constant' % (name,))
 
         if name in self.relations:
-            utils.print_error(tok, 'Name %s is already declared as a relation' %
-                        (name,))
+            utils.print_error(tok, 'Name %s is already declared as a relation' % (name,))
 
         if name in self.functions:
-            utils.print_error(tok, 'Name %s is already declared as a function' %
-                        (name,))
+            utils.print_error(tok, 'Name %s is already declared as a function' % (name,))
+
+        if name in self.definitions:
+            utils.print_error(tok, 'Name %s is already declared as a definition' % (name,))
 
 
     def add_sort(self, decl: SortDecl) -> None:
@@ -1701,16 +1829,22 @@ class Scope(Generic[B]):
     def get_phase(self, phase: str) -> Optional[PhaseDecl]:
         return self.phases.get(phase)
 
-    def add_transition(self, decl: TransitionDecl) -> None:
+    def add_definition(self, decl: DefinitionDecl) -> None:
         assert len(self.stack) == 0
 
-        if decl.name is not None:
-            if decl.name in self.transitions:
-                utils.print_error(decl.tok, 'there is already a transition named %s' % decl.name)
-            self.transitions[decl.name] = decl
+        self._check_duplicate_name(decl.tok, decl.name)
+        self.definitions[decl.name] = decl
 
-    def get_transition(self, transition: str) -> Optional[TransitionDecl]:
-        return self.transitions.get(transition)
+    def get_definition(self, definition: str) -> Optional[DefinitionDecl]:
+        return self.definitions.get(definition)
+
+    @contextmanager
+    def fresh_stack(self) -> Iterator[None]:
+        stack = self.stack
+        self.stack = []
+        yield None
+        assert self.stack == []
+        self.stack = stack
 
     @contextmanager
     def old_context(self) -> Iterator[None]:
@@ -1720,11 +1854,13 @@ class Scope(Generic[B]):
         self.in_old_context = old
 
     @contextmanager
-    def two_state(self) -> Iterator[None]:
-        assert not self.in_two_state_context
-        self.in_two_state_context = True
+    def two_state(self, twostate: bool) -> Iterator[None]:
+        if twostate:
+            assert not self.in_two_state_context
+            self.in_two_state_context = True
         yield None
-        self.in_two_state_context = False
+        if twostate:
+            self.in_two_state_context = False
 
     @contextmanager
     def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:
@@ -1762,9 +1898,14 @@ class Program(object):
             if isinstance(d, InvariantDecl) and d.is_safety:
                 yield d
 
-    def transitions(self) -> Iterator[TransitionDecl]:
+    def definitions(self) -> Iterator[DefinitionDecl]:
         for d in self.decls:
-            if isinstance(d, TransitionDecl):
+            if isinstance(d, DefinitionDecl):
+                yield d
+
+    def transitions(self) -> Iterator[DefinitionDecl]:
+        for d in self.definitions():
+            if d.public:
                 yield d
 
     def axioms(self) -> Iterator[AxiomDecl]:
@@ -1790,10 +1931,10 @@ class Program(object):
                 yield d
 
     def decls_containing_exprs(self)\
-        -> Iterator[Union[InitDecl, TransitionDecl, InvariantDecl, AxiomDecl, TheoremDecl]]:
+        -> Iterator[Union[InitDecl, DefinitionDecl, InvariantDecl, AxiomDecl, TheoremDecl]]:
         for d in self.decls:
             if isinstance(d, InitDecl) or \
-               isinstance(d, TransitionDecl) or \
+               isinstance(d, DefinitionDecl) or \
                isinstance(d, InvariantDecl) or \
                isinstance(d, AxiomDecl) or \
                isinstance(d, TheoremDecl):

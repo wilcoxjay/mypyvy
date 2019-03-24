@@ -26,7 +26,7 @@
   (save-excursion (search-forward s (line-end-position) 't)))
 
 (defconst mypyvy-keyword-regex
-  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|\\|onestate\\|twostate\\|theorem\\|assume\\|automaton\\|global\\|safety\\|phase\\|self\\|derived\\|sketch\\|trace\\|assert\\|any\\)\\>")
+  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|definition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|onestate\\|twostate\\|theorem\\|assume\\|automaton\\|global\\|safety\\|phase\\|self\\|derived\\|sketch\\|trace\\|assert\\|any\\|if\\|then\\|else\\|let\\|in\\)\\>")
 
 (defconst mypyvy-font-lock-keywords
   `((,mypyvy-keyword-regex . font-lock-keyword-face)))
@@ -50,7 +50,7 @@
                           (string-join flycheck-mypyvy-args " ")
                           buffer-file-name)
                     " "))
-  (local-set-key (kbd "C-c C-c") compile))
+  (local-set-key (kbd "C-c C-c") #'compile))
 
 
 (defun mypyvy-toggle-flycheck-verify ()

@@ -21,7 +21,7 @@ import z3
 import parser
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
+    FunctionDecl, DefinitionDecl, InvariantDecl, AutomatonDecl
 import utils
 from utils import MySet
 
@@ -384,7 +384,7 @@ def check_two_state_implication_all_transitions(
         prog: Program,
         old_hyps: Iterable[Expr],
         new_conc: Expr
-) -> Optional[Tuple[z3.ModelRef, TransitionDecl]]:
+) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
     with s:
         for h in old_hyps:
@@ -422,7 +422,7 @@ def check_two_state_implication_along_transitions(
         for phase_transition in transitions:
             #logger.debug("two state implication check post %s; transition %s; pre %s" % (new_conc, phase_transition, old_hyps))
             delta = phase_transition.transition_decl()
-            trans = prog.scope.get_transition(delta.transition)
+            trans = prog.scope.get_definition(delta.transition)
             assert trans is not None
             precond = delta.precond
 
@@ -1483,7 +1483,7 @@ class Frames(object):
 
                 for phase_transition in transitions:
                     delta = phase_transition.transition_decl()
-                    trans = self.prog.scope.get_transition(delta.transition)
+                    trans = self.prog.scope.get_definition(delta.transition)
                     assert trans is not None
                     precond = delta.precond
 
@@ -1702,7 +1702,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                 s.add(t.translate_expr(inv.expr, old=True))
 
             for delta in phase.transitions():
-                trans = prog.scope.get_transition(delta.transition)
+                trans = prog.scope.get_definition(delta.transition)
                 assert trans is not None
                 precond = delta.precond
                 target = prog.scope.get_phase(delta.target) if delta.target is not None else phase
@@ -1845,7 +1845,7 @@ def nop(s: Solver, prog: Program) -> None:
     pass
 
 def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
-    ition = prog.scope.get_transition(c.target)
+    ition = prog.scope.get_definition(c.target)
     assert ition is not None
     lator = s.get_translator(key, key_old)
     bs = lator.bind(ition.binder)

@@ -29,6 +29,7 @@ reserved = {
     'onestate': 'ONESTATE',
     'twostate': 'TWOSTATE',
     'theorem': 'THEOREM',
+    'definition': 'DEFINITION',
     'assume': 'ASSUME',
     'assert': 'ASSERT',
     'automaton': 'AUTOMATON',
@@ -38,6 +39,11 @@ reserved = {
     'self': 'SELF',
     'any': 'ANY',
     'trace': 'TRACE',
+    'if': 'IF',
+    'then': 'THEN',
+    'else': 'ELSE',
+    'let': 'LET',
+    'in': 'IN',
 }
 
 tokens = [
@@ -111,6 +117,7 @@ def get_lexer(forbid_rebuild: bool=False) -> ply.lex.Lexer:
 
 precedence = (
     ('right', 'DOT'),
+    ('nonassoc', 'ELSE'),
     ('nonassoc', 'IFF'),
     ('right', 'IMPLIES'),
     ('left', 'PIPE'),
@@ -341,6 +348,14 @@ def p_expr_paren(p: Any) -> None:
     'expr : LPAREN expr RPAREN'
     p[0] = p[2]
 
+def p_expr_if(p: Any) -> None:
+    'expr : IF expr THEN expr ELSE expr'
+    p[0] = syntax.IfThenElse(p.slice[1], p[2], p[4], p[6])
+
+def p_expr_let(p: Any) -> None:
+    'expr : LET sortedvar EQUAL expr IN expr'
+    p[0] = syntax.Let(p.slice[1], p[2], p[4], p[6])
+
 def p_params(p: Any) -> None:
     'params : sortedvars0'
     p[0] = p[1]
@@ -362,15 +377,19 @@ def p_mods(p: Any) -> None:
     p[0] = p[2]
 
 def p_decl_transition(p: Any) -> None:
-    'decl : TRANSITION id LPAREN params RPAREN transition_body'
-    p[0] = syntax.TransitionDecl(p[2], p[2].value, p[4], p[6])
+    'decl : TRANSITION id LPAREN params RPAREN definition_body'
+    p[0] = syntax.DefinitionDecl(p[2], public=True, twostate=True, name=p[2].value, params=p[4], body=p[6])
 
-def p_decl_transition_body_mods_expr(p: Any) -> None:
-    'transition_body : mods expr'
+def p_decl_definition_body_mods_expr(p: Any) -> None:
+    'definition_body : mods expr'
     p[0] = (p[1], p[2])
 
-def p_decl_transition_body_block(p: Any) -> None:
-    'transition_body : blockstmt'
+def p_decl_definition_body_expr(p: Any) -> None:
+    'definition_body : EQUAL expr'
+    p[0] = ([], p[2])
+
+def p_decl_definition_body_block(p: Any) -> None:
+    'definition_body : blockstmt'
     p[0] = p[1]
 
 def p_blockstmt(p: Any) -> None:
@@ -405,11 +424,31 @@ def p_onetwostate(p: Any) -> None:
     '''onetwostate : ONESTATE
                    | TWOSTATE
                    | empty'''
-    p[0] = p[1] == 'twostate'
+    p[0] = p[1]
 
 def p_decl_theorem(p: Any) -> None:
     'decl : onetwostate THEOREM opt_name expr'
-    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], p[1])
+    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], twostate=p[1] == 'twostate')
+
+def p_decl_definition(p: Any) -> None:
+    'decl : onetwostate DEFINITION id LPAREN params RPAREN definition_body'
+    twostate = p[1]
+    body = p[7]
+    if isinstance(body, syntax.BlockStatement):
+        if twostate == 'onestate':
+            utils.print_error(p.slice[7], "syntax error: imperative body of definition cannot be declared 'onestate'")
+            return
+        twostate_bool = True
+    else:
+        twostate_bool = twostate == 'twostate'
+
+    if not twostate_bool and isinstance(body, tuple):
+        mods, _ = body
+        if len(mods) != 0:
+            utils.print_error(p.slice[7], "syntax error: 'onestate' definition cannot have a modifies clause")
+            return
+
+    p[0] = syntax.DefinitionDecl(p[3], public=False, twostate=twostate_bool, name=p[3].value, params=p[5], body=p[7])
 
 def p_phase_target_self(p: Any) -> None:
     'phase_target : SELF'
@@ -546,8 +585,6 @@ def p_empty(p: Any) -> None:
 def p_error(t: Any) -> None:
     if t is not None:
         utils.print_error(t, 'syntax error near %s' % t.value)
-        assert program_parser is not None
-        program_parser.errok()
     else:
         l = get_lexer(forbid_rebuild=True)
         assert l is not None
