@@ -76,12 +76,15 @@ mutable relation left_term(node, term)
 
 immutable relation index_used(log, index)
 immutable relation term_at(log, index, term)
+axiom [term_at_partial_func] term_at(L, I, T1) & term_at(L, I, T2) -> T1 = T2
 
 immutable function value_at(log, index): value
 
 mutable function current_log(node): log
 
 immutable constant log0: log
+axiom !index_used(log0, I)
+axiom !term_at(log0, I, T)
 
 mutable relation committed(index, value)
 
@@ -104,9 +107,6 @@ init current_term(N,T) <-> T = term_zero
 init !left_term(N,T)
 
 init current_log(N) = log0
-init !index_used(L, I)
-
-init !term_at(L, I, T)
 
 init !append_msg(T, PLI, PLT, EI, ET, EV)
 init !append_reply_msg(F, T, EI, ET)
@@ -176,11 +176,11 @@ transition timeout(n: node, t: term, t2: term, oli: option_index, olt: option_te
  (forall N,T. voted(N,T) <-> old(voted(N,T)) | N = n & T = t2) &
  (forall C,T,V. vote_msg(C,T,V) <-> old(vote_msg(C,T,V)) | C = n & T = t2 & V = n)
 
-transition propose(n: node, v: value, t: term, l: log, i: index, l2: log)
+transition propose(n: node, v: value, t: term, i: index, l2: log)
   modifies valid, current_log, term_log
   old(current_term(n,t)) &
   old(leader(n,t)) &
-  l = old(current_log(n)) &
+  let l = old(current_log(n)) in
   !index_used(l, i) &
   (forall I. !index_le(i, I) -> index_used(l, I)) &
   (forall I. index_used(l2, I) <-> index_le(I, i)) &
@@ -390,7 +390,6 @@ invariant [entries_from_term_in_term_log]
 
 # terms
 
-invariant [term_at_partial_func] term_at(L, I, T1) & term_at(L, I, T2) -> T1 = T2
 invariant [current_term_partial_func] current_term(N, T1) & current_term(N, T2) -> T1 = T2
 invariant [lt_current_left_term] current_term(N, T1) & !term_le(T1,T2) -> left_term(N, T2)
 invariant [left_term_downward] left_term(N, T1) & !term_le(T1,T2) -> left_term(N, T2)
@@ -456,3 +455,13 @@ invariant [choosable_future_term_log]
 
 
 safety committed(I, V1) & committed(I, V2) -> V1 = V2
+
+trace {  # sanity check that we can commit a value starting from initial state
+  timeout
+  receive_request_vote_msg
+  become_leader
+  propose
+  send_append_message
+  receive_append_msg
+  commit
+}

@@ -279,17 +279,21 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
             ans |= symbols_used(scope, arg, old)
         return ans
     elif isinstance(expr, AppExpr):
+        args: Set[Tuple[bool, Optional[Token], str]] = set()
+        for arg in expr.args:
+            args |= symbols_used(scope, arg, old)
+
         d = scope.get(expr.callee)
         assert d is not None and not isinstance(d, tuple)
         if isinstance(d, DefinitionDecl):
             assert not (old and d.twostate)
             with scope.fresh_stack():
                 with scope.in_scope(d.binder, [None for i in range(len(d.binder.vs))]):
-                    return symbols_used(scope, d.expr, old)
+                    return args | symbols_used(scope, d.expr, old)
         elif d.mutable:
-            return {(old, expr.tok, expr.callee)}
+            return args | {(old, expr.tok, expr.callee)}
         else:
-            return set()
+            return args
     elif isinstance(expr, QuantifierExpr):
         with scope.in_scope(expr.binder, [None for i in range(len(expr.binder.vs))]):
             return symbols_used(scope, expr.body, old)
@@ -1262,6 +1266,8 @@ class InitDecl(Decl):
         self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
 
+        if symbols_used(scope, self.expr) == set():
+            utils.print_error(self.tok, 'this initial condition mentions no mutable symbols. it should be declared `axiom` instead.')
 
     def __repr__(self) -> str:
         return 'InitDecl(tok=None, name=%s, expr=%s)' % (
@@ -1378,6 +1384,9 @@ class InvariantDecl(Decl):
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
+
+        if symbols_used(scope, self.expr) == set():
+            utils.print_error(self.tok, 'this invariant mentions no mutable symbols. it can be deleted.')
 
     def __repr__(self) -> str:
         return 'InvariantDecl(tok=None, name=%s, expr=%s, is_safety=%s, is_sketch=%s)' % (
