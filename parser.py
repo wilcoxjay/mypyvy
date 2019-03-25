@@ -286,6 +286,10 @@ def p_expr_app(p: Any) -> None:
     'expr : id LPAREN args RPAREN'
     p[0] = syntax.AppExpr(p[1], p[1].value, p[3])
 
+def p_expr_and1(p: Any) -> None:
+    'expr : AMPERSAND expr'
+    p[0] = p[2]
+
 def p_expr_and(p: Any) -> None:
     'expr : expr AMPERSAND expr'
     l = p[1]
@@ -294,6 +298,10 @@ def p_expr_and(p: Any) -> None:
         p[0] = l
     else:
         p[0] = syntax.NaryExpr(p.slice[2], 'AND', [l, p[3]])
+
+def p_expr_or1(p: Any) -> None:
+    'expr : PIPE expr'
+    p[0] = p[2]
 
 def p_expr_or(p: Any) -> None:
     'expr : expr PIPE expr'

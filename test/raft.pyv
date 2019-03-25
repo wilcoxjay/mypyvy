@@ -123,194 +123,197 @@ init valid(L) <-> L = log0
 
 definition get_last(l: log, lli: option_index, llt: option_term) =
   if exists I. index_used(l, I)
-  then !is_none_index(lli) &
-       !is_none_term(llt) &
-       index_used(l, oi_index(lli)) &
-       term_at(l, oi_index(lli), ot_term(llt)) &
-       (forall I. index_used(l, I) -> index_le(I, oi_index(lli)))
-  else lli = none_index &
-       llt = none_term
+  then & !is_none_index(lli)
+       & !is_none_term(llt)
+       & index_used(l, oi_index(lli))
+       & term_at(l, oi_index(lli), ot_term(llt))
+       & (forall I. index_used(l, I) -> index_le(I, oi_index(lli)))
+  else & lli = none_index
+       & llt = none_term
 
 twostate definition set_term(n: node, t: term)
   modifies current_term, left_term
-    (forall N,T. current_term(N,T) <-> N != n & old(current_term(N,T)) | N = n & T = t)
+  & (forall N,T. current_term(N,T) <-> N != n & old(current_term(N,T)) | N = n & T = t)
   & (forall N,T. left_term(N,T) <-> N != n & old(left_term(N,T)) | N = n & !term_le(t, T))
 
-transition receive_request_vote_msg(n: node, t: term, cand: node, t2: term, oli: option_index, olt: option_term, my_lli: option_index, my_llt: option_term)
+transition receive_request_vote_msg(n: node, t: term, cand: node, t2: term,
+                                   oli: option_index, olt: option_term,
+                                   my_lli: option_index, my_llt: option_term)
   modifies current_term, left_term, voted, vote_msg
-    old(current_term(n,t))
+  & old(current_term(n,t))
   & old(request_vote_msg(cand, t2, oli, olt))
   & old(term_le(t, t2))
   & set_term(n, t2)
   & old(get_last(current_log(n), my_lli, my_llt))
   & !old(voted(n, t2))
-  & if is_none_index(my_lli)
-     | !is_none_index(oli) &
-       (!term_le(ot_term(olt), ot_term(my_llt)) |
-         ot_term(olt) = ot_term(my_llt) &
-         index_le(oi_index(my_lli), oi_index(oli)))
+  & if | is_none_index(my_lli)
+       | & !is_none_index(oli)
+         & (| !term_le(ot_term(olt), ot_term(my_llt))
+            | & ot_term(olt) = ot_term(my_llt)
+              & index_le(oi_index(my_lli), oi_index(oli)))
     then
-        (forall N,T. voted(N,T) <-> old(voted(N,T)) | N = n & T = t2)
+      & (forall N,T. voted(N,T) <-> old(voted(N,T)) | N = n & T = t2)
       & (forall C,T,V. vote_msg(C,T,V) <-> old(vote_msg(C,T,V)) | C = cand & T = t2 & V = n)
     else
-        (forall N,T. voted(N,T) <-> old(voted(N,T)))
+      & (forall N,T. voted(N,T) <-> old(voted(N,T)))
       & (forall C,T,V. vote_msg(C,T,V) <-> old(vote_msg(C,T,V)))
 
 transition become_leader(n: node, t: term, q: quorum)
   modifies voting_quorum, leader, started, term_leader, term_log
-  old(current_term(n,t)) &
-  (forall N. member(N,q) -> old(vote_msg(n,t,N))) &
-  (forall T. T != t -> voting_quorum(T) = old(voting_quorum(T))) & voting_quorum(t) = q &
-  (forall N,T. leader(N,T) <-> old(leader(N,T)) | N = n & T = t) &
-  (forall T. started(T) <-> old(started(T)) | T = t) &
-  (forall T. T != t -> term_leader(T) = old(term_leader(T))) & term_leader(t) = n &
-  (forall T. T != t -> term_log(T) = old(term_log(T))) & term_log(t) = old(current_log(n))
+  & old(current_term(n,t))
+  & (forall N. member(N,q) -> old(vote_msg(n,t,N)))
+  & (forall T. T != t -> voting_quorum(T) = old(voting_quorum(T))) & voting_quorum(t) = q
+  & (forall N,T. leader(N,T) <-> old(leader(N,T)) | N = n & T = t)
+  & (forall T. started(T) <-> old(started(T)) | T = t)
+  & (forall T. T != t -> term_leader(T) = old(term_leader(T))) & term_leader(t) = n
+  & (forall T. T != t -> term_log(T) = old(term_log(T))) & term_log(t) = old(current_log(n))
 
 transition timeout(n: node, t: term, t2: term, oli: option_index, olt: option_term)
   modifies request_vote_msg , voted, vote_msg, current_term, left_term
-  old(current_term(n, t)) &
-  !term_le(t2, t) &
-  set_term(n, t2) &
-  old(get_last(current_log(n), oli, olt)) &
- (forall N,T,OI,OT. request_vote_msg(N,T,OI,OT) <-> old(request_vote_msg(N,T,OI,OT)) | N = n & T = t2 & OI = oli & OT = olt) &
- (forall N,T. voted(N,T) <-> old(voted(N,T)) | N = n & T = t2) &
- (forall C,T,V. vote_msg(C,T,V) <-> old(vote_msg(C,T,V)) | C = n & T = t2 & V = n)
+  old(current_term(n, t))
+  & !term_le(t2, t)
+  & set_term(n, t2)
+  & old(get_last(current_log(n), oli, olt))
+  & (forall N,T,OI,OT. request_vote_msg(N,T,OI,OT) <-> old(request_vote_msg(N,T,OI,OT))
+                                                    | N = n & T = t2 & OI = oli & OT = olt)
+  & (forall N,T. voted(N,T) <-> old(voted(N,T)) | N = n & T = t2) &
+  & (forall C,T,V. vote_msg(C,T,V) <-> old(vote_msg(C,T,V)) | C = n & T = t2 & V = n)
 
 transition propose(n: node, v: value, t: term, i: index, l2: log)
   modifies valid, current_log, term_log
-  old(current_term(n,t)) &
-  old(leader(n,t)) &
-  let l = old(current_log(n)) in
-  !index_used(l, i) &
-  (forall I. !index_le(i, I) -> index_used(l, I)) &
-  (forall I. index_used(l2, I) <-> index_le(I, i)) &
-  (forall I,T. term_at(l2, I, T) <-> !index_le(i,I) & term_at(l,I,T) | I = i & T = t) &
-  (forall I. !index_le(i,I) -> value_at(l2,I) = value_at(l,I)) &
-  value_at(l2,i) = v &
-  (forall L. valid(L) <-> old(valid(L)) | L = l2) &
-  (forall N. N != n -> current_log(N) = old(current_log(N))) & current_log(n) = l2 &
-  (forall T. T != t -> term_log(T) = old(term_log(T))) & term_log(t) = l2
+  & old(current_term(n,t))
+  & old(leader(n,t))
+  & let l = old(current_log(n)) in
+  & !index_used(l, i)
+  & (forall I. !index_le(i, I) -> index_used(l, I))
+  & (forall I. index_used(l2, I) <-> index_le(I, i))
+  & (forall I,T. term_at(l2, I, T) <-> !index_le(i,I) & term_at(l,I,T) | I = i & T = t)
+  & (forall I. !index_le(i,I) -> value_at(l2,I) = value_at(l,I))
+  & value_at(l2,i) = v
+  & (forall L. valid(L) <-> old(valid(L)) | L = l2)
+  & (forall N. N != n -> current_log(N) = old(current_log(N))) & current_log(n) = l2
+  & (forall T. T != t -> term_log(T) = old(term_log(T))) & term_log(t) = l2
 
 definition index_pred(i: index, pi: index) =
-  !index_le(i, pi) &
-  (forall I. !index_le(i, I) -> index_le(I, pi))
+  & !index_le(i, pi)
+  & (forall I. !index_le(i, I) -> index_le(I, pi))
 
 definition some_index(i: index, oi: option_index) =
-  !is_none_index(oi) &
-  oi_index(oi) = i
+  & !is_none_index(oi)
+  & oi_index(oi) = i
 
 definition some_term(t: term, ot: option_term) =
-  !is_none_term(ot) &
-  ot_term(ot) = t
+  & !is_none_term(ot)
+  & ot_term(ot) = t
 
 definition get_pl(l: log, i: index, opli: option_index, oplt: option_term) =
   if i = index_zero
   then opli = none_index & oplt = none_term
   else
     exists pli, plt.
-      index_pred(i, pli) &
-      index_used(l, pli) &
-      term_at(l, pli, plt) &
-      some_index(pli, opli) &
-      some_term(plt, oplt)
+      & index_pred(i, pli)
+      & index_used(l, pli)
+      & term_at(l, pli, plt)
+      & some_index(pli, opli)
+      & some_term(plt, oplt)
 
 transition send_append_message(n: node, t: term, i: index, ti: term, opli: option_index, oplt: option_term)
   modifies append_msg, append_reply_msg
-  old(current_term(n, t)) &
-  old(leader(n, t)) &
-  let l = old(current_log(n)) in
-  index_used(l, i) &
-  term_at(l, i, ti) &
-  old(get_pl(l, i, opli, oplt)) &
-  let v = value_at(l, i) in
-  (forall T,OPI,OPT,I,TI,V.
-    append_msg(T,OPI,OPT,I,TI,V) <-> old(append_msg(T,OPI,OPT,I,TI,V))
-                                  | T = t & OPI = opli & OPT = oplt & I = i & TI = ti & V = v) &
-  (forall N,T,I,TI.
-    append_reply_msg(N,T,I,TI) <-> old(append_reply_msg(N,T,I,TI))
-                                | N = n & T = t & I = i & TI = ti)
+  & old(current_term(n, t))
+  & old(leader(n, t))
+  & let l = old(current_log(n)) in
+  & index_used(l, i)
+  & term_at(l, i, ti)
+  & old(get_pl(l, i, opli, oplt))
+  & let v = value_at(l, i) in
+  & (forall T,OPI,OPT,I,TI,V.
+      append_msg(T,OPI,OPT,I,TI,V) <-> old(append_msg(T,OPI,OPT,I,TI,V))
+                                    | T = t & OPI = opli & OPT = oplt & I = i & TI = ti & V = v)
+  & (forall N,T,I,TI.
+      append_reply_msg(N,T,I,TI) <-> old(append_reply_msg(N,T,I,TI))
+                                  | N = n & T = t & I = i & TI = ti)
 
 transition receive_append_msg(n: node, t: term, t2: term, opi: option_index, opt: option_term,
                               ei: index, et: term, ev: value, l2: log, ti: term)
   modifies current_term, left_term, valid, current_log, append_reply_msg
-  old(current_term(n,t)) &
-  old(append_msg(t2, opi, opt, ei, et, ev)) &
-  term_le(t, t2) &
-  set_term(n, t2) &
-  let l = current_log(n) in
-  if is_none_index(opi)
-  then
-    (index_used(l, ei) -> term_at(l, ei, ti)) &
-    if !index_used(l, ei) | et != ti
+  & old(current_term(n,t))
+  & old(append_msg(t2, opi, opt, ei, et, ev))
+  & term_le(t, t2)
+  & set_term(n, t2)
+  & let l = current_log(n) in
+  & if is_none_index(opi)
     then
-      (forall I. index_used(l2, I) <-> I = ei) &
-      (forall I, T. term_at(l2, I, T) <-> I = ei & T = et) &
-      value_at(l2, ei) = ev &
-      (forall L. valid(L) <-> old(valid(L)) | L = l2) &
-      (forall N. N != n -> current_log(N) = old(current_log(N))) &
-      current_log(n) = l2 &
-      (forall N,T,EI,ET.
-        append_reply_msg(N,T,EI,ET) <->
-        old(append_reply_msg(N,T,EI,ET)) | N = n & T = t2 & EI = ei & ET = et)
+      & (index_used(l, ei) -> term_at(l, ei, ti))
+      & if !index_used(l, ei) | et != ti
+        then
+          & (forall I. index_used(l2, I) <-> I = ei)
+          & (forall I, T. term_at(l2, I, T) <-> I = ei & T = et)
+          & value_at(l2, ei) = ev
+          & (forall L. valid(L) <-> old(valid(L)) | L = l2)
+          & (forall N. N != n -> current_log(N) = old(current_log(N)))
+          & current_log(n) = l2
+          & (forall N,T,EI,ET.
+              append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET))
+                                           | N = n & T = t2 & EI = ei & ET = et)
+        else
+          & (forall L. valid(L) <-> old(valid(L)))
+          & (forall N. current_log(N) = old(current_log(N)))
+          & (forall N,T,EI,ET.
+              append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)))
     else
-      (forall L. valid(L) <-> old(valid(L))) &
-      (forall N. current_log(N) = old(current_log(N))) &
-      (forall N,T,EI,ET.
-        append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)))
-  else
-    let pi = oi_index(opi) in
-    let pt = ot_term(opt) in
-    if term_at(l, pi, pt)
-    then
-      (index_used(l, ei) -> term_at(l, ei, ti)) &
-      if !index_used(l, ei) | et != ti
+      let pi = oi_index(opi) in
+      let pt = ot_term(opt) in
+      if term_at(l, pi, pt)
       then
-        (forall I. index_used(l2, I) <-> index_le(I, ei)) &
-        (forall I,T. term_at(l2, I, T) <-> !index_le(ei, I) & term_at(l, I, T) |
-                                           I = ei & T = et) &
-        (forall I. !index_le(ei, I) -> value_at(l2, I) = value_at(l, I)) &
-        value_at(l2, ei) = ev &
-        (forall L. valid(L) <-> old(valid(L)) | L = l2) &
-        (forall N. N != n -> current_log(N) = old(current_log(N))) &
-        current_log(n) = l2 &
-        (forall N,T,EI,ET. append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)) |
-                                                           N = n & T = t2 & EI = ei & ET = et)
+        & (index_used(l, ei) -> term_at(l, ei, ti))
+        & if !index_used(l, ei) | et != ti
+          then
+            & (forall I. index_used(l2, I) <-> index_le(I, ei))
+            & (forall I,T. term_at(l2, I, T) <-> !index_le(ei, I) & term_at(l, I, T) |
+                                                 I = ei & T = et)
+            & (forall I. !index_le(ei, I) -> value_at(l2, I) = value_at(l, I))
+            & value_at(l2, ei) = ev
+            & (forall L. valid(L) <-> old(valid(L)) | L = l2)
+            & (forall N. N != n -> current_log(N) = old(current_log(N)))
+            & current_log(n) = l2
+            & (forall N,T,EI,ET. append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET))
+                                                              | N = n & T = t2 & EI = ei & ET = et)
+          else
+            & (forall L. valid(L) <-> old(valid(L)))
+            & (forall N. current_log(N) = old(current_log(N)))
+            & (forall N,T,EI,ET.
+                append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)))
       else
-        (forall L. valid(L) <-> old(valid(L))) &
-        (forall N. current_log(N) = old(current_log(N))) &
-        (forall N,T,EI,ET.
-          append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)))
-    else
-      (forall L. valid(L) <-> old(valid(L))) &
-      (forall N. current_log(N) = old(current_log(N))) &
-      (forall N,T,EI,ET.
-        append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)))
+        & (forall L. valid(L) <-> old(valid(L)))
+        & (forall N. current_log(N) = old(current_log(N)))
+        & (forall N,T,EI,ET.
+            append_reply_msg(N,T,EI,ET) <-> old(append_reply_msg(N,T,EI,ET)))
 
 transition commit(n: node, t: term, i: index, q: quorum)
   modifies commit_log, commit_index, commit_term, commit_value, commit_quorum, valid, committed
-  old(current_term(n,t)) &
-  old(leader(n,t)) &
-  let l = old(current_log(n)) in
-  index_used(l, i) &
-  (forall N. member(N,q) -> old(append_reply_msg(N, t, i, t))) &
-  (forall I,V. committed(I,V) <-> old(committed(I,V)) | index_le(I,i) & V = value_at(l,I)) &
-  if index_le(old(commit_index), i)
-  then
-    commit_index = i &
-    commit_term = t &
-    commit_value = value_at(l, i) &
-    commit_quorum = q &
-    (forall L. valid(L) <-> old(valid(L)) | L = commit_log) &
-    (forall I. index_used(commit_log, I) <-> index_le(I, i)) &
-    (forall I,T. term_at(commit_log, I, T) <-> index_le(I, i) & term_at(l, I, T)) &
-    (forall I. value_at(commit_log, I) = value_at(l, I))
-  else
-    commit_log = old(commit_log) &
-    commit_index = old(commit_index) &
-    commit_term = old(commit_term) &
-    commit_value = old(commit_value) &
-    commit_quorum = old(commit_quorum) &
-    (forall L. valid(L) <-> old(valid(L)))
+  & old(current_term(n,t))
+  & old(leader(n,t))
+  & let l = old(current_log(n)) in
+  & index_used(l, i)
+  & (forall N. member(N,q) -> old(append_reply_msg(N, t, i, t)))
+  & (forall I,V. committed(I,V) <-> old(committed(I,V)) | index_le(I,i) & V = value_at(l,I))
+  & if index_le(old(commit_index), i)
+    then
+      & commit_index = i
+      & commit_term = t
+      & commit_value = value_at(l, i)
+      & commit_quorum = q
+      & (forall L. valid(L) <-> old(valid(L)) | L = commit_log)
+      & (forall I. index_used(commit_log, I) <-> index_le(I, i))
+      & (forall I,T. term_at(commit_log, I, T) <-> index_le(I, i) & term_at(l, I, T))
+      & (forall I. value_at(commit_log, I) = value_at(l, I))
+    else
+      & commit_log = old(commit_log)
+      & commit_index = old(commit_index)
+      & commit_term = old(commit_term)
+      & commit_value = old(commit_value)
+      & commit_quorum = old(commit_quorum)
+      & (forall L. valid(L) <-> old(valid(L)))
 
 # properties of leader election and vote messages
 invariant [vote_msg_voted] vote_msg(N2, T, N1) -> voted(N1, T)
