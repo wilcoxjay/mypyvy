@@ -118,6 +118,7 @@ def get_lexer(forbid_rebuild: bool=False) -> ply.lex.Lexer:
 precedence = (
     ('right', 'DOT'),
     ('nonassoc', 'ELSE'),
+    ('nonassoc', 'IN'),
     ('nonassoc', 'IFF'),
     ('right', 'IMPLIES'),
     ('left', 'PIPE'),
