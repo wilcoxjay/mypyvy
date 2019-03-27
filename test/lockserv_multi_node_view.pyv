@@ -1,0 +1,106 @@
+sort node
+sort lock
+
+mutable relation lock_msg(node, lock)
+mutable relation grant_msg(node, lock)
+mutable relation unlock_msg(node, lock)
+mutable relation holds_lock(node, lock)
+mutable relation server_holds_lock(lock)
+
+init !lock_msg(N, L)
+init !grant_msg(N, L)
+init !unlock_msg(N, L)
+init !holds_lock(N, L)
+init server_holds_lock(L)
+
+transition send_lock(n: node, l: lock)
+  modifies lock_msg
+  lock_msg(N, L) <-> old(lock_msg(N, L)) | N = n & L = l
+
+transition recv_lock(n: node, l: lock)
+  modifies lock_msg, server_holds_lock, grant_msg
+  old(lock_msg(n, l)) &
+  old(server_holds_lock(l)) &
+  (server_holds_lock(L) <-> old(server_holds_lock(L)) & L != l) &
+  (lock_msg(N, L) <-> old(lock_msg(N, L)) & !(N = n & L = l)) &
+  (grant_msg(N, L) <-> old(grant_msg(N, L)) | N = n & L = l)
+
+transition recv_grant(n: node, l: lock)
+  modifies grant_msg, holds_lock
+  old(grant_msg(n, l)) &
+  (grant_msg(N, L) <-> old(grant_msg(N, L)) & !(N = n & L = l)) &
+  (holds_lock(N, L) <-> old(holds_lock(N, L)) | N = n & L = l)
+
+transition unlock(n: node, l: lock)
+  modifies holds_lock, unlock_msg
+  old(holds_lock(n, l)) &
+  (holds_lock(N, L) <-> old(holds_lock(N, L)) & !(N = n & L = l)) &
+  (unlock_msg(N, L) <-> old(unlock_msg(N, L)) | N = n & L = l)
+
+transition recv_unlock(n: node, l: lock)
+  modifies unlock_msg, server_holds_lock
+  old(unlock_msg(n, l)) &
+  (unlock_msg(N, L) <-> old(unlock_msg(N, L)) & !(N = n & L = l)) &
+  (server_holds_lock(L) <-> old(server_holds_lock(L)) | L = l)
+
+safety [mutex] holds_lock(N1, L) & holds_lock(N2, L) -> N1 = N2
+
+invariant grant_msg(N1, L) & grant_msg(N2, L) -> N1 = N2
+invariant unlock_msg(N1, L) & unlock_msg(N2, L) -> N1 = N2
+
+invariant !(holds_lock(N1, L) & grant_msg(N2, L))
+invariant !(holds_lock(N1, L) & unlock_msg(N2, L))
+invariant !(grant_msg(N1, L) & unlock_msg(N2, L))
+
+invariant !(grant_msg(N, L) & server_holds_lock(L))
+invariant !(holds_lock(N, L) & server_holds_lock(L))
+invariant !(unlock_msg(N, L) & server_holds_lock(L))
+
+immutable constant qn: node
+
+# Declare a phase automaton structure to prove safety.
+automaton {
+  init phase server  # The initial phase.
+
+  # Adds the given transition to every phase.
+  global
+    safety holds_lock(qn, L) & holds_lock(N, L) -> qn = N
+
+    transition send_lock -> self
+
+    transition recv_lock -> self assume n!=qn
+    transition recv_grant -> self assume n!=qn
+    transition unlock -> self assume n!=qn
+    transition recv_unlock -> self assume n!=qn
+
+  phase server
+    transition recv_lock -> phase grant assume n=qn
+
+    transition recv_grant -> self assume n=qn
+    transition unlock -> self assume n=qn
+    transition recv_unlock -> self assume n=qn
+
+  phase grant
+    transition recv_grant -> phase client assume n=qn
+
+    transition recv_lock -> self assume n=qn
+    transition unlock -> self assume n=qn
+    transition recv_unlock -> self assume n=qn
+
+    
+  phase client
+    transition unlock -> phase unlock assume n=qn
+
+    transition recv_lock -> self assume n=qn
+    transition recv_grant -> self assume n=qn
+    transition recv_unlock -> self assume n=qn
+
+    
+  phase unlock
+    transition recv_unlock -> phase server assume n=qn
+
+    transition recv_lock -> self assume n=qn
+    transition recv_grant -> self assume n=qn
+    transition unlock -> self assume n=qn
+
+}
