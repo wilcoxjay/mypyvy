@@ -1,0 +1,53 @@
+sort node
+
+immutable constant tail: node
+mutable constant head: node
+
+init head = tail
+
+mutable relation n(node, node)
+init !n(X,Y)
+
+mutable relation even(node)
+init even(X) <-> X = tail
+
+definition unused(x: node) =
+  !n(x,X) & !n(X,x) & x != tail & x != head
+
+transition inc(a: node, b: node)
+  modifies head, n, even
+  & old(unused(a))
+  & old(unused(b))
+  & a != b
+  & head = a
+  & (forall X,Y.
+       n(X,Y) <->
+         | old(n(X,Y))
+         | X = a & Y = b
+         | X = b & Y = old(head))
+  & (forall X.
+       even(X) <->
+         | old(even(X)) & X != a & X != b
+         | X = a)
+
+transition dec(a: node, b: node)
+  modifies head, n
+  & old(n(head, a))
+  & old(n(a, b))
+  & head = b
+  & (forall X,Y.
+       n(X,Y) <->
+         & old(n(X,Y))
+         & X != old(head)
+         & X != a)
+
+safety !n(head,tail)
+
+invariant even(head)
+invariant even(tail)
+invariant n(X,Y) -> (even(X) <-> !even(Y))
+
+trace {  # sanity check transitions non-vacuous
+  inc
+  dec
+}

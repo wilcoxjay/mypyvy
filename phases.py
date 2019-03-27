@@ -69,7 +69,9 @@ class PhaseAutomaton(object):
                                 for p in self.automaton_decl.phases()
                                 for delta in p.transitions()]
 
-        self._init_phase = self._phases[automaton_decl.the_init().phase]
+        init_decl = automaton_decl.the_init()
+        assert init_decl is not None
+        self._init_phase = self._phases[init_decl.phase]
 
         self.nontrivial = len(self._phases) > 1
 

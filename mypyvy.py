@@ -21,7 +21,7 @@ import z3
 import parser
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, TransitionDecl, InvariantDecl, AutomatonDecl
+    FunctionDecl, DefinitionDecl, InvariantDecl, AutomatonDecl
 import utils
 from utils import MySet
 
@@ -291,7 +291,7 @@ def check_unsat(
             logger.always_print('unknown!')
             logger.always_print('reason unknown: ' + s.reason_unknown())
         for tok, msg in errmsgs:
-            syntax.print_error(tok, msg)
+            utils.print_error(tok, msg)
     logger.always_print('ok. (%s)' % (datetime.now() - start))
     sys.stdout.flush()
 
@@ -329,11 +329,18 @@ def check_transitions(s: Solver, prog: Program) -> None:
             s.add(t.translate_expr(inv.expr, old=True))
 
         for trans in prog.transitions():
+            if utils.args.check_transition is not None and trans.name not in utils.args.check_transition:
+                continue
+
             logger.always_print('checking transation %s:' % (trans.name,))
 
             with s:
                 s.add(t.translate_transition(trans))
                 for inv in prog.invs():
+                    if utils.args.check_invariant is not None and \
+                       inv.name not in utils.args.check_invariant:
+                        continue
+
                     with s:
                         s.add(z3.Not(t.translate_expr(inv.expr)))
 
@@ -377,7 +384,7 @@ def check_two_state_implication_all_transitions(
         prog: Program,
         old_hyps: Iterable[Expr],
         new_conc: Expr
-) -> Optional[Tuple[z3.ModelRef, TransitionDecl]]:
+) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
     with s:
         for h in old_hyps:
@@ -415,7 +422,7 @@ def check_two_state_implication_along_transitions(
         for phase_transition in transitions:
             #logger.debug("two state implication check post %s; transition %s; pre %s" % (new_conc, phase_transition, old_hyps))
             delta = phase_transition.transition_decl()
-            trans = prog.scope.get_transition(delta.transition)
+            trans = prog.scope.get_definition(delta.transition)
             assert trans is not None
             precond = delta.precond
 
@@ -1043,7 +1050,7 @@ class Frames(object):
         if utils.args.automaton:
             automaton = prog.the_automaton()
             if automaton is None:
-                syntax.error(None, 'updr --automaton requires the file to declare an automaton')
+                utils.print_error_and_exit(None, 'updr --automaton requires the file to declare an automaton')
         else:
             the_phase = 'the_phase'
             pcs: List[syntax.PhaseComponent] = []
@@ -1476,7 +1483,7 @@ class Frames(object):
 
                 for phase_transition in transitions:
                     delta = phase_transition.transition_decl()
-                    trans = self.prog.scope.get_transition(delta.transition)
+                    trans = self.prog.scope.get_definition(delta.transition)
                     assert trans is not None
                     precond = delta.precond
 
@@ -1631,8 +1638,10 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
 
     t = s.get_translator(KEY_ONE)
 
-    init_phase = prog.scope.get_phase(a.the_init().phase)
-    assert init_phase is not None
+    init_decl = a.the_init()
+    assert init_decl is not None  # checked by resolver
+    init_phase = prog.scope.get_phase(init_decl.phase)
+    assert init_phase is not None  # checked by resolver
 
     with s:
         for init in prog.inits():
@@ -1693,7 +1702,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                 s.add(t.translate_expr(inv.expr, old=True))
 
             for delta in phase.transitions():
-                trans = prog.scope.get_transition(delta.transition)
+                trans = prog.scope.get_definition(delta.transition)
                 assert trans is not None
                 precond = delta.precond
                 target = prog.scope.get_phase(delta.target) if delta.target is not None else phase
@@ -1722,10 +1731,11 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
 
 @log_start_end_time(logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
+    old_count = utils.error_count
     a = prog.the_automaton()
     if a is None:
         if utils.args.automaton == 'only':
-            syntax.error(None, "--automaton='only' requires the file to declare an automaton")
+            utils.print_error_and_exit(None, "--automaton='only' requires the file to declare an automaton")
     elif utils.args.automaton != 'no':
         check_automaton_full(s, prog, a)
 
@@ -1733,7 +1743,7 @@ def verify(s: Solver, prog: Program) -> None:
         check_init(s, prog)
         check_transitions(s, prog)
 
-    if not syntax.errored:
+    if utils.error_count == old_count:
         logger.always_print('all ok!')
     else:
         logger.always_print('program has errors.')
@@ -1831,11 +1841,11 @@ def theorem(s: Solver, prog: Program) -> None:
 
             check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, prog, keys)
 
-def generate_parser(s: Solver, prog: Program) -> None:
-    pass  # parser is generated implicitly by main when it parses the program
+def nop(s: Solver, prog: Program) -> None:
+    pass
 
 def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
-    ition = prog.scope.get_transition(c.target)
+    ition = prog.scope.get_definition(c.target)
     assert ition is not None
     lator = s.get_translator(key, key_old)
     bs = lator.bind(ition.binder)
@@ -1920,8 +1930,13 @@ def parse_args() -> argparse.Namespace:
     all_subparsers.append(trace_subparser)
 
     generate_parser_subparser = subparsers.add_parser('generate-parser')
-    generate_parser_subparser.set_defaults(main=generate_parser)
+    generate_parser_subparser.set_defaults(main=nop)  # parser is generated implicitly by main when it parses the program
     all_subparsers.append(generate_parser_subparser)
+
+    typecheck_subparser = subparsers.add_parser('typecheck')
+    typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
+    all_subparsers.append(typecheck_subparser)
+
 
     for s in all_subparsers:
         s.add_argument('--forbid-parser-rebuild', action='store_true',
@@ -1972,6 +1987,10 @@ def parse_args() -> argparse.Namespace:
                                   help="whether to use phase automata during verification. by default ('yes'), both non-automaton "
                                   "and autotomaton proofs are checked. 'no' means ignore automaton proofs. "
                                   "'only' means ignore non-automaton proofs.")
+    verify_subparser.add_argument('--check-transition', default=None, nargs='+',
+                                  help="when verifying inductiveness, check only these transitions")
+    verify_subparser.add_argument('--check-invariant', default=None, nargs='+',
+                                  help="when verifying inductiveness, check only these invariants")
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
@@ -2039,6 +2058,8 @@ def main() -> None:
             logger.info('setting z3 timeout to %s' % utils.args.timeout)
             z3.set_param('timeout', utils.args.timeout)
 
+        pre_parse_error_count = utils.error_count
+
         with open(utils.args.filename) as f:
             l = parser.get_lexer()
             p = parser.get_parser(forbid_rebuild=utils.args.forbid_parser_rebuild)
@@ -2049,12 +2070,14 @@ def main() -> None:
         if utils.args.print_program:
             logger.always_print(str(prog))
 
-        if parser.errored:
+        if utils.error_count > pre_parse_error_count:
             logger.always_print('program has syntax errors.')
             return
 
+        pre_resolve_error_count = utils.error_count
+
         prog.resolve()
-        if syntax.errored:
+        if utils.error_count > pre_resolve_error_count:
             logger.always_print('program has resolution errors.')
             return
 

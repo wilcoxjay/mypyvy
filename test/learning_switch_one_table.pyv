@@ -1,0 +1,36 @@
+sort node
+
+immutable constant ps: node
+
+mutable relation table(node, node)
+mutable relation pending(node, node, node)
+
+init table(N1, N2) <-> N1 = N2
+init !pending(PD, S, D)
+
+transition new_packet(pd: node)
+  modifies pending
+  pending(PD, S, D) <-> old(pending(PD, S, D)) | PD = pd & S = ps & D = ps
+
+transition forward(pd: node, sw0: node, sw1: node)
+  modifies pending, table
+  old(pending(pd, sw0, sw1)) &
+  (forall PD,S,D.
+    pending(PD,S,D) <-> old(pending(PD,S,D)) | (PD = pd & S = sw1)) &
+  (forall N1,N2.
+    table(N1,N2) <->
+      old(table(N1,N2)) |
+      ps != sw1 &
+      (forall W. W != sw1 -> !old(table(sw1, W))) &
+      old(table(N1, sw1)) &
+      old(table(sw0, N2)))
+
+safety table(X,X)
+safety table(X,Y) & table(Y,Z) -> table(X,Z)
+safety table(X,Y) & table(Y,X) -> X = Y
+safety table(X,Y) & table(X,Z) -> table(Y,Z) | table(Z,Y)
+
+invariant pending(PD,S,D) & ps != S -> exists W. table(S,W) & W != S
+invariant table(X,Y) & ps != Y & X != Y -> exists W. table(Y,W) & W != Y
+
+
