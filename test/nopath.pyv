@@ -1,0 +1,26 @@
+sort node
+
+immutable relation edge(node, node)
+immutable constant destination: node
+
+mutable constant current: node
+
+sort set
+immutable relation member(node, set)
+
+definition cut() =
+  exists s.
+    & member(current, s)
+    & !member(destination, s)
+    & (forall X,Y. edge(X,Y) -> (member(X,s) <-> member(Y,s)))
+
+init cut
+
+transition follow_edge(x: node)
+  modifies current
+  & old(edge(current, x))
+  & current = x
+
+safety current != destination
+
+invariant cut
