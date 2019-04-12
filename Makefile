@@ -2,7 +2,7 @@ PYTHON := python3
 MYPYVY_OPTS := --seed=0 --log=warning
 
 check:
-        mypy --config-file ./mypy.ini mypyvy.py
+	mypy --config-file ./mypy.ini mypyvy.py
 
 test: check verify updr
 
