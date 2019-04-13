@@ -66,6 +66,7 @@ tokens = [
     'COMMA',
     'AMPERSAND',
     'STAR',
+    'ANNOT',
     'ID'
 ] + list(reserved.values())
 
@@ -73,6 +74,10 @@ tokens = [
 def t_ID(t: Any) -> Any:
     r'[a-zA-Z_][a-zA-Z_0-9]*'
     t.type = reserved.get(t.value, 'ID')    # Check for reserved words
+    return t
+
+def t_ANNOT(t: Any) -> Any:
+    r'@[-a-zA-Z_0-9]+'
     return t
 
 t_LPAREN = r'\('
@@ -143,9 +148,37 @@ def p_id(p: Any) -> None:
     'id : ID'
     p[0] = p.slice[1]
 
+def p_optional_annotation_args_empty(p: Any) -> None:
+    'optional_annotation_args : empty'
+    p[0] = []
+
+def p_optional_annotation_args_nonempty(p: Any) -> None:
+    'optional_annotation_args : LPAREN annotation_args RPAREN'
+    p[0] = p[2]
+
+def p_annotation_args_one(p: Any) -> None:
+    'annotation_args : id'
+    p[0] = [p[1].value]
+
+def p_annotation_args_more(p: Any) -> None:
+    'annotation_args : annotation_args COMMA id'
+    p[0] = p[1] + [p[3].value]
+
+def p_annotation(p: Any) -> None:
+    'annotation : ANNOT optional_annotation_args'
+    p[0] = syntax.Annotation(p.slice[1], p[1][1:], p[2])
+
+def p_annotations_empty(p: Any) -> None:
+    'annotations : empty'
+    p[0] = []
+
+def p_annotatioins_one(p: Any) -> None:
+    'annotations : annotations annotation'
+    p[0] = p[1] + [p[2]]
+
 def p_decl_sort(p: Any) -> None:
-    'decl : SORT id'
-    p[0] = syntax.SortDecl(p.slice[1], p[2].value)
+    'decl : SORT id annotations'
+    p[0] = syntax.SortDecl(p.slice[1], p[2].value, p[3])
 
 def p_decl_mut(p: Any) -> None:
     '''mut : MUTABLE
@@ -177,24 +210,24 @@ def p_sort(p: Any) -> None:
     p[0] = syntax.UninterpretedSort(p[1], p[1].value)
 
 def p_decl_relation(p: Any) -> None:
-    'decl : mut RELATION id arity'
-    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], p[1])
+    'decl : mut RELATION id arity annotations'
+    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], mutable=p[1], derived=None, annotations=p[5])
 
 def p_decl_relation_derived(p: Any) -> None:
-    'decl : DERIVED RELATION id arity COLON expr'
-    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], mutable=True, derived=p[6])
+    'decl : DERIVED RELATION id arity annotations COLON expr'
+    p[0] = syntax.RelationDecl(p.slice[2], p[3].value, p[4], mutable=True, derived=p[7], annotations=p[5])
 
 def p_constant_decl(p: Any) -> None:
-    'constant_decl : mut CONSTANT id COLON sort'
-    p[0] = syntax.ConstantDecl(p.slice[2], p[3].value, p[5], p[1])
+    'constant_decl : mut CONSTANT id COLON sort annotations'
+    p[0] = syntax.ConstantDecl(p.slice[2], p[3].value, p[5], p[1], p[6])
 
 def p_decl_constant_decl(p: Any) -> None:
     'decl : constant_decl'
     p[0] = p[1]
 
 def p_decl_function(p: Any) -> None:
-    'decl : mut FUNCTION id LPAREN arity_nonempty RPAREN COLON sort'
-    p[0] = syntax.FunctionDecl(p.slice[2], p[3].value, p[5], p[8], p[1])
+    'decl : mut FUNCTION id LPAREN arity_nonempty RPAREN COLON sort annotations'
+    p[0] = syntax.FunctionDecl(p.slice[2], p[3].value, p[5], p[8], p[1], p[9])
 
 def p_axiom_decl(p: Any) -> None:
     'axiom_decl : AXIOM opt_name expr'

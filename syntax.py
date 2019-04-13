@@ -1090,9 +1090,10 @@ class Decl(object):
 
 
 class SortDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: str) -> None:
+    def __init__(self, tok: Optional[Token], name: str, annotations: List[Annotation]) -> None:
         self.tok = tok
         self.name = name
+        self.annotations = annotations
         self.z3: Optional[z3.SortRef] = None
 
     def resolve(self, scope: Scope) -> None:
@@ -1111,12 +1112,13 @@ class SortDecl(Decl):
         return self.z3
 
 class FunctionDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: str, arity: Arity, sort: Sort, mutable: bool) -> None:
+    def __init__(self, tok: Optional[Token], name: str, arity: Arity, sort: Sort, mutable: bool, annotations: List[Annotation]) -> None:
         self.tok = tok
         self.name = name
         self.arity = arity
         self.sort = sort
         self.mutable = mutable
+        self.annotations = annotations
         self.mut_z3: Dict[str, z3.FuncDeclRef] = {}
         self.immut_z3: Optional[z3.FuncDeclRef] = None
 
@@ -1160,14 +1162,15 @@ class FunctionDecl(Decl):
 
 
 class RelationDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool, derived: Optional[Expr]=None) -> None:
+    def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool, derived: Optional[Expr], annotations: List[Annotation]) -> None:
         self.tok = tok
         self.name = name
         self.arity = arity
         self.mutable = mutable
+        self.derived_axiom = derived
+        self.annotations = annotations
         self.mut_z3: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]] = {}
         self.immut_z3: Optional[Union[z3.FuncDeclRef, z3.ExprRef]] = None
-        self.derived_axiom = derived
 
     def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
@@ -1215,11 +1218,12 @@ class RelationDecl(Decl):
 
 
 class ConstantDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: str, sort: Sort, mutable: bool) -> None:
+    def __init__(self, tok: Optional[Token], name: str, sort: Sort, mutable: bool, annotations: List[Annotation]) -> None:
         self.tok = tok
         self.name = name
         self.sort = sort
         self.mutable = mutable
+        self.annotations = annotations
         self.mut_z3: Dict[str, z3.ExprRef] = {}
         self.immut_z3: Optional[z3.ExprRef] = None
 
@@ -1753,6 +1757,25 @@ class TraceDecl(Decl):
     def resolve(self, scope: Scope) -> None:
         for c in self.components:
             c.resolve(scope)
+
+@dataclass
+class Annotation(object):
+    tok: Optional[Token]
+    name: str
+    args: List[str]
+
+class HasAnnotations(Protocol):
+    annotations: List[Annotation]
+
+def has_annotation(d: HasAnnotations, name: str) -> bool:
+    return any(annot.name == name for annot in d.annotations)
+
+def get_annotation(d: HasAnnotations, name: str) -> Optional[Annotation]:
+    for annot in d.annotations:
+        if annot.name == name:
+            return annot
+
+    return None
 
 class Scope(Generic[B]):
     def __init__(self) -> None:

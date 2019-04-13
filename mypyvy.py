@@ -812,44 +812,94 @@ class Model(object):
 
         self.read_out()
 
+    def try_printed_by(self, s: SortDecl, elt: str) -> Optional[str]:
+        custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
+
+        if custom_printer_annotation is not None:
+            assert len(custom_printer_annotation.args) >= 1
+            import importlib
+            printers = importlib.import_module('printers')
+            printer_name = custom_printer_annotation.args[0]
+            custom_printer = printers.__dict__.get(printer_name)
+            custom_printer_args = custom_printer_annotation.args[1:] if custom_printer is not None else []
+            if custom_printer is not None:
+                return custom_printer(self, s, elt, custom_printer_args)
+            else:
+                utils.print_warning(custom_printer_annotation.tok, 'could not find printer named %s' % (printer_name,))
+        return None
+
+    def try_ordered_by(self, s: SortDecl, elt: str) -> Optional[str]:
+        ordered_by_annotation = syntax.get_annotation(s, 'ordered_by')
+
+        if ordered_by_annotation is not None:
+            assert len(ordered_by_annotation.args) == 1
+            import importlib
+            printers = importlib.import_module('printers')
+            assert 'ordered_by_printer' in printers.__dict__
+            printer = printers.__dict__['ordered_by_printer']
+            order_name = ordered_by_annotation.args[0]
+            return printer(self, s, elt, order_name)
+
+        return None
+
+    def print_element(self, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
+        if not isinstance(s, SortDecl):
+            assert isinstance(s, syntax.UninterpretedSort) and s.decl is not None
+            s = s.decl
+
+        return self.try_printed_by(s, elt) or self.try_ordered_by(s, elt) or elt
+
+    def print_tuple(self, arity: List[syntax.Sort], tup: List[str]) -> str:
+        l = []
+        assert len(arity) == len(tup)
+        for s, x in zip(arity, tup):
+            l.append(self.print_element(s, x))
+        return ','.join(l)
+
     def univ_str(self) -> List[str]:
         l = []
         for s in sorted(self.univs.keys(), key=str):
             l.append(str(s))
-            for x in self.univs[s]:
-                l.append('  %s' % x)
+            for x in sorted(self.univs[s], key=lambda x: self.print_element(s, x)):
+                l.append('  %s' % self.print_element(s, x))
         return l
 
     def __str__(self) -> str:
         l = []
         l.extend(self.univ_str())
-        l.append(Model._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
+        l.append(self._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
         for i, k in enumerate(self.keys):
             if i > 0 and self.transitions[i-1] != '':
                 l.append('\ntransition %s' % (self.transitions[i-1],))
             l.append('\nstate %s:' % (i,))
-            l.append(Model._state_str(self.const_interps[i], self.rel_interps[i], self.func_interps[i]))
+            l.append(self._state_str(self.const_interps[i], self.rel_interps[i], self.func_interps[i]))
 
         return '\n'.join(l)
 
-    @staticmethod
     def _state_str(
+            self,
             Cs: Dict[ConstantDecl,str],
             Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]],
             Fs: Dict[FunctionDecl, List[Tuple[List[str], str]]]
     ) -> str:
         l = []
         for C in Cs:
-            l.append('%s = %s' % (C.name, Cs[C]))
+            if syntax.has_annotation(C,'no_print'):
+                continue
+            l.append('%s = %s' % (C.name, self.print_element(C.sort, Cs[C])))
 
         for R in Rs:
-            for tup, b in sorted(Rs[R]):
+            if syntax.has_annotation(R,'no_print'):
+                continue
+            for tup, b in sorted(Rs[R], key=lambda x: self.print_tuple(R.arity, x[0])):
                 if b:
-                    l.append('%s%s(%s)' % ('' if b else '!', R.name, ','.join(tup)))
+                    l.append('%s%s(%s)' % ('' if b else '!', R.name, self.print_tuple(R.arity, tup)))
 
         for F in Fs:
-            for tup, res in sorted(Fs[F]):
-                l.append('%s(%s) = %s' % (F.name, ','.join(tup), res))
+            if syntax.has_annotation(F,'no_print'):
+                continue
+            for tup, res in sorted(Fs[F], key=lambda x: self.print_tuple(F.arity, x[0])):
+                l.append('%s(%s) = %s' % (F.name, self.print_tuple(F.arity, tup), self.print_element(F.sort, res)))
 
         return '\n'.join(l)
 

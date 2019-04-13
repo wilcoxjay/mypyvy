@@ -17,44 +17,44 @@
 # index
 # value
 
-sort term
-sort quorum
+sort term @ordered_by(term_le)
+sort quorum @printed_by(set_printer, member)
 sort node
-sort log
-sort index
+sort log @printed_by(raft_log_printer)
+sort index @ordered_by(index_le)
 sort value
 
-immutable constant term_zero: term
-immutable relation term_le(term, term)
+immutable constant term_zero: term @no_print
+immutable relation term_le(term, term) @no_print
 axiom term_le(T,T)
 axiom term_le(T1,T2) & term_le(T2,T3) -> term_le(T1,T3)
 axiom term_le(T1,T2) & term_le(T2,T1) -> T1 = T2
 axiom term_le(T1,T2) | term_le(T2,T1)
 axiom term_le(term_zero, T)
 
-immutable constant index_zero: index
-immutable relation index_le(index, index)
+immutable constant index_zero: index @no_print
+immutable relation index_le(index, index) @no_print
 axiom index_le(T,T)
 axiom index_le(T1,T2) & index_le(T2,T3) -> index_le(T1,T3)
 axiom index_le(T1,T2) & index_le(T2,T1) -> T1 = T2
 axiom index_le(T1,T2) | index_le(T2,T1)
 axiom index_le(index_zero, T)
 
-immutable relation member(node, quorum)
+immutable relation member(node, quorum) @no_print
 
 axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
 
-sort option_index
-immutable constant none_index: option_index
-immutable relation is_none_index(option_index)
+sort option_index @printed_by(option_printer, is_none_index, oi_index)
+immutable constant none_index: option_index @no_print
+immutable relation is_none_index(option_index) @no_print
 axiom is_none_index(OI) <-> OI = none_index
-immutable function oi_index(option_index): index
+immutable function oi_index(option_index): index @no_print
 
-sort option_term
-immutable constant none_term: option_term
-immutable relation is_none_term(option_term)
+sort option_term @printed_by(option_printer, is_none_term, ot_term)
+immutable constant none_term: option_term @no_print
+immutable relation is_none_term(option_term) @no_print
 axiom is_none_term(OT) <-> OT = none_term
-immutable function ot_term(option_term): term
+immutable function ot_term(option_term): term @no_print
 
 mutable relation append_msg(term,
                             option_index, option_term,
@@ -74,15 +74,15 @@ mutable function term_leader(term): node
 mutable relation current_term(node, term)
 mutable relation left_term(node, term)
 
-immutable relation index_used(log, index)
-immutable relation term_at(log, index, term)
+immutable relation index_used(log, index) @no_print
+immutable relation term_at(log, index, term) @no_print
 axiom [term_at_partial_func] term_at(L, I, T1) & term_at(L, I, T2) -> T1 = T2
 
-immutable function value_at(log, index): value
+immutable function value_at(log, index): value @no_print
 
 mutable function current_log(node): log
 
-immutable constant log0: log
+immutable constant log0: log @no_print
 axiom !index_used(log0, I)
 axiom !term_at(log0, I, T)
 
@@ -96,7 +96,7 @@ mutable constant commit_quorum : quorum
 
 mutable function term_log(term): log
 
-mutable relation valid(log)
+mutable relation valid(log) @no_print
 
 mutable function voting_quorum(term): quorum
 
