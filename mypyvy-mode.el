@@ -62,7 +62,7 @@
 (defun mypyvy-infer-invariant ()
   (interactive)
   (let ((b (generate-new-buffer "*mypyvy-output*")))
-    (call-process "mypyvy" nil b t "updr" (buffer-file-name))
+    (call-process "mypyvy" nil b t "updr" "--use-z3-unsat-cores" (buffer-file-name))
     (with-current-buffer b
       (goto-char (point-min))
       (if (search-forward "frame is safe and inductive. done!" nil t)
