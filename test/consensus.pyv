@@ -45,7 +45,7 @@ transition choose_voting_quorum(q, sn)
 
 transition become_leader(n: node)
   modifies leader
-  (member(N, voting_quorum) -> old(votes(n, N))) &
+  (member(N, old(voting_quorum)) -> old(votes(n, N))) &
   (leader(N) <-> old(leader(N)) | N = n)
 
 transition decide(n: node, v: value)
