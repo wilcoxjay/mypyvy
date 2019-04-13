@@ -468,7 +468,7 @@ class Diagram(object):
         self.consts = consts
         self.funcs = funcs
         self.trackers: List[z3.ExprRef] = []
-        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], Union[Set[int], None]] = \
+        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], Optional[Set[int]]] = \
             defaultdict(lambda: set())
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
