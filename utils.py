@@ -69,3 +69,6 @@ def print_error(tok: Optional[Token], msg: str) -> None:
 def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
     print_error(tok, msg)
     sys.exit(1)
+
+def print_warning(tok: Optional[Token], msg: str) -> None:
+    print('warning: %s: %s' % (tok_to_string(tok), msg))
