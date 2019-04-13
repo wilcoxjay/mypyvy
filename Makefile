@@ -8,7 +8,7 @@ test: check verify updr
 
 verify: check test/lockserv.verify test/consensus.verify test/sharded-kv.verify
 
-updr: lockserv.updr consensus.updr sharded-kv.updr
+updr: lockserv.updr sharded-kv.updr
 
 bench:
 	$(PYTHON) benchmark.py
@@ -19,10 +19,7 @@ bench:
 lockserv.updr:
 	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) test/lockserv.pyv
 
-consensus.updr:
-	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) test/consensus.pyv
-
 sharded-kv.updr:
 	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) test/sharded-kv.pyv
 
-.PHONY: check run test verify updr bench lockserv.updr consensus.updr sharded-kv.updr
+.PHONY: check run test verify updr bench lockserv.updr sharded-kv.updr
