@@ -300,11 +300,13 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
     elif isinstance(expr, Id):
         d = scope.get(expr.name)
         assert d is not None, expr.name
-        if (isinstance(d, RelationDecl) or \
-            isinstance(d, ConstantDecl) or \
-            isinstance(d, FunctionDecl)) and \
-            d.mutable:
-            return {(old, expr.tok, expr.name)}
+        if isinstance(d, RelationDecl) or \
+           isinstance(d, ConstantDecl) or \
+           isinstance(d, FunctionDecl):
+            return {(old, expr.tok, expr.name)} if d.mutable else set()
+        elif isinstance(d, DefinitionDecl):
+            with scope.fresh_stack():
+                return symbols_used(scope, d.expr, old)
         else:
             return set()
     elif isinstance(expr, IfThenElse):
