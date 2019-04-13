@@ -1014,6 +1014,9 @@ class Model(object):
 
         return diag
 
+    def as_onestate_formula(self, i: Optional[int]=None) -> Expr:
+        pass
+
 class Blocked(object):
     pass
 class CexFound(object):
@@ -1903,6 +1906,26 @@ def trace(s: Solver, prog: Program) -> None:
 
             check_unsat([(None, 'found trace!')], s, prog, keys)
 
+def reachability_tree(s: Solver, prog: Program) -> None:
+    print('hey oded and kartik')
+
+    models: List[Model] = []
+
+    # somehow, we got this list of formulas
+    l: List[Expr]
+
+    inits = [init.expr for init in prog.inits()]
+    res = check_two_state_implication_all_transitions(s, prog, inits, l[0])
+    if res is not None:
+        z3m, ition = res
+        models.append(Model(prog, z3m, s, [KEY_NEW, KEY_OLD]))
+
+    for e in l[1:]:
+        res = check_two_state_implication_all_transitions(s, prog, [models[-1].as_onestate_formula(i=0)], e)
+        if res is not None:
+            z3m, ition = res
+            models.append(Model(prog, z3m, s, [KEY_NEW, KEY_OLD]))
+
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
@@ -1936,6 +1959,10 @@ def parse_args() -> argparse.Namespace:
     typecheck_subparser = subparsers.add_parser('typecheck')
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
+
+    reachability_tree_subparser = subparsers.add_parser('reachability-tree')
+    reachability_tree_subparser.set_defaults(main=reachability_tree)
+    all_subparsers.append(reachability_tree_subparser)
 
 
     for s in all_subparsers:
