@@ -1967,15 +1967,15 @@ def parse_args() -> argparse.Namespace:
     theorem_subparser.set_defaults(main=theorem)
     all_subparsers.append(theorem_subparser)
 
-    trace_subparser = subparsers.add_parser('trace', help='TODO write help')
+    trace_subparser = subparsers.add_parser('trace', help='search for concrete executions that satisfy query described by the file\'s trace declaration')
     trace_subparser.set_defaults(main=trace)
     all_subparsers.append(trace_subparser)
 
-    generate_parser_subparser = subparsers.add_parser('generate-parser', help='TODO write help')
+    generate_parser_subparser = subparsers.add_parser('generate-parser', help='internal command used by benchmarking infrastructure to avoid certain race conditions')
     generate_parser_subparser.set_defaults(main=nop)  # parser is generated implicitly by main when it parses the program
     all_subparsers.append(generate_parser_subparser)
 
-    typecheck_subparser = subparsers.add_parser('typecheck', help='TODO write help')
+    typecheck_subparser = subparsers.add_parser('typecheck', help='typecheck the file, report any errors, and exit')
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
 
