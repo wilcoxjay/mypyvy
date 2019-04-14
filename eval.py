@@ -172,7 +172,7 @@ def main() -> None:
 args: argparse.Namespace
 
 if __name__ == '__main__':
-    print(' '.join(['python3'] + sys.argv))
+    print(' '.join(['python3.7'] + sys.argv))
 
     argparser = argparse.ArgumentParser()
 

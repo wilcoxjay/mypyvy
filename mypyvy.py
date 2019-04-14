@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.7
 
 from __future__ import annotations
 import argparse
@@ -2108,7 +2108,7 @@ def main() -> None:
         KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
 
     with LogTag('main', lvl=logging.INFO):
-        logger.always_print(' '.join(['python3'] + sys.argv))
+        logger.always_print(' '.join(['python3.7'] + sys.argv))
 
 
         logger.info('setting seed to %d' % utils.args.seed)
