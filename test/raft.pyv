@@ -17,11 +17,11 @@
 # index
 # value
 
-sort term @ordered_by(term_le)
+sort term @printed_by(ordered_by_printer, term_le)
 sort quorum @printed_by(set_printer, member)
 sort node
 sort log @printed_by(raft_log_printer)
-sort index @ordered_by(index_le)
+sort index @printed_by(ordered_by_printer, index_le)
 sort value
 
 immutable constant term_zero: term @no_print

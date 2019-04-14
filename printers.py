@@ -26,7 +26,9 @@ def get_function(m: mypyvy.Model, name: str) -> mypyvy.FunctionDecl:
     assert isinstance(f, mypyvy.FunctionDecl), (name, f)
     return f
 
-def ordered_by_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, order_name: str) -> str:
+def ordered_by_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
+    assert len(args) == 1
+    order_name = args[0]
     order = get_relation(m, order_name)
     us = syntax.UninterpretedSort(None, s.name)
     assert order.arity == [us, us] and not order.mutable

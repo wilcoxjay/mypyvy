@@ -828,26 +828,12 @@ class Model(object):
                 utils.print_warning(custom_printer_annotation.tok, 'could not find printer named %s' % (printer_name,))
         return None
 
-    def try_ordered_by(self, s: SortDecl, elt: str) -> Optional[str]:
-        ordered_by_annotation = syntax.get_annotation(s, 'ordered_by')
-
-        if ordered_by_annotation is not None:
-            assert len(ordered_by_annotation.args) == 1
-            import importlib
-            printers = importlib.import_module('printers')
-            assert 'ordered_by_printer' in printers.__dict__
-            printer = printers.__dict__['ordered_by_printer']
-            order_name = ordered_by_annotation.args[0]
-            return printer(self, s, elt, order_name)
-
-        return None
-
     def print_element(self, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
         if not isinstance(s, SortDecl):
             assert isinstance(s, syntax.UninterpretedSort) and s.decl is not None
             s = s.decl
 
-        return self.try_printed_by(s, elt) or self.try_ordered_by(s, elt) or elt
+        return self.try_printed_by(s, elt) or elt
 
     def print_tuple(self, arity: List[syntax.Sort], tup: List[str]) -> str:
         l = []
