@@ -27,6 +27,8 @@ from utils import MySet
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
+import pd
+
 ALWAYS_PRINT = 35
 
 class MyLogger(object):
@@ -1942,64 +1944,42 @@ def trace(s: Solver, prog: Program) -> None:
 
             check_unsat([(None, 'found trace!')], s, prog, keys)
 
-def reachability_tree(s: Solver, prog: Program) -> None:
-    print('hey oded and kartik')
-
-    models: List[Model] = []
-
-    # somehow, we got this list of formulas
-    l: List[Expr]
-
-    inits = [init.expr for init in prog.inits()]
-    res = check_two_state_implication_all_transitions(s, prog, inits, l[0])
-    if res is not None:
-        z3m, ition = res
-        models.append(Model(prog, z3m, s, [KEY_NEW, KEY_OLD]))
-
-    for e in l[1:]:
-        res = check_two_state_implication_all_transitions(s, prog, [models[-1].as_onestate_formula(i=0)], e)
-        if res is not None:
-            z3m, ition = res
-            models.append(Model(prog, z3m, s, [KEY_NEW, KEY_OLD]))
 
 def parse_args() -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
-    subparsers = argparser.add_subparsers()
+    subparsers = argparser.add_subparsers(title='subcommands')
     all_subparsers = []
 
-    verify_subparser = subparsers.add_parser('verify')
+    verify_subparser = subparsers.add_parser('verify', help='verify that the invariants are inductive')
     verify_subparser.set_defaults(main=verify)
     all_subparsers.append(verify_subparser)
 
-    updr_subparser = subparsers.add_parser('updr')
+    updr_subparser = subparsers.add_parser('updr', help='search for a strengthening that proves the invariant named by the --safety=NAME flag')
     updr_subparser.set_defaults(main=updr)
     all_subparsers.append(updr_subparser)
 
-    bmc_subparser = subparsers.add_parser('bmc')
+    bmc_subparser = subparsers.add_parser('bmc', help='bounded model check to depth given by the --depth=DEPTH flag for property given by the --safety=NAME flag')
     bmc_subparser.set_defaults(main=bmc)
     all_subparsers.append(bmc_subparser)
 
-    theorem_subparser = subparsers.add_parser('theorem')
+    theorem_subparser = subparsers.add_parser('theorem', help='check state-independent theorems about the background axioms of a model')
     theorem_subparser.set_defaults(main=theorem)
     all_subparsers.append(theorem_subparser)
 
-    trace_subparser = subparsers.add_parser('trace')
+    trace_subparser = subparsers.add_parser('trace', help='TODO write help')
     trace_subparser.set_defaults(main=trace)
     all_subparsers.append(trace_subparser)
 
-    generate_parser_subparser = subparsers.add_parser('generate-parser')
+    generate_parser_subparser = subparsers.add_parser('generate-parser', help='TODO write help')
     generate_parser_subparser.set_defaults(main=nop)  # parser is generated implicitly by main when it parses the program
     all_subparsers.append(generate_parser_subparser)
 
-    typecheck_subparser = subparsers.add_parser('typecheck')
+    typecheck_subparser = subparsers.add_parser('typecheck', help='TODO write help')
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
 
-    reachability_tree_subparser = subparsers.add_parser('reachability-tree')
-    reachability_tree_subparser.set_defaults(main=reachability_tree)
-    all_subparsers.append(reachability_tree_subparser)
-
+    all_subparsers += pd.pd_add_argparsers(subparsers)
 
     for s in all_subparsers:
         s.add_argument('--forbid-parser-rebuild', action='store_true',

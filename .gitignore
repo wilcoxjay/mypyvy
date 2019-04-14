@@ -1,3 +1,4 @@
+*~
 *.pyc
 .mypy_cache/
 .z3-trace
