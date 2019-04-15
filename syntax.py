@@ -1728,14 +1728,15 @@ class TraceTransitionDecl(object):
 @dataclass
 class AssertDecl(object):
     tok: Optional[Token]
-    expr: Expr
+    expr: Optional[Expr]  # None is only allowed in first step, and means "init"
 
     def __str__(self) -> str:
         return 'assert %s' % (str(self.expr),)
 
     def resolve(self, scope: Scope) -> None:
-        self.expr = close_free_vars(self.tok, self.expr)
-        self.expr.resolve(scope, BoolSort)
+        if self.expr is not None:
+            self.expr = close_free_vars(self.tok, self.expr)
+            self.expr.resolve(scope, BoolSort)
 
 
 TraceComponent = Union[TraceTransitionDecl, AssertDecl] # , AxiomDecl, ConstantDecl]

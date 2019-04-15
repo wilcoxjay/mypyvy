@@ -604,6 +604,10 @@ def p_trace_component_assert(p: Any) -> None:
     'trace_component : ASSERT expr'
     p[0] = syntax.AssertDecl(p.slice[1], p[2])
 
+def p_trace_component_assert_init(p: Any) -> None:
+    'trace_component : ASSERT INIT'
+    p[0] = syntax.AssertDecl(p.slice[1], None)
+
 def p_trace_component_transition(p: Any) -> None:
     'trace_component : trace_transition'
     p[0] = syntax.TraceTransitionDecl(p[1])

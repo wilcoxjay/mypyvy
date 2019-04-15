@@ -1921,13 +1921,20 @@ def trace(s: Solver, prog: Program) -> None:
 
         with s:
             lator = s.get_translator(keys[0])
-            for init in prog.inits():
-                s.add(lator.translate_expr(init.expr))
+            if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
+                for init in prog.inits():
+                    s.add(lator.translate_expr(init.expr))
 
             i = 0
             for c in trace.components:
                 if isinstance(c, syntax.AssertDecl):
-                    s.add(s.get_translator(keys[i]).translate_expr(c.expr))
+                    if c.expr is None:
+                        if i != 0:
+                            utils.print_error_and_exit(c.tok, 'assert init is only allowed in the first state')
+                        for init in prog.inits():
+                            s.add(s.get_translator(keys[i]).translate_expr(init.expr))
+                    else:
+                        s.add(s.get_translator(keys[i]).translate_expr(c.expr))
                 else:
                     te: syntax.TransitionExpr = c.transition
                     if isinstance(te, syntax.AnyTransition):
