@@ -1,5 +1,5 @@
 PYTHON := python3.7
-MYPYVY_OPTS := --seed=0 --log=warning
+MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000
 
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini mypyvy.py

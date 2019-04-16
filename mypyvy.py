@@ -1788,6 +1788,7 @@ def verify(s: Solver, prog: Program) -> None:
         logger.always_print('all ok!')
     else:
         logger.always_print('program has errors.')
+        sys.exit(1)
 
 def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_init(s, prog, a)
