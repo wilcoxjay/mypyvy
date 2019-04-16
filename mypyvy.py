@@ -2122,14 +2122,14 @@ def main() -> None:
 
         if utils.error_count > pre_parse_error_count:
             logger.always_print('program has syntax errors.')
-            return
+            sys.exit(1)
 
         pre_resolve_error_count = utils.error_count
 
         prog.resolve()
         if utils.error_count > pre_resolve_error_count:
             logger.always_print('program has resolution errors.')
-            return
+            sys.exit(1)
 
         scope = prog.scope
         assert scope is not None

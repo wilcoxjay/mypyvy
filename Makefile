@@ -4,7 +4,9 @@ MYPYVY_OPTS := --seed=0 --log=warning
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini mypyvy.py
 
-test: check verify updr
+test: check typecheck verify updr
+
+typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard test/*.pyv))
 
 verify: check test/lockserv.verify test/consensus.verify test/sharded-kv.verify
 
@@ -12,6 +14,9 @@ updr: lockserv.updr sharded-kv.updr
 
 bench:
 	$(PYTHON) benchmark.py
+
+%.typecheck: %.pyv
+	$(PYTHON) mypyvy.py typecheck $(MYPYVY_OPTS) $<
 
 %.verify: %.pyv
 	time $(PYTHON) mypyvy.py verify $(MYPYVY_OPTS) $<
@@ -22,4 +27,4 @@ lockserv.updr:
 sharded-kv.updr:
 	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) test/sharded-kv.pyv
 
-.PHONY: check run test verify updr bench lockserv.updr sharded-kv.updr
+.PHONY: check run test verify updr bench lockserv.updr sharded-kv.updr typecheck

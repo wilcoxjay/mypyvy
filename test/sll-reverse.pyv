@@ -22,7 +22,7 @@ init v != null
 init nrtc(h, u)
 init h != u
 init nrtc(u, v)
-init u != v
+axiom u != v
 init nrtc(u, Z) & u != Z -> nrtc(v, Z)
 
 # instantiate dtca(node, nrtc) for invariant

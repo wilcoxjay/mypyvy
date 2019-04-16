@@ -1391,7 +1391,7 @@ class InvariantDecl(Decl):
         self.expr = close_free_vars(self.tok, self.expr)
         self.expr.resolve(scope, BoolSort)
 
-        if symbols_used(scope, self.expr) == set():
+        if not scope.in_phase_context and symbols_used(scope, self.expr) == set():
             utils.print_error(self.tok, 'this invariant mentions no mutable symbols. it can be deleted.')
 
     def __repr__(self) -> str:
@@ -1562,8 +1562,9 @@ class PhaseDecl(object):
         )
 
     def resolve(self, scope: Scope) -> None:
-        for c in self.components:
-            c.resolve(scope)
+        with scope.in_phase():
+            for c in self.components:
+                c.resolve(scope)
 
     def invs(self) -> Iterator[InvariantDecl]:
         for c in self.components:
@@ -1789,6 +1790,7 @@ class Scope(Generic[B]):
         self.phases: Dict[str, PhaseDecl] = {}
         self.in_two_state_context = False
         self.in_old_context = False
+        self.in_phase_context = False
 
     def push(self, l: List[Tuple[str, B]]) -> None:
         self.stack.append(l)
@@ -1896,6 +1898,14 @@ class Scope(Generic[B]):
         yield None
         if twostate:
             self.in_two_state_context = False
+
+    @contextmanager
+    def in_phase(self) -> Iterator[None]:
+        assert not self.in_phase_context
+        self.in_phase_context = True
+        yield None
+        assert self.in_phase_context
+        self.in_phase_context = False
 
     @contextmanager
     def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:

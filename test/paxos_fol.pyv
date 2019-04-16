@@ -73,7 +73,7 @@ transition propose_with_votes(r: round, q: quorum, maxr: round, v: value)
 
 transition cast_vote(n: node, v: value, r: round)
   modifies vote
-  le(current_round(n), r) &
+  le(old(current_round(n)), r) &
   old(proposal(r, v)) &
   (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
 

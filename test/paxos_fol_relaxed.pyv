@@ -101,7 +101,7 @@ transition cast_vote(n: node, v: value, r: round)
   old(node_active(n)) &
   old(value_active(v)) &
   old(round_active(r)) & 
-  le(current_round(n), r) &
+  le(old(current_round(n)), r) &
   old(proposal(r, v)) &
   (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
 
