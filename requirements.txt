@@ -1,4 +1,3 @@
 mypy
-networkx
 typeshed
 typing_extensions

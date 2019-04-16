@@ -1,29 +1,31 @@
 # mypyvy
 
-My python reimplementation of (some of) Ivy.
+A language for symbolic transitions system, inspired by Ivy.
 
-## Setup dependencies
+## Dependencies
 
-You need python version 3.7. (Sorry.)
+You need python version 3.7. (Sorry.) I use 3.7.3, but 3.7.X should work for any X.
 
 ```
-python3 --version
-Python 3.7.0
+python3.7
+Python 3.7.3 (default, Mar 27 2019, 09:23:15)
+...
 ```
 
-Make sure z3 is installed and on your `PYTHONPATH`. I use z3 version 4.7.1.
+Make sure z3 is installed and on your `PYTHONPATH`. I use z3 version 4.8.5,
+but any version from the past few years should work.
 
 ```
 z3 --version
-Z3 version 4.7.1 - 64 bit
+Z3 version 4.8.5 - 64 bit
 ```
 
 Importing z3 should work (not report any errors) as follows.
 
 ```
-python3
-Python 3.7.0 (default, Oct 18 2018, 15:38:37)
-[GCC 5.5.0] on linux
+python3.7
+Python 3.7.3 (default, Mar 27 2019, 09:23:15)
+[Clang 10.0.1 (clang-1001.0.46.3)] on darwin
 Type "help", "copyright", "credits" or "license" for more information.
 >>> import z3
 >>>
@@ -36,26 +38,33 @@ do by running the following:
 pip3 install -r requirements.txt
 ```
 
+You may wish to set up a virtual environment if you're into that.
+
 ## Getting started
 
-mypyvy takes input files describing transition relations and performs various verification tasks.
-For an example input, see `test/lockserv.pyv`, which is fairly well documented (though perhaps too documented...).
+mypyvy takes an input file describing a symbolic transition system and can
+perform various tasks such as inductive invariant checking and inference.  For
+an example input, see `test/lockserv.pyv`, which is written in an tutorial
+style.
 
-The syntax is broadly fairly similar to Ivy. The primary difference is that transitions are
-specified directly as a double-vocabulary formula, using `old(R(x))` to refer to the
-pre-state version of relation `R`.
+For users who are familiar with Ivy, the syntax of mypyvy is broadly similar to
+Ivy.  The primary difference is that transitions are specified directly as a
+double-vocabulary formula, using `old(R(x))` to refer to the pre-state version
+of relation `R`.
 
-The mypyvy command line tool has several modes, all of which take a single `.pyv` file.
+The mypyvy command line tool has several modes, all of which take a single `.pyv`
+file.  See `mypyvy --help` for a list of modes and `mypyvy <mode> --help` for
+a description of all command line options to a particular mode.
 - `verify`: verifies that the invariants given in the file are inductive.
   For example, we can verify the lock service:
 ```
-python3 mypyvy.py verify test/lockserv.pyv
+python3.7 src/mypyvy.py verify --automaton no test/lockserv.pyv
 checking init:
-  implies invariant mutex...ok. (0:00:00.001003)
+  implies invariant mutex... ok. (0:00:00.000176)
   ...
 checking transation send_lock:
-  preserves invariant mutex...ok. (0:00:00.000653)
-  preserves invariant on line 109...ok. (0:00:00.000651)
+  preserves invariant mutex... ok. (0:00:00.000120)
+  preserves invariant on line 109... ok. (0:00:00.000107)
   ...
 ...
 all ok!
@@ -64,22 +73,16 @@ all ok!
   The `all ok!` message means success. If you delete one of the invariants and run again,
   you can see what the counterexamples look like.
 
-- `updr`: search for a strengthening that proves the invariant named by the `--safety=NAME` flag.
-  For example, we can ask it to strengthen the mutex property of the lock service:
+- `updr`: search for a strengthening that proves the safety property.  For
+  example, we can ask it to strengthen the mutex property of the lock service:
+
 ```
-python3 mypyvy.py updr --safety=mutex test/lockserv.pyv
+python3.7 src/mypyvy.py updr test/lockserv.pyv
 checking init:
-  implies invariant mutex...ok. (0:00:00.000541)
-  implies invariant on line 109...ok. (0:00:00.000423)
-  implies invariant on line 110...ok. (0:00:00.000407)
-  implies invariant on line 112...ok. (0:00:00.000364)
-  implies invariant on line 113...ok. (0:00:00.000342)
-  implies invariant on line 114...ok. (0:00:00.000336)
-  implies invariant on line 116...ok. (0:00:00.000309)
-  implies invariant on line 117...ok. (0:00:00.000298)
-  implies invariant on line 118...ok. (0:00:00.000296)
+  implies invariant mutex... ok. (0:00:00.000234)
 frame is safe and inductive. done!
-forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+summary of the_phase:
+!(exists node0:node, node1:node. node0 != node1 & holds_lock(node0) & holds_lock(node1))
 !(exists node0:node, node1:node. grant_msg(node1) & holds_lock(node0))
 !(exists node0:node. holds_lock(node0) & server_holds_lock)
 !(exists node0:node, node1:node. node0 != node1 & grant_msg(node0) & grant_msg(node1))
@@ -90,20 +93,21 @@ forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
 !(exists node0:node. server_holds_lock & unlock_msg(node0))
 ```
 
-  The message `frame is safe and inductive. done!` means success, and then it prints out
-  the inductive strengthening. Note that even though the file `test/lockserv.pyv` actually
-  already contains an inductive invariant to prove `mutex`, the algorithm *does not* use
-  the given strengthening, but looks only at `mutex`. (You can see this by going and
-  deleting all the other invariants in the file and re-running.)
+  The message `frame is safe and inductive. done!` means success, and then it
+  prints out the inductive strengthening.  Note that even though the file
+  `test/lockserv.pyv` actually already contains an inductive invariant to prove
+  `mutex`, the algorithm *does not* use the given strengthening, but looks only
+  at `mutex`, which is marked as a `safety` property.  (You can see this by
+  going and deleting all the other invariants in the file and re-running.)
 
-- `bmc`: performs bounded model checking out to depth given by the `--depth=DEPTH` flag
-  for a property given by the `--safety=NAME` flag.
-  For example, we can check that `mutex` property is true for 5 steps as follows:
+- `bmc`: performs bounded model checking out to depth given by the `--depth=DEPTH`
+  flag for a property given by the `--safety=NAME` flag. For example, we can check
+  that `mutex` property is true for 5 steps as follows:
 ```
-python3 mypyvy.py bmc --depth=5 --safety=mutex test/lockserv.pyv
+python3.7 src/mypyvy.py bmc --depth=5 --safety=mutex test/lockserv.pyv
 bmc checking the following property to depth 5
   forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
-ok. (0:00:00.678835)
+ok. (0:00:00.062531)
 ```
 
   The `ok.` message means success.
@@ -112,20 +116,76 @@ ok. (0:00:00.678835)
 ```
 invariant [bad] !holds_lock(N)
 ```
-  to the file and then rerun. You will get a (horribly ugly) counterexample from
-  which it is possible to reconstruct a trace violating the property
+  to the file and then rerun.  `mypyvy` reports a counterexample trace demonstrating
+  how to reach a state that violates the invariant. (Note the use of the option
+  `--minimize-models` to find the trace with the fewest client nodes.)
 
 ```
-python3 mypyvy.py bmc --depth=5 --safety=bad test/lockserv.pyv
+python3.7 src/mypyvy.py bmc --depth=5 --safety=bad --minimize-models test/lockserv.pyv
 bmc checking the following property to depth 5
   forall N:node. !holds_lock(N)
 
-<horrible countermodel here>
-...
-no! (0:00:00.198516)
+sort node
+  node0
+
+
+state 0:
+server_holds_lock()
+
+transition send_lock
+
+state 1:
+lock_msg(node0)
+server_holds_lock()
+
+transition recv_lock
+
+state 2:
+grant_msg(node0)
+
+transition send_lock
+
+state 3:
+grant_msg(node0)
+lock_msg(node0)
+
+transition stutter
+
+state 4:
+grant_msg(node0)
+lock_msg(node0)
+
+transition recv_grant
+
+state 5:
+holds_lock(node0)
+lock_msg(node0)
+error: found concrete trace violating safety
 ```
 
-  The `no!` message means that a counterexample was found.
+  The `error: ...` message means that a counterexample was found.  The trace is
+  pretty readable!
 
 - `theorem`: proves state-independent theorems about the background axioms of a model.
   Currently not documented and rarely used.
+
+- `trace`: is an generalization of `bmc` that allows user-guided queries over executions.
+  For example, at the bottom of the lockserv file, we see the following declaration:
+```
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists N. holds_lock(N)
+}
+```
+
+which asks mypyvy to find an execution with 3 steps that ends in a state where
+some client holds the lock. (This is essentially the same query we used bmc to
+answer above.)  A trace declaration says whether it is expected to be `sat` or
+`unsat`, and mypyvy reports an error if it disagrees.  The syntax of trace queries
+is under flux and currently undocumented.
+
+- `typecheck`: This mode justs typechecks the input file and then exits. It is
+  used by the emacs mode when the system's verification queries get too expensive
+  to run on every keystroke.
