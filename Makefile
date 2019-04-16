@@ -2,7 +2,7 @@ PYTHON := python3.7
 MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000
 
 check:
-	$(PYTHON) -m mypy --config-file ./mypy.ini mypyvy.py
+	$(PYTHON) -m mypy --config-file ./mypy.ini src/mypyvy.py
 
 test: check typecheck verify updr
 
@@ -10,21 +10,18 @@ typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard test/*.pyv))
 
 verify: check test/lockserv.verify test/consensus.verify test/sharded-kv.verify
 
-updr: lockserv.updr sharded-kv.updr
+updr: test/lockserv.updr test/sharded-kv.updr
 
 bench:
-	$(PYTHON) benchmark.py
+	$(PYTHON) script/benchmark.py
 
 %.typecheck: %.pyv
-	$(PYTHON) mypyvy.py typecheck $(MYPYVY_OPTS) $<
+	$(PYTHON) src/mypyvy.py typecheck $(MYPYVY_OPTS) $<
 
 %.verify: %.pyv
-	time $(PYTHON) mypyvy.py verify $(MYPYVY_OPTS) $<
+	time $(PYTHON) src/mypyvy.py verify $(MYPYVY_OPTS) $<
 
-lockserv.updr:
-	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) test/lockserv.pyv
+%.updr: %.pyv
+	time $(PYTHON) src/mypyvy.py updr $(MYPYVY_OPTS) $<
 
-sharded-kv.updr:
-	time $(PYTHON) mypyvy.py updr $(MYPYVY_OPTS) test/sharded-kv.pyv
-
-.PHONY: check run test verify updr bench lockserv.updr sharded-kv.updr typecheck
+.PHONY: check run test verify updr bench typecheck
