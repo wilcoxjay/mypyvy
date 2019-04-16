@@ -298,7 +298,7 @@ def check_unsat(
     sys.stdout.flush()
 
 @log_start_end_xml(logging.INFO)
-def check_init(s: Solver, prog: Program) -> None:
+def check_init(s: Solver, prog: Program, safety_only: bool=False) -> None:
     logger.always_print('checking init:')
 
     t = s.get_translator(KEY_ONE)
@@ -307,7 +307,7 @@ def check_init(s: Solver, prog: Program) -> None:
         for init in prog.inits():
             s.add(t.translate_expr(init.expr))
 
-        for inv in prog.invs():
+        for inv in (prog.invs() if not safety_only else prog.safeties()):
             with s:
                 s.add(z3.Not(t.translate_expr(inv.expr)))
 
@@ -1656,7 +1656,7 @@ def updr(s: Solver, prog: Program) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
 
-    check_init(s, prog)
+    check_init(s, prog, safety_only=True)
 
     fs = Frames(s, prog)
     fs.search()
