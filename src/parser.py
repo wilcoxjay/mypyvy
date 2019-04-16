@@ -44,6 +44,8 @@ reserved = {
     'else': 'ELSE',
     'let': 'LET',
     'in': 'IN',
+    'sat': 'SAT',
+    'unsat': 'UNSAT',
 }
 
 tokens = [
@@ -620,9 +622,14 @@ def p_trace_components_component(p: Any) -> None:
     'trace_components : trace_components trace_component'
     p[0] = p[1] + [p[2]]
 
+def p_satunsat(p: Any) -> None:
+    '''satunsat : SAT
+                | UNSAT'''
+    p[0] = p[1]
+
 def p_decl_trace(p: Any) -> None:
-    'decl : TRACE LBRACE trace_components RBRACE'
-    p[0] = syntax.TraceDecl(p[3])
+    'decl : satunsat TRACE LBRACE trace_components RBRACE'
+    p[0] = syntax.TraceDecl(p.slice[2], p[4], sat=p[1] == 'sat')
 
 def p_empty(p: Any) -> None:
     'empty :'

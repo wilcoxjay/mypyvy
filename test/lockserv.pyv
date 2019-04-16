@@ -161,3 +161,11 @@ automaton {
     invariant !grant_msg(X)
     invariant !holds_lock(X)
 }
+
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists N. holds_lock(N)
+}

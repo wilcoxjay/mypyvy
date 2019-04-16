@@ -51,18 +51,15 @@ MySet = OrderedSet
 args: argparse.Namespace
 
 Token = ply.lex.LexToken
-def tok_to_string(tok: Optional[Token]) -> str:
-    if tok is not None:
-        return '%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
-    else:
-        return 'None'
+def tok_to_string(tok: Token) -> str:
+    return '%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
 
 error_count = 0
 
 def print_error(tok: Optional[Token], msg: str) -> None:
     global error_count
     error_count += 1
-    print('error: %s: %s' % (tok_to_string(tok), msg))
+    print('error%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
     if args.exit_on_error:
         sys.exit(1)
 
@@ -71,4 +68,5 @@ def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
     sys.exit(1)
 
 def print_warning(tok: Optional[Token], msg: str) -> None:
-    print('warning: %s: %s' % (tok_to_string(tok), msg))
+    print('warning%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
+

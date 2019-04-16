@@ -275,7 +275,7 @@ def check_unsat(
         s: Solver,
         prog: Program,
         keys: List[str]
-) -> None:
+) -> z3.CheckSatResult:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
     #     logger.debug('assertions')
@@ -294,8 +294,11 @@ def check_unsat(
             logger.always_print('reason unknown: ' + s.reason_unknown())
         for tok, msg in errmsgs:
             utils.print_error(tok, msg)
-    logger.always_print('ok. (%s)' % (datetime.now() - start))
-    sys.stdout.flush()
+    else:
+        logger.always_print('ok. (%s)' % (datetime.now() - start))
+        sys.stdout.flush()
+
+    return res
 
 @log_start_end_xml(logging.INFO)
 def check_init(s: Solver, prog: Program, safety_only: bool=False) -> None:
@@ -1788,7 +1791,6 @@ def verify(s: Solver, prog: Program) -> None:
         logger.always_print('all ok!')
     else:
         logger.always_print('program has errors.')
-        sys.exit(1)
 
 def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_init(s, prog, a)
@@ -1909,7 +1911,8 @@ def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, 
         return body
 
 def trace(s: Solver, prog: Program) -> None:
-    logger.always_print('finding traces:')
+    if len(list(prog.traces())) > 0:
+        logger.always_print('finding traces:')
 
     for trace in prog.traces():
         n_states = len(list(trace.transitions())) + 1
@@ -1950,7 +1953,9 @@ def trace(s: Solver, prog: Program) -> None:
 
                     i += 1
 
-            check_unsat([(None, 'found trace!')], s, prog, keys)
+            res = check_unsat([], s, prog, keys)
+            if (res == z3.sat) != trace.sat:
+                utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
 
 def parse_args() -> argparse.Namespace:
@@ -2146,6 +2151,9 @@ def main() -> None:
         utils.args.main(s, prog)
 
         logger.info('total number of queries: %s' % s.nqueries)
+
+    sys.exit(1 if utils.error_count > 0 else 0)
+
 
 if __name__ == '__main__':
     main()

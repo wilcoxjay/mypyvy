@@ -1744,7 +1744,9 @@ TraceComponent = Union[TraceTransitionDecl, AssertDecl] # , AxiomDecl, ConstantD
 
 @dataclass
 class TraceDecl(Decl):
+    tok: Optional[Token]
     components: List[TraceComponent]
+    sat: bool  # whether the user expects this query to be satisfiable or not
 
     def __str__(self) -> str:
         return 'trace {%s\n}' % (

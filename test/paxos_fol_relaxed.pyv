@@ -133,7 +133,7 @@ immutable constant r1: round
 immutable constant r2: round
 axiom r1 != r2 & le(r1, r2)
 
-trace {
+sat trace {
   send_1a(r2)
   join_round_never_voted(*, r2) 
   propose_without_votes(r2, *, *)

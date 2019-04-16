@@ -47,7 +47,7 @@ invariant even(head)
 invariant even(tail)
 invariant n(X,Y) -> (even(X) <-> !even(Y))
 
-trace {  # sanity check transitions non-vacuous
+sat trace {  # sanity check transitions non-vacuous
   inc
   dec
 }

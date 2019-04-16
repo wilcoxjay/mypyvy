@@ -459,7 +459,7 @@ invariant [choosable_future_term_log]
 
 safety committed(I, V1) & committed(I, V2) -> V1 = V2
 
-trace {  # sanity check that we can commit a value starting from initial state
+sat trace {  # sanity check that we can commit a value starting from initial state
   timeout
   receive_request_vote_msg
   become_leader
