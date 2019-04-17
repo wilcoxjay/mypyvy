@@ -97,8 +97,11 @@ transition decrease_domain()
   (forall Q. quorum_active(Q) -> old(quorum_active(Q))) &
   (forall R. round_active(R) -> old(round_active(R)))
 
-safety
+definition unique_decisions() =
   decision(R1, V1) & decision(R2, V2) -> V1 = V2
+
+safety unique_decisions
+
 
 #  invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
 #  invariant vote(N,R,V) -> proposal(R,V)
@@ -129,3 +132,20 @@ safety
 #      decision(R, V) ->
 #      forall N. member(N, decision_quorum(R, V)) -> vote(N, R, V)
 #  
+
+sat trace {
+  send_1a
+  join_round
+  propose
+  cast_vote
+  decide
+
+  decrease_domain
+
+  send_1a
+  join_round
+  propose
+  cast_vote
+  decide
+  assert !unique_decisions
+}
