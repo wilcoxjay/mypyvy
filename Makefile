@@ -8,7 +8,7 @@ test: check typecheck verify trace updr
 
 typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard test/*.pyv))
 
-verify: check test/lockserv.verify test/consensus.verify test/sharded-kv.verify
+verify: test/lockserv.verify test/consensus.verify test/sharded-kv.verify
 
 trace: $(patsubst %.pyv, %.trace, $(wildcard test/*.pyv))
 
