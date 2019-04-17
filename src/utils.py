@@ -51,8 +51,8 @@ MySet = OrderedSet
 args: argparse.Namespace
 
 Token = ply.lex.LexToken
-def tok_to_string(tok: Token) -> str:
-    return '%s:%s:%s' % (tok.filename, tok.lineno, tok.col)
+def tok_to_string(tok: Optional[Token]) -> str:
+    return '%s:%s:%s' % (tok.filename, tok.lineno, tok.col) if tok is not None else 'None'
 
 error_count = 0
 
