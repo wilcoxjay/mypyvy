@@ -1888,6 +1888,11 @@ def theorem(s: Solver, prog: Program) -> None:
 def nop(s: Solver, prog: Program) -> None:
     pass
 
+def ipython(s:Solver, prog: Program) -> None:
+    import IPython
+    #IPython.embed()
+    IPython.start_ipython(argv=[],user_ns=dict(locals()))
+
 def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
     ition = prog.scope.get_definition(c.target)
     assert ition is not None
@@ -1991,6 +1996,10 @@ def parse_args() -> argparse.Namespace:
     typecheck_subparser = subparsers.add_parser('typecheck', help='typecheck the file, report any errors, and exit')
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
+
+    ipython_subparser = subparsers.add_parser('ipython', help='start IPython shell with s and prog')
+    ipython_subparser.set_defaults(main=ipython)
+    all_subparsers.append(ipython_subparser)
 
     all_subparsers += pd.pd_add_argparsers(subparsers)
 
