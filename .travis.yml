@@ -1,0 +1,13 @@
+dist: xenial   # required for Python >= 3.7
+language: python
+python:
+  - "3.7"
+install:
+  - pushd /tmp
+  - wget https://github.com/Z3Prover/z3/releases/download/z3-4.8.4/z3-4.8.4.d6df51951f4c-x64-ubuntu-16.04.zip -O z3-4.8.4.d6df51951f4c-x64-ubuntu-16.04.zip
+  - unzip z3-4.8.4.d6df51951f4c-x64-ubuntu-16.04.zip
+  - popd
+  - export PATH=/tmp/z3-4.8.4.d6df51951f4c-x64-ubuntu-16.04/bin/:$PATH
+  - export PYTHONPATH=/tmp/z3-4.8.4.d6df51951f4c-x64-ubuntu-16.04/bin/python/:$PYTHONPATH
+  - pip install -r requirements.txt
+script: make test
