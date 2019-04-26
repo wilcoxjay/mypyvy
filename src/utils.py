@@ -144,10 +144,10 @@ class LogTag(object):
 
 FuncType = Callable[..., Any]
 F = TypeVar('F', bound=FuncType)
-def log_start_end_time(lvl: int=logging.DEBUG) -> Callable[[F], F]:
+def log_start_end_time(logger: MyLogger, lvl: int=logging.DEBUG) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
-        def wrapped(*args, **kwargs): # type: ignore
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
             start = datetime.now()
             logger.log(lvl, '%s started at %s' % (func.__name__, start))
             ans = func(*args, **kwargs)
@@ -157,11 +157,11 @@ def log_start_end_time(lvl: int=logging.DEBUG) -> Callable[[F], F]:
         return cast(F, wrapped)
     return dec
 
-def log_start_end_xml(lvl: int=logging.DEBUG, tag: Optional[str]=None) -> Callable[[F], F]:
+def log_start_end_xml(logger: MyLogger, lvl: int=logging.DEBUG, tag: Optional[str]=None) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
-        def wrapped(*args, **kwargs): # type: ignore
-            with LogTag(tag if tag is not None else func.__name__, lvl=lvl):
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            with LogTag(logger, tag if tag is not None else func.__name__, lvl=lvl):
                 ans = func(*args, **kwargs)
             return ans
         return cast(F, wrapped)

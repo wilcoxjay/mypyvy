@@ -207,7 +207,7 @@ def check_unsat(
 
     return res
 
-@utils.log_start_end_xml(logging.INFO)
+@utils.log_start_end_xml(_logger, logging.INFO)
 def check_init(s: Solver, prog: Program, safety_only: bool=False) -> None:
     _logger.always_print('checking init:')
 
@@ -618,8 +618,8 @@ class Diagram(object):
             return self.valid_in_init(s, prog)
         return None
 
-    @utils.log_start_end_xml()
-    @utils.log_start_end_time()
+    @utils.log_start_end_xml(_logger)
+    @utils.log_start_end_time(_logger)
     def generalize(self, s: Solver, prog: Program, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                    propagate_init: bool,
@@ -993,7 +993,7 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
 
 
 class Frames(object):
-    @utils.log_start_end_xml(logging.DEBUG, 'Frames.__init__')
+    @utils.log_start_end_xml(_logger, logging.DEBUG, 'Frames.__init__')
     def __init__(self, solver: Solver, prog: Program) -> None:
         self.solver = solver
         self.prog = prog
@@ -1067,7 +1067,7 @@ class Frames(object):
 
 
 
-    @utils.log_start_end_xml()
+    @utils.log_start_end_xml(_logger)
     def establish_safety(self) -> None:
         self.assert_inductive_trace()
 
@@ -1199,7 +1199,7 @@ class Frames(object):
                     else:
                         break
 
-    @utils.log_start_end_xml(logging.DEBUG)
+    @utils.log_start_end_xml(_logger, logging.DEBUG)
     def push_forward_frames(self) -> None:
         self.assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
@@ -1251,7 +1251,7 @@ class Frames(object):
     # or throwing an exception describing an abstract counterexample on failure.
     # If safety_goal is False, then no abstract counterexample is ever reported to user,
     # instead, CexFound() is returned to indicate the diagram could not be blocked.
-    @utils.log_start_end_xml(lvl=logging.DEBUG)
+    @utils.log_start_end_xml(_logger, lvl=logging.DEBUG)
     def block(
             self,
             diag: Diagram,
@@ -1374,7 +1374,7 @@ class Frames(object):
             self.assert_inductive_trace()
         self.assert_inductive_trace()
 
-    @utils.log_start_end_xml(lvl=logging.DEBUG)
+    @utils.log_start_end_xml(_logger, lvl=logging.DEBUG)
     def find_predecessor(
             self,
             pre_frame: Frame,
@@ -1507,7 +1507,7 @@ class Frames(object):
         f.l = l
 
 
-    @utils.log_start_end_xml()
+    @utils.log_start_end_xml(_logger)
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
             for p in self.automaton.phases():
@@ -1560,8 +1560,8 @@ def get_safety(prog: Program) -> List[Expr]:
     return safety
 
 
-@utils.log_start_end_xml(logging.INFO)
-@utils.log_start_end_time(logging.INFO)
+@utils.log_start_end_xml(_logger, logging.INFO)
+@utils.log_start_end_time(_logger, logging.INFO)
 def updr(s: Solver, prog: Program) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
@@ -1680,7 +1680,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                                          (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
                                         s, prog, [KEY_OLD, KEY_NEW])
 
-@utils.log_start_end_time(logging.INFO)
+@utils.log_start_end_time(_logger, logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
     old_count = utils.error_count
     a = prog.the_automaton()
@@ -1751,7 +1751,7 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
         check_unsat([(None, 'found concrete trace violating safety')],
                     s, prog, keys)
 
-@utils.log_start_end_time()
+@utils.log_start_end_time(_logger)
 def bmc(s: Solver, prog: Program) -> None:
     safety = syntax.And(*get_safety(prog))
 
@@ -1765,7 +1765,7 @@ def bmc(s: Solver, prog: Program) -> None:
     check_bmc(s, prog, safety, n)
 
 
-@utils.log_start_end_time()
+@utils.log_start_end_time(_logger)
 def theorem(s: Solver, prog: Program) -> None:
     _logger.always_print('checking theorems:')
 
