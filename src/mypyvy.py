@@ -1796,7 +1796,7 @@ def nop(s: Solver, prog: Program) -> None:
     pass
 
 def ipython(s:Solver, prog: Program) -> None:
-    import IPython
+    import IPython  # type: ignore
     #IPython.embed()
     IPython.start_ipython(argv=[],user_ns=dict(locals()))
 
