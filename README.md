@@ -1,4 +1,4 @@
-# mypyvy
+# mypyvy [![Build Status](https://travis-ci.org/wilcoxjay/mypyvy.svg?branch=master)](https://travis-ci.org/wilcoxjay/mypyvy)
 
 A language for symbolic transitions system, inspired by Ivy.
 
