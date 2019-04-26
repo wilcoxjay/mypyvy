@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import itertools
-import logging
 import ply.lex
 import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
@@ -11,10 +10,6 @@ from typing import List, Union, Tuple, Optional, Dict, Iterator, \
 from typing_extensions import Protocol
 import utils
 import z3
-
-logger = logging.getLogger(__file__)
-logger.setLevel(logging.DEBUG)
-
 
 Token = ply.lex.LexToken
 
@@ -1257,9 +1252,6 @@ def close_free_vars(tok: Optional[Token], expr: Expr, in_scope: List[str]=[]) ->
     if vs == []:
         return expr
     else:
-        # logging.debug('closing expression')
-        # logging.debug(str(expr))
-        # logging.debug('with free vars %s' % vs)
         return QuantifierExpr(None, 'FORALL', [SortedVar(tok, v, None) for v in vs], expr)
 
 class InitDecl(Decl):
