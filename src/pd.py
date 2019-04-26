@@ -9,8 +9,11 @@ from itertools import product, chain, combinations
 from syntax import *
 from mypyvy import *
 
+from typing import TypeVar, Iterable
+
+A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
-def powerset(iterable):
+def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
     "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
     s = list(iterable)
     return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
@@ -46,7 +49,7 @@ def alpha(s:Solver, states: List[State] , top_clause:Expr) -> List[Expr]:
     literals = top_clause.body.args
     assert len(set(literals)) == len(literals)
 
-    result = []
+    result: List[Expr] = []
     for lits in powerset(literals):
         vs = [v for v in top_clause.binder.vs
              if v.name in set(n for lit in lits for n in lit.free_ids())]
@@ -61,14 +64,14 @@ def alpha(s:Solver, states: List[State] , top_clause:Expr) -> List[Expr]:
 def forward_explore(s: Solver, prog: Program, alpha: Callable[[List[Model]], List[Expr]]) -> None:
 
     states: List[State] = []
-    a: List[Expr] = alpha([])
+    a: Sequence[Expr] = alpha([])
 
     changes = True
     while changes:
         changes = False
 
         # check for initial states violating a
-        z3m = check_implication(s, prog.inits(), a)
+        z3m = check_implication(s, [init.expr for init in prog.inits()], a)
         if z3m is not None:
             states.append(Model(prog, z3m, s, [KEY_ONE]))
             changes = True
@@ -76,9 +79,9 @@ def forward_explore(s: Solver, prog: Program, alpha: Callable[[List[Model]], Lis
             continue
 
         # check for 1 transition from an initial state or a state in states
-        for prestate, p in product([None] + states, a):
+        for prestate, p in product(itertools.chain([None], states), a):
             if prestate is None:
-                precondition = prog.inits()
+                precondition = [init.expr for init in prog.inits()]
             else:
                 precondition = [prestate.as_onestate_formula(i=0)]
             res = check_two_state_implication_all_transitions(s, prog, precondition, p)
