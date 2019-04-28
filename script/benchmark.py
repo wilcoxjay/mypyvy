@@ -14,7 +14,7 @@ from typing import Optional, TextIO, List, Tuple, Union
 args: argparse.Namespace
 
 def generate_parser() -> None:
-    cmd = ['python3.7', 'mypyvy.py', 'generate-parser', 'examples/lockserv.pyv']
+    cmd = ['mypyvy.py', 'generate-parser', 'examples/lockserv.pyv']
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) # type: ignore
 
 def run_isolated_process(cmd: List[str], out: TextIO) -> None:
@@ -44,7 +44,7 @@ class Benchmark(object):
 
     def run(self, uid: Optional[int]=None, seed: Optional[int]=None, worker_id: Optional[int]=None) -> Optional[Tuple[float, int]]:
         assert args is not None
-        cmd = ['python3.7', 'mypyvy.py', 'updr', '--forbid-parser-rebuild', '--log=%s' % args.log]
+        cmd = ['mypyvy.py', 'updr', '--forbid-parser-rebuild', '--log=%s' % args.log]
 
         if args.pin_cores and worker_id is not None:
             cmd = ['taskset', hex(1 << worker_id), ] + cmd
