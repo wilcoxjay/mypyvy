@@ -14,7 +14,7 @@ from typing import Optional, TextIO, List, Tuple, Union
 args: argparse.Namespace
 
 def generate_parser() -> None:
-    cmd = ['python3.7', 'mypyvy.py', 'generate-parser', 'test/lockserv.pyv']
+    cmd = ['python3.7', 'mypyvy.py', 'generate-parser', 'examples/lockserv.pyv']
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) # type: ignore
 
 def run_isolated_process(cmd: List[str], out: TextIO) -> None:
@@ -116,19 +116,19 @@ class Benchmark(object):
 
 
 convergant_benchmarks = [
-    Benchmark('test/lockserv.pyv'),
-    Benchmark('test/lockserv_multi.pyv'),
-    Benchmark('test/consensus.pyv'),
-    Benchmark('test/consensus-0.1.pyv'),
-    Benchmark('test/sharded-kv.pyv'),
-    Benchmark('test/sharded-kv-retransmit.pyv'),
-    Benchmark('test/ring.pyv'),
-    Benchmark('test/sll-reverse.pyv'),
+    Benchmark('examples/lockserv.pyv'),
+    Benchmark('examples/lockserv_multi.pyv'),
+    Benchmark('examples/consensus.pyv'),
+    Benchmark('examples/consensus-0.1.pyv'),
+    Benchmark('examples/sharded-kv.pyv'),
+    Benchmark('examples/sharded-kv-retransmit.pyv'),
+    Benchmark('examples/ring.pyv'),
+    Benchmark('examples/sll-reverse.pyv'),
 ]
 
 other_benchmarks: List[Benchmark] = [
-    Benchmark('test/cache.pyv'),
-    Benchmark('test/paxos.pyv'),
+    Benchmark('examples/cache.pyv'),
+    Benchmark('examples/paxos.pyv'),
 ]
 
 all_benchmarks = convergant_benchmarks + other_benchmarks

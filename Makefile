@@ -6,13 +6,13 @@ check:
 
 test: check typecheck verify trace updr
 
-typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard test/*.pyv))
+typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv))
 
-verify: test/lockserv.verify test/consensus.verify test/sharded-kv.verify
+verify: examples/lockserv.verify examples/consensus.verify examples/sharded-kv.verify
 
-trace: $(patsubst %.pyv, %.trace, $(wildcard test/*.pyv))
+trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
-updr: test/lockserv.updr test/sharded-kv.updr
+updr: examples/lockserv.updr examples/sharded-kv.updr
 
 bench:
 	$(PYTHON) script/benchmark.py

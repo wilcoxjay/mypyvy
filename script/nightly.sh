@@ -3,7 +3,7 @@
 
 LOGDIR=logs/$(date '+%y%m%d-%H%M%S')-updr-skv-ghost
 echo "$LOGDIR"
-time python3 benchmark.py -n 16 -j 16 --benchmark test/sharded-kv-retransmit-ghost-view-disabled.pyv  --timeout 3600 --keep-logs "$LOGDIR" --args --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
+time python3 benchmark.py -n 16 -j 16 --benchmark examples/sharded-kv-retransmit-ghost-view-disabled.pyv  --timeout 3600 --keep-logs "$LOGDIR" --args --simplify-diagram --use-z3-unsat-cores --dont-block-may-cex
 
 
 # for AUTOMATON in '' --automaton '--automaton --sketch'; do
