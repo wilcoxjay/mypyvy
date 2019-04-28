@@ -114,7 +114,7 @@ class Benchmark(object):
 
         return None
 
-
+# TODO: (YF) suggest to decouple the benchmarking framework from the list of examples
 convergant_benchmarks = [
     Benchmark('examples/lockserv.pyv'),
     Benchmark('examples/lockserv_multi.pyv'),
