@@ -1,0 +1,78 @@
+sort key
+sort value
+sort node
+
+mutable relation table(node, key, value)
+mutable relation owner(node, key)
+mutable relation transfer_msg(node, key, value)
+
+init !table(N, K, V)
+init !transfer_msg(N, K, V)
+init owner(N1, K) & owner(N2, K) -> N1 = N2
+# init forall K. exists N. owner(N, K)
+
+transition reshard(k: key, v: value, n_old: node, n_new: node)
+  modifies table, owner, transfer_msg
+  old(table(n_old, k, v)) &
+  (table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
+  (owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
+  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) | (N = n_new & K = k & V = v))
+
+
+transition recv_transfer_msg(n: node, k: key, v: value)
+  modifies table, owner, transfer_msg
+  old(transfer_msg(n, k, v)) &
+  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) & !(N = n & K = k & V = v)) &
+  (table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
+  (owner(N, K) <-> old(owner(N, K)) | (N = n & K = k))
+
+
+transition put(n: node, k: key, v: value)
+  modifies table
+  old(owner(n, k)) &
+  (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) & 
+  (table(n, k, V) <-> V = v)
+
+safety [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
+
+invariant owner(N1, K) & owner(N2, K) -> N1 = N2
+invariant table(N, K, V) -> owner(N, K)
+
+invariant !(transfer_msg(N1, K, V) & owner(N2, K))
+invariant transfer_msg(N1, K, V1) & transfer_msg(N2, K, V2) -> N1 = N2 & V1 = V2
+
+# invariant forall K. (exists N. owner(N, K)) | (exists N, V. transfer_msg(N, K, V))
+immutable constant qk: key
+
+automaton {
+  init phase owned
+
+  # Adds the given transition to every phase.
+  global
+    safety table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
+    # transition get -> self
+    transition put -> self
+    transition recv_transfer_msg -> self assume k!=qk
+    transition reshard -> self assume k!=qk
+
+  phase owned
+    transition reshard -> phase transferring assume k=qk
+
+    transition recv_transfer_msg -> self assume k!=qk
+    transition reshard -> self assume k!=qk
+
+    invariant owner(N1, qk) & owner(N2, qk) -> N1 = N2
+    invariant !(transfer_msg(DST, qk, V))
+
+    invariant table(N, qk, V) -> owner(N, qk)
+    invariant table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
+
+
+  phase transferring
+    transition recv_transfer_msg -> phase owned assume k=qk
+
+    invariant !owner(N, qk)
+    invariant transfer_msg(DST1, qk, V1) & transfer_msg(DST2, qk, V2) -> DST1 = DST2 & V1 = V2
+
+    invariant table(N, qk, V) -> owner(N, qk)
+}
