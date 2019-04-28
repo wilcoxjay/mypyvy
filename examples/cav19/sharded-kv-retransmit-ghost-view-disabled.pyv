@@ -15,7 +15,6 @@ mutable relation seqnum_recvd(node, node, seqnum)
 init !table(N, K, V)
 init !transfer_msg(SRC, DST, K, V, S)
 init owner(N1, K) & owner(N2, K) -> N1 = N2
-#assume forall K. exists N. owner(N, K)
 
 init !unacked(SRC, DST, K, V, S)
 init !ack_msg(SRC, DST, S)

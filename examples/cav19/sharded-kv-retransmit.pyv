@@ -15,7 +15,6 @@ mutable relation seqnum_recvd(node, node, seqnum)
 init !table(N, K, V)
 init !transfer_msg(SRC, DST, K, V, S)
 init owner(N1, K) & owner(N2, K) -> N1 = N2
-#assume forall K. exists N. owner(N, K)
 
 init !unacked(SRC, DST, K, V, S)
 init !ack_msg(SRC, DST, S)
@@ -97,26 +96,7 @@ invariant
   SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
 
 
-# invariant [keys_never_lost]
-#     forall K.
-#         (exists N. owner(N, K)) |
-#         (exists SRC, DST, V, S. unacked(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S))
-# invariant ack_msg(SRC, DST, S) -> seqnum_recvd(DST, SRC, S)
-# 
-# invariant transfer_msg(SRC, DST1, K1, V1, S) & transfer_msg(SRC, DST2, K2, V2, S) ->
-#     DST1 = DST2 & K1 = K2 & V1 = V2
-# 
-# invariant unacked(SRC, DST1, K1, V1, S) & unacked(SRC, DST2, K2, V2, S) ->
-#     DST1 = DST2 & K1 = K2 & V1 = V2
-# 
-# invariant transfer_msg(SRC, DST1, K1, V1, S) & unacked(SRC, DST2, K2, V2, S) ->
-#     DST1 = DST2 & K1 = K2 & V1 = V2
-# 
-# 
-# 
-# invariant seqnum_recvd(DST, SRC, S) -> seqnum_sent(SRC, S)
-# invariant transfer_msg(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
-# invariant unacked(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
+
 
 immutable constant qk: key
 
@@ -142,8 +122,8 @@ automaton {
     transition recv_transfer_msg -> self assume k!=qk
     transition reshard -> self assume k!=qk
 
-    sketch invariant owner(N1, qk) & owner(N2, qk) -> N1 = N2
-    sketch invariant !(transfer_msg(SRC, DST, qk, V, S) & !seqnum_recvd(DST, SRC, S))
+    invariant owner(N1, qk) & owner(N2, qk) -> N1 = N2
+    invariant !(transfer_msg(SRC, DST, qk, V, S) & !seqnum_recvd(DST, SRC, S))
 
     invariant table(N, qk, V) -> owner(N, qk)
     invariant table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
@@ -153,8 +133,8 @@ automaton {
   phase transferring
     transition recv_transfer_msg -> phase owned assume k=qk
 
-    sketch invariant !owner(N, qk)
-    sketch invariant transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & transfer_msg(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
+    invariant !owner(N, qk)
+    invariant transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & transfer_msg(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
 
     invariant table(N, qk, V) -> owner(N, qk)
     invariant transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & unacked(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2

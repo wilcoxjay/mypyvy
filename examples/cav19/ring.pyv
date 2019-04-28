@@ -1,22 +1,3 @@
-# module total_order(t: sort, r: relation (t, t)) {
-#   axiom r(X,X)                        # Reflexivity
-#   axiom r(X, Y) & r(Y, Z) -> r(X, Z)  # Transitivity
-#   axiom r(X, Y) & r(Y, X) -> X = Y    # Anti-symmetry
-#   axiom r(X, Y) | r(Y, X)             # Totality
-# }
-#
-# module ring_topology(t: sort) {
-#     immutable relation btw(t,t,t)
-#
-#     axiom btw(W,X,Y) & btw(W,Y,Z) -> btw(W,X,Z)  # transitive
-#     axiom btw(W,X,Y) -> !btw(W,Y,X)  # acyclic
-#     axiom btw(W,X,Y) | btw(W,Y,X) | W=X | W=Y | X=Y  # total
-#     axiom btw(X,Y,Z) -> btw(Y,Z,X)  # cyclic permutations
-#
-#     definition succ(x: t, y: t)
-#         x != y & ((Z != x & Z != y) -> btw(x,y,Z))
-# }
-
 sort node
 
 immutable relation le(node, node)
@@ -46,13 +27,11 @@ init !pending(N1, N2)
 
 transition send(n: node, next: node)
   modifies pending
-  # succ(n, next) &
   (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
   (forall N1, N2. pending(N1, N2) <-> old(pending(N1, N2)) | N1 = n & N2 = next)
 
 transition recv(sender: node, n: node, next: node)
   modifies leader, pending
-  # succ(n, next) &
   (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
   old(pending(sender, n)) &
   (sender = n ->

@@ -77,7 +77,7 @@ automaton {
 
   phase server
     transition recv_lock -> phase grant assume l=ql
-    sketch invariant server_holds_lock(ql)
+    invariant server_holds_lock(ql)
 
     invariant !grant_msg(X, ql)
     invariant !holds_lock(X, ql)
@@ -89,7 +89,7 @@ automaton {
 
   phase grant
     transition recv_grant -> phase client assume l=ql
-    sketch invariant grant_msg(X, ql) & grant_msg(Y, ql) -> X = Y
+    invariant grant_msg(X, ql) & grant_msg(Y, ql) -> X = Y
 
     invariant !server_holds_lock(ql)
     invariant !holds_lock(X, ql)
@@ -101,7 +101,7 @@ automaton {
 
   phase client
     transition unlock -> phase unlock assume l=ql
-    sketch invariant holds_lock(X, ql) & holds_lock(Y, ql) -> X = Y
+    invariant holds_lock(X, ql) & holds_lock(Y, ql) -> X = Y
 
     invariant !server_holds_lock(ql)
     invariant !grant_msg(X, ql)
@@ -113,7 +113,7 @@ automaton {
 
   phase unlock
     transition recv_unlock -> phase server assume l=ql
-    sketch invariant unlock_msg(X, ql) & unlock_msg(Y, ql) -> X = Y
+    invariant unlock_msg(X, ql) & unlock_msg(Y, ql) -> X = Y
 
     invariant !server_holds_lock(ql)
     invariant !grant_msg(X, ql)

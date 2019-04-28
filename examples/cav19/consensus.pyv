@@ -36,7 +36,6 @@ transition recv_vote(n: node, sender: node)
   modifies votes
   old(vote_msg(sender, n)) &
   (votes(N1, N2) <-> old(votes(N1, N2)) | N1 = n & N2 = sender) 
-  # & ((!(N1=sender & N2=n)) -> (vote_msg(N1, N2) <-> old(vote_msg(N1, N2))))
 
 transition choose_voting_quorum(q, sn)
   modifies voting_quorum
@@ -77,11 +76,9 @@ automaton {
   phase gathering
       transition become_leader -> phase elected
 
-      # partial characterizations
       invariant !leader(N)
       invariant !decided(N, V)
 
-      # full characterizations
       invariant votes(N, M) -> vote_msg(M, N)
       invariant vote_msg(M, N1) & vote_msg(M, N2) -> N1 = N2
       invariant vote_msg(M, N) -> voted(M)
@@ -91,11 +88,9 @@ automaton {
       transition decide -> phase decided
       transition become_leader -> self
 
-      # partial characterizations
-      sketch invariant leader(N1) & leader(N2) -> N1 = N2
-      sketch invariant !decided(N, V)
+      invariant leader(N1) & leader(N2) -> N1 = N2
+      invariant !decided(N, V)
 
-      # full characterizations
       invariant leader(N1) & member(N2, voting_quorum) -> votes(N1, N2)
       invariant leader(N1) & member(N2, voting_quorum) -> votes(N1, N2)
       invariant votes(N, M) -> vote_msg(M, N)
@@ -107,11 +102,9 @@ automaton {
       transition become_leader -> self
       transition decide -> self
 
-      # partial characterizations
-      sketch invariant leader(N1) & leader(N2) -> N1 = N2
-      sketch invariant decided(N1,V1) & decided(N2,V2) -> V1 = V2
+      invariant leader(N1) & leader(N2) -> N1 = N2
+      invariant decided(N1,V1) & decided(N2,V2) -> V1 = V2
 
-      # full characterizations
       invariant decided(N,V) -> leader(N)
       invariant leader(N1) & member(N2, voting_quorum) -> votes(N1, N2)
       invariant votes(N, M) -> vote_msg(M, N)
