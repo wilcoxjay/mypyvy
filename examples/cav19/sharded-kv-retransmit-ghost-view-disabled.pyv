@@ -100,6 +100,3 @@ invariant transferring(qk) -> (transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_re
 invariant transferring(qk) -> (table(N, qk, V) -> owner(N, qk))
 invariant transferring(qk) -> (transfer_msg(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & unacked(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2)
 invariant transferring(qk) -> (unacked(SRC1, DST1, qk, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) & unacked(SRC2, DST2, qk, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) -> SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2)
-
-safety owned(qk) -> !(transfer_msg(SRC, N, qk, V, S) & !seqnum_recvd(N, SRC, S))
-safety transferring(qk) -> !(table(N, qk, V) & !(seqnum_sent(N, S)))
