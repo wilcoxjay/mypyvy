@@ -1192,7 +1192,7 @@ class Frames(object):
                     _logger.debug('note: current clause is safety condition')
                     self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=True)
                 else:
-                    if not utils.args.dont_block_may_cexs:
+                    if utils.args.block_may_cexs:
                         ans = self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=False)
                         if isinstance(ans, CexFound):
                             break
@@ -1934,8 +1934,8 @@ def parse_args() -> argparse.Namespace:
                        help='exit after reporting first error')
 
 
-    updr_subparser.add_argument('--use-z3-unsat-cores', action='store_true',
-                                help='generalize diagrams using unsat cores instead of brute force')
+    updr_subparser.add_argument('--dont-use-z3-unsat-cores', action='store_false', dest='use_z3_unsat_cores',
+                                help='generalize diagrams using brute force instead of unsat cores')
     updr_subparser.add_argument('--smoke-test', action='store_true',
                                 help='(for debugging mypyvy itself) run bmc to confirm every conjunct added to a frame')
     updr_subparser.add_argument('--assert-inductive-trace', action='store_true',
@@ -1946,18 +1946,18 @@ def parse_args() -> argparse.Namespace:
 
     updr_subparser.add_argument('--simple-conjuncts', action='store_true',
                                 help='substitute existentially quantified variables that are equal to constants')
-    updr_subparser.add_argument('--simplify-diagram', action='store_true',
-                                help='in diagram generation, substitute existentially quantified variables that are equal to constants')
+    updr_subparser.add_argument('--dont-simplify-diagram', action='store_false', dest='simplify_diagram',
+                                help='in diagram generation, refrain from substituting existentially quantified variables that are equal to constants')
     updr_subparser.add_argument('--automaton', action='store_true',
                                 help='whether to run vanilla UPDR or phase UPDR')
-    updr_subparser.add_argument('--dont-block-may-cexs', action='store_true',
-                                help="don't treat failures to push as additional proof obligations")
+    updr_subparser.add_argument('--block-may-cexs', action='store_true',
+                                help="treat failures to push as additional proof obligations")
     updr_subparser.add_argument('--push-frame-zero', default='if_trivial', choices=['if_trivial', 'always', 'never'],
-                                help="don't treat failures to push as additional proof obligations")
+                                help="push lemmas from the initial frame: always/never/if_trivial, the latter is when there is more than one phase")
 
     verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],
                                   help="whether to use phase automata during verification. by default ('yes'), both non-automaton "
-                                  "and autotomaton proofs are checked. 'no' means ignore automaton proofs. "
+                                  "and automaton proofs are checked. 'no' means ignore automaton proofs. "
                                   "'only' means ignore non-automaton proofs.")
     verify_subparser.add_argument('--check-transition', default=None, nargs='+',
                                   help="when verifying inductiveness, check only these transitions")
