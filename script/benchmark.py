@@ -8,8 +8,11 @@ import statistics
 import subprocess
 import sys
 import threading
+import io
 
 from typing import Optional, TextIO, List, Tuple, Union
+
+import stats_from_log
 
 args: argparse.Namespace
 
@@ -100,7 +103,8 @@ class Benchmark(object):
 
             if found:
                 assert nqueries is not None
-                return time, nqueries
+                nframes, phase_summaries = stats_from_log.log_summary(io.StringIO(proc.stdout))
+                return time, nqueries, nframes, phase_summaries
 
         # probably the child job was killed or terminated abnormally
 #        print('could not find "updr ended" in job %s' % uid)
@@ -310,10 +314,23 @@ def main() -> None:
 
             return avg, stdev
 
+        def safe_range_stats(lst: List[Union[float,int]]) -> str:
+            if len(lst) == 1:
+                return '%d' % lst[0]
+            return '%d-%d' % (min(lst), max(lst))
+
         avg_time, stdev_time = safe_summary_stats([t[0] for t in without_timeouts])
         avg_queries, stdev_queries = safe_summary_stats([t[1] for t in without_timeouts])
+        frames_rng = safe_range_stats([t[2] for t in without_timeouts])
 
-        data.append((b, times, avg_time, stdev_time, avg_queries, stdev_queries, n_timeouts))
+        per_phase_mean_clauses, per_phase_mean_quantifiers,  per_phase_mean_literals = stats_from_log.per_phase_stats([t[3] for t in without_timeouts])
+        avg_clauses_range = safe_range_stats(list(per_phase_mean_clauses.values()))
+        num_quantifies_range = safe_range_stats(list(per_phase_mean_quantifiers.values()))
+        num_literals_range = safe_range_stats(list(per_phase_mean_literals.values()))
+
+        data.append((b, times, avg_time, stdev_time, avg_queries, stdev_queries, 
+                    frames_rng, avg_clauses_range, num_quantifies_range, num_literals_range,
+                    n_timeouts))
 
     print()
 
@@ -324,13 +341,20 @@ def main() -> None:
 
     if print_seeds:
         print('seeds: %s' % seeds, file=results_file)
-    for b, times, avg_time, stdev_time, avg_queries, stdev_queries, n_timeouts in data:
+    for b, times, avg_time, stdev_time, avg_queries, stdev_queries, \
+        num_frames_range, num_clauses_range, num_quantifies_range, num_literals_range, \
+        n_timeouts \
+        in data:
         lines = [repr(b),
                  str(times),
                  'avg_time: %s' % avg_time,
                  'stdev_time: %s' % stdev_time,
                  'avg_nqueries: %s' % avg_queries,
                  'stdev_nqueries: %s' % stdev_queries,
+                 'nframes: %s' % num_frames_range,
+                 'avg_clauses_phase: %s' % num_clauses_range,
+                 'avg_quantifiers_phase: %s' % num_quantifies_range,
+                 'avg_literals_phase: %s' % num_literals_range,
                  '# timeouts: %s' % n_timeouts
         ]
         print('\n'.join(lines), file=results_file)

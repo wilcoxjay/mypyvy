@@ -50,7 +50,10 @@ def process_file(f) -> None:
 
 def file_summary(filename):
     with open(filename, 'rt') as f:
-        frame_num, pstats = process_file(f)
+        return log_summary(f)
+
+def log_summary(f):
+    frame_num, pstats = process_file(f)
 
     phase_summaries = {}
     for pname, pinfo in pstats.items():
@@ -66,6 +69,16 @@ def sum_list(lst):
 
 def mean(lst):
     return float(sum(lst)) / len(lst)
+
+def per_phase_stats(pstats):
+    pnames = list(pstats[0].keys())
+    per_phase_mean_clauses = {pname: mean([pstat[pname][0] for pstat in pstats]) for pname in pnames}
+    per_phase_mean_quantifiers = {pname: mean([pstat[pname][1] for pstat in pstats]) for pname in pnames}
+    per_phase_mean_literals = {pname: mean([pstat[pname][2] for pstat in pstats]) for pname in pnames}
+
+    return (per_phase_mean_clauses,
+            per_phase_mean_quantifiers,
+            per_phase_mean_literals)    
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -84,10 +97,7 @@ def main() -> None:
     print('inductive frame: %s' % ind_frame)
 
     pstats = [summary[1] for summary in summaries]
-    pnames = list(pstats[0].keys())
-    per_phase_mean_clauses = {pname: mean([pstat[pname][0] for pstat in pstats]) for pname in pnames}
-    per_phase_mean_quantifiers = {pname: mean([pstat[pname][1] for pstat in pstats]) for pname in pnames}
-    per_phase_mean_literals = {pname: mean([pstat[pname][2] for pstat in pstats]) for pname in pnames}
+    per_phase_mean_clauses, per_phase_mean_quantifiers,  per_phase_mean_literals = per_phase_stats(pstats)
 
     print('mean num clauses: %s' % sum_list(list(per_phase_mean_clauses.values())))
     print('mean num quantifiers: %s' % sum_list(list(per_phase_mean_quantifiers.values())))
