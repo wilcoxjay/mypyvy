@@ -148,6 +148,11 @@ def raft_log_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[s
         if log == elt and index in entries:
             entries[index].value = res
 
+    # The printed value of an index is consistent with index_le, so the log
+    # should be ordered in the same way.
+    sorted_entries = sorted(entries.values(),
+                            key=lambda e: m.print_element(index_sort, e.index))
+
     def entry_to_str(e: RaftEntry) -> str:
         assert e.value is not None
 
@@ -156,4 +161,4 @@ def raft_log_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[s
             '[%s]' % (', '.join(m.print_element(term_sort, t) for t in e.terms)),
             m.print_element(value_sort, e.value))
 
-    return '<<%s>>' % (', '.join(entry_to_str(entry) for entry in sorted(entries.values(), key=lambda e: e.index)))
+    return '<<%s>>' % (', '.join(entry_to_str(entry) for entry in sorted_entries))
