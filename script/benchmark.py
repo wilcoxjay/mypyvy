@@ -315,6 +315,8 @@ def main() -> None:
             return avg, stdev
 
         def safe_range_stats(lst: List[Union[float,int]]) -> str:
+            if not lst:
+                return "-"
             if len(lst) == 1:
                 return '%d' % lst[0]
             return '%d-%d' % (min(lst), max(lst))
@@ -323,10 +325,15 @@ def main() -> None:
         avg_queries, stdev_queries = safe_summary_stats([t[1] for t in without_timeouts])
         frames_rng = safe_range_stats([t[2] for t in without_timeouts])
 
-        per_phase_mean_clauses, per_phase_mean_quantifiers,  per_phase_mean_literals = stats_from_log.per_phase_stats([t[3] for t in without_timeouts])
-        avg_clauses_range = safe_range_stats(list(per_phase_mean_clauses.values()))
-        num_quantifies_range = safe_range_stats(list(per_phase_mean_quantifiers.values()))
-        num_literals_range = safe_range_stats(list(per_phase_mean_literals.values()))
+        if without_timeouts:
+            per_phase_mean_clauses, per_phase_mean_quantifiers,  per_phase_mean_literals = stats_from_log.per_phase_stats([t[3] for t in without_timeouts])
+            avg_clauses_range = safe_range_stats(list(per_phase_mean_clauses.values()))
+            num_quantifies_range = safe_range_stats(list(per_phase_mean_quantifiers.values()))
+            num_literals_range = safe_range_stats(list(per_phase_mean_literals.values()))
+        else:
+            avg_clauses_range = "-"
+            num_quantifies_range = "-"
+            num_literals_range = "-"
 
         data.append((b, times, avg_time, stdev_time, avg_queries, stdev_queries, 
                     frames_rng, avg_clauses_range, num_quantifies_range, num_literals_range,
