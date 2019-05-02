@@ -218,7 +218,7 @@ definition get_pl(l: log, i: index, opli: option_index, oplt: option_term) =
       & some_term(plt, oplt)
 
 transition send_append_message(n: node, t: term, i: index, ti: term, opli: option_index, oplt: option_term)
-  modifies append_msg, append_reply_msg
+  modifies append_msg
   & old(current_term(n, t))
   & old(leader(n, t))
   & let l = old(current_log(n)) in
@@ -229,9 +229,6 @@ transition send_append_message(n: node, t: term, i: index, ti: term, opli: optio
   & (forall T,OPI,OPT,I,TI,V.
       append_msg(T,OPI,OPT,I,TI,V) <-> old(append_msg(T,OPI,OPT,I,TI,V))
                                     | T = t & OPI = opli & OPT = oplt & I = i & TI = ti & V = v)
-  & (forall N,T,I,TI.
-      append_reply_msg(N,T,I,TI) <-> old(append_reply_msg(N,T,I,TI))
-                                  | N = n & T = t & I = i & TI = ti)
 
 transition receive_append_msg(n: node, t: term, t2: term, opi: option_index, opt: option_term,
                               ei: index, et: term, ev: value, l2: log, ti: term)
@@ -240,7 +237,7 @@ transition receive_append_msg(n: node, t: term, t2: term, opi: option_index, opt
   & old(append_msg(t2, opi, opt, ei, et, ev))
   & term_le(t, t2)
   & set_term(n, t2)
-  & let l = current_log(n) in
+  & let l = old(current_log(n)) in
   & if is_none_index(opi)
     then
       & (index_used(l, ei) -> term_at(l, ei, ti))
