@@ -26,13 +26,7 @@ def get_function(m: mypyvy.Model, name: str) -> mypyvy.FunctionDecl:
     assert isinstance(f, mypyvy.FunctionDecl), (name, f)
     return f
 
-def ordered_by_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
-    assert len(args) == 1
-    order_name = args[0]
-    order = get_relation(m, order_name)
-    us = syntax.UninterpretedSort(None, s.name)
-    assert order.arity == [us, us] and not order.mutable
-
+def get_ordinal(m: mypyvy.Model, order: mypyvy.RelationDecl, elt: str) -> int:
     graph: Dict[str, Set[str]] = defaultdict(set)
     for tup, b in m.immut_rel_interps[order]:
         if b:
@@ -41,7 +35,16 @@ def ordered_by_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List
             graph[hi].add(lo)
 
     assert elt in graph
-    return '%s%s' % (s.name, len(graph[elt]) - 1)
+    return len(graph[elt]) - 1
+
+def ordered_by_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
+    assert len(args) == 1
+    order_name = args[0]
+    order = get_relation(m, order_name)
+    us = syntax.UninterpretedSort(None, s.name)
+    assert order.arity == [us, us] and not order.mutable
+
+    return '%s%s' % (s.name, get_ordinal(m, order, elt))
 
 def set_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1
@@ -151,14 +154,29 @@ def raft_log_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[s
     # The printed value of an index is consistent with index_le, so the log
     # should be ordered in the same way.
     sorted_entries = sorted(entries.values(),
-                            key=lambda e: m.print_element(index_sort, e.index))
+                            key=lambda e: get_ordinal(m, index_le, e.index))
 
-    def entry_to_str(e: RaftEntry) -> str:
+    # A log is well-formed if it is empty or
+    #  all entries have a single term and the set of indexes
+    #  has no gaps starting from zero.
+    well_formed = ((not sorted_entries) or
+                   (all(map(lambda e: len(e.terms) == 1, sorted_entries)) and
+                    get_ordinal(m, index_le, sorted_entries[-1].index) ==
+                    len(sorted_entries) - 1))
+
+    def entry_to_str(e: RaftEntry, wf: bool) -> str:
         assert e.value is not None
 
-        return '[index |-> %s, term |-> %s, value |-> %s]' % (
-            m.print_element(index_sort, e.index),
-            '[%s]' % (', '.join(m.print_element(term_sort, t) for t in e.terms)),
-            m.print_element(value_sort, e.value))
+        if wf:
+            assert len(e.terms) == 1
 
-    return '<<%s>>' % (', '.join(entry_to_str(entry) for entry in sorted_entries))
+            return '[term |-> %s, value |-> %s]' % (
+                m.print_element(term_sort, e.terms[0]),
+                m.print_element(value_sort, e.value))
+        else:
+            return '[index |-> %s, term |-> %s, value |-> %s]' % (
+                m.print_element(index_sort, e.index),
+                '[%s]' % (', '.join(m.print_element(term_sort, t) for t in e.terms)),
+                m.print_element(value_sort, e.value))
+
+    return '<<%s>>' % (', '.join(entry_to_str(entry, well_formed) for entry in sorted_entries))
