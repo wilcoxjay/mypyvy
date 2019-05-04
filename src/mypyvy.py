@@ -1904,10 +1904,6 @@ def parse_args() -> argparse.Namespace:
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
 
-    ipython_subparser = subparsers.add_parser('ipython', help='start IPython shell with s and prog')
-    ipython_subparser.set_defaults(main=ipython)
-    all_subparsers.append(ipython_subparser)
-
     all_subparsers += pd.pd_add_argparsers(subparsers)
 
     for s in all_subparsers:
@@ -1932,7 +1928,8 @@ def parse_args() -> argparse.Namespace:
                        help='z3 timeout (milliseconds)')
         s.add_argument('--exit-on-error', action='store_true',
                        help='exit after reporting first error')
-
+        s.add_argument('--ipython', action='store_true',
+                       help='run IPython with s and prog at the end')
 
     updr_subparser.add_argument('--dont-use-z3-unsat-cores', action='store_false', dest='use_z3_unsat_cores',
                                 help='generalize diagrams using brute force instead of unsat cores')
@@ -2064,6 +2061,9 @@ def main() -> None:
         utils.args.main(s, prog)
 
         _logger.info('total number of queries: %s' % s.nqueries)
+
+        if utils.args.ipython:
+            ipython(s, prog)
 
     sys.exit(1 if utils.error_count > 0 else 0)
 
