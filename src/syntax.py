@@ -1910,6 +1910,14 @@ class Scope(Generic[B]):
         self.pop()
         assert n == len(self.stack)
 
+    def fresh(self, base_name: str) -> str:
+        if self.get(base_name) is None:
+            return base_name
+        counter = 0
+        while self.get(base_name + str(counter)) is not None:
+            counter += 1
+        return base_name + str(counter)
+
 StateDecl = Union[RelationDecl, ConstantDecl, FunctionDecl]
 
 class Program(object):
