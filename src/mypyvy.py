@@ -1984,6 +1984,11 @@ class MyFormatter(logging.Formatter):
     def formatTime(self, record: Any, datefmt: Optional[str]=None) -> str:
         return str((datetime.now() - self.start).total_seconds())
 
+def parse_program(input: str, force_rebuild: bool=False, filename: Optional[str]=None) -> Program:
+    l = parser.get_lexer()
+    p = parser.get_parser(forbid_rebuild=force_rebuild)
+    return p.parse(input=input, lexer=l, filename=filename)
+
 def main() -> None:
     utils.args = parse_args()
 
@@ -2027,9 +2032,7 @@ def main() -> None:
         pre_parse_error_count = utils.error_count
 
         with open(utils.args.filename) as f:
-            l = parser.get_lexer()
-            p = parser.get_parser(forbid_rebuild=utils.args.forbid_parser_rebuild)
-            prog: syntax.Program = p.parse(input=f.read(), lexer=l, filename=utils.args.filename)
+            prog = parse_program(f.read(), force_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
 
         if utils.args.print_program_repr:
             _logger.always_print(repr(prog))
