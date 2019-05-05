@@ -2034,14 +2034,14 @@ def main() -> None:
         with open(utils.args.filename) as f:
             prog = parse_program(f.read(), force_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
 
+        if utils.error_count > pre_parse_error_count:
+            _logger.always_print('program has syntax errors.')
+            sys.exit(1)
+
         if utils.args.print_program_repr:
             _logger.always_print(repr(prog))
         if utils.args.print_program:
             _logger.always_print(str(prog))
-
-        if utils.error_count > pre_parse_error_count:
-            _logger.always_print('program has syntax errors.')
-            sys.exit(1)
 
         pre_resolve_error_count = utils.error_count
 
