@@ -333,6 +333,54 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
         assert False
 
 
+def xor(b1: bool, b2: bool) -> bool:
+    return b1 != b2
+
+def as_clause_body(expr: Expr, negated: bool=False) -> List[Expr]:
+    if isinstance(expr, Bool):
+        return [Bool(None, xor(expr.val, negated))]
+    elif isinstance(expr, UnaryExpr):
+        assert expr.op == 'NOT'
+        return as_clause_body(expr.arg, not negated)
+    elif isinstance(expr, BinaryExpr):
+        if expr.op in ['EQUAL', 'NOTEQ']:
+            op = 'NOTEQ' if xor(expr.op == 'NOTEQ', negated) else 'EQUAL'
+            return [BinaryExpr(None, op, expr.arg1, expr.arg2)]
+        else:
+            assert expr.op == 'IMPLIES'
+            return as_clause_body(Or(Not(expr.arg1), expr.arg2), negated=negated)
+    elif isinstance(expr, NaryExpr):
+        if negated:
+            other_op = 'AND' if expr.op == 'OR' else 'OR'
+            return as_clause_body(NaryExpr(None, other_op, [Not(arg) for arg in expr.args]), negated=False)
+        else:
+            assert expr.op == 'OR'
+            return list(itertools.chain(*(as_clause_body(arg, negated=False) for arg in expr.args)))
+    elif isinstance(expr, AppExpr) or isinstance(expr, Id):
+        if negated:
+            return [Not(expr)]
+        else:
+            return [expr]
+    else:
+        assert False, "unsupported expressions %s in as_clause_body" % expr
+
+def as_quant_clause(expr: Expr, negated: bool=False) -> Tuple[List[SortedVar], List[Expr]]:
+    if isinstance(expr, QuantifierExpr):
+        if negated:
+            other_quant = 'EXISTS' if expr.quant == 'FORALL' else 'FORALL'
+            return as_quant_clause(QuantifierExpr(None, other_quant, expr.binder.vs, Not(expr.body)), negated=False)
+        else:
+            new_vs, new_body = as_quant_clause(expr.body, negated=False)
+            return expr.binder.vs + new_vs, new_body
+    elif isinstance(expr, UnaryExpr) and expr.op == 'NOT':
+        return as_quant_clause(expr.arg, not negated)
+    else:
+        return [], as_clause_body(expr, negated)
+
+def as_clause(expr: Expr) -> Expr:
+    vs, disjs = as_quant_clause(expr)
+    return Forall(vs, Or(*disjs))
+
 class Expr(object):
     def __repr__(self) -> str:
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
@@ -659,9 +707,14 @@ class NaryExpr(Expr):
         return l
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
+    if len(vs) == 0:
+        return body
     return QuantifierExpr(None, 'FORALL', vs, body)
 
 def Exists(vs: List[SortedVar], body: Expr) -> Expr:
+    if len(vs) == 0:
+        return body
+
     return QuantifierExpr(None, 'EXISTS', vs, body)
 
 def And(*args: Expr) -> Expr:
@@ -688,6 +741,9 @@ def Neq(arg1: Expr, arg2: Expr) -> Expr:
 
 def Iff(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr(None, 'IFF', arg1, arg2)
+
+def Implies(arg1: Expr, arg2: Expr) -> Expr:
+    return BinaryExpr(None, 'IMPLIES', arg1, arg2)
 
 def Apply(callee: str, args: List[Expr]) -> Expr:
     return AppExpr(None, callee, args)
@@ -1252,7 +1308,7 @@ def close_free_vars(tok: Optional[Token], expr: Expr, in_scope: List[str]=[]) ->
     if vs == []:
         return expr
     else:
-        return QuantifierExpr(None, 'FORALL', [SortedVar(tok, v, None) for v in vs], expr)
+        return QuantifierExpr(tok, 'FORALL', [SortedVar(tok, v, None) for v in vs], expr)
 
 class InitDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
