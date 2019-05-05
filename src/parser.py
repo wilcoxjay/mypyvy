@@ -657,5 +657,16 @@ def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:
     return program_parser
 
 
-# expr_parser = ply.yacc.yacc(start='expr', errorlog=ply.yacc.NullLogger(), debug=False, optimize=True)
+expr_parser = None
+def get_expr_parser() -> ply.yacc.LRParser:
+    global expr_parser
+    if not expr_parser:
+        expr_parser = ply.yacc.yacc(start='expr', debug=False, errorlog=ply.yacc.NullLogger())
+
+    return expr_parser
+
+def parse_expr(input: str) -> syntax.Expr:
+    l = get_lexer()
+    p = get_expr_parser()
+    return p.parse(input=input, lexer=l, filename='<none>')
 
