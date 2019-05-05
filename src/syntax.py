@@ -714,7 +714,6 @@ def Forall(vs: List[SortedVar], body: Expr) -> Expr:
 def Exists(vs: List[SortedVar], body: Expr) -> Expr:
     if len(vs) == 0:
         return body
-
     return QuantifierExpr(None, 'EXISTS', vs, body)
 
 def And(*args: Expr) -> Expr:

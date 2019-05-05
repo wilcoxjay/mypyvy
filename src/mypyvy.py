@@ -927,11 +927,9 @@ class Model(object):
             vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
                       for v in self.univs[sort])
 
-            ineqs[sort] = []
             u = [syntax.Id(None, s) for s in self.univs[sort]]
-            for i, a in enumerate(u):
-                for b in u[i+1:]:
-                    ineqs[sort].append(syntax.Neq(a, b))
+            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+
         for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
             rels[R] = []
             for tup, ans in l:
@@ -963,7 +961,60 @@ class Model(object):
         return diag
 
     def as_onestate_formula(self, i: Optional[int]=None) -> Expr:
-        pass
+        assert len(self.keys) == 1 or i is not None, 'to generate a onestate formula from a multi-state model, you must specify which state you want'
+        assert i is None or (0 <= i and i < len(self.keys))
+
+        if i is None:
+            i = 0
+
+        mut_rel_interps = self.rel_interps[i]
+        mut_const_interps = self.const_interps[i]
+        mut_func_interps = self.func_interps[i]
+
+        vs: List[syntax.SortedVar] = []
+        ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
+        rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
+        consts: Dict[ConstantDecl, Expr] = OrderedDict()
+        funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
+        for sort in self.univs:
+            vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
+                      for v in self.univs[sort])
+            u = [syntax.Id(None, v) for v in self.univs[sort]]
+            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+        for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
+            rels[R] = []
+            for tup, ans in l:
+                e = (
+                    syntax.AppExpr(None, R.name, [syntax.Id(None, col) for col in tup])
+                    if len(tup) > 0 else syntax.Id(None, R.name)
+                )
+                rels[R].append(e if ans else syntax.Not(e))
+        for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
+            consts[C] = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, c))
+        for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
+            funcs[F] = [
+                syntax.Eq(syntax.AppExpr(None, F.name, [syntax.Id(None, col) for col in tup]),
+                          syntax.Id(None, res))
+                for tup, res in fl
+            ]
+
+        # get a fresh variable to use in the forall. TODO: there should be a better way to do this...
+        dummy = syntax.Exists(vs, syntax.TrueExpr)
+        assert isinstance(dummy, syntax.QuantifierExpr)
+        with self.prog.scope.in_scope(dummy.binder, [v.sort for v in vs]):
+            fresh = self.prog.scope.fresh('x')
+
+        e = syntax.Exists(vs, syntax.And(
+            *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
+                syntax.Forall([syntax.SortedVar(None, fresh, syntax.UninterpretedSort(None, sort.name))],
+                              syntax.Or(*(syntax.Eq(syntax.Id(None, fresh), syntax.Id(None, v))
+                                          for v in self.univs[sort])))
+                for sort in self.univs
+            )
+        )))
+        assert self.prog.scope is not None
+        e.resolve(self.prog.scope, None)
+        return e
 
 class Blocked(object):
     pass

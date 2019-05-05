@@ -117,3 +117,6 @@ invariant !grant_msg(N) | !server_holds_lock
 invariant !holds_lock(N) | !server_holds_lock
 invariant !unlock_msg(N) | !server_holds_lock
 
+# invariants added solely for pd.forward_explore
+invariant !(lock_msg(N1) & N1 != N2) | false
+
