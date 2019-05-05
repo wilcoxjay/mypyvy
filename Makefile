@@ -4,7 +4,10 @@ MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000  --minimize-models
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini src/mypyvy.py
 
-test: check typecheck verify trace updr
+test: check unit typecheck verify trace updr
+
+unit:
+	$(PYTHON) -m unittest discover -s src -v
 
 typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv))
 
