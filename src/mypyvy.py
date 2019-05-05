@@ -1870,7 +1870,7 @@ def trace(s: Solver, prog: Program) -> None:
                 utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(args: List[str]) -> argparse.Namespace:
     argparser = argparse.ArgumentParser()
 
     subparsers = argparser.add_subparsers(title='subcommands')
@@ -1967,7 +1967,7 @@ def parse_args() -> argparse.Namespace:
 
     argparser.add_argument('filename')
 
-    return argparser.parse_args()
+    return argparser.parse_args(args)
 
 class MyFormatter(logging.Formatter):
     def __init__(self, fmt: str) -> None:
@@ -1990,7 +1990,7 @@ def parse_program(input: str, force_rebuild: bool=False, filename: Optional[str]
     return p.parse(input=input, lexer=l, filename=filename)
 
 def main() -> None:
-    utils.args = parse_args()
+    utils.args = parse_args(sys.argv[1:])
 
     if utils.args.log_xml:
         fmt = '%(message)s'
