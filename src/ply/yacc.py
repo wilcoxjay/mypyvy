@@ -106,8 +106,13 @@ MAXINT = sys.maxsize
 # it into PLY.
 
 class PlyLogger(object):
-    def __init__(self, f):
+    def __init__(self, f, close=False):
         self.f = f
+        self.close = close
+
+    def __del__(self):
+        if self.close:
+            self.f.close()
 
     def debug(self, msg, *args, **kwargs):
         self.f.write((msg % args) + '\n')
@@ -3310,7 +3315,7 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
     if debuglog is None:
         if debug:
             try:
-                debuglog = PlyLogger(open(os.path.join(outputdir, debugfile), 'w'))
+                debuglog = PlyLogger(open(os.path.join(outputdir, debugfile), 'w'), close=True)
             except IOError as e:
                 errorlog.warning("Couldn't open %r. %s" % (debugfile, e))
                 debuglog = NullLogger()
