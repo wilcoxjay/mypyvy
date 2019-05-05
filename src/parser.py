@@ -652,7 +652,7 @@ def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:
     global program_parser
     if not program_parser:
         # intentionally don's pass optimize=True here, because that disables the signature check
-        program_parser = ply.yacc.yacc(start='program', debug=True)
+        program_parser = ply.yacc.yacc(start='program', debug=False)
 
     return program_parser
 
