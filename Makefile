@@ -1,10 +1,12 @@
 PYTHON := python3.7
 MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000  --minimize-models
 
-check:
-	$(PYTHON) -m mypy --config-file ./mypy.ini src/mypyvy.py
+SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
-test: check unit typecheck verify trace updr pd
+check:
+	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
+
+test: check check-imports unit typecheck verify trace updr pd
 
 unit:
 	$(PYTHON) -m unittest discover -s src -v
@@ -35,4 +37,9 @@ bench:
 pd:
 	time $(PYTHON) src/mypyvy.py pd-forward-explore $(MYPYVY_OPTS) examples/lockserv_cnf.pyv
 
-.PHONY: check run test verify updr bench typecheck trace pd
+check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
+
+src/%.importable: src/%.py
+	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" >/dev/null 2>&1 || { echo "file $< is not importable"; exit 1; }
+
+.PHONY: check run test verify updr bench typecheck trace pd unit check-imports
