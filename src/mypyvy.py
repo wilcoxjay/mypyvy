@@ -1996,6 +1996,13 @@ def parse_args(args: List[str]) -> argparse.Namespace:
         s.add_argument('--ipython', action='store_true',
                        help='run IPython with s and prog at the end')
 
+        # for diagrams:
+        s.add_argument('--dont-simplify-diagram', action='store_false', dest='simplify_diagram',
+                       help='in diagram generation, refrain from substituting existentially quantified variables that are equal to constants')
+        s.add_argument('--simple-conjuncts', action='store_true',
+                       help='substitute existentially quantified variables that are equal to constants')
+
+
     updr_subparser.add_argument('--dont-use-z3-unsat-cores', action='store_false', dest='use_z3_unsat_cores',
                                 help='generalize diagrams using brute force instead of unsat cores')
     updr_subparser.add_argument('--smoke-test', action='store_true',
@@ -2006,10 +2013,6 @@ def parse_args(args: List[str]) -> argparse.Namespace:
     updr_subparser.add_argument('--sketch', action='store_true',
                                 help='use sketched invariants as additional safety (currently only in automaton)')
 
-    updr_subparser.add_argument('--simple-conjuncts', action='store_true',
-                                help='substitute existentially quantified variables that are equal to constants')
-    updr_subparser.add_argument('--dont-simplify-diagram', action='store_false', dest='simplify_diagram',
-                                help='in diagram generation, refrain from substituting existentially quantified variables that are equal to constants')
     updr_subparser.add_argument('--automaton', action='store_true',
                                 help='whether to run vanilla UPDR or phase UPDR')
     updr_subparser.add_argument('--block-may-cexs', action='store_true',
