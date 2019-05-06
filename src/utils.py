@@ -5,6 +5,7 @@ from datetime import datetime
 import functools
 import logging
 import ply
+import ply.lex
 import sys
 import xml
 import xml.sax
