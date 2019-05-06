@@ -1012,11 +1012,8 @@ class Model(object):
                 for tup, res in fl
             ]
 
-        # get a fresh variable to use in the forall. TODO: there should be a better way to do this...
-        dummy = syntax.Exists(vs, syntax.TrueExpr)
-        assert isinstance(dummy, syntax.QuantifierExpr)
-        with self.prog.scope.in_scope(dummy.binder, [v.sort for v in vs]):
-            fresh = self.prog.scope.fresh('x')
+        # get a fresh variable, avoiding names of universe elements in vs
+        fresh = self.prog.scope.fresh('x', [v.name for v in vs])
 
         e = syntax.Exists(vs, syntax.And(
             *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (

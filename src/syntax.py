@@ -1965,13 +1965,15 @@ class Scope(Generic[B]):
         self.pop()
         assert n == len(self.stack)
 
-    def fresh(self, base_name: str) -> str:
+    def fresh(self, base_name: str, also_avoid: List[str]=[]) -> str:
         if self.get(base_name) is None:
             return base_name
         counter = 0
-        while self.get(base_name + str(counter)) is not None:
+        candidate = base_name + str(counter)
+        while self.get(candidate) is not None or candidate in also_avoid:
             counter += 1
-        return base_name + str(counter)
+            candidate = base_name + str(counter)
+        return candidate
 
 StateDecl = Union[RelationDecl, ConstantDecl, FunctionDecl]
 
