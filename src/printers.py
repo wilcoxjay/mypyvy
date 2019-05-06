@@ -2,31 +2,32 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import mypyvy
-import syntax
+from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
+from logic import Model
 
 from typing import List, Dict, Optional, Set
 
-def get_sort(m: mypyvy.Model, name: str) -> mypyvy.SortDecl:
+def get_sort(m: Model, name: str) -> SortDecl:
     s = m.prog.scope.get_sort(name)
     assert s is not None, (name, s)
     return s
 
-def get_constant(m: mypyvy.Model, name: str) -> mypyvy.ConstantDecl:
+def get_constant(m: Model, name: str) -> ConstantDecl:
     c = m.prog.scope.get(name)
-    assert isinstance(c, mypyvy.ConstantDecl), (name, c)
+    assert isinstance(c, ConstantDecl), (name, c)
     return c
 
-def get_relation(m: mypyvy.Model, name: str) -> mypyvy.RelationDecl:
+def get_relation(m: Model, name: str) -> RelationDecl:
     r = m.prog.scope.get(name)
-    assert isinstance(r, mypyvy.RelationDecl), (name, r)
+    assert isinstance(r, RelationDecl), (name, r)
     return r
 
-def get_function(m: mypyvy.Model, name: str) -> mypyvy.FunctionDecl:
+def get_function(m: Model, name: str) -> FunctionDecl:
     f = m.prog.scope.get(name)
-    assert isinstance(f, mypyvy.FunctionDecl), (name, f)
+    assert isinstance(f, FunctionDecl), (name, f)
     return f
 
-def get_ordinal(m: mypyvy.Model, order: mypyvy.RelationDecl, elt: str) -> int:
+def get_ordinal(m: Model, order: RelationDecl, elt: str) -> int:
     graph: Dict[str, Set[str]] = defaultdict(set)
     for tup, b in m.immut_rel_interps[order]:
         if b:
@@ -37,25 +38,25 @@ def get_ordinal(m: mypyvy.Model, order: mypyvy.RelationDecl, elt: str) -> int:
     assert elt in graph
     return len(graph[elt]) - 1
 
-def ordered_by_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
+def ordered_by_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1
     order_name = args[0]
     order = get_relation(m, order_name)
-    us = syntax.UninterpretedSort(None, s.name)
+    us = UninterpretedSort(None, s.name)
     assert order.arity == [us, us] and not order.mutable
 
     return '%s%s' % (s.name, get_ordinal(m, order, elt))
 
-def set_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
+def set_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1
     member_name = args[0]
     member = get_relation(m, member_name)
 
     assert len(member.arity) == 2 and not member.mutable
-    set_sort = syntax.UninterpretedSort(None, s.name)
+    set_sort = UninterpretedSort(None, s.name)
     assert member.arity[1] == set_sort
     item_sort = member.arity[0]
-    assert isinstance(item_sort, syntax.UninterpretedSort) and item_sort.decl is not None
+    assert isinstance(item_sort, UninterpretedSort) and item_sort.decl is not None
     item_sort_decl = item_sort.decl
 
     items: Set[str] = set()
@@ -67,19 +68,19 @@ def set_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) 
 
     return '{%s}' % (','.join(sorted(m.print_element(item_sort_decl, x) for x in items)),)
 
-def option_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
+def option_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 2
     is_none_name, value_name = args
     is_none = get_relation(m, is_none_name)
     value = get_function(m, value_name)
 
-    option_sort = syntax.UninterpretedSort(None, s.name)
+    option_sort = UninterpretedSort(None, s.name)
 
     assert not is_none.mutable and not value.mutable and \
         is_none.arity == [option_sort] and value.arity == [option_sort]
 
     elt_sort_us = value.sort
-    assert isinstance(elt_sort_us, syntax.UninterpretedSort) and elt_sort_us.decl is not None
+    assert isinstance(elt_sort_us, UninterpretedSort) and elt_sort_us.decl is not None
     elt_sort = elt_sort_us.decl
 
     none: Optional[str] = None
@@ -109,7 +110,7 @@ class RaftEntry(object):
     terms: List[str]
     value: Optional[str]
 
-def raft_log_printer(m: mypyvy.Model, s: mypyvy.SortDecl, elt: str, args: List[str]) -> str:
+def raft_log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
     prog = m.prog
     scope = prog.scope
 

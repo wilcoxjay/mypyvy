@@ -7,7 +7,7 @@ from __future__ import annotations
 from itertools import product, chain, combinations
 
 from syntax import *
-from mypyvy import *
+from logic import *
 
 from typing import TypeVar, Iterable, FrozenSet
 
@@ -253,9 +253,3 @@ def repeated_houdini_sharp(s: Solver, prog: Program) -> None:
                 clauses.append(clause)
             print('='*80)
             #print(f'Abstraction now contains {len(alpha([]))} predicates')
-
-
-def pd_add_argparsers(subparsers: argparse._SubParsersAction) -> List[argparse.ArgumentParser]:
-    forward_explore_inv_subparser = subparsers.add_parser('pd-forward-explore', help='Forward explore program w.r.t. its invariant')
-    forward_explore_inv_subparser.set_defaults(main=forward_explore_inv)
-    return [forward_explore_inv_subparser]

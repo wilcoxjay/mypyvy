@@ -1,6 +1,7 @@
 from collections import OrderedDict
-from syntax import AutomatonDecl, PhaseDecl, PhaseTransitionDecl, Expr, TrueExpr
+from syntax import AutomatonDecl, PhaseDecl, PhaseTransitionDecl, Expr, TrueExpr, InvariantDecl
 from typing import List, Optional, Dict, Sequence
+import utils
 from utils import MySet
 
 class Phase(object):
@@ -117,3 +118,7 @@ class Frame(object):
     def __str__(self) -> str:
         return str({p.name(): [str(x) for x in summary] for (p, summary) in self._summary_by_pred.items()})
 
+def phase_safety(p: Phase) -> Sequence[InvariantDecl]:
+    if utils.args.sketch:
+        return p.safety + p.sketch_invs
+    return p.safety
