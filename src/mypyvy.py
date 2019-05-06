@@ -342,9 +342,7 @@ def parse_args(args: List[str]) -> argparse.Namespace:
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
 
-    forward_explore_inv_subparser = subparsers.add_parser('pd-forward-explore', help='Forward explore program w.r.t. its invariant')
-    forward_explore_inv_subparser.set_defaults(main=pd.forward_explore_inv)
-    all_subparsers.append(forward_explore_inv_subparser)
+    all_subparsers += pd.add_argparsers(subparsers)
 
     for s in all_subparsers:
         s.add_argument('--forbid-parser-rebuild', action='store_true',
@@ -362,8 +360,8 @@ def parse_args(args: List[str]) -> argparse.Namespace:
                        help='print the program after parsing')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
-        s.add_argument('--minimize-models', action='store_true',
-                       help='find models with minimal cardinality')
+        s.add_argument('--minimize-models', action='store_false',
+                       help='do not search for models with minimal cardinality')
         s.add_argument('--timeout', type=int, default=None,
                        help='z3 timeout (milliseconds)')
         s.add_argument('--exit-on-error', action='store_true',
