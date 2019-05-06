@@ -55,7 +55,7 @@ class OrderedSet(Generic[T], Iterable[T]):
 
 MySet = OrderedSet
 
-args: argparse.Namespace
+args: argparse.Namespace = cast(argparse.Namespace, None)  # ensure that args is always defined
 
 Token = ply.lex.LexToken
 def tok_to_string(tok: Optional[Token]) -> str:

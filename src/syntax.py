@@ -4,9 +4,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import itertools
 import ply.lex
-import sys
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, NoReturn, Set, TypeVar, Generic, Iterable, Mapping, Sequence
+    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, Sequence
 from typing_extensions import Protocol
 import utils
 import z3

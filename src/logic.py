@@ -6,16 +6,14 @@ import itertools
 import io
 import logging
 import sys
-from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, Iterator, cast
+from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
 import z3
 
 import utils
-import phases
-from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
+from phases import Phase, Frame, PhaseTransition
 import syntax
 from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, DefinitionDecl, InvariantDecl, AutomatonDecl
+    FunctionDecl, DefinitionDecl
 
 z3.Forall = z3.ForAll
 
@@ -30,10 +28,10 @@ _logger = utils.MyLogger(logging.getLogger(__file__), datetime.now())
 def verbose_print_z3_model(m: z3.ModelRef) -> None:
     _logger.always_print('')
     out = io.StringIO()
-    fmt = z3.Formatter() # type: ignore
+    fmt = z3.Formatter()  # type: ignore
     fmt.max_args = 10000
     _logger.always_print(str(fmt.max_args))
-    pp = z3.PP() # type: ignore
+    pp = z3.PP()  # type: ignore
     pp.max_lines = 10000
     pp(out, fmt(m))
     _logger.always_print(out.getvalue())
@@ -70,7 +68,7 @@ def check_unsat(
     return res
 
 @utils.log_start_end_xml(_logger, logging.INFO)
-def check_init(s: Solver, prog: Program, safety_only: bool=False) -> None:
+def check_init(s: Solver, prog: Program, safety_only: bool = False) -> None:
     _logger.always_print('checking init:')
 
     t = s.get_translator(KEY_ONE)
@@ -92,7 +90,8 @@ def check_init(s: Solver, prog: Program, safety_only: bool=False) -> None:
                 _logger.always_print('  implies invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)], s, prog, [KEY_ONE])
+                check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
+                            s, prog, [KEY_ONE])
 
 
 def check_transitions(s: Solver, prog: Program) -> None:
@@ -103,7 +102,8 @@ def check_transitions(s: Solver, prog: Program) -> None:
             s.add(t.translate_expr(inv.expr, old=True))
 
         for trans in prog.transitions():
-            if utils.args.check_transition is not None and trans.name not in utils.args.check_transition:
+            if utils.args.check_transition is not None and \
+               trans.name not in utils.args.check_transition:
                 continue
 
             _logger.always_print('checking transation %s:' % (trans.name,))
@@ -127,9 +127,10 @@ def check_transitions(s: Solver, prog: Program) -> None:
                         _logger.always_print('  preserves invariant%s... ' % msg, end='')
                         sys.stdout.flush()
 
-                        check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s' %
-                                      (msg, trans.name)),
-                                     (trans.tok, 'this transition may not preserve invariant%s' % (msg,))],
+                        check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s'
+                                      % (msg, trans.name)),
+                                     (trans.tok, 'this transition may not preserve invariant%s'
+                                      % (msg,))],
                                     s, prog, [KEY_OLD, KEY_NEW])
 
 def check_implication(
@@ -183,24 +184,25 @@ def check_two_state_implication_all_transitions(
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
-def assert_any_transition(s: Solver, prog: Program, uid: str, key: str, key_old: str, allow_stutter: bool=False) -> None:
+def assert_any_transition(s: Solver, prog: Program, uid: str,
+                          key: str, key_old: str, allow_stutter: bool = False) -> None:
     t = s.get_translator(key, key_old)
 
-    l = []
+    tids = []
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
-        l.append(tid)
+        tids.append(tid)
         s.add(tid == t.translate_transition(transition))
 
     if allow_stutter:
         tid = z3.Bool(get_transition_indicator(uid, 'stutter'))
-        l.append(tid)
+        tids.append(tid)
         s.add(tid == z3.And(*t.frame([])))
 
-    s.add(z3.Or(*l))
+    s.add(z3.Or(*tids))
 
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
-    keys = ['state%2d' % i for i in range(depth+1)]
+    keys = ['state%2d' % i for i in range(depth + 1)]
 
     if _logger.isEnabledFor(logging.DEBUG):
         _logger.debug('check_bmc property: %s' % safety)
@@ -218,7 +220,7 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
         s.add(t.translate_expr(syntax.Not(safety)))
 
         for i in range(depth):
-            assert_any_transition(s, prog, str(i), keys[i+1], keys[i], allow_stutter=True)
+            assert_any_transition(s, prog, str(i), keys[i + 1], keys[i], allow_stutter=True)
 
         # if _logger.isEnabledFor(logging.DEBUG):
         #     _logger.debug('assertions')
@@ -242,7 +244,6 @@ def check_two_state_implication_along_transitions(
         s.add(z3.Not(t.translate_expr(new_conc)))
 
         for phase_transition in transitions:
-            #_logger.debug("two state implication check post %s; transition %s; pre %s" % (new_conc, phase_transition, old_hyps))
             delta = phase_transition.transition_decl()
             trans = prog.scope.get_definition(delta.transition)
             assert trans is not None
@@ -250,15 +251,8 @@ def check_two_state_implication_along_transitions(
 
             with s:
                 s.add(t.translate_transition(trans, precond=precond))
-
-                # if _logger.isEnabledFor(logging.DEBUG):
-                #     _logger.debug('assertions')
-                #     _logger.debug(str(s.assertions()))
-
                 if s.check() != z3.unsat:
-                    #_logger.debug("two state implication check invalid")
                     return s.model(), phase_transition
-            #_logger.debug("two state implication check valid")
 
     return None
 
@@ -274,21 +268,24 @@ class Solver(object):
         self.mutable_axioms: List[Expr] = []
 
     def register_mutable_axioms(self, axioms: Iterable[Expr]) -> None:
-        assert len(self.known_keys) == 0, "mutable axioms must be registered before any keys are known to the solver!"
+        assert len(self.known_keys) == 0, \
+            "mutable axioms must be registered before any keys are known to the solver!"
         self.mutable_axioms.extend(axioms)
 
     def _initialize_key(self, key: Optional[str]) -> None:
         if key is not None and key not in self.known_keys:
             self.known_keys.add(key)
 
-            assert self.z3solver.num_scopes() == 0, "the first time get_translator is called with a particular key, there must be no scopes pushed on the Z3 stack!"
+            assert self.z3solver.num_scopes() == 0, \
+                "the first time get_translator is called with a particular key, " + \
+                "there must be no scopes pushed on the Z3 stack!"
 
             t = self.get_translator(key)
             for a in self.mutable_axioms:
                 self.add(t.translate_expr(a))
 
-    def get_translator(self, key: Optional[str]=None, key_old: Optional[str]=None) \
-        -> syntax.Z3Translator:
+    def get_translator(self, key: Optional[str] = None, key_old: Optional[str] = None) \
+            -> syntax.Z3Translator:
         t = (key, key_old)
         if t not in self.translators:
             self._initialize_key(key)
@@ -315,7 +312,7 @@ class Solver(object):
 
         self.z3solver.add(e)
 
-    def check(self, assumptions: Optional[Sequence[z3.ExprRef]]=None) -> z3.CheckSatResult:
+    def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.CheckSatResult:
         # logger.debug('solver.check')
         if assumptions is None:
             assert not self.assumptions_necessary
@@ -323,7 +320,7 @@ class Solver(object):
         self.nqueries += 1
         return self.z3solver.check(*assumptions)
 
-    def model(self, assumptions: Optional[Sequence[z3.ExprRef]]=None) -> z3.ModelRef:
+    def model(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.ModelRef:
         if utils.args.minimize_models:
             return self._minimal_model(assumptions)
         else:
@@ -408,14 +405,16 @@ class Solver(object):
             return m
 
     def assertions(self) -> Sequence[z3.ExprRef]:
-        l = self.z3solver.assertions()
-        return sorted(l, key=lambda x: str(x))
+        asserts = self.z3solver.assertions()
+        return sorted(asserts, key=lambda x: str(x))
 
     def unsat_core(self) -> Sequence[z3.ExprRef]:
         return self.z3solver.unsat_core()
 
     def reason_unknown(self) -> str:
         return self.z3solver.reason_unknown()
+
+_RelevantDecl = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
 
 class Diagram(object):
     # This class represents a formula of the form
@@ -429,7 +428,6 @@ class Diagram(object):
     # it also constructs an internal ast of the formula, which structurally shares
     # all the conjuncts from the list.  This ast is ignored except for purposes
     # of resolving all the C_i.
-
 
     def __init__(
             self,
@@ -445,8 +443,7 @@ class Diagram(object):
         self.consts = consts
         self.funcs = funcs
         self.trackers: List[z3.ExprRef] = []
-        self.tombstones: Dict[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], Optional[Set[int]]] = \
-            defaultdict(lambda: set())
+        self.tombstones: Dict[_RelevantDecl, Optional[Set[int]]] = defaultdict(lambda: set())
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
         for s, l in self.ineqs.items():
@@ -486,7 +483,7 @@ class Diagram(object):
             ans[e.arg2] = e.arg1
         return ans
 
-    def conjuncts(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
+    def conjuncts(self) -> Iterable[Tuple[_RelevantDecl, int, Expr]]:
         for t1 in self.ineq_conjuncts():
             yield t1
         for t2 in self.rel_conjuncts():
@@ -496,7 +493,7 @@ class Diagram(object):
         for t4 in self.func_conjuncts():
             yield t4
 
-    def conjuncts_simple(self) -> Iterable[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int, Expr]]:
+    def conjuncts_simple(self) -> Iterable[Tuple[_RelevantDecl, int, Expr]]:
         subst = self.const_subst()
         s: Union[SortDecl, RelationDecl, FunctionDecl]
         for (s, r, e) in self.ineq_conjuncts():
@@ -513,11 +510,15 @@ class Diagram(object):
         C: Dict[ConstantDecl, Expr]
         F: Dict[FunctionDecl, List[Expr]]
 
-        def apply_subst1(e: Expr) -> Expr: return syntax.subst_vars_simple(e, subst)
-        def apply_subst(l: List[Expr]) -> List[Expr]: return [apply_subst1(e) for e in l]
+        def apply_subst1(e: Expr) -> Expr:
+            return syntax.subst_vars_simple(e, subst)
+
+        def apply_subst(l: List[Expr]) -> List[Expr]:
+            return [apply_subst1(e) for e in l]
+
         def is_trivial_eq(eq: Expr) -> bool:
             return isinstance(eq, syntax.BinaryExpr) and eq.op == 'EQUAL' and \
-                    eq.arg1 == eq.arg2
+                eq.arg1 == eq.arg2
 
         I = OrderedDict((s, apply_subst(l)) for s, l in self.ineqs.items())
         R = OrderedDict((r, apply_subst(l)) for r, l in self.rels.items())
@@ -551,7 +552,7 @@ class Diagram(object):
         with t.scope.in_scope(self.binder, bs):
             z3conjs = []
             self.trackers = []
-            self.reverse_map: List[Tuple[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], int]] = []
+            self.reverse_map: List[Tuple[_RelevantDecl, int]] = []
             i = 0
 
             for (d, j, c) in self.conjuncts():
@@ -583,7 +584,8 @@ class Diagram(object):
 
     # TODO: can be removed? replaced with Frames.valid_in_initial_frame (YF)
     def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:
-        return check_implication(s, (init.expr for init in prog.inits()), [syntax.Not(self.to_ast())])
+        return check_implication(s, (init.expr for init in prog.inits()),
+                                 [syntax.Not(self.to_ast())])
 
     def minimize_from_core(self, core: Optional[Iterable[int]]) -> None:
         if core is None:
@@ -621,7 +623,7 @@ class Diagram(object):
         self.consts = C
         self.funcs = F
 
-    def remove_clause(self, d: Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], i: Union[int, Set[int], None]=None) -> None:
+    def remove_clause(self, d: _RelevantDecl, i: Union[int, Set[int], None] = None) -> None:
         if i is None:
             self.tombstones[d] = None
         elif isinstance(i, int):
@@ -639,9 +641,8 @@ class Diagram(object):
         self.binder.vs = [v for v in self.binder.vs
                           if any(v.name in c.free_ids() for _, _, c in self.conjuncts())]
 
-
     @contextmanager
-    def without(self, d: Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl], j: Union[int, Set[int], None]=None) -> Iterator[None]:
+    def without(self, d: _RelevantDecl, j: Union[int, Set[int], None] = None) -> Iterator[None]:
         S = self.tombstones[d]
         if j is None:
             self.tombstones[d] = None
@@ -660,7 +661,6 @@ class Diagram(object):
             yield
             S -= j
 
-
     def smoke(self, s: Solver, prog: Program, depth: Optional[int]) -> None:
         if utils.args.smoke_test and depth is not None:
             _logger.debug('smoke testing at depth %s...' % (depth,))
@@ -668,14 +668,13 @@ class Diagram(object):
             check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
 
     # TODO: merge similarities with clause_implied_by_transitions_from_frame...
-    def check_valid_in_phase_from_frame(self, s: Solver, prog: Program, f: Frame,
-                                        transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
-                                        propagate_init: bool) \
-    -> Optional[z3.ModelRef]:
+    def check_valid_in_phase_from_frame(
+            self, s: Solver, prog: Program, f: Frame,
+            transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
+            propagate_init: bool) -> Optional[z3.ModelRef]:
         for src, transitions in transitions_to_grouped_by_src.items():
-            # _logger.debug("gen: check transition from %s by %s" % (src.name(), str(list(transitions))))
-            ans = check_two_state_implication_along_transitions(s, prog, f.summary_of(src), transitions,
-                                                                syntax.Not(self.to_ast()))
+            ans = check_two_state_implication_along_transitions(
+                s, prog, f.summary_of(src), transitions, syntax.Not(self.to_ast()))
             if ans is not None:
                 return ans[0]
 
@@ -688,29 +687,20 @@ class Diagram(object):
     def generalize(self, s: Solver, prog: Program, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                    propagate_init: bool,
-                   depth: Optional[int]=None) -> None:
+                   depth: Optional[int] = None) -> None:
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug('generalizing diagram')
             _logger.debug(str(self))
             with utils.LogTag(_logger, 'previous-frame', lvl=logging.DEBUG):
                 for p in f.phases():
-                    _logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] + [str(x) for x in f.summary_of(p)])
+                    _logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
+                                     [str(x) for x in f.summary_of(p)])
 
-        T = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
-        d: T
-        I: Iterable[T] = self.ineqs
-        R: Iterable[T] = self.rels
-        C: Iterable[T] = self.consts
-        F: Iterable[T] = self.funcs
-
-#         if _logger.isEnabledFor(logging.DEBUG):
-#             _logger.debug('checking that transition relation itself is SAT from previous frame...')
-#             res1 = check_two_state_implication_all_transitions(s, prog, f, syntax.Bool(None, False))
-#             if res1 is None:
-#                 assert False
-#             m, t = res1
-#             _logger.always_print(str(m))
-#             _logger.always_print(t.name)
+        d: _RelevantDecl
+        I: Iterable[_RelevantDecl] = self.ineqs
+        R: Iterable[_RelevantDecl] = self.rels
+        C: Iterable[_RelevantDecl] = self.consts
+        F: Iterable[_RelevantDecl] = self.funcs
 
         self.smoke(s, prog, depth)
 
@@ -719,7 +709,8 @@ class Diagram(object):
                 if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                     continue
                 with self.without(d):
-                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src, propagate_init)
+                    res = self.check_valid_in_phase_from_frame(
+                        s, prog, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
                     if _logger.isEnabledFor(logging.DEBUG):
                         _logger.debug('eliminated all conjuncts from declaration %s' % d)
@@ -735,16 +726,18 @@ class Diagram(object):
                         if j not in S and isinstance(x, syntax.UnaryExpr):
                             cs.add(j)
                     with self.without(d, cs):
-                        res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src, propagate_init)
+                        res = self.check_valid_in_phase_from_frame(
+                            s, prog, f, transitions_to_grouped_by_src, propagate_init)
                     if res is None:
                         if _logger.isEnabledFor(logging.DEBUG):
-                            _logger.debug('eliminated all negative conjuncts from declaration %s' % d)
+                            _logger.debug(f'eliminated all negative conjuncts from decl {d}')
                         self.remove_clause(d, cs)
                         self.smoke(s, prog, depth)
 
             for d, j, c in self.conjuncts():
                 with self.without(d, j):
-                    res = self.check_valid_in_phase_from_frame(s, prog, f, transitions_to_grouped_by_src, propagate_init)
+                    res = self.check_valid_in_phase_from_frame(
+                        s, prog, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
                     if _logger.isEnabledFor(logging.DEBUG):
                         _logger.debug('eliminated clause %s' % c)
@@ -762,8 +755,6 @@ class Diagram(object):
     #                else:
     #                    _logger.debug('because the diagram is satisfiable in the initial state')
     #                    _logger.debug('and model %s' % Model(prog, m, KEY_ONE))
-
-
 
         self.prune_unused_vars()
 
@@ -795,11 +786,13 @@ class Model(object):
             printers = importlib.import_module('printers')
             printer_name = custom_printer_annotation.args[0]
             custom_printer = printers.__dict__.get(printer_name)
-            custom_printer_args = custom_printer_annotation.args[1:] if custom_printer is not None else []
+            custom_printer_args = custom_printer_annotation.args[1:] \
+                if custom_printer is not None else []
             if custom_printer is not None:
                 return custom_printer(self, s, elt, custom_printer_args)
             else:
-                utils.print_warning(custom_printer_annotation.tok, 'could not find printer named %s' % (printer_name,))
+                utils.print_warning(custom_printer_annotation.tok,
+                                    'could not find printer named %s' % (printer_name,))
         return None
 
     def print_element(self, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
@@ -827,46 +820,49 @@ class Model(object):
     def __str__(self) -> str:
         l = []
         l.extend(self.univ_str())
-        l.append(self._state_str(self.immut_const_interps, self.immut_rel_interps, self.immut_func_interps))
+        l.append(self._state_str(self.immut_const_interps, self.immut_rel_interps,
+                                 self.immut_func_interps))
         for i, k in enumerate(self.keys):
-            if i > 0 and self.transitions[i-1] != '':
-                l.append('\ntransition %s' % (self.transitions[i-1],))
+            if i > 0 and self.transitions[i - 1] != '':
+                l.append('\ntransition %s' % (self.transitions[i - 1],))
             l.append('\nstate %s:' % (i,))
-            l.append(self._state_str(self.const_interps[i], self.rel_interps[i], self.func_interps[i]))
+            l.append(self._state_str(self.const_interps[i], self.rel_interps[i],
+                                     self.func_interps[i]))
 
         return '\n'.join(l)
 
     def _state_str(
             self,
-            Cs: Dict[ConstantDecl,str],
+            Cs: Dict[ConstantDecl, str],
             Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]],
             Fs: Dict[FunctionDecl, List[Tuple[List[str], str]]]
     ) -> str:
         l = []
         for C in Cs:
-            if syntax.has_annotation(C,'no_print'):
+            if syntax.has_annotation(C, 'no_print'):
                 continue
             l.append('%s = %s' % (C.name, self.print_element(C.sort, Cs[C])))
 
         for R in Rs:
-            if syntax.has_annotation(R,'no_print'):
+            if syntax.has_annotation(R, 'no_print'):
                 continue
             for tup, b in sorted(Rs[R], key=lambda x: self.print_tuple(R.arity, x[0])):
                 if b:
-                    l.append('%s%s(%s)' % ('' if b else '!', R.name, self.print_tuple(R.arity, tup)))
+                    l.append('%s%s(%s)' % ('' if b else '!', R.name,
+                                           self.print_tuple(R.arity, tup)))
 
         for F in Fs:
-            if syntax.has_annotation(F,'no_print'):
+            if syntax.has_annotation(F, 'no_print'):
                 continue
             for tup, res in sorted(Fs[F], key=lambda x: self.print_tuple(F.arity, x[0])):
-                l.append('%s(%s) = %s' % (F.name, self.print_tuple(F.arity, tup), self.print_element(F.sort, res)))
+                l.append('%s(%s) = %s' % (F.name, self.print_tuple(F.arity, tup),
+                                          self.print_element(F.sort, res)))
 
         return '\n'.join(l)
 
-
     def _eval(self, expr: z3.ExprRef) -> z3.ExprRef:
         ans = self.z3model.eval(expr, model_completion=True)
-        assert ans == True or ans == False, (expr, ans)
+        assert bool(ans) is True or bool(ans) is False, (expr, ans)
         return ans
 
     def read_out(self) -> None:
@@ -878,12 +874,12 @@ class Model(object):
         for z3sort in sorted(self.z3model.sorts(), key=str):
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
-            self.univs[sort] = list(sorted(rename(str(x)) for x in self.z3model.get_universe(z3sort)))
+            univ = self.z3model.get_universe(z3sort)
+            self.univs[sort] = list(sorted(rename(str(x)) for x in univ))
             # if _logger.isEnabledFor(logging.DEBUG):
             #     _logger.debug(str(z3sort))
             #     for x in self.univs[sort]:
             #         _logger.debug('  ' + x)
-
 
         RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
         CT = Dict[ConstantDecl, str]
@@ -920,8 +916,6 @@ class Model(object):
             assert not isinstance(decl, syntax.Sort) and \
                 not isinstance(decl, syntax.SortInferencePlaceholder)
             if decl is not None:
-#                if _logger.isEnabledFor(logging.DEBUG):
-#                    _logger.debug(str(z3decl))
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
                         rl = []
@@ -951,7 +945,8 @@ class Model(object):
                         g = itertools.product(*domains)
                         for row in g:
                             ans = self.z3model.eval(z3decl(*row))
-                            fl.append(([rename(str(col)) for col in row], rename(ans.decl().name())))
+                            fl.append(([rename(str(col)) for col in row],
+                                       rename(ans.decl().name())))
                         assert decl not in F
                         F[decl] = fl
 
@@ -961,16 +956,15 @@ class Model(object):
                     assert decl not in C
                     C[decl] = rename(v)
             else:
-#                 if _logger.isEnabledFor(logging.DEBUG):
-#                     _logger.debug('extra constant: ' + str(z3decl))
                 if name.startswith(TRANSITION_INDICATOR + '_') and self.z3model.eval(z3decl()):
                     name = name[len(TRANSITION_INDICATOR + '_'):]
                     istr, name = name.split('_', maxsplit=1)
                     i = int(istr)
                     self.transitions[i] = name
 
-    def as_diagram(self, i: Optional[int]=None) -> Diagram:
-        assert len(self.keys) == 1 or i is not None, 'to generate a diagram from a multi-state model, you must specify which state you want'
+    def as_diagram(self, i: Optional[int] = None) -> Diagram:
+        assert len(self.keys) == 1 or i is not None, \
+            'to generate a diagram from a multi-state model, you must specify which state you want'
         assert i is None or (0 <= i and i < len(self.keys))
 
         if i is None:
@@ -1013,7 +1007,6 @@ class Model(object):
                 e = syntax.Eq(e, syntax.Id(None, res))
                 funcs[F].append(e)
 
-
         diag = Diagram(vs, ineqs, rels, consts, funcs)
         if utils.args.simplify_diagram:
             diag.simplify_consts()
@@ -1022,8 +1015,10 @@ class Model(object):
 
         return diag
 
-    def as_onestate_formula(self, i: Optional[int]=None) -> Expr:
-        assert len(self.keys) == 1 or i is not None, 'to generate a onestate formula from a multi-state model, you must specify which state you want'
+    def as_onestate_formula(self, i: Optional[int] = None) -> Expr:
+        assert len(self.keys) == 1 or i is not None, \
+            'to generate a onestate formula from a multi-state model, ' + \
+            'you must specify which state you want'
         assert i is None or (0 <= i and i < len(self.keys))
 
         if i is None:
@@ -1081,4 +1076,3 @@ class CexFound(object):
     pass
 class GaveUp(object):
     pass
-    

@@ -2,7 +2,6 @@ import unittest
 
 import parser
 import syntax
-import pd
 import mypyvy
 
 from pathlib import Path
@@ -17,13 +16,18 @@ class SyntaxTests(unittest.TestCase):
         ios = [
             ('true', 'true'),
             ('foo', 'foo'),
-            ('forall N1,N2. grant_msg(N1) & grant_msg(N2) -> N1 = N2', 'forall N1, N2. !grant_msg(N1) | !grant_msg(N2) | N1 = N2'),
-            ('forall N1,N2. !(holds_lock(N1) & grant_msg(N2))', 'forall N1, N2. !holds_lock(N1) | !grant_msg(N2)'),
-            ('forall N. !(unlock_msg(N) & server_holds_lock)', 'forall N. !unlock_msg(N) | !server_holds_lock'),
-            ('!(exists N. holds_lock(N) & server_holds_lock)', 'forall N. !holds_lock(N) | !server_holds_lock'),
-            ('!!(forall X. !(exists Y. (r(X) & s(Y)) & (q(X) & p(Y))))', 'forall X, Y. !r(X) | !s(Y) | !q(X) | !p(Y)')
+            ('forall N1,N2. grant_msg(N1) & grant_msg(N2) -> N1 = N2',
+             'forall N1, N2. !grant_msg(N1) | !grant_msg(N2) | N1 = N2'),
+            ('forall N1,N2. !(holds_lock(N1) & grant_msg(N2))',
+             'forall N1, N2. !holds_lock(N1) | !grant_msg(N2)'),
+            ('forall N. !(unlock_msg(N) & server_holds_lock)',
+             'forall N. !unlock_msg(N) | !server_holds_lock'),
+            ('!(exists N. holds_lock(N) & server_holds_lock)',
+             'forall N. !holds_lock(N) | !server_holds_lock'),
+            ('!!(forall X. !(exists Y. (r(X) & s(Y)) & (q(X) & p(Y))))',
+             'forall X, Y. !r(X) | !s(Y) | !q(X) | !p(Y)')
         ]
-        for expr,expected in ios:
+        for expr, expected in ios:
             with self.subTest(expr=expr):
                 clause = syntax.as_clause(parser.parse_expr(expr))
                 # print(clause)

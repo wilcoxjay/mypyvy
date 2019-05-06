@@ -60,14 +60,14 @@ class Benchmark(object):
 
         timed_out = False
         timed_out_stdout = None
-        timed_out_stderr = None
+        # timed_out_stderr = None
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout) # type: ignore
         except subprocess.TimeoutExpired as e:
             # print('timeout uid %s' % uid)
             timed_out = True
             timed_out_stdout = e.stdout
-            timed_out_stderr = e.stderr
+            # timed_out_stderr = e.stderr
 
         if args.keep_logs:
             assert uid is not None

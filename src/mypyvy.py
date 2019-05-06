@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 import argparse
-from collections import OrderedDict, defaultdict
-from contextlib import contextmanager
-import copy
 from datetime import datetime
-import io
-import itertools
 import logging
 import sys
-from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, Iterator, cast
+from typing import List, Any, Optional, cast
 import z3
 
 import logic
 from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE
 import parser
 import syntax
-from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, DefinitionDecl, InvariantDecl, AutomatonDecl
+from syntax import Expr, Program, Scope, InvariantDecl, AutomatonDecl
 import updr
 import utils
-from utils import MySet
-
-from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
 import pd
 

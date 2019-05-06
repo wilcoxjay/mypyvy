@@ -8,10 +8,8 @@ import logic
 from logic import Solver, Diagram, Model, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, CexFound
 import phases
 import syntax
-from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, DefinitionDecl, InvariantDecl, AutomatonDecl
-from typing import List, Any, Optional, Callable, Set, Tuple, Union, Iterable, \
-    Dict, TypeVar, Sequence, Iterator, cast
+from syntax import Expr, Program, Scope, AutomatonDecl
+from typing import List, Optional, Set, Tuple, Union, Dict, Sequence, cast
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 

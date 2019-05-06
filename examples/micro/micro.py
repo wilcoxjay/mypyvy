@@ -1,6 +1,4 @@
 import argparse
-import sys
-import json
 
 def dump(N: int, mode: str) -> None:
     assert N >= 2

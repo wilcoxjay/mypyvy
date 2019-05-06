@@ -1,7 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
-import mypyvy
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
 from logic import Model
 
@@ -111,9 +110,6 @@ class RaftEntry(object):
     value: Optional[str]
 
 def raft_log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
-    prog = m.prog
-    scope = prog.scope
-
     index_sort = get_sort(m, 'index')
     term_sort = get_sort(m, 'term')
     value_sort = get_sort(m, 'value')
@@ -122,7 +118,6 @@ def raft_log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
     term_at = get_relation(m, 'term_at')
     value_at = get_function(m, 'value_at')
     index_le = get_relation(m, 'index_le')
-    term_le = get_relation(m, 'term_le')
 
     def dedup(l: List[str]) -> List[str]:
         return list(dict.fromkeys(l))

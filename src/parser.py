@@ -5,8 +5,6 @@ import syntax
 import utils
 from typing import Any
 
-import sys
-
 reserved = {
     'modifies': 'MODIFIES',
     'sort': 'SORT',
