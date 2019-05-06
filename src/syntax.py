@@ -382,6 +382,9 @@ def as_clause(expr: Expr) -> Expr:
     return Forall(vs, Or(*disjs))
 
 class Expr(object):
+    def __init__(self) -> None:
+        self._hash: Optional[int] = None
+
     def __repr__(self) -> str:
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
 
@@ -398,7 +401,9 @@ class Expr(object):
         raise Exception('Unexpected expr %s does not implement _denote method' % repr(self))
 
     def __hash__(self) -> int:
-        return hash(self._denote())
+        if self._hash is None:
+            self._hash = hash(self._denote())
+        return self._hash
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Expr):
@@ -433,6 +438,7 @@ class Expr(object):
 
 class Bool(Expr):
     def __init__(self, tok: Optional[Token], val: bool) -> None:
+        super().__init__()
         self.tok = tok
         self.val = val
 
@@ -500,6 +506,7 @@ def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: Infe
 
 class UnaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg: Expr) -> None:
+        super().__init__()
         assert op in UNOPS
         self.tok = tok
         self.op = op
@@ -568,6 +575,7 @@ z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
 
 class BinaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg1: Expr, arg2: Expr) -> None:
+        super().__init__()
         assert op in BINOPS
         self.tok = tok
         self.op = op
@@ -643,6 +651,7 @@ z3_NOPS: Any = {
 
 class NaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, args: List[Expr]) -> None:
+        super().__init__()
         assert op in NOPS
         assert len(args) >= 2, (args, tok)
 
@@ -749,6 +758,7 @@ def Apply(callee: str, args: List[Expr]) -> Expr:
 
 class AppExpr(Expr):
     def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
+        super().__init__()
         if not (len(args) > 0):
             utils.print_error(tok, "must be applied to at least one argument")
         self.tok = tok
@@ -855,6 +865,7 @@ class Binder(object):
 
 class QuantifierExpr(Expr):
     def __init__(self, tok: Optional[Token], quant: str, vs: List[SortedVar], body: Expr) -> None:
+        super().__init__()
         assert quant in ['FORALL', 'EXISTS']
         assert len(vs) > 0
         self.tok = tok
@@ -903,6 +914,7 @@ class QuantifierExpr(Expr):
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     def __init__(self, tok: Optional[Token], name: str) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
 
@@ -954,6 +966,7 @@ class Id(Expr):
 
 class IfThenElse(Expr):
     def __init__(self, tok: Optional[Token], branch: Expr, then: Expr, els: Expr) -> None:
+        super().__init__()
         self.tok = tok
         self.branch = branch
         self.then = then
@@ -991,6 +1004,7 @@ class IfThenElse(Expr):
 
 class Let(Expr):
     def __init__(self, tok: Optional[Token], var: SortedVar, val: Expr, body: Expr) -> None:
+        super().__init__()
         self.tok = tok
         self.binder = Binder([var])
         self.val = val
