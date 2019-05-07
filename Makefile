@@ -1,5 +1,5 @@
 PYTHON := python3.7
-MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000  --minimize-models
+MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
@@ -11,9 +11,9 @@ test: check check-imports unit typecheck verify trace updr pd
 unit:
 	$(PYTHON) -m unittest discover -s src -v
 
-typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv))
+typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv examples/*/*.pyv))
 
-verify: examples/lockserv.verify examples/consensus.verify examples/sharded-kv.verify
+verify: examples/lockserv.verify examples/consensus.verify examples/sharded-kv.verify examples/oded/paxos_epr.verify examples/oded/paxos_forall.verify
 
 trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
