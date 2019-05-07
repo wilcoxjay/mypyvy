@@ -40,6 +40,6 @@ pd:
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
 src/%.importable: src/%.py
-	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" >/dev/null 2>&1 || { echo "file $< is not importable"; exit 1; }
+	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" || { echo "file $< is not importable"; exit 1; }
 
 .PHONY: check run test verify updr bench typecheck trace pd unit check-imports
