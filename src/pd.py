@@ -22,11 +22,33 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
 
 State = Model
 
+# Here's a hacky way to eval a possibly-quantified z3 expression.
+# This function only works if e is either quantifier free, or has exactly one quantifier
+# (with arbitrarily many bound vars) at the root of the expression.  For example, this
+# function will not work on the conjunction of two universally quantified clauses.
+def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
+    if not isinstance(e, z3.QuantifierRef):
+        ans = m.eval(e)
+        assert z3.is_bool(ans)
+        return bool(ans)
+
+    q = all if e.is_forall() else any
+
+    def ev(e: z3.ExprRef) -> bool:
+        ans = m.eval(e)
+        assert z3.is_bool(ans)
+        return bool(ans)
+
+    return q(ev(z3.substitute_vars(e.body(), *tup))
+             for tup in itertools.product(*(m.get_universe(e.var_sort(i))
+                                            for i in range(e.num_vars()))))
+
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
 def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
+        # cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
         cache[k] = check_implication(s, [m.as_onestate_formula(0)], [p]) is None
         cache['m'] += 1
         if len(cache) % 1000 == 1:
