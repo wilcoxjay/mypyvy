@@ -15,6 +15,8 @@ Token = ply.lex.LexToken
 B = TypeVar('B')
 
 class Sort(object):
+    def __init__(self) -> None:
+        self._hash: Optional[int] = None
     def __repr__(self) -> str:
         raise Exception('Unexpected sort %s does not implement __repr__ method' % type(self))
 
@@ -31,7 +33,9 @@ class Sort(object):
         raise Exception('Unexpected sort %s does not implement _denote method' % repr(self))
 
     def __hash__(self) -> int:
-        return hash(self._denote())
+        if self._hash is None:
+            self._hash = hash(self._denote())
+        return self._hash
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Sort):
