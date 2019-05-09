@@ -36,9 +36,9 @@ def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
         return ev(e)
     else:
         q = all if e.is_forall() else any
-        return q(ev(z3.substitute_vars(e.body(), *tup))
-                 for tup in product(*(m.get_universe(e.var_sort(i))
-                                      for i in range(e.num_vars()))))
+        return q(ev(z3.substitute_vars(e.body(), *tup)) for tup in product(*(
+            m.get_universe(e.var_sort(i)) for i in range(e.num_vars() - 1, -1, -1) # de Bruijn
+        )))
 
 
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
