@@ -350,8 +350,8 @@ def parse_args(args: List[str]) -> argparse.Namespace:
                        help='print the program after parsing')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
-        s.add_argument('--minimize-models', action='store_false',
-                       help='do not search for models with minimal cardinality')
+        s.add_argument('--minimize-models', action=utils.YesNoAction, default=True,
+                       help='search for models with minimal cardinality')
         s.add_argument('--timeout', type=int, default=None,
                        help='z3 timeout (milliseconds)')
         s.add_argument('--exit-on-error', action='store_true',
@@ -447,8 +447,12 @@ def main() -> None:
         KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
 
     with utils.LogTag(_logger, 'main', lvl=logging.INFO):
-        _logger.always_print(' '.join(['python3.7'] + sys.argv))
-
+        _logger.always_print(' '.join([sys.executable] + sys.argv))
+        # TODO: the following should probably be _logger.info once it works again
+        _logger.always_print('Running mypyvy with the following options:')
+        for k, v in sorted(vars(utils.args).items()):
+            _logger.always_print(f'    {k} = {v!r}')
+        _logger.always_print
 
         _logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)

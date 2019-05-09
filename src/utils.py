@@ -14,6 +14,7 @@ import xml.sax.saxutils
 from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
                    Any, Callable, cast
 
+
 T = TypeVar('T')
 
 class OrderedSet(Generic[T], Iterable[T]):
@@ -167,4 +168,40 @@ def log_start_end_xml(logger: MyLogger, lvl: int=logging.DEBUG, tag: Optional[st
             return ans
         return cast(F, wrapped)
     return dec
-    
+
+
+class YesNoAction(argparse.Action):
+    '''Parser argument with --[no-]option.
+    Based on:
+    https://thisdataguy.com/2017/07/03/no-options-with-argparse-and-python/
+    https://stackoverflow.com/questions/9234258/in-python-argparse-is-it-possible-to-have-paired-no-something-something-arg
+    '''
+    def __init__(self,
+                 option_strings: List[str],
+                 dest: str,
+                 nargs: Any = None,
+                 const: Any = None,
+                 default: bool = False,
+                 help: Optional[str] = None,
+                 **kwargs: Any
+    ) -> None:
+        if nargs is not None:
+            raise ValueError('nargs not allowed')
+        if const is not None:
+            raise ValueError('const not allowed')
+        if not (isinstance(option_strings, (list, tuple)) and
+                len(option_strings) == 1 and
+                option_strings[0].startswith('--')):
+            raise ValueError(f'bad option_strings: {option_strings}')
+        if help is not None:
+            help = f'{help} (or not, default {"yes" if default else "no"})'
+        yes = option_strings[0]
+        no = '--no-' + yes[2:]
+        super().__init__([yes, no], dest, nargs=0, const=None, default=default, help=help, **kwargs)
+        self._yes = yes
+        self._no = no
+
+    def __call__(self, parser: Any, namespace: Any, values: Any, option_string : Optional[str] = None) -> None:
+        assert option_string is not None, 'Cannot use Flag as a positional argument'
+        assert option_string in [self._yes, self._no]
+        setattr(namespace, self.dest, option_string == self._yes)
