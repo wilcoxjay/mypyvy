@@ -10,7 +10,7 @@ from itertools import product, chain, combinations
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet
+from typing import TypeVar, Iterable, FrozenSet, Union
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -27,29 +27,26 @@ State = Model
 # (with arbitrarily many bound vars) at the root of the expression.  For example, this
 # function will not work on the conjunction of two universally quantified clauses.
 def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
-    if not isinstance(e, z3.QuantifierRef):
-        ans = m.eval(e)
-        assert z3.is_bool(ans)
-        return bool(ans)
-
-    q = all if e.is_forall() else any
-
     def ev(e: z3.ExprRef) -> bool:
         ans = m.eval(e)
         assert z3.is_bool(ans)
+        assert z3.is_true(ans) or z3.is_false(ans), f'{m}\n{"="*80}\n{e}'
         return bool(ans)
+    if not isinstance(e, z3.QuantifierRef):
+        return ev(e)
+    else:
+        q = all if e.is_forall() else any
+        return q(ev(z3.substitute_vars(e.body(), *tup))
+                 for tup in product(*(m.get_universe(e.var_sort(i))
+                                      for i in range(e.num_vars()))))
 
-    return q(ev(z3.substitute_vars(e.body(), *tup))
-             for tup in itertools.product(*(m.get_universe(e.var_sort(i))
-                                            for i in range(e.num_vars()))))
 
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
 def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
-        # cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
-        cache[k] = check_implication(s, [m.as_onestate_formula(0)], [p]) is None
+        cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
         cache['m'] += 1
         if len(cache) % 1000 == 1:
             print(f'_cache_eval_in_state length is {len(cache)}, h/m is {cache["h"]}/{cache["m"]}')
@@ -57,26 +54,48 @@ def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
         cache['h'] += 1
     return cache[k]
 
-_cache_check_two_state_implication_all_transitions_cache : Dict[Any,Any] = dict(h=0,m=0)
-def _check_two_state_implication_all_transitions(
+_cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
+_cache_transitions: List[Tuple[State,State]] = []
+def check_two_state_implication(
         s: Solver,
         prog: Program,
-        precondition: Iterable[Expr],
+        precondition: Union[Iterable[Expr], State],
         p: Expr
-) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
-    k = (tuple(precondition), p)
-    cache = _cache_check_two_state_implication_all_transitions_cache
+) -> Optional[Tuple[State,State]]:
+    if not isinstance(precondition, State):
+        precondition = tuple(precondition)
+    k = (precondition, p)
+    cache = _cache_two_state_implication
     if k not in cache:
-        cache[k] = check_two_state_implication_all_transitions(s, prog, precondition, p)
-        cache['m'] += 1
+        for prestate, poststate in _cache_transitions:
+            if ((prestate == precondition if isinstance(precondition, State) else
+                 all(eval_in_state(s, prestate, q) for q in precondition)) and
+                not eval_in_state(s, poststate, p)):
+                cache[k] = (prestate, poststate)
+                cache['r'] += 1
+                break
+        else:
+            res = check_two_state_implication_all_transitions(
+                s, prog,
+                [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
+                p)
+            if res is None:
+                cache[k] = None
+            else:
+                z3m, _ = res
+                prestate = Model(prog, z3m, s, [KEY_OLD])
+                poststate = Model(prog, z3m, s, [KEY_NEW, KEY_OLD])
+                result = (prestate, poststate)
+                _cache_transitions.append(result)
+                cache[k] = result
         if len(cache) % 10 == 1:
-            print(f'_cache_check_two_state_implication_all_transitions_cache length is {len(cache)}, h/m is {cache["h"]}/{cache["m"]}')
+            print(f'_cache_two_state_implication length is {len(cache)}, h/r is {cache["h"]}/{cache["r"]}')
     else:
         cache['h'] += 1
     return cache[k]
 
 
-def alpha_from_clause(s:Solver, states: List[State] , top_clause:Expr) -> List[Expr]:
+def alpha_from_clause(s:Solver, states: Iterable[State] , top_clause:Expr) -> Sequence[Expr]:
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
@@ -86,7 +105,10 @@ def alpha_from_clause(s:Solver, states: List[State] , top_clause:Expr) -> List[E
 
     result: List[Expr] = []
     implied : Set[FrozenSet[Expr]] = set()
-    for lits in powerset(literals):
+    P = list(powerset(literals))
+    print(f'the powerset is of size {len(P)}')
+    assert len(P) < 10**6, 'Really?'
+    for lits in P:
         if any(s <= set(lits) for s in implied):
             continue
         vs = [v for v in top_clause.binder.vs
@@ -102,15 +124,15 @@ def alpha_from_clause(s:Solver, states: List[State] , top_clause:Expr) -> List[E
     return result
 
 
-def alpha_from_predicates(s:Solver, states: List[State] , predicates: Sequence[Expr]) -> Sequence[Expr]:
+def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterable[Expr]) -> Sequence[Expr]:
     return tuple(p for p in predicates if all(eval_in_state(s, m, p) for m in states))
 
 
 def forward_explore(s: Solver,
                     prog: Program,
-                    alpha: Callable[[List[State]], List[Expr]],
+                    alpha: Callable[[Iterable[State]], Sequence[Expr]],
                     states: Optional[Iterable[State]] = None
-) -> Tuple[List[State], List[Expr]]:
+) -> Tuple[Sequence[State], Sequence[Expr]]:
 
     if states is None:
         states = []
@@ -138,18 +160,17 @@ def forward_explore(s: Solver,
             print('YES')
 
         # check for 1 transition from an initial state or a state in states
-        for prestate, p in product(chain([None], states), a):
-            print(f'Checking if {"init" if prestate is None else "state"} satisfies WP of {p}... ',end='')
-            if prestate is None:
-                precondition = inits
-            else:
-                precondition = (prestate.as_onestate_formula(0),)
-            res = _check_two_state_implication_all_transitions(s, prog, precondition, p)
+        for precondition, p in product(chain([None], states), a):
+            print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
+            res = check_two_state_implication(
+                s, prog,
+                inits if precondition is None else precondition,
+                p
+            )
             # print(res)
             if res is not None:
                 print('NO')
-                z3m, ition = res
-                m = Model(prog, z3m, s, [KEY_NEW, KEY_OLD])
+                _, m = res
                 print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
                 states.append(m)
                 changes = True
@@ -187,97 +208,81 @@ def forward_explore_inv(s: Solver, prog: Program) -> None:
         print('-'*80)
 
 
-def repeated_houdini(s: Solver, prog: Program) -> None:
-    clauses = [as_clause(inv.expr) for inv in prog.invs() if inv.is_safety]
-    alpha  = lambda states: sorted(set(chain(*(alpha_from_clause(s, states, clause) for clause in clauses))), key=lambda x: (len(str(x)),str(x)))
-
-    reachable_states, a = forward_explore(s, prog, alpha)
+def repeated_houdini(s: Solver, prog: Program) -> str:
+    '''The (proof side) repeated Houdini algorith, either sharp or not.
+    '''
+    sharp = utils.args.sharp
+    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    reachable_states : Sequence[State] = ()
+    clauses : List[Expr] = [as_clause(x) for x in safety]  # all top clauses in our abstraction, TODO: really convert safety to CNF
+    sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
+    def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
+        return sorted(
+            set(chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
+            key=lambda x: (len(str(x)),str(x))
+        )
+    def alpha_sharp(states: Iterable[State]) -> Sequence[Expr]:
+        return sorted(
+            alpha_from_predicates(s, states, sharp_predicates),
+            key=lambda x: (len(str(x)),str(x))
+        )
     while True:
-        #open('_.dat', 'w').write(repr(dict(clauses=clauses, reachable_states=reachable_states)))
-        reachable_states, a = forward_explore(s, prog, alpha, reachable_states)
-        print(f'Discovered {len(reachable_states)} reachable states:')
-        for m in reachable_states:
-            print(str(m) + '\n' + '-'*80)
-        states = list(reachable_states)
-        unreachable = []
-        while True:
-            for p in a:
-                res = _check_two_state_implication_all_transitions(s, prog, a, p)
-                if res is not None:
-                    print(f'Found new CTI violating {p}')
-                    z3m, ition = res
-                    m = Model(prog, z3m, s, [KEY_NEW, KEY_OLD])
-                    print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
-                    unreachable.append(m)
-                    states.append(m)
-                    states, a = forward_explore(s, prog, alpha, states)
-                    changes = True
-                    break
-            else:
-                break
-        if len(unreachable) == 0:
-            print(f'Inductive invariant found with {len(a)} predicates:')
-            for p in sorted(a, key=lambda x: len(str(x))):
-                print(p)
-            break
-        else:
-            print(f'Refining by {len(unreachable)} new clauses:')
-            for m in unreachable:
-                clause = as_clause(Not(m.as_diagram(1).to_ast()))
-                print(clause)
-                clauses.append(clause)
-            print('='*80)
-            #print(f'Abstraction now contains {len(alpha([]))} predicates')
-
-
-def repeated_houdini_sharp(s: Solver, prog: Program) -> None:
-    clauses = [as_clause(inv.expr) for inv in prog.invs() if inv.is_safety]
-    alpha_clauses  = lambda states: sorted(set(chain(*(alpha_from_clause(s, states, clause) for clause in clauses))), key=lambda x: (len(str(x)),str(x)))
-
-    reachable_states, a = forward_explore(s, prog, alpha_clauses)
-    while True:
-        #open('_.dat', 'w').write(repr(dict(clauses=clauses, reachable_states=reachable_states)))
         reachable_states, a = forward_explore(s, prog, alpha_clauses, reachable_states)
-        sharp_predicates = tuple(a)
-        print(f'Discovered {len(reachable_states)} reachable states:')
+        print(f'Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
             print(str(m) + '\n' + '-'*80)
-        print(f'Discovered {len(sharp_predicates)} sharp predicates:')
+        if check_implication(s, a, safety) is not None:
+            print('Found safety violation!')
+            return 'UNSAFE'
+        sharp_predicates = tuple(a)
+        print(f'Current sharp predicates ({len(sharp_predicates)}):')
         for p in sharp_predicates:
             print(p)
-        alpha_sharp = lambda states: sorted(alpha_from_predicates(s, states, sharp_predicates), key=lambda x: (len(str(x)),str(x)))
-        states = list(reachable_states)
+        states = reachable_states
         unreachable = []
         while True:
             for p in a:
-                res = _check_two_state_implication_all_transitions(s, prog, a, p)
+                res = check_two_state_implication(s, prog, a, p)
                 if res is not None:
                     print(f'Found new CTI violating {p}')
-                    z3m, ition = res
-                    m = Model(prog, z3m, s, [KEY_NEW, KEY_OLD])
-                    print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
-                    unreachable.append(m)
-                    states.append(m)
-                    states, a = forward_explore(s, prog, alpha_sharp, states)
-                    changes = True
+                    prestate, poststate = res
+                    print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                    unreachable.append(prestate)
+                    states, a = forward_explore(
+                        s, prog,
+                        alpha_sharp if sharp else alpha_clauses,
+                        chain(states, [prestate, poststate]) # so that forward_explore also considers extensions of the prestate
+                    )
                     break
             else:
                 break
-        if len(unreachable) == 0:
+        if len(a) > 0 and check_implication(s, a, safety) is None:
             print(f'Inductive invariant found with {len(a)} predicates:')
             for p in sorted(a, key=lambda x: len(str(x))):
                 print(p)
-            break
+            return 'SAFE'
         else:
             print(f'Refining by {len(unreachable)} new clauses:')
             for m in unreachable:
-                clause = as_clause(Not(m.as_diagram(1).to_ast()))
+                clause = as_clause(Not(m.as_diagram(0).to_ast()))
                 print(clause)
                 clauses.append(clause)
             print('='*80)
-            #print(f'Abstraction now contains {len(alpha([]))} predicates')
 
-def add_argparsers(subparsers: argparse._SubParsersAction) -> List[argparse.ArgumentParser]:
-    forward_explore_inv_subparser = subparsers.add_parser('pd-forward-explore', help='Forward explore program w.r.t. its invariant')
-    forward_explore_inv_subparser.set_defaults(main=repeated_houdini_sharp)#forward_explore_inv)
-    return [forward_explore_inv_subparser]
+
+def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
+    result : List[argparse.ArgumentParser] = []
+
+    # forward_explore_inv
+    s = subparsers.add_parser('pd-forward-explore', help='Forward explore program w.r.t. its invariant')
+    s.set_defaults(main=forward_explore_inv)
+    result.append(s)
+
+    # repeated_houdini
+    s = subparsers.add_parser('pd-repeated-houdini', help='Run the repeated Houdini algorith in the proof space')
+    s.set_defaults(main=repeated_houdini)
+    s.add_argument('--sharp', action=utils.YesNoAction, default=True,
+                   help='search for sharp invariants')
+    result.append(s)
+
+    return result
