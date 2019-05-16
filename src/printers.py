@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
 from logic import Model
 
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Union
 
 def get_sort(m: Model, name: str) -> SortDecl:
     s = m.prog.scope.get_sort(name)
@@ -16,10 +16,18 @@ def get_constant(m: Model, name: str) -> ConstantDecl:
     assert isinstance(c, ConstantDecl), (name, c)
     return c
 
+def is_relation(m: Model, name: str) -> bool:
+    r = m.prog.scope.get(name)
+    return isinstance(r, RelationDecl)
+
 def get_relation(m: Model, name: str) -> RelationDecl:
     r = m.prog.scope.get(name)
     assert isinstance(r, RelationDecl), (name, r)
     return r
+
+def is_function(m: Model, name: str) -> bool:
+    f = m.prog.scope.get(name)
+    return isinstance(f, FunctionDecl)
 
 def get_function(m: Model, name: str) -> FunctionDecl:
     f = m.prog.scope.get(name)
@@ -104,48 +112,86 @@ def option_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
         return 'Some(%s)' % (m.print_element(elt_sort, the_value))
 
 @dataclass
-class RaftEntry(object):
+class LogEntry(object):
     index: str
-    terms: List[str]
-    value: Optional[str]
+    # Contents of the different fields of this log entry.
+    # Each element of the list is itself a list because
+    # it may be based on a relation, and a not well-formed
+    # log might have multiple values for a given field.
+    values: List[List[str]]
 
-def raft_log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
-    index_sort = get_sort(m, 'index')
-    term_sort = get_sort(m, 'term')
-    value_sort = get_sort(m, 'value')
+# Generic printer for logs.
+# args[0] should give the name of the relation giving a total order over the index sort.
+# args[1] should give a relation of type used(s, args[0]) specifying whether an
+# index is used for the given log.
+# args[i] for i > 1 should give names of either relations of
+# type r(args[0], some_sort) or functions of type f(args[0]): some_sort.
+# These functions and relations give the elements at each index.
+# This printer assumes that there is a function 
+def log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
+    prog = m.prog
+    scope = prog.scope
 
-    index_used = get_relation(m, 'index_used')
-    term_at = get_relation(m, 'term_at')
-    value_at = get_function(m, 'value_at')
-    index_le = get_relation(m, 'index_le')
+    # args should at least hold an index total order and used relation
+    assert len(args) > 1
+    n_values = len(args) - 2
 
-    def dedup(l: List[str]) -> List[str]:
-        return list(dict.fromkeys(l))
+    index_le = get_relation(m, args[0])
+    assert len(index_le.arity) == 2
+    assert index_le.arity[0] == index_le.arity[1] and not index_le.mutable
+    index_sort_us = index_le.arity[0]
+    assert isinstance(index_sort_us, UninterpretedSort) and index_sort_us.decl is not None
+    index_sort = index_sort_us.decl
+    index_used = get_relation(m, args[1])
 
-    entries: Dict[str, RaftEntry] = {}
-    for tup, b in m.immut_rel_interps[term_at]:
-        if not b:
-            continue
+    def default_values() -> List[List[str]]: return [[] for x in range(n_values)]
 
-        log, index, term = tup
-        if log == elt:
-            if index in entries:
-                entries[index].terms.append(term)
-            else:
-                entries[index] = RaftEntry(index, [term], value=None)
+    def assert_valid_rel_or_func(rel_or_func: Union[RelationDecl, FunctionDecl]) -> None:
+        assert len(rel_or_func.arity) >= 2
+        assert isinstance(rel_or_func.arity[0], UninterpretedSort)
+        assert isinstance(rel_or_func.arity[1], UninterpretedSort)
+        print(rel_or_func.arity[1].decl)
+        assert rel_or_func.arity[0].decl == s
+        assert rel_or_func.arity[1].decl == index_sort
 
+    entries: Dict[str, LogEntry] = {}
     for tup, b in m.immut_rel_interps[index_used]:
         if not b:
             continue
 
         log, index = tup
         if log == elt and index not in entries:
-            entries[index] = RaftEntry(index, terms=[], value=None)
+            entries[index] = LogEntry(index, values=default_values())
 
-    for tup, res in m.immut_func_interps[value_at]:
-        log, index = tup
-        if log == elt and index in entries:
-            entries[index].value = res
+    value_sorts: List[SortDecl] = []
+    for idx, name in enumerate(args[2:]):
+        if is_relation(m, name):
+            val_rel = get_relation(m, name)
+            assert_valid_rel_or_func(val_rel)
+            assert isinstance(val_rel.arity[2], UninterpretedSort)
+            assert val_rel.arity[2].decl is not None
+            value_sorts.append(val_rel.arity[2].decl)
+            for tup, b in m.immut_rel_interps[val_rel]:
+                if not b:
+                    continue
+
+                log, index, value = tup
+                if log == elt:
+                    if index not in entries:
+                        entries[index] = LogEntry(index, default_values())
+                    entries[index].values[idx].append(value)
+        else:
+            val_func = get_function(m, name)
+            assert_valid_rel_or_func(val_func)
+            assert isinstance(val_func.sort, UninterpretedSort)
+            assert val_func.sort.decl is not None
+            value_sorts.append(val_func.sort.decl)
+            for tup, res in m.immut_func_interps[val_func]:
+                log, index = tup
+                if log == elt:
+                    if index not in entries:
+                        entries[index] = LogEntry(index, default_values())
+                    entries[index].values[idx].append(res)
 
     # The printed value of an index is consistent with index_le, so the log
     # should be ordered in the same way.
@@ -153,26 +199,23 @@ def raft_log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
                             key=lambda e: get_ordinal(m, index_le, e.index))
 
     # A log is well-formed if it is empty or
-    #  all entries have a single term and the set of indexes
+    #  all entries have a single element for each value and the set of indexes
     #  has no gaps starting from zero.
     well_formed = ((not sorted_entries) or
-                   (all(map(lambda e: len(e.terms) == 1, sorted_entries)) and
+                   (all(all(len(x) == 1 for x in e.values) for e in sorted_entries) and
                     get_ordinal(m, index_le, sorted_entries[-1].index) ==
                     len(sorted_entries) - 1))
 
-    def entry_to_str(e: RaftEntry, wf: bool) -> str:
-        assert e.value is not None
-
-        if wf:
-            assert len(e.terms) == 1
-
-            return '[term |-> %s, value |-> %s]' % (
-                m.print_element(term_sort, e.terms[0]),
-                m.print_element(value_sort, e.value))
-        else:
-            return '[index |-> %s, term |-> %s, value |-> %s]' % (
-                m.print_element(index_sort, e.index),
-                '[%s]' % (', '.join(m.print_element(term_sort, t) for t in e.terms)),
-                m.print_element(value_sort, e.value))
+    def value_to_str(vs: List[str], sort: SortDecl) -> str:
+        return '%s |-> %s' % (
+            sort.name,
+            m.print_element(sort,vs[0]) if len(vs) == 1 else
+            '[%s]' % (', '.join(m.print_element(sort, v) for v in vs)))
+    
+    def entry_to_str(e: LogEntry, wf: bool) -> str:
+        entry_strs = [value_to_str(e.values[idx], sort) for idx, sort in enumerate(value_sorts)]
+        if not wf:
+            entry_strs.insert(0, 'index |-> %s' % m.print_element(index_sort, e.index))
+        return '[%s]' % (', '.join(entry_strs))
 
     return '<<%s>>' % (', '.join(entry_to_str(entry, well_formed) for entry in sorted_entries))
