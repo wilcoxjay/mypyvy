@@ -54,7 +54,8 @@ def check_unsat(
             m = Model(prog, s.model(), s, keys)
 
             _logger.always_print('')
-            _logger.always_print(str(m))
+            if not utils.args.no_print_counterexample:
+                _logger.always_print(str(m))
         else:
             assert res == z3.unknown
             _logger.always_print('unknown!')
@@ -62,7 +63,13 @@ def check_unsat(
         for tok, msg in errmsgs:
             utils.print_error(tok, msg)
     else:
-        _logger.always_print('ok. (%s)' % (datetime.now() - start))
+
+        if utils.args.no_query_time:
+            time_msg = ''
+        else:
+            time_msg = ' (%s)' % (datetime.now() - start, )
+        _logger.always_print('ok.%s' % (time_msg,))
+
         sys.stdout.flush()
 
     return res

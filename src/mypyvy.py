@@ -358,6 +358,16 @@ def parse_args(args: List[str]) -> argparse.Namespace:
                        help='exit after reporting first error')
         s.add_argument('--ipython', action='store_true',
                        help='run IPython with s and prog at the end')
+        s.add_argument('--error-filename-basename', action='store_true',
+                       help='print only the basename of the input file in error messages')
+        s.add_argument('--no-query-time', action='store_true',
+                       help='do not report how long various z3 queries take')
+        s.add_argument('--no-print-counterexample', action='store_true',
+                       help='do not print counterexamples')
+        s.add_argument('--no-print-cmdline', action='store_true',
+                       help='do not print the command line passed to mypyvy')
+
+
 
         # for diagrams:
         s.add_argument('--dont-simplify-diagram', action='store_false', dest='simplify_diagram',
@@ -447,12 +457,13 @@ def main() -> None:
         KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
 
     with utils.LogTag(_logger, 'main', lvl=logging.INFO):
-        _logger.always_print(' '.join([sys.executable] + sys.argv))
-        # TODO: the following should probably be _logger.info once it works again
-        _logger.always_print('Running mypyvy with the following options:')
-        for k, v in sorted(vars(utils.args).items()):
-            _logger.always_print(f'    {k} = {v!r}')
-        _logger.always_print
+        if not utils.args.no_print_cmdline:
+            _logger.always_print(' '.join([sys.executable] + sys.argv))
+            # TODO: the following should probably be _logger.info once it works again
+            _logger.always_print('Running mypyvy with the following options:')
+            for k, v in sorted(vars(utils.args).items()):
+                _logger.always_print(f'    {k} = {v!r}')
+            _logger.always_print
 
         _logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)

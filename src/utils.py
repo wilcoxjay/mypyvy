@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 import functools
 import logging
+from pathlib import Path
 import ply
 import ply.lex
 import sys
@@ -59,8 +60,14 @@ MySet = OrderedSet
 args: argparse.Namespace = cast(argparse.Namespace, None)  # ensure that args is always defined
 
 Token = ply.lex.LexToken
+def clean_filename(filename: str) -> str:
+    if args.error_filename_basename:
+        return Path(filename).name
+    else:
+        return filename
+
 def tok_to_string(tok: Optional[Token]) -> str:
-    return '%s:%s:%s' % (tok.filename, tok.lineno, tok.col) if tok is not None else 'None'
+    return '%s:%s:%s' % (clean_filename(tok.filename), tok.lineno, tok.col) if tok is not None else 'None'
 
 error_count = 0
 
