@@ -18,7 +18,7 @@ executable."
             (eval flycheck-mypyvy-args)
             source)
   :error-patterns
-  ((error line-start "error: " (file-name) ":" line ":" column ": " (message) line-end))
+  ((error line-start "error " (file-name) ":" line ":" column ": " (message) line-end))
   :modes mypyvy-mode)
 
 (add-to-list 'flycheck-checkers 'mypyvy t)
