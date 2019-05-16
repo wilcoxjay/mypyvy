@@ -150,7 +150,6 @@ def log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
         assert len(rel_or_func.arity) >= 2
         assert isinstance(rel_or_func.arity[0], UninterpretedSort)
         assert isinstance(rel_or_func.arity[1], UninterpretedSort)
-        print(rel_or_func.arity[1].decl)
         assert rel_or_func.arity[0].decl == s
         assert rel_or_func.arity[1].decl == index_sort
 
