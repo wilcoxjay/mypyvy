@@ -118,11 +118,13 @@ class Z3Translator(object):
         self.scope = scope
         self.key = key
         self.key_old = key_old
+        self.counter = 0
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []
         for sv in binder.vs:
-            n = sv.name
+            n = sv.name + '_%s' % (self.counter,)  # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
+            self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, SortInferencePlaceholder)
             bs.append(z3.Const(n, sv.sort.to_z3()))
         return bs

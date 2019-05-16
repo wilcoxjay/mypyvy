@@ -2,6 +2,8 @@
 
 sort T
 definition all_equal(t: T) = (forall Y. t = Y)
+
+# both of the following theorems are false
 theorem (forall X. all_equal(X))
-theorem (forall Y. all_equal(Y))  # used to incorrectly pass
+theorem (forall Y. all_equal(Y))  # used to incorrectly pass because of a name-shadowing bug in the translation to z3
 
