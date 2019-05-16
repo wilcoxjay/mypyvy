@@ -4,7 +4,10 @@ import parser
 import syntax
 import mypyvy
 
+import os
 from pathlib import Path
+import shlex
+import subprocess
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,3 +44,22 @@ class SyntaxTests(unittest.TestCase):
             expr = inv.expr
             with self.subTest(expr=expr):
                 syntax.as_clause(expr)
+
+class RegressionTests(unittest.TestCase):
+    def test_regressions(self) -> None:
+        for p in sorted(Path(PROJECT_ROOT / 'examples' / 'regression').glob('*.pyv')):
+            with self.subTest(testFile=str(p)):
+                with open(p) as f:
+                    line = f.readline()
+                magic_prefix = '# MYPYVY: '
+                assert line.startswith(magic_prefix)
+                line = line[len(magic_prefix):]
+                python = os.getenv('PYTHON') or 'python3.7'
+                out_path = p.with_suffix('.output')
+                expect_path = p.with_suffix('.expect')
+                python_cmd = [python, str((PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())] + shlex.split(line) + [str(p)]
+                with open(out_path, 'w') as f_out:
+                    subprocess.run(python_cmd, stdout=f_out)
+                diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
+                proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')

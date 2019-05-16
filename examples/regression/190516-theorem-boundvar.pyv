@@ -1,0 +1,7 @@
+# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline
+
+sort T
+definition all_equal(t: T) = (forall Y. t = Y)
+theorem (forall X. all_equal(X))
+theorem (forall Y. all_equal(Y))  # used to incorrectly pass
+
