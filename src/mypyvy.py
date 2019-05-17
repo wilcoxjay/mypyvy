@@ -296,7 +296,7 @@ def trace(s: Solver, prog: Program) -> None:
                 utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
 
-def parse_args(args: List[str]) -> argparse.Namespace:
+def parse_args(args: List[str]) -> utils.MypyvyArgs:
     argparser = argparse.ArgumentParser()
 
     subparsers = argparser.add_subparsers(title='subcommands')
@@ -402,7 +402,7 @@ def parse_args(args: List[str]) -> argparse.Namespace:
 
     argparser.add_argument('filename')
 
-    return argparser.parse_args(args)
+    return cast(utils.MypyvyArgs, argparser.parse_args(args))
 
 class MyFormatter(logging.Formatter):
     def __init__(self, fmt: str) -> None:
@@ -425,7 +425,7 @@ def parse_program(input: str, force_rebuild: bool=False, filename: Optional[str]
     return p.parse(input=input, lexer=l, filename=filename)
 
 def main() -> None:
-    utils.args = cast(utils.MypyvyArgs, parse_args(sys.argv[1:]))
+    utils.args = parse_args(sys.argv[1:])
 
     if utils.args.log_xml:
         fmt = '%(message)s'
