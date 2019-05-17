@@ -188,7 +188,7 @@ def forward_explore(s: Solver,
 
 
 def forward_explore_inv(s: Solver, prog: Program) -> None:
-    #invs = [as_clause(inv.expr) for inv in prog.invs()]
+    #invs = list(itertools.chain(*(as_clauses(inv.expr) for inv in prog.invs())))
     invs = [inv.expr for inv in prog.invs()]
     print('Performing forward explore w.r.t. the following clauses:')
     for p in sorted(invs, key=lambda x: len(str(x))):
@@ -214,7 +214,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     reachable_states : Sequence[State] = ()
-    clauses : List[Expr] = [as_clause(x) for x in safety]  # all top clauses in our abstraction, TODO: really convert safety to CNF
+    clauses : List[Expr] = list(itertools.chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction, TODO: really convert safety to CNF
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
     def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
         return sorted(
@@ -264,9 +264,9 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
         else:
             print(f'Refining by {len(unreachable)} new clauses:')
             for m in unreachable:
-                clause = as_clause(Not(m.as_diagram(0).to_ast()))
-                print(clause)
-                clauses.append(clause)
+                new_clauses = as_clauses(Not(m.as_diagram(0).to_ast()))
+                print(new_clauses)
+                clauses.extend(new_clauses)
             print('='*80)
 
 

@@ -341,16 +341,16 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
 def xor(b1: bool, b2: bool) -> bool:
     return b1 != b2
 
-def as_clause_body(expr: Expr, negated: bool=False) -> List[Expr]:
+def as_clause_body(expr: Expr, negated: bool=False) -> List[List[Expr]]:
     if isinstance(expr, Bool):
-        return [Bool(None, xor(expr.val, negated))]
+        return [[Bool(None, xor(expr.val, negated))]]
     elif isinstance(expr, UnaryExpr):
         assert expr.op == 'NOT'
         return as_clause_body(expr.arg, not negated)
     elif isinstance(expr, BinaryExpr):
         if expr.op in ['EQUAL', 'NOTEQ']:
             op = 'NOTEQ' if xor(expr.op == 'NOTEQ', negated) else 'EQUAL'
-            return [BinaryExpr(None, op, expr.arg1, expr.arg2)]
+            return [[BinaryExpr(None, op, expr.arg1, expr.arg2)]]
         else:
             assert expr.op == 'IMPLIES'
             return as_clause_body(Or(Not(expr.arg1), expr.arg2), negated=negated)
@@ -358,33 +358,41 @@ def as_clause_body(expr: Expr, negated: bool=False) -> List[Expr]:
         if negated:
             other_op = 'AND' if expr.op == 'OR' else 'OR'
             return as_clause_body(NaryExpr(None, other_op, [Not(arg) for arg in expr.args]), negated=False)
+        elif expr.op == 'AND':
+            return list(itertools.chain(*(as_clause_body(arg, negated=False) for arg in expr.args)))
         else:
             assert expr.op == 'OR'
-            return list(itertools.chain(*(as_clause_body(arg, negated=False) for arg in expr.args)))
+            return [list(itertools.chain(*tup)) for tup in itertools.product(*(as_clause_body(arg, negated=False) for arg in expr.args))]
     elif isinstance(expr, AppExpr) or isinstance(expr, Id):
         if negated:
-            return [Not(expr)]
+            return [[Not(expr)]]
         else:
-            return [expr]
+            return [[expr]]
     else:
         assert False, "unsupported expressions %s in as_clause_body" % expr
 
-def as_quant_clause(expr: Expr, negated: bool=False) -> Tuple[List[SortedVar], List[Expr]]:
+def as_quant_clauses(expr: Expr, negated: bool=False) -> Tuple[List[SortedVar], List[List[Expr]]]:
     if isinstance(expr, QuantifierExpr):
         if negated:
             other_quant = 'EXISTS' if expr.quant == 'FORALL' else 'FORALL'
-            return as_quant_clause(QuantifierExpr(None, other_quant, expr.binder.vs, Not(expr.body)), negated=False)
+            return as_quant_clauses(QuantifierExpr(None, other_quant, expr.binder.vs, Not(expr.body)), negated=False)
         else:
-            new_vs, new_body = as_quant_clause(expr.body, negated=False)
+            assert expr.quant == 'FORALL'
+            new_vs, new_body = as_quant_clauses(expr.body, negated=False)
             return expr.binder.vs + new_vs, new_body
     elif isinstance(expr, UnaryExpr) and expr.op == 'NOT':
-        return as_quant_clause(expr.arg, not negated)
+        return as_quant_clauses(expr.arg, not negated)
     else:
         return [], as_clause_body(expr, negated)
 
-def as_clause(expr: Expr) -> Expr:
-    vs, disjs = as_quant_clause(expr)
-    return Forall(vs, Or(*disjs))
+def as_clauses(expr: Expr) -> List[Expr]:
+    vs, clauses = as_quant_clauses(expr)
+    ans = []
+    for clause in clauses:
+        if len(clause) == 1:
+            clause += [Bool(None, False)]
+        ans.append(Forall(vs, Or(*clause)))
+    return ans
 
 class Expr(object):
     def __init__(self) -> None:
