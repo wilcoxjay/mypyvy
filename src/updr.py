@@ -13,10 +13,8 @@ from typing import List, Optional, Set, Tuple, Union, Dict, Sequence, cast
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
-_logger = utils.MyLogger(logging.getLogger(__file__), datetime.now())
-
 class Frames(object):
-    @utils.log_start_end_xml(_logger, logging.DEBUG, 'Frames.__init__')
+    @utils.log_start_end_xml(utils.logger, logging.DEBUG, 'Frames.__init__')
     def __init__(self, solver: Solver, prog: Program) -> None:
         self.solver = solver
         self.prog = prog
@@ -69,35 +67,35 @@ class Frames(object):
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
             contents = {}
-        _logger.debug("new frame! %s" % len(self.fs))
+        utils.logger.debug("new frame! %s" % len(self.fs))
         self.fs.append(Frame(self.automaton.phases(), contents))
         self.push_cache.append({p: set() for p in self.automaton.phases()})
 
         self.push_forward_frames()
 
-        with utils.LogTag(_logger, 'current-frames-after-push', lvl=logging.DEBUG):
+        with utils.LogTag(utils.logger, 'current-frames-after-push', lvl=logging.DEBUG):
             self.print_frames(lvl=logging.DEBUG)
 
         self.establish_safety()
 
-        with utils.LogTag(_logger, 'current-frames-after-safety', lvl=logging.DEBUG):
+        with utils.LogTag(utils.logger, 'current-frames-after-safety', lvl=logging.DEBUG):
             self.print_frames(lvl=logging.DEBUG)
 
         self.simplify()
 
-        with utils.LogTag(_logger, 'current-frames-after-simplify', lvl=logging.DEBUG):
+        with utils.LogTag(utils.logger, 'current-frames-after-simplify', lvl=logging.DEBUG):
             self.print_frames(lvl=logging.DEBUG)
 
 
 
-    @utils.log_start_end_xml(_logger)
+    @utils.log_start_end_xml(utils.logger)
     def establish_safety(self) -> None:
         self.assert_inductive_trace()
 
         frame_no = len(self.fs) - 1
 
         while True:
-            with utils.LogTag(_logger, 'establish-safety-attempt'):
+            with utils.LogTag(utils.logger, 'establish-safety-attempt'):
                 res = self._get_some_cex_to_safety()
 
                 if res is None:
@@ -115,10 +113,10 @@ class Frames(object):
             res = logic.check_implication(self.solver, f.summary_of(p), (inv.expr for inv in phases.phase_safety(p)))
 
             if res is None:
-                _logger.debug("Frontier frame phase %s implies safety, summary is %s" % (p.name(), f.summary_of(p)))
+                utils.logger.debug("Frontier frame phase %s implies safety, summary is %s" % (p.name(), f.summary_of(p)))
                 return None
 
-            _logger.debug("Frontier frame phase %s cex to safety" % p.name())
+            utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
             mod = Model(self.prog, z3m, self.solver, [KEY_ONE])
             diag = mod.as_diagram()
@@ -138,10 +136,10 @@ class Frames(object):
                     edges_from_phase_matching_prog_trans = [t for t in transitions_from_phase
                                                                 if t.prog_transition_name() == trans.name]
                     if any(delta.precond is None for delta in edges_from_phase_matching_prog_trans):
-                        _logger.debug('transition %s is covered trivially by %s' % (trans.name, p.name()))
+                        utils.logger.debug('transition %s is covered trivially by %s' % (trans.name, p.name()))
                         continue
 
-                    _logger.debug('checking transition %s is covered by %s' % (trans.name, p.name()))
+                    utils.logger.debug('checking transition %s is covered by %s' % (trans.name, p.name()))
 
                     with self.solver:
                         self.solver.add(t.translate_transition(trans))
@@ -149,16 +147,16 @@ class Frames(object):
                                        for delta in edges_from_phase_matching_prog_trans)))
 
                         if self.solver.check() != z3.unsat:
-                            _logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
+                            utils.logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
                             mod = Model(self.prog, z3m, self.solver, [KEY_OLD, KEY_NEW])
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
 
-                        _logger.debug('transition %s is covered non-trivially by %s' % (trans.name, p.name()))
+                        utils.logger.debug('transition %s is covered non-trivially by %s' % (trans.name, p.name()))
                         continue
 
-                _logger.debug('all edges covered from phase %s' % p.name())
+                utils.logger.debug('all edges covered from phase %s' % p.name())
                 return None
 
         # TODO: also check edge covering
@@ -187,15 +185,15 @@ class Frames(object):
 
         f = self.fs[frame_no]
         while True:
-            with utils.LogTag(_logger, 'pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
-                _logger.debug('frame %s phase %s attempting to push %s' % (frame_no, p.name(), c))
+            with utils.LogTag(utils.logger, 'pushing-conjunct-attempt', lvl=logging.DEBUG, frame=str(frame_no), conj=str(c)):
+                utils.logger.debug('frame %s phase %s attempting to push %s' % (frame_no, p.name(), c))
 
                 res = self.clause_implied_by_transitions_from_frame(f, p, c)
                 if res is None:
-                    _logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
+                    utils.logger.debug('frame %s phase %s managed to push %s' % (frame_no, p.name(), c))
 
-                    if utils.args.smoke_test and _logger.isEnabledFor(logging.DEBUG):
-                        _logger.debug('jrw smoke testing...')
+                    if utils.args.smoke_test and utils.logger.isEnabledFor(logging.DEBUG):
+                        utils.logger.debug('jrw smoke testing...')
                         # TODO: phases
                         logic.check_bmc(self.solver, self.prog, c, frame_no + 1)
 
@@ -208,11 +206,11 @@ class Frames(object):
                 mod = Model(self.prog, m, self.solver, [KEY_OLD, KEY_NEW])
                 diag = mod.as_diagram(i=0)
 
-                if _logger.isEnabledFor(logging.DEBUG):
-                    _logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.pp()))
-                    # _logger.debug(str(mod))
+                if utils.logger.isEnabledFor(logging.DEBUG):
+                    utils.logger.debug('frame %s failed to immediately push %s due to transition %s' % (frame_no, c, t.pp()))
+                    # utils.logger.debug(str(mod))
                 if is_safety:
-                    _logger.debug('note: current clause is safety condition')
+                    utils.logger.debug('note: current clause is safety condition')
                     self.block(diag, frame_no, pre_phase, [(None, c), (t, diag)], safety_goal=True)
                 else:
                     if utils.args.block_may_cexs:
@@ -222,16 +220,16 @@ class Frames(object):
                     else:
                         break
 
-    @utils.log_start_end_xml(_logger, logging.DEBUG)
+    @utils.log_start_end_xml(utils.logger, logging.DEBUG)
     def push_forward_frames(self) -> None:
         self.assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
             if ((utils.args.push_frame_zero == 'if_trivial' and self.automaton.nontrivial) or \
                 (utils.args.push_frame_zero == 'never')) and i == 0:
                 continue
-            with utils.LogTag(_logger, 'pushing-frame', lvl=logging.DEBUG, i=str(i)):
+            with utils.LogTag(utils.logger, 'pushing-frame', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
-                    _logger.debug('pushing in frame %d phase %s' % (i, p.name()))
+                    utils.logger.debug('pushing in frame %d phase %s' % (i, p.name()))
                     self.push_phase_from_pred(i, f, p)
                     # self.assert_inductive_trace()
 
@@ -242,7 +240,7 @@ class Frames(object):
             return
 
         for i, f in enumerate(self.fs[:-1]):
-            with utils.LogTag(_logger, 'inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
+            with utils.LogTag(utils.logger, 'inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
                     for c in self.fs[i+1].summary_of(p):
                         res = self.clause_implied_by_transitions_from_frame(f, p, c, self._fresh_solver())
@@ -255,7 +253,7 @@ class Frames(object):
             if c in self.fs[i+1].summary_of(p) or c in self.push_cache[i][p]:
                 return
 
-            with utils.LogTag(_logger, 'pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
+            with utils.LogTag(utils.logger, 'pushing-conjunct', lvl=logging.DEBUG, frame=str(i), conj=str(c)):
                 self.push_conjunct(i, c, p, frame_old_count)
 
             self.push_cache[i][p].add(c)
@@ -274,7 +272,7 @@ class Frames(object):
     # or throwing an exception describing an abstract counterexample on failure.
     # If safety_goal is False, then no abstract counterexample is ever reported to user,
     # instead, CexFound() is returned to indicate the diagram could not be blocked.
-    @utils.log_start_end_xml(_logger, lvl=logging.DEBUG)
+    @utils.log_start_end_xml(utils.logger, lvl=logging.DEBUG)
     def block(
             self,
             diag: Diagram,
@@ -287,24 +285,24 @@ class Frames(object):
             trace = []
         if j == 0 or (j == 1 and self.valid_in_initial_frame(self.solver, p, diag) is not None):
             if safety_goal:
-                _logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') + str(diag) for t, diag in trace))
+                utils.logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') + str(diag) for t, diag in trace))
                 raise Exception('abstract counterexample')
             else:
-                if _logger.isEnabledFor(logging.DEBUG):
-                    _logger.debug('failed to block diagram')
-                    # _logger.debug(str(diag))
+                if utils.logger.isEnabledFor(logging.DEBUG):
+                    utils.logger.debug('failed to block diagram')
+                    # utils.logger.debug(str(diag))
                 return CexFound()
 
         # print fs
         while True:
-            if _logger.isEnabledFor(logging.DEBUG):
-                _logger.debug('blocking diagram in frame %s' % j)
-                _logger.debug(str(diag))
+            if utils.logger.isEnabledFor(logging.DEBUG):
+                utils.logger.debug('blocking diagram in frame %s' % j)
+                utils.logger.debug(str(diag))
 
                 self.print_frame(j-1, lvl=logging.DEBUG)
             res, x = self.find_predecessor(self[j-1], p, diag)
             if res == z3.unsat:
-                _logger.debug('no predecessor: blocked!')
+                utils.logger.debug('no predecessor: blocked!')
                 # assert self.clause_implied_by_transitions_from_frame(self[j-1], p, syntax.Not(diag.to_ast())) is None
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
@@ -319,9 +317,9 @@ class Frames(object):
                 return ans
             trace.pop()
 
-        if _logger.isEnabledFor(logging.DEBUG) and core is not None:
-            _logger.debug('core %s' % core)
-            _logger.debug('unminimized diag\n%s' % diag)
+        if utils.logger.isEnabledFor(logging.DEBUG) and core is not None:
+            utils.logger.debug('core %s' % core)
+            utils.logger.debug('unminimized diag\n%s' % diag)
 
         diag.minimize_from_core(core)
         diag.generalize(self.solver, self.prog,
@@ -330,14 +328,14 @@ class Frames(object):
 
         e = syntax.Not(diag.to_ast())
 
-        if _logger.isEnabledFor(logging.DEBUG):
-            _logger.debug('adding new clause to frames 0 through %d phase %s' % (j, p.name()))
-        if _logger.isEnabledFor(logging.INFO):
-            _logger.info("[%d] %s" % (j, str(e)))
+        if utils.logger.isEnabledFor(logging.DEBUG):
+            utils.logger.debug('adding new clause to frames 0 through %d phase %s' % (j, p.name()))
+        if utils.logger.isEnabledFor(logging.INFO):
+            utils.logger.info("[%d] %s" % (j, str(e)))
 
         # assert self.clause_implied_by_transitions_from_frame(self.fs[j-1], p, syntax.Not(diag.to_ast())) is None
         self.add(p, e, j)
-        _logger.debug("Done blocking")
+        utils.logger.debug("Done blocking")
 
         return Blocked()
 
@@ -361,24 +359,24 @@ class Frames(object):
 
             assert res == z3.unsat
             uc = self.solver.unsat_core()
-            # if _logger.isEnabledFor(logging.DEBUG):
-            #     _logger.debug('uc')
-            #     _logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+            # if utils.logger.isEnabledFor(logging.DEBUG):
+            #     utils.logger.debug('uc')
+            #     utils.logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
-                # _logger.debug('assertions')
-                # _logger.debug(str(self.solver.assertions()))
+                # utils.logger.debug('assertions')
+                # utils.logger.debug(str(self.solver.assertions()))
 
             res = self.solver.check([diag.trackers[i] for i in core])
             if res == z3.unsat:
-                _logger.debug('augment_core_for_init: existing core sufficient')
+                utils.logger.debug('augment_core_for_init: existing core sufficient')
                 return
 
             for x in sorted(uc, key=lambda y: y.decl().name()):
                 assert isinstance(x, z3.ExprRef)
                 core.add(int(x.decl().name()[1:]))
-            if _logger.isEnabledFor(logging.DEBUG):
-                _logger.debug('augment_core_for_init: new core')
-                _logger.debug(str(sorted(core)))
+            if utils.logger.isEnabledFor(logging.DEBUG):
+                utils.logger.debug('augment_core_for_init: new core')
+                utils.logger.debug(str(sorted(core)))
 
     def add(self, p: Phase, e: Expr, depth: Optional[int]=None) -> None:
         self.counter += 1
@@ -386,18 +384,18 @@ class Frames(object):
         if depth is None:
             depth = len(self)
 
-        if utils.args.smoke_test and _logger.isEnabledFor(logging.DEBUG):
-            _logger.debug('smoke testing at depth %s...' % (depth,))
+        if utils.args.smoke_test and utils.logger.isEnabledFor(logging.DEBUG):
+            utils.logger.debug('smoke testing at depth %s...' % (depth,))
             logic.check_bmc(self.solver, self.prog, e, depth)
 
         self.assert_inductive_trace()
         for i in range(depth+1):
             self[i].strengthen(p, e)
-            _logger.debug("%d %s %s" % (i, p.name(), e))
+            utils.logger.debug("%d %s %s" % (i, p.name(), e))
             self.assert_inductive_trace()
         self.assert_inductive_trace()
 
-    @utils.log_start_end_xml(_logger, lvl=logging.DEBUG)
+    @utils.log_start_end_xml(utils.logger, lvl=logging.DEBUG)
     def find_predecessor(
             self,
             pre_frame: Frame,
@@ -419,7 +417,7 @@ class Frames(object):
                 for src in self._predecessor_precedence(current_phase, list(transitions_into.keys())):
                     transitions = transitions_into[src]
                     assert transitions
-                    _logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
+                    utils.logger.debug("check predecessor of %s from %s by %s" % (current_phase.name(), src.name(), transitions))
                     (sat_res, pre_diag) = self.find_predecessor_from_src_phase(t, pre_frame, src, transitions, diag, core)
                     if sat_res == z3.unsat:
                         continue
@@ -466,32 +464,32 @@ class Frames(object):
                         res = solver.check(diag.trackers)
 
                         if res != z3.unsat:
-                            _logger.debug('found predecessor via %s' % trans.name)
+                            utils.logger.debug('found predecessor via %s' % trans.name)
                             m = Model(self.prog, solver.model(diag.trackers), self.solver, [KEY_OLD, KEY_NEW])
-                            # if _logger.isEnabledFor(logging.DEBUG):
-                            #     _logger.debug(str(m))
+                            # if utils.logger.isEnabledFor(logging.DEBUG):
+                            #     utils.logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
                         elif utils.args.use_z3_unsat_cores:
                             assert core is not None
                             uc = solver.unsat_core()
-                            # if _logger.isEnabledFor(logging.DEBUG):
-                            #     _logger.debug('uc')
-                            #     _logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+                            # if utils.logger.isEnabledFor(logging.DEBUG):
+                            #     utils.logger.debug('uc')
+                            #     utils.logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
 
-                                # _logger.debug('assertions')
-                                # _logger.debug(str(solver.assertions()))
+                                # utils.logger.debug('assertions')
+                                # utils.logger.debug(str(solver.assertions()))
 
                             res = solver.check([diag.trackers[i] for i in core])
                             if res == z3.unsat:
-                                _logger.debug('but existing core sufficient, skipping')
+                                utils.logger.debug('but existing core sufficient, skipping')
                                 continue
 
                             for x in sorted(uc, key=lambda y: y.decl().name()):
                                 assert isinstance(x, z3.ExprRef)
                                 core.add(int(x.decl().name()[1:]))
-                            if _logger.isEnabledFor(logging.DEBUG):
-                                _logger.debug('new core')
-                                _logger.debug(str(sorted(core)))
+                            if utils.logger.isEnabledFor(logging.DEBUG):
+                                utils.logger.debug('new core')
+                                utils.logger.debug(str(sorted(core)))
 
                 return (z3.unsat, None)
 
@@ -505,7 +503,7 @@ class Frames(object):
         if solver is None:
             solver = self.solver
         for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
-            _logger.debug("check transition from %s by %s" % (src.name(), str(list(transitions))))
+            utils.logger.debug("check transition from %s by %s" % (src.name(), str(list(transitions))))
 
             ans = logic.check_two_state_implication_along_transitions(solver, self.prog,
                                                                       pre_frame.summary_of(src), transitions,
@@ -522,7 +520,7 @@ class Frames(object):
             f_minus_c = [x for x in f.l if x in f.s and x is not c]
             if c not in phases.phase_safety(p) and \
                logic.check_implication(self.solver, f_minus_c, [c]) is None:
-                _logger.debug('removed %s' % c)
+                utils.logger.debug('removed %s' % c)
                 f.s.remove(c)
             else:
                 l.append(c)
@@ -530,20 +528,20 @@ class Frames(object):
         f.l = l
 
 
-    @utils.log_start_end_xml(_logger)
+    @utils.log_start_end_xml(utils.logger)
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
             for p in self.automaton.phases():
-                with utils.LogTag(_logger, 'simplify', frame=str(i)):
-                    _logger.debug('simplifying frame %d, pred %s' % (i, p.name()))
+                with utils.LogTag(utils.logger, 'simplify', frame=str(i)):
+                    utils.logger.debug('simplifying frame %d, pred %s' % (i, p.name()))
                     self._simplify_summary(f.summary_of(p), p)
 
 
     def print_frame(self, i: int, lvl: int=logging.INFO) -> None:
         f = self.fs[i]
-        with utils.LogTag(_logger, 'frame', i=str(i)):
+        with utils.LogTag(utils.logger, 'frame', i=str(i)):
             for p in self.automaton.phases():
-                _logger.log_list(lvl, ['frame %d of %s is' % (i, p.name())] + [str(x) for x in f.summary_of(p)])
+                utils.logger.log_list(lvl, ['frame %d of %s is' % (i, p.name())] + [str(x) for x in f.summary_of(p)])
 
     def print_frames(self, lvl: int=logging.INFO) -> None:
         for i, _ in enumerate(self.fs):
@@ -552,18 +550,18 @@ class Frames(object):
     def search(self) -> Frame:
         while True:
             n = len(self) - 1
-            with utils.LogTag(_logger, 'frame', lvl=logging.INFO, n=str(n)):
-                with utils.LogTag(_logger, 'current-frames', lvl=logging.INFO):
+            with utils.LogTag(utils.logger, 'frame', lvl=logging.INFO, n=str(n)):
+                with utils.LogTag(utils.logger, 'current-frames', lvl=logging.INFO):
                     self.print_frames()
 
-                _logger.info('considering frame %s' % (len(self) - 1,))
+                utils.logger.info('considering frame %s' % (len(self) - 1,))
 
                 f = self.get_inductive_frame()
                 if f is not None:
-                    _logger.always_print('frame is safe and inductive. done!')
+                    utils.logger.always_print('frame is safe and inductive. done!')
                     for p in self.automaton.phases():
-                        _logger.log_list(utils.MyLogger.ALWAYS_PRINT, ['summary of %s: ' % p.name()] + [str(x) for x in f.summary_of(p)])
+                        utils.logger.log_list(utils.MyLogger.ALWAYS_PRINT, ['summary of %s: ' % p.name()] + [str(x) for x in f.summary_of(p)])
                     return f
 
-                _logger.info('frame is safe but not inductive. starting new frame')
+                utils.logger.info('frame is safe but not inductive. starting new frame')
                 self.new_frame()

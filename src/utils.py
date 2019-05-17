@@ -150,6 +150,7 @@ class LogTag(object):
         if args.log_xml and self.logger.isEnabledFor(self.lvl):
             self.logger.rawlog(MyLogger.ALWAYS_PRINT, '</%s>' % self.name)
 
+logger = MyLogger(logging.getLogger('mypyvy'), datetime.now())
 
 FuncType = Callable[..., Any]
 F = TypeVar('F', bound=FuncType)

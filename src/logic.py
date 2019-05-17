@@ -22,19 +22,17 @@ KEY_NEW = 'new'
 KEY_OLD = 'old'
 TRANSITION_INDICATOR = 'tid'
 
-_logger = utils.MyLogger(logging.getLogger(__file__), datetime.now())
-
 # useful for debugging
 def verbose_print_z3_model(m: z3.ModelRef) -> None:
-    _logger.always_print('')
+    utils.logger.always_print('')
     out = io.StringIO()
     fmt = z3.Formatter()  # type: ignore
     fmt.max_args = 10000
-    _logger.always_print(str(fmt.max_args))
+    utils.logger.always_print(str(fmt.max_args))
     pp = z3.PP()  # type: ignore
     pp.max_lines = 10000
     pp(out, fmt(m))
-    _logger.always_print(out.getvalue())
+    utils.logger.always_print(out.getvalue())
     assert False
 
 def check_unsat(
@@ -53,13 +51,13 @@ def check_unsat(
         if res == z3.sat:
             m = Model(prog, s.model(), s, keys)
 
-            _logger.always_print('')
+            utils.logger.always_print('')
             if not utils.args.no_print_counterexample:
-                _logger.always_print(str(m))
+                utils.logger.always_print(str(m))
         else:
             assert res == z3.unknown
-            _logger.always_print('unknown!')
-            _logger.always_print('reason unknown: ' + s.reason_unknown())
+            utils.logger.always_print('unknown!')
+            utils.logger.always_print('reason unknown: ' + s.reason_unknown())
         for tok, msg in errmsgs:
             utils.print_error(tok, msg)
     else:
@@ -68,15 +66,15 @@ def check_unsat(
             time_msg = ''
         else:
             time_msg = ' (%s)' % (datetime.now() - start, )
-        _logger.always_print('ok.%s' % (time_msg,))
+        utils.logger.always_print('ok.%s' % (time_msg,))
 
         sys.stdout.flush()
 
     return res
 
-@utils.log_start_end_xml(_logger, logging.INFO)
+@utils.log_start_end_xml(utils.logger, logging.INFO)
 def check_init(s: Solver, prog: Program, safety_only: bool = False) -> None:
-    _logger.always_print('checking init:')
+    utils.logger.always_print('checking init:')
 
     t = s.get_translator(KEY_ONE)
 
@@ -94,7 +92,7 @@ def check_init(s: Solver, prog: Program, safety_only: bool = False) -> None:
                     msg = ' on line %d' % inv.tok.lineno
                 else:
                     msg = ''
-                _logger.always_print('  implies invariant%s... ' % msg, end='')
+                utils.logger.always_print('  implies invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
                 check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
@@ -113,7 +111,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
                trans.name not in utils.args.check_transition:
                 continue
 
-            _logger.always_print('checking transation %s:' % (trans.name,))
+            utils.logger.always_print('checking transation %s:' % (trans.name,))
 
             with s:
                 s.add(t.translate_transition(trans))
@@ -131,7 +129,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
                             msg = ' on line %d' % inv.tok.lineno
                         else:
                             msg = ''
-                        _logger.always_print('  preserves invariant%s... ' % msg, end='')
+                        utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
                         sys.stdout.flush()
 
                         check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s'
@@ -152,9 +150,9 @@ def check_implication(
         for e in concs:
             with s:
                 s.add(z3.Not(t.translate_expr(e)))
-                # if _logger.isEnabledFor(logging.DEBUG):
-                #     _logger.debug('assertions')
-                #     _logger.debug(str(s.assertions()))
+                # if utils.logger.isEnabledFor(logging.DEBUG):
+                #     utils.logger.debug('assertions')
+                #     utils.logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
                     return s.model()
@@ -178,9 +176,9 @@ def check_two_state_implication_all_transitions(
             with s:
                 s.add(t.translate_transition(trans))
 
-                # if _logger.isEnabledFor(logging.DEBUG):
-                #     _logger.debug('assertions')
-                #     _logger.debug(str(s.assertions()))
+                # if utils.logger.isEnabledFor(logging.DEBUG):
+                #     utils.logger.debug('assertions')
+                #     utils.logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
                     return s.model(), trans
@@ -211,9 +209,9 @@ def assert_any_transition(s: Solver, prog: Program, uid: str,
 def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
     keys = ['state%2d' % i for i in range(depth + 1)]
 
-    if _logger.isEnabledFor(logging.DEBUG):
-        _logger.debug('check_bmc property: %s' % safety)
-        _logger.debug('check_bmc depth: %s' % depth)
+    if utils.logger.isEnabledFor(logging.DEBUG):
+        utils.logger.debug('check_bmc property: %s' % safety)
+        utils.logger.debug('check_bmc depth: %s' % depth)
 
     for k in keys:
         s.get_translator(k)  # initialize all the keys before pushing a solver stack frame
@@ -229,9 +227,9 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
         for i in range(depth):
             assert_any_transition(s, prog, str(i), keys[i + 1], keys[i], allow_stutter=True)
 
-        # if _logger.isEnabledFor(logging.DEBUG):
-        #     _logger.debug('assertions')
-        #     _logger.debug(str(s.assertions()))
+        # if utils.logger.isEnabledFor(logging.DEBUG):
+        #     utils.logger.debug('assertions')
+        #     utils.logger.debug(str(s.assertions()))
 
         check_unsat([(None, 'found concrete trace violating safety')],
                     s, prog, keys)
@@ -670,8 +668,8 @@ class Diagram(object):
 
     def smoke(self, s: Solver, prog: Program, depth: Optional[int]) -> None:
         if utils.args.smoke_test and depth is not None:
-            _logger.debug('smoke testing at depth %s...' % (depth,))
-            _logger.debug(str(self))
+            utils.logger.debug('smoke testing at depth %s...' % (depth,))
+            utils.logger.debug(str(self))
             check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
 
     # TODO: merge similarities with clause_implied_by_transitions_from_frame...
@@ -689,18 +687,18 @@ class Diagram(object):
             return self.valid_in_init(s, prog)
         return None
 
-    @utils.log_start_end_xml(_logger)
-    @utils.log_start_end_time(_logger)
+    @utils.log_start_end_xml(utils.logger)
+    @utils.log_start_end_time(utils.logger)
     def generalize(self, s: Solver, prog: Program, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                    propagate_init: bool,
                    depth: Optional[int] = None) -> None:
-        if _logger.isEnabledFor(logging.DEBUG):
-            _logger.debug('generalizing diagram')
-            _logger.debug(str(self))
-            with utils.LogTag(_logger, 'previous-frame', lvl=logging.DEBUG):
+        if utils.logger.isEnabledFor(logging.DEBUG):
+            utils.logger.debug('generalizing diagram')
+            utils.logger.debug(str(self))
+            with utils.LogTag(utils.logger, 'previous-frame', lvl=logging.DEBUG):
                 for p in f.phases():
-                    _logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
+                    utils.logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
                                      [str(x) for x in f.summary_of(p)])
 
         d: _RelevantDecl
@@ -711,7 +709,7 @@ class Diagram(object):
 
         self.smoke(s, prog, depth)
 
-        with utils.LogTag(_logger, 'eliminating-conjuncts', lvl=logging.DEBUG):
+        with utils.LogTag(utils.logger, 'eliminating-conjuncts', lvl=logging.DEBUG):
             for d in itertools.chain(I, R, C, F):
                 if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                     continue
@@ -719,8 +717,8 @@ class Diagram(object):
                     res = self.check_valid_in_phase_from_frame(
                         s, prog, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
-                    if _logger.isEnabledFor(logging.DEBUG):
-                        _logger.debug('eliminated all conjuncts from declaration %s' % d)
+                    if utils.logger.isEnabledFor(logging.DEBUG):
+                        utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
                     self.remove_clause(d)
                     self.smoke(s, prog, depth)
                     continue
@@ -736,8 +734,8 @@ class Diagram(object):
                         res = self.check_valid_in_phase_from_frame(
                             s, prog, f, transitions_to_grouped_by_src, propagate_init)
                     if res is None:
-                        if _logger.isEnabledFor(logging.DEBUG):
-                            _logger.debug(f'eliminated all negative conjuncts from decl {d}')
+                        if utils.logger.isEnabledFor(logging.DEBUG):
+                            utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
                         self.remove_clause(d, cs)
                         self.smoke(s, prog, depth)
 
@@ -746,28 +744,28 @@ class Diagram(object):
                     res = self.check_valid_in_phase_from_frame(
                         s, prog, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
-                    if _logger.isEnabledFor(logging.DEBUG):
-                        _logger.debug('eliminated clause %s' % c)
+                    if utils.logger.isEnabledFor(logging.DEBUG):
+                        utils.logger.debug('eliminated clause %s' % c)
                     self.remove_clause(d, j)
                     self.smoke(s, prog, depth)
-    #            elif _logger.isEnabledFor(logging.DEBUG):
+    #            elif utils.logger.isEnabledFor(logging.DEBUG):
     #
-    #                _logger.debug('failed to eliminate clause %s' % c)
-    #                _logger.debug('from diagram %s' % self)
+    #                utils.logger.debug('failed to eliminate clause %s' % c)
+    #                utils.logger.debug('from diagram %s' % self)
     #
     #                if isinstance(res, tuple):
     #                    m, t = res
-    #                    _logger.debug('because of transition %s' % t.name)
-    #                    _logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
+    #                    utils.logger.debug('because of transition %s' % t.name)
+    #                    utils.logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
     #                else:
-    #                    _logger.debug('because the diagram is satisfiable in the initial state')
-    #                    _logger.debug('and model %s' % Model(prog, m, KEY_ONE))
+    #                    utils.logger.debug('because the diagram is satisfiable in the initial state')
+    #                    utils.logger.debug('and model %s' % Model(prog, m, KEY_ONE))
 
         self.prune_unused_vars()
 
-        if _logger.isEnabledFor(logging.DEBUG):
-            _logger.debug('generalized diag')
-            _logger.debug(str(self))
+        if utils.logger.isEnabledFor(logging.DEBUG):
+            utils.logger.debug('generalized diag')
+            utils.logger.debug(str(self))
 
 class Model(object):
     def __init__(
@@ -873,7 +871,7 @@ class Model(object):
         return ans
 
     def read_out(self) -> None:
-        # _logger.debug('read_out')
+        # utils.logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
@@ -883,10 +881,10 @@ class Model(object):
             assert sort is not None
             univ = self.z3model.get_universe(z3sort)
             self.univs[sort] = list(sorted(rename(str(x)) for x in univ))
-            # if _logger.isEnabledFor(logging.DEBUG):
-            #     _logger.debug(str(z3sort))
+            # if utils.logger.isEnabledFor(logging.DEBUG):
+            #     utils.logger.debug(str(z3sort))
             #     for x in self.univs[sort]:
-            #         _logger.debug('  ' + x)
+            #         utils.logger.debug('  ' + x)
 
         RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
         CT = Dict[ConstantDecl, str]

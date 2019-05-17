@@ -18,8 +18,6 @@ import utils
 
 import pd
 
-_logger = utils.MyLogger(logging.getLogger(__file__), datetime.now())
-
 def get_safety(prog: Program) -> List[Expr]:
     if utils.args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
@@ -35,8 +33,8 @@ def get_safety(prog: Program) -> List[Expr]:
     return safety
 
 
-@utils.log_start_end_xml(_logger, logging.INFO)
-@utils.log_start_end_time(_logger, logging.INFO)
+@utils.log_start_end_xml(utils.logger, logging.INFO)
+@utils.log_start_end_time(utils.logger, logging.INFO)
 def do_updr(s: Solver, prog: Program) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
@@ -56,11 +54,11 @@ def debug_tokens(filename: str) -> None:
         tok = l.token()
         if not tok:
             break      # No more input
-        _logger.always_print(str(tok))
+        utils.logger.always_print(str(tok))
 
 
 def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
-    _logger.always_print('checking automaton init:')
+    utils.logger.always_print('checking automaton init:')
 
     t = s.get_translator(KEY_ONE)
 
@@ -81,28 +79,28 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
                     msg = ' on line %d' % inv.tok.lineno
                 else:
                     msg = ''
-                _logger.always_print('  implies phase invariant%s... ' % msg, end='')
+                utils.logger.always_print('  implies phase invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
                 logic.check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, prog, [KEY_ONE])
 
 def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) -> None:
-    _logger.always_print('checking automaton edge covering:')
+    utils.logger.always_print('checking automaton edge covering:')
 
     t = s.get_translator(KEY_NEW, KEY_OLD)
 
     for phase in a.phases():
-        _logger.always_print('  checking phase %s:' % phase.name)
+        utils.logger.always_print('  checking phase %s:' % phase.name)
         with s:
             for inv in phase.invs():
                 s.add(t.translate_expr(inv.expr, old=True))
 
             for trans in prog.transitions():
                 if any(delta.transition == trans.name and delta.precond is None for delta in phase.transitions()):
-                    _logger.always_print('    transition %s is covered trivially.' % trans.name)
+                    utils.logger.always_print('    transition %s is covered trivially.' % trans.name)
                     continue
 
-                _logger.always_print('    checking transition %s is covered... ' % trans.name, end='')
+                utils.logger.always_print('    checking transition %s is covered... ' % trans.name, end='')
 
                 with s:
                     s.add(t.translate_transition(trans))
@@ -116,12 +114,12 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
 
 
 def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) -> None:
-    _logger.always_print('checking automaton inductiveness:')
+    utils.logger.always_print('checking automaton inductiveness:')
 
     t = s.get_translator(KEY_NEW, KEY_OLD)
 
     for phase in a.phases():
-        _logger.always_print('  checking phase %s:' % phase.name)
+        utils.logger.always_print('  checking phase %s:' % phase.name)
 
         with s:
             for inv in phase.invs():
@@ -135,7 +133,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                 assert target is not None
 
                 trans_pretty = '(%s, %s)' % (trans.name, str(precond) if (precond is not None) else 'true')
-                _logger.always_print('    checking transition: %s' % trans_pretty)
+                utils.logger.always_print('    checking transition: %s' % trans_pretty)
 
                 with s:
                     s.add(t.translate_transition(trans, precond=precond))
@@ -147,7 +145,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                                 msg = ' on line %d' % inv.tok.lineno
                             else:
                                 msg = ''
-                            _logger.always_print('      preserves invariant%s... ' % msg, end='')
+                            utils.logger.always_print('      preserves invariant%s... ' % msg, end='')
                             sys.stdout.flush()
 
                             logic.check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
@@ -155,7 +153,7 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                                                (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
                                               s, prog, [KEY_OLD, KEY_NEW])
 
-@utils.log_start_end_time(_logger, logging.INFO)
+@utils.log_start_end_time(utils.logger, logging.INFO)
 def verify(s: Solver, prog: Program) -> None:
     old_count = utils.error_count
     a = prog.the_automaton()
@@ -170,32 +168,32 @@ def verify(s: Solver, prog: Program) -> None:
         logic.check_transitions(s, prog)
 
     if utils.error_count == old_count:
-        _logger.always_print('all ok!')
+        utils.logger.always_print('all ok!')
     else:
-        _logger.always_print('program has errors.')
+        utils.logger.always_print('program has errors.')
 
 def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
     check_automaton_init(s, prog, a)
     check_automaton_inductiveness(s, prog, a)
     check_automaton_edge_covering(s, prog, a)
 
-@utils.log_start_end_time(_logger)
+@utils.log_start_end_time(utils.logger)
 def bmc(s: Solver, prog: Program) -> None:
     safety = syntax.And(*get_safety(prog))
 
     n = utils.args.depth
 
-    _logger.always_print('bmc checking the following property to depth %d' % n)
-    _logger.always_print('  ' + str(safety))
+    utils.logger.always_print('bmc checking the following property to depth %d' % n)
+    utils.logger.always_print('  ' + str(safety))
 
     start = datetime.now()
 
     logic.check_bmc(s, prog, safety, n)
 
 
-@utils.log_start_end_time(_logger)
+@utils.log_start_end_time(utils.logger)
 def theorem(s: Solver, prog: Program) -> None:
-    _logger.always_print('checking theorems:')
+    utils.logger.always_print('checking theorems:')
 
     for th in prog.theorems():
         if th.twostate:
@@ -212,7 +210,7 @@ def theorem(s: Solver, prog: Program) -> None:
         else:
             msg = ''
 
-        _logger.always_print(' theorem%s... ' % msg, end='')
+        utils.logger.always_print(' theorem%s... ' % msg, end='')
         sys.stdout.flush()
 
         with s:
@@ -252,7 +250,7 @@ def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, 
 
 def trace(s: Solver, prog: Program) -> None:
     if len(list(prog.traces())) > 0:
-        _logger.always_print('finding traces:')
+        utils.logger.always_print('finding traces:')
 
     for trace in prog.traces():
         n_states = len(list(trace.transitions())) + 1
@@ -440,12 +438,12 @@ def main() -> None:
     else:
         fmt = '%(filename)s:%(lineno)d: %(message)s'
 
-    _logger.setLevel(getattr(logging, utils.args.log.upper(), None))
+    utils.logger.setLevel(getattr(logging, utils.args.log.upper(), None))
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.terminator = ''
     handler.setFormatter(MyFormatter(fmt))
     logging.root.addHandler(handler)
-    # _logger.addHandler(handler)
+    # utils.logger.addHandler(handler)
 
     if utils.args.key_prefix is not None:
         global KEY_ONE
@@ -456,23 +454,21 @@ def main() -> None:
         KEY_NEW = utils.args.key_prefix + '_' + KEY_NEW
         KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
 
-    with utils.LogTag(_logger, 'main', lvl=logging.INFO):
+    with utils.LogTag(utils.logger, 'main', lvl=logging.INFO):
         if not utils.args.no_print_cmdline:
-            _logger.always_print(' '.join([sys.executable] + sys.argv))
-            # TODO: the following should probably be _logger.info once it works again
-            _logger.always_print('Running mypyvy with the following options:')
+            utils.logger.info(' '.join([sys.executable] + sys.argv))
+            utils.logger.info('Running mypyvy with the following options:')
             for k, v in sorted(vars(utils.args).items()):
-                _logger.always_print(f'    {k} = {v!r}')
-            _logger.always_print
+                utils.logger.info(f'    {k} = {v!r}')
 
-        _logger.info('setting seed to %d' % utils.args.seed)
+        utils.logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)
 
-        # _logger.info('enable z3 macro finder')
+        # utils.logger.info('enable z3 macro finder')
         # z3.set_param('smt.macro_finder', True)
 
         if utils.args.timeout is not None:
-            _logger.info('setting z3 timeout to %s' % utils.args.timeout)
+            utils.logger.info('setting z3 timeout to %s' % utils.args.timeout)
             z3.set_param('timeout', utils.args.timeout)
 
         pre_parse_error_count = utils.error_count
@@ -481,19 +477,19 @@ def main() -> None:
             prog = parse_program(f.read(), force_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
 
         if utils.error_count > pre_parse_error_count:
-            _logger.always_print('program has syntax errors.')
+            utils.logger.always_print('program has syntax errors.')
             sys.exit(1)
 
         if utils.args.print_program_repr:
-            _logger.always_print(repr(prog))
+            utils.logger.always_print(repr(prog))
         if utils.args.print_program:
-            _logger.always_print(str(prog))
+            utils.logger.always_print(str(prog))
 
         pre_resolve_error_count = utils.error_count
 
         prog.resolve()
         if utils.error_count > pre_resolve_error_count:
-            _logger.always_print('program has resolution errors.')
+            utils.logger.always_print('program has resolution errors.')
             sys.exit(1)
 
         scope = prog.scope
@@ -509,7 +505,7 @@ def main() -> None:
 
         utils.args.main(s, prog)
 
-        _logger.info('total number of queries: %s' % s.nqueries)
+        utils.logger.info('total number of queries: %s' % s.nqueries)
 
         if utils.args.ipython:
             ipython(s, prog)
