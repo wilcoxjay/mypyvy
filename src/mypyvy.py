@@ -333,18 +333,18 @@ def parse_args(args: List[str]) -> argparse.Namespace:
     all_subparsers += pd.add_argparsers(subparsers)
 
     for s in all_subparsers:
-        s.add_argument('--forbid-parser-rebuild', action='store_true',
+        s.add_argument('--forbid-parser-rebuild', action=utils.YesNoAction, default=False,
                        help='force loading parser from disk (helps when running mypyvy from multiple processes)')
         s.add_argument('--log', default='warning', choices=['error', 'warning', 'info', 'debug'],
                        help='logging level')
-        s.add_argument('--log-time', action='store_true',
+        s.add_argument('--log-time', action=utils.YesNoAction, default=False,
                        help='make each log message include current time')
-        s.add_argument('--log-xml', action='store_true',
+        s.add_argument('--log-xml', action=utils.YesNoAction, default=False,
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
-        s.add_argument('--print-program-repr', action='store_true',
+        s.add_argument('--print-program-repr', action=utils.YesNoAction, default=False,
                        help='print a machine-readable representation of the program after parsing')
-        s.add_argument('--print-program', action='store_true',
+        s.add_argument('--print-program', action=utils.YesNoAction, default=False,
                        help='print the program after parsing')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -352,41 +352,37 @@ def parse_args(args: List[str]) -> argparse.Namespace:
                        help='search for models with minimal cardinality')
         s.add_argument('--timeout', type=int, default=None,
                        help='z3 timeout (milliseconds)')
-        s.add_argument('--exit-on-error', action='store_true',
+        s.add_argument('--exit-on-error', action=utils.YesNoAction, default=False,
                        help='exit after reporting first error')
-        s.add_argument('--ipython', action='store_true',
+        s.add_argument('--ipython', action=utils.YesNoAction, default=False,
                        help='run IPython with s and prog at the end')
-        s.add_argument('--error-filename-basename', action='store_true',
+        s.add_argument('--error-filename-basename', action=utils.YesNoAction, default=False,
                        help='print only the basename of the input file in error messages')
-        s.add_argument('--no-query-time', action='store_true',
-                       help='do not report how long various z3 queries take')
-        s.add_argument('--no-print-counterexample', action='store_true',
-                       help='do not print counterexamples')
-        s.add_argument('--no-print-cmdline', action='store_true',
-                       help='do not print the command line passed to mypyvy')
-
-
+        s.add_argument('--query-time', action=utils.YesNoAction, default=True,
+                       help='report how long various z3 queries take')
+        s.add_argument('--print-counterexample', action=utils.YesNoAction, default=True,
+                       help='print counterexamples')
+        s.add_argument('--print-cmdline', action=utils.YesNoAction, default=True,
+                       help='print the command line passed to mypyvy')
 
         # for diagrams:
-        s.add_argument('--dont-simplify-diagram', action='store_false', dest='simplify_diagram',
-                       help='in diagram generation, refrain from substituting existentially quantified variables that are equal to constants')
-        s.add_argument('--simple-conjuncts', action='store_true',
-                       help='substitute existentially quantified variables that are equal to constants')
+        s.add_argument('--simplify-diagram', action=utils.YesNoAction, default=True,
+                       help='in diagram generation, substitute existentially quantified variables that are equal to constants')
 
 
-    updr_subparser.add_argument('--dont-use-z3-unsat-cores', action='store_false', dest='use_z3_unsat_cores',
+    updr_subparser.add_argument('--use-z3-unsat-cores', action=utils.YesNoAction, default=True,
                                 help='generalize diagrams using brute force instead of unsat cores')
-    updr_subparser.add_argument('--smoke-test', action='store_true',
+    updr_subparser.add_argument('--smoke-test', action=utils.YesNoAction, default=False,
                                 help='(for debugging mypyvy itself) run bmc to confirm every conjunct added to a frame')
-    updr_subparser.add_argument('--assert-inductive-trace', action='store_true',
+    updr_subparser.add_argument('--assert-inductive-trace', action=utils.YesNoAction, default=False,
                                 help='(for debugging mypyvy itself) check that frames are always inductive')
 
-    updr_subparser.add_argument('--sketch', action='store_true',
+    updr_subparser.add_argument('--sketch', action=utils.YesNoAction, default=False,
                                 help='use sketched invariants as additional safety (currently only in automaton)')
 
-    updr_subparser.add_argument('--automaton', action='store_true',
+    updr_subparser.add_argument('--automaton', action=utils.YesNoAction, default=False,
                                 help='whether to run vanilla UPDR or phase UPDR')
-    updr_subparser.add_argument('--block-may-cexs', action='store_true',
+    updr_subparser.add_argument('--block-may-cexs', action=utils.YesNoAction, default=False,
                                 help="treat failures to push as additional proof obligations")
     updr_subparser.add_argument('--push-frame-zero', default='if_trivial', choices=['if_trivial', 'always', 'never'],
                                 help="push lemmas from the initial frame: always/never/if_trivial, the latter is when there is more than one phase")
@@ -429,7 +425,7 @@ def parse_program(input: str, force_rebuild: bool=False, filename: Optional[str]
     return p.parse(input=input, lexer=l, filename=filename)
 
 def main() -> None:
-    utils.args = parse_args(sys.argv[1:])
+    utils.args = cast(utils.MypyvyArgs, parse_args(sys.argv[1:]))
 
     if utils.args.log_xml:
         fmt = '%(message)s'
@@ -455,7 +451,7 @@ def main() -> None:
         KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
 
     with utils.LogTag(utils.logger, 'main', lvl=logging.INFO):
-        if not utils.args.no_print_cmdline:
+        if utils.args.print_cmdline:
             utils.logger.info(' '.join([sys.executable] + sys.argv))
             utils.logger.info('Running mypyvy with the following options:')
             for k, v in sorted(vars(utils.args).items()):

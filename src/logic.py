@@ -52,7 +52,7 @@ def check_unsat(
             m = Model(prog, s.model(), s, keys)
 
             utils.logger.always_print('')
-            if not utils.args.no_print_counterexample:
+            if utils.args.print_counterexample:
                 utils.logger.always_print(str(m))
         else:
             assert res == z3.unknown
@@ -62,7 +62,7 @@ def check_unsat(
             utils.print_error(tok, msg)
     else:
 
-        if utils.args.no_query_time:
+        if not utils.args.query_time:
             time_msg = ''
         else:
             time_msg = ' (%s)' % (datetime.now() - start, )
@@ -573,19 +573,10 @@ class Diagram(object):
             return z3.And(*z3conjs)
 
     def to_ast(self) -> Expr:
-        # TODO: remove this option on merge
-        if utils.args.simple_conjuncts:
-            e = syntax.And(*(c for _, _, c in self.conjuncts_simple()))
-            fv = e.free_ids()
-            vs = [v for v in self.binder.vs if v.name in fv]
-        else:
-            e = syntax.And(*(c for _, _, c in self.conjuncts()))
-            vs = self.binder.vs
+        e = syntax.And(*(c for _, _, c in self.conjuncts()))
+        vs = self.binder.vs
 
-        if len(vs) == 0:
-            return e
-        else:
-            return syntax.Exists(vs, e)
+        return syntax.Exists(vs, e)
 
     # TODO: can be removed? replaced with Frames.valid_in_initial_frame (YF)
     def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:

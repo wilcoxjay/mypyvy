@@ -13,7 +13,7 @@ import xml.sax
 import xml.sax.saxutils
 
 from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
-                   Any, Callable, cast
+                   Any, Callable, cast, Sequence
 
 
 T = TypeVar('T')
@@ -57,7 +57,42 @@ class OrderedSet(Generic[T], Iterable[T]):
 
 MySet = OrderedSet
 
-args: argparse.Namespace = cast(argparse.Namespace, None)  # ensure that args is always defined
+# Dummy class that is not used at run time. Allows us to statically declare and check
+# which options are available.
+class MypyvyArgs(object):
+    forbid_parser_rebuild: bool
+    log: str
+    log_time: bool
+    log_xml: bool
+    seed: int
+    print_program_repr: bool
+    print_program: bool
+    key_prefix: str
+    minimize_models: bool
+    timeout: int
+    exit_on_error: bool
+    ipython: bool
+    error_filename_basename: bool
+    query_time: bool
+    print_counterexample: bool
+    print_cmdline: bool
+    simplify_diagram: bool
+    use_z3_unsat_cores: bool
+    smoke_test: bool
+    assert_inductive_trace: bool
+    sketch: bool
+    block_may_cexs: bool
+    push_frame_zero: str
+    automaton: Any  # str or bool depending on updr vs. verify
+    check_transition: Sequence[str]
+    check_invariant: Sequence[str]
+    safety: str
+    depth: int
+    filename: str
+    sharp: bool
+    def main(self, solver: Any, prog: Any) -> None: ...
+
+args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
 
 Token = ply.lex.LexToken
 def clean_filename(filename: str) -> str:
