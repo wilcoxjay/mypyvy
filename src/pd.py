@@ -230,7 +230,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     reachable_states : Sequence[State] = ()
-    clauses : List[Expr] = list(itertools.chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction, TODO: really convert safety to CNF
+    clauses : List[Expr] = list(itertools.chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
     def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
         return sorted(
@@ -282,6 +282,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
             for m in unreachable:
                 new_clauses = as_clauses(Not(m.as_diagram(0).to_ast()))
                 print(new_clauses[0])
+                assert len(new_clauses) == 1
                 clauses.extend(new_clauses)
             print('='*80)
 
