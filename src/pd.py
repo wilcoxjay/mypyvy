@@ -106,6 +106,7 @@ def alpha_from_clause(s:Solver, states: Iterable[State] , top_clause:Expr) -> Se
     result: List[Expr] = []
     implied : Set[FrozenSet[Expr]] = set()
     P = list(powerset(literals))
+    # print(f'the top clause is {top_clause}')
     print(f'the powerset is of size {len(P)}')
     assert len(P) < 10**6, 'Really?'
     for lits in P:
@@ -146,7 +147,11 @@ def forward_explore(s: Solver,
         changes = False
 
         # check for initial states violating a
+        print('alpha is:')
+        for e in a:
+            print(f'  {e}')
         print(f'Checking if init implies everything ({len(a)} predicates)... ', end='')
+
         z3m = check_implication(s, inits, a)
         if z3m is not None:
             print('NO')
@@ -159,8 +164,8 @@ def forward_explore(s: Solver,
         else:
             print('YES')
 
-        # check for 1 transition from an initial state or a state in states
-        for precondition, p in product(chain([None], states), a):
+        # check for 1 transition from an initial state or a non-initial state in states
+        for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
             print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
                 s, prog,
@@ -207,6 +212,17 @@ def forward_explore_inv(s: Solver, prog: Program) -> None:
         print(x)
         print('-'*80)
 
+def dedup_equivalent_predicates(s: Solver, prog: Program, itr: Iterable[Expr]) -> Sequence[Expr]:
+    ans: List[Expr] = []
+    for x in itr:
+        for y in ans:
+            if (check_implication(s, [x], [y]) is None and
+                check_implication(s, [y], [x]) is None):
+                break
+        else:
+            ans.append(x)
+
+    return ans
 
 def repeated_houdini(s: Solver, prog: Program) -> str:
     '''The (proof side) repeated Houdini algorith, either sharp or not.
@@ -218,7 +234,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
     def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
         return sorted(
-            set(chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
+            dedup_equivalent_predicates(s, prog, chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
             key=lambda x: (len(str(x)),str(x))
         )
     def alpha_sharp(states: Iterable[State]) -> Sequence[Expr]:
@@ -265,7 +281,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
             print(f'Refining by {len(unreachable)} new clauses:')
             for m in unreachable:
                 new_clauses = as_clauses(Not(m.as_diagram(0).to_ast()))
-                print(new_clauses)
+                print(new_clauses[0])
                 clauses.extend(new_clauses)
             print('='*80)
 
