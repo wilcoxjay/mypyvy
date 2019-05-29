@@ -10,7 +10,7 @@ from itertools import product, chain, combinations
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet, Union
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -28,9 +28,9 @@ State = Model
 # function will not work on the conjunction of two universally quantified clauses.
 def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
     def ev(e: z3.ExprRef) -> bool:
-        ans = m.eval(e)
+        ans = m.eval(e)#, model_completion=True)
         assert z3.is_bool(ans)
-        assert z3.is_true(ans) or z3.is_false(ans), f'{m}\n{"="*80}\n{e}'
+        assert z3.is_true(ans) or z3.is_false(ans), f'{m}\n{"="*80}\n{e}\n{"="*80}\n{ans}'
         return bool(ans)
     if not isinstance(e, z3.QuantifierRef):
         return ev(e)
@@ -95,7 +95,110 @@ def check_two_state_implication(
     return cache[k]
 
 
-def alpha_from_clause(s:Solver, states: Iterable[State] , top_clause:Expr) -> Sequence[Expr]:
+class MapSolver(object):
+    def __init__(self, n: int):
+        """Initialization.
+             Args:
+            n: The number of constraints to map.
+        """
+        self.solver = z3.Solver()
+        self.n = n
+        self.all_n = set(range(n))  # used in complement fairly frequently
+
+    def next_seed(self) -> Optional[Set[int]]:
+        """Get the seed from the current model, if there is one.
+            Returns:
+            A seed as an array of 0-based constraint indexes.
+        """
+        if self.solver.check() == z3.unsat:
+            return None
+        seed = self.all_n.copy()  # default to all True for "high bias"
+        model = self.solver.model()
+        for x in model:
+            if z3.is_false(model[x]):
+                seed.remove(int(x.name()))
+        return set(seed)
+
+    def block_down(self, frompoint: Set[int]) -> None:
+        """Block down from a given set."""
+        comp = self.all_n - frompoint
+        self.solver.add(z3.Or(*(z3.Bool(str(i)) for i in comp)))
+
+    def block_up(self, frompoint: Set[int]) -> None:
+        """Block up from a given set."""
+        self.solver.add(z3.Or(*(z3.Not(z3.Bool(str(i))) for i in frompoint)))
+
+
+def marco(n: int, f: Callable[[Set[int]], bool]) -> Generator[Tuple[str,Set[int]], None, None]:
+    """Basic MUS/MCS enumeration, as a simple example."""
+    def shrink(seed: Set[int]) -> Set[int]:
+        assert f(seed)
+        current = set(seed)
+        for i in sorted(seed):
+            if i not in current:
+                assert False # this can happen once we have "unsat cores" from f
+                continue
+            if f(current - {i}):
+                current.remove(i)
+        return current
+
+    def grow(seed: Set[int]) -> Set[int]:
+        assert not f(seed)
+        current = seed
+        for i in sorted(set(range(n)) - set(seed)):
+            if not f(current | {i}):
+                current.add(i)
+        return current
+
+    msolver = MapSolver(n)
+    while True:
+        seed = msolver.next_seed()
+        if seed is None:
+           return
+        if not f(seed):
+           MSS = grow(seed)
+           yield ("MSS", MSS)
+           msolver.block_down(MSS)
+        else:
+           MUS = shrink(seed)
+           yield ("MUS", MUS)
+           msolver.block_up(MUS)
+
+
+def alpha_from_clause_marco(solver:Solver, states: Iterable[State] , top_clause:Expr) -> Sequence[Expr]:
+    # TODO: why can't top_clause be quantifier free?
+    assert isinstance(top_clause, QuantifierExpr)
+    assert isinstance(top_clause.body, NaryExpr)
+    assert top_clause.body.op == 'OR'
+    #assert set(top_clause.body.free_ids()) == set(v.name for v in top_clause.binder.vs)
+    literals = tuple(top_clause.body.args) # TODO: cannot sort sorted(top_clause.body.args)
+    variables = tuple(top_clause.binder.vs)
+    assert len(set(literals)) == len(literals)
+    n = len(literals)
+    print(f'the powerset is of size {2**n}', end='...\n')
+
+    def to_clause(s: Set[int]) -> Expr:
+        lits = [literals[i] for i in s]
+        vs = [v for v in variables if v.name in set(n for lit in lits for n in lit.free_ids())]
+        if len(vs) > 0:
+            return Forall(vs, Or(*lits))
+        else:
+            return Or(*lits)
+
+    def f(s: Set[int]) -> bool:
+        clause = to_clause(s)
+        return all(eval_in_state(solver, m, clause) for m in states)
+
+    result: List[Expr] = []
+    for k, v in marco(n, f):
+        if k == 'MUS':
+            result.append(to_clause(v))
+            print(f'  {len(result)}: {result[-1]}')
+    print(f'alpha is of size {len(result)}')
+    return result
+
+
+def alpha_from_clause(solver:Solver, states: Iterable[State] , top_clause:Expr) -> Sequence[Expr]:
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
@@ -118,11 +221,11 @@ def alpha_from_clause(s:Solver, states: Iterable[State] , top_clause:Expr) -> Se
             clause : Expr = Forall(vs, Or(*lits))
         else:
             clause = Or(*lits)
-        if all(eval_in_state(s, m, clause) for m in states):
-            # z3.is_true(m.z3model.eval(s.get_translator(m.keys[0]).translate_expr(clause))) for m in states):
+        if all(eval_in_state(solver, m, clause) for m in states):
             result.append(clause)
             implied.add(frozenset(lits))
     return result
+alpha_from_clause = alpha_from_clause_marco
 
 
 def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterable[Expr]) -> Sequence[Expr]:
@@ -147,7 +250,7 @@ def forward_explore(s: Solver,
         changes = False
 
         # check for initial states violating a
-        print('alpha is:')
+        print(f'a is ({len(a)} predicates):' if len(a) > 0 else 'a is true')
         for e in a:
             print(f'  {e}')
         print(f'Checking if init implies everything ({len(a)} predicates)... ', end='')
@@ -213,15 +316,18 @@ def forward_explore_inv(s: Solver, prog: Program) -> None:
         print('-'*80)
 
 def dedup_equivalent_predicates(s: Solver, prog: Program, itr: Iterable[Expr]) -> Sequence[Expr]:
+    ps = list(itr)
+    print(f'Deduping {len(ps)} predicates to...',end=' ')
+    sys.stdout.flush()
     ans: List[Expr] = []
-    for x in itr:
+    for x in ps:
         for y in ans:
-            if (check_implication(s, [x], [y]) is None and
-                check_implication(s, [y], [x]) is None):
+            if x == y:# or (check_implication(s, [x], [y], never_minimize=True) is None and
+                      #    check_implication(s, [y], [x], never_minimize=True) is None):
                 break
         else:
             ans.append(x)
-
+    print(f'{len(ans)} predicates')
     return ans
 
 def repeated_houdini(s: Solver, prog: Program) -> str:
@@ -272,18 +378,26 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
                     break
             else:
                 break
+        print(f'Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else 'Current inductive invariant is true')
+        for p in sorted(a, key=lambda x: len(str(x))):
+            print(p)
         if len(a) > 0 and check_implication(s, a, safety) is None:
-            print(f'Inductive invariant found with {len(a)} predicates:')
-            for p in sorted(a, key=lambda x: len(str(x))):
-                print(p)
+            print('Implies safety!')
             return 'SAFE'
         else:
-            print(f'Refining by {len(unreachable)} new clauses:')
+            new_clauses = []
             for m in unreachable:
-                new_clauses = as_clauses(Not(m.as_diagram(0).to_ast()))
-                print(new_clauses[0])
-                assert len(new_clauses) == 1
-                clauses.extend(new_clauses)
+                cs = as_clauses(Not(m.as_diagram(0).to_ast()))
+                assert len(cs) == 1
+                c = cs[0]
+                if c not in clauses:
+                    new_clauses.append(c)
+            print(f'Refining from {len(unreachable)} unreachable states which give {len(new_clauses)} new clauses:')
+            for c in new_clauses:
+                print(f'  {c}')
+            clauses.extend(new_clauses)
+            assert len(clauses) == len(set(clauses))
+            assert clauses == list(dedup_equivalent_predicates(s, prog, clauses))
             print('='*80)
 
 

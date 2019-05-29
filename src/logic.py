@@ -357,21 +357,6 @@ class Solver(object):
         # logger.debug(str(self.assertions()))
 
         with self:
-            # ODED: I changed this according to the comment below, it turned out to require a biger change, please review
-            # for s in m.sorts():
-            #     u = m.get_universe(s)
-            #     n = 1
-            #     while n < len(u):
-            #         with self:
-            #             self.add(self._cardinality_constraint(s, n))
-            #             res = self.check(assumptions)
-            #             if res == z3.sat:
-            #                 break
-            #         n += 1
-            #     if n < len(u): # TODO: ODED: I think this should not be conditioned, otherwise we may increase the cardinality of s when we minimize the next sort
-            #         self.add(self._cardinality_constraint(s, n))
-            # ODED: here's the fixed version that passes the tests (just removing the if above is incorrect, and caughty by make test)
-            # please review and if it's fine remove the commenet out code above
             for s in m.sorts():
                 for n in itertools.count(1):
                     with self:
@@ -380,30 +365,30 @@ class Solver(object):
                         if res == z3.sat:
                             break
                 self.add(self._cardinality_constraint(s, n))
-
-            # TODO: ODED: there's actually a similar problem here too,
-            # but I don't fix it now since there's anyway something
-            # funny happening with n < 2
-            for d in m.decls():
-                nm = d.name()
-                if nm.startswith(KEY_OLD) or nm.startswith(KEY_ONE):
-                    arity = d.arity()
-                    if arity == 1 and d.range() == z3.BoolSort():
-                        s = d.domain(0)
-                        u = m.get_universe(s)
-                        hi = sum(1 if m.eval(d(x)) else 0 for x in u)
-                        n = 1
-                        while n < hi and n < 2:  # hehe
-                            with self:
-                                self.add(self._relational_cardinality_constraint(d, n))
-                                res = self.check(assumptions)
-                                if res == z3.sat:
-                                    break
-                            n += 1
-                        if n < hi and n < 2:
-                            self.add(self._relational_cardinality_constraint(d, n))
-
             assert self.check(assumptions) == z3.sat
+
+            # # TODO: ODED: there's actually a similar problem here too,
+            # # but I don't fix it now since there's anyway something
+            # # funny happening with n < 2
+            # for d in m.decls():
+            #     nm = d.name()
+            #     if nm.startswith(KEY_OLD) or nm.startswith(KEY_ONE):
+            #         arity = d.arity()
+            #         if arity == 1 and d.range() == z3.BoolSort():
+            #             s = d.domain(0)
+            #             u = m.get_universe(s)
+            #             hi = sum(1 if m.eval(d(x)) else 0 for x in u)
+            #             n = 1
+            #             while n < hi and n < 2:  # hehe
+            #                 with self:
+            #                     self.add(self._relational_cardinality_constraint(d, n))
+            #                     res = self.check(assumptions)
+            #                     if res == z3.sat:
+            #                         break
+            #                 n += 1
+            #             if n < hi and n < 2:
+            #                 self.add(self._relational_cardinality_constraint(d, n))
+            # assert self.check(assumptions) == z3.sat
             m = self.z3solver.model()
             # logger.debug('finished with minimal model')
             # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
