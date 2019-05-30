@@ -35,9 +35,9 @@ bench:
 	time $(PYTHON) src/mypyvy.py updr $(MYPYVY_OPTS) $<
 
 pd:
-	time $(PYTHON) src/mypyvy.py pd-forward-explore $(MYPYVY_OPTS) examples/lockserv_cnf.pyv # ~2s
-	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp $(MYPYVY_OPTS) examples/lockserv.pyv # ~30s
-	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp $(MYPYVY_OPTS) examples/lockserv.pyv # ~5m
+	time $(PYTHON) src/mypyvy.py pd-forward-explore $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > /dev/null # ~2s
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null # ~30s
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null # ~5m
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
