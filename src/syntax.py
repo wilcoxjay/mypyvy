@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import functools
 import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
@@ -394,6 +395,7 @@ def as_clauses(expr: Expr) -> List[Expr]:
         ans.append(Forall(vs, Or(*clause)))
     return ans
 
+@functools.total_ordering
 class Expr(object):
     def __init__(self) -> None:
         self._hash: Optional[int] = None
@@ -410,7 +412,7 @@ class Expr(object):
         raise Exception('Unexpected expression %s does not implement resolve method' %
                         repr(self))
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         raise Exception('Unexpected expr %s does not implement _denote method' % repr(self))
 
     def __hash__(self) -> int:
@@ -420,11 +422,13 @@ class Expr(object):
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Expr):
-            return False
+            return NotImplemented
         return self._denote() == other._denote()
 
-    def __ne__(self, other: object) -> bool:
-        return not (self == other)
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Expr):
+            return NotImplemented
+        return self._denote() < other._denote()
 
     def pretty(self, buf: List[str], prec: int, side: str) -> None:
         needs_parens = not no_parens(self.prec(), prec, side)
@@ -458,8 +462,8 @@ class Bool(Expr):
     def __repr__(self) -> str:
         return str(self.val)
 
-    def _denote(self) -> object:
-        return self.val
+    def _denote(self) -> Tuple:
+        return (Bool, self.val)
 
     def prec(self) -> int:
         return PREC_BOT
@@ -539,7 +543,7 @@ class UnaryExpr(Expr):
             self.arg.resolve(scope, BoolSort)
             return BoolSort
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (UnaryExpr, self.op, self.arg)
 
     def __repr__(self) -> str:
@@ -609,7 +613,7 @@ class BinaryExpr(Expr):
         return BoolSort
 
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (BinaryExpr, self.op, self.arg1, self.arg2)
 
     def __repr__(self) -> str:
@@ -680,7 +684,7 @@ class NaryExpr(Expr):
 
         return BoolSort
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (NaryExpr, self.op, tuple(self.args))
 
     def __repr__(self) -> str:
@@ -800,7 +804,7 @@ class AppExpr(Expr):
             sort = check_constraint(self.tok, sort, d.sort)
             return sort
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (AppExpr, self.callee, tuple(self.args))
 
     def __repr__(self) -> str:
@@ -901,7 +905,7 @@ class QuantifierExpr(Expr):
     def __repr__(self) -> str:
         return 'QuantifierExpr(tok=None, quant=%s, vs=%s, body=%s)' % (repr(self.quant), self.binder.vs, repr(self.body))
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (QuantifierExpr, self.quant, self.body)
 
     def prec(self) -> int:
@@ -962,7 +966,7 @@ class Id(Expr):
             vsort = check_constraint(self.tok, sort, vsort)
             return vsort
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (Id, self.name)
 
     def __repr__(self) -> str:
@@ -993,7 +997,7 @@ class IfThenElse(Expr):
         sort = self.then.resolve(scope, sort)
         return self.els.resolve(scope, sort)
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (IfThenElse, self.branch, self.then, self.els)
 
     def prec(self) -> int:
@@ -1038,7 +1042,7 @@ class Let(Expr):
 
         return sort
 
-    def _denote(self) -> object:
+    def _denote(self) -> Tuple:
         return (Let, self.binder, self.val, self.body)
 
     def prec(self) -> int:
