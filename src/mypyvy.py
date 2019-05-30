@@ -366,7 +366,9 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='print the command line passed to mypyvy')
 
         # for diagrams:
-        s.add_argument('--simplify-diagram', action=utils.YesNoAction, default=(s is updr_subparser),
+        s.add_argument('--simplify-diagram', action=utils.YesNoAction,
+                       default=(s is updr_subparser),
+                       default_description='yes for updr, else no',
                        help='in diagram generation, substitute existentially quantified variables that are equal to constants')
 
 

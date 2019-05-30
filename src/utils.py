@@ -225,6 +225,7 @@ class YesNoAction(argparse.Action):
                  nargs: Any = None,
                  const: Any = None,
                  default: bool = False,
+                 default_description: Optional[str] = None,
                  help: Optional[str] = None,
                  **kwargs: Any
     ) -> None:
@@ -237,7 +238,8 @@ class YesNoAction(argparse.Action):
                 option_strings[0].startswith('--')):
             raise ValueError(f'bad option_strings: {option_strings}')
         if help is not None:
-            help = f'{help} (or not, default {"yes" if default else "no"})'
+            default_description = default_description or ("yes" if default else "no")
+            help = f'{help} (or not, default {default_description})'
         yes = option_strings[0]
         no = '--no-' + yes[2:]
         super().__init__([yes, no], dest, nargs=0, const=None, default=default, help=help, **kwargs)
