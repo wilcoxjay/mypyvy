@@ -62,7 +62,6 @@ _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
 _cache_transitions: List[Tuple[State,State]] = []
 def check_two_state_implication(
         s: Solver,
-        prog: Program,
         precondition: Union[Iterable[Expr], State],
         p: Expr
 ) -> Optional[Tuple[State,State]]:
@@ -80,15 +79,15 @@ def check_two_state_implication(
                 break
         else:
             res = check_two_state_implication_all_transitions(
-                s, prog,
+                s, 
                 [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
                 p)
             if res is None:
                 cache[k] = None
             else:
                 z3m, _ = res
-                prestate = Model.from_z3(prog, [KEY_OLD], z3m)
-                poststate = Model.from_z3(prog, [KEY_NEW, KEY_OLD], z3m)
+                prestate = Model.from_z3([KEY_OLD], z3m)
+                poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
                 cache[k] = result
@@ -238,11 +237,11 @@ def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterab
 
 
 def forward_explore_marco(solver: Solver,
-                          prog: Program,
                           clauses: Sequence[Expr],
                           _states: Optional[Iterable[State]] = None
 ) -> Tuple[Sequence[State], Sequence[Expr]]:
 
+    prog = syntax.the_program
     states: List[State] = [] if _states is None else list(_states)
 
     inits = tuple(init.expr for init in prog.inits())
@@ -332,7 +331,7 @@ def forward_explore_marco(solver: Solver,
         if z3m is not None:
             print(f'Checking if init implies: {clause}... NO')
             print('Found new initial state:')
-            m = Model.from_z3(prog, [KEY_ONE], z3m)
+            m = Model.from_z3([KEY_ONE], z3m)
             print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             return False
@@ -346,7 +345,6 @@ def forward_explore_marco(solver: Solver,
             #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
             res = check_two_state_implication(
                 solver,
-                prog,
                 inits if precondition is None else precondition,
                 clause
             )
@@ -380,7 +378,7 @@ def forward_explore_marco(solver: Solver,
             # here init U states |= a /\ wp(a), and also there is no uncharted territory in the maps
             #print(states)
             #print(a)
-            return states, dedup_equivalent_predicates(solver, prog, a)
+            return states, dedup_equivalent_predicates(solver, a)
 
         n_states = len(states)
 
@@ -440,7 +438,6 @@ def forward_explore_marco(solver: Solver,
 
 
 def forward_explore(s: Solver,
-                    prog: Program,
                     alpha: Callable[[Iterable[State]], Sequence[Expr]],
                     states: Optional[Iterable[State]] = None
 ) -> Tuple[Sequence[State], Sequence[Expr]]:
@@ -450,6 +447,7 @@ def forward_explore(s: Solver,
     else:
         states = list(states)
     a = alpha(states)
+    prog = syntax.the_program
     inits = tuple(init.expr for init in prog.inits())
 
     changes = True
@@ -465,7 +463,7 @@ def forward_explore(s: Solver,
         z3m = check_implication(s, inits, a)
         if z3m is not None:
             print('NO')
-            m = Model.from_z3(prog, [KEY_ONE], z3m)
+            m = Model.from_z3([KEY_ONE], z3m)
             print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             changes = True
@@ -478,7 +476,7 @@ def forward_explore(s: Solver,
         for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
             # print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
-                s, prog,
+                s, 
                 inits if precondition is None else precondition,
                 p
             )
@@ -504,15 +502,16 @@ def forward_explore(s: Solver,
     return states, a
 
 
-def forward_explore_inv(s: Solver, prog: Program) -> None:
+def forward_explore_inv(s: Solver) -> None:
     #invs = list(itertools.chain(*(as_clauses(inv.expr) for inv in prog.invs())))
+    prog = syntax.the_program
     invs = [inv.expr for inv in prog.invs()]
     print('Performing forward explore w.r.t. the following clauses:')
     for p in sorted(invs, key=lambda x: len(str(x))):
         print(p)
     print('='*80)
     alpha  = lambda states: list(set(chain(*(alpha_from_clause(s, states, inv) for inv in invs))))
-    states, a = forward_explore(s, prog, alpha)
+    states, a = forward_explore(s, alpha)
     len(states)
     print('Done!\n' + '='*80)
     print('The resulting invariant after forward exporation:')
@@ -524,7 +523,7 @@ def forward_explore_inv(s: Solver, prog: Program) -> None:
         print(x)
         print('-'*80)
 
-def dedup_equivalent_predicates(s: Solver, prog: Program, itr: Iterable[Expr]) -> Sequence[Expr]:
+def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr]:
     ps = list(itr)
     print(f'Deduping {len(ps)} predicates to...',end=' ')
     sys.stdout.flush()
@@ -539,9 +538,10 @@ def dedup_equivalent_predicates(s: Solver, prog: Program, itr: Iterable[Expr]) -
     print(f'{len(ans)} predicates')
     return ans
 
-def repeated_houdini(s: Solver, prog: Program) -> str:
+def repeated_houdini(s: Solver) -> str:
     '''The (proof side) repeated Houdini algorith, either sharp or not.
     '''
+    prog = syntax.the_program
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     reachable_states : Sequence[State] = ()
@@ -549,7 +549,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
     def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
         return sorted(
-            dedup_equivalent_predicates(s, prog, chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
+            dedup_equivalent_predicates(s, chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
             key=lambda x: (len(str(x)),str(x))
         )
     def alpha_sharp(states: Iterable[State]) -> Sequence[Expr]:
@@ -558,8 +558,8 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
             key=lambda x: (len(str(x)),str(x))
         )
     while True:
-        # reachable_states, a = forward_explore(s, prog, alpha_clauses, reachable_states)
-        reachable_states, a = forward_explore_marco(s, prog, clauses, reachable_states)
+        # reachable_states, a = forward_explore(s, alpha_clauses, reachable_states)
+        reachable_states, a = forward_explore_marco(s, clauses, reachable_states)
         print(f'Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
             print(str(m) + '\n' + '-'*80)
@@ -574,14 +574,14 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
         unreachable = []
         while True:
             for p in a:
-                res = check_two_state_implication(s, prog, a, p)
+                res = check_two_state_implication(s, a, p)
                 if res is not None:
                     print(f'Found new CTI violating {p}')
                     prestate, poststate = res
                     print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                     unreachable.append(prestate)
                     states, a = forward_explore(
-                        s, prog,
+                        s,
                         alpha_sharp if sharp else alpha_clauses,
                         chain(states, [prestate, poststate]) # so that forward_explore also considers extensions of the prestate
                     )
@@ -607,7 +607,7 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
                 print(f'  {c}')
             clauses.extend(new_clauses)
             assert len(clauses) == len(set(clauses))
-            assert clauses == list(dedup_equivalent_predicates(s, prog, clauses))
+            assert clauses == list(dedup_equivalent_predicates(s, clauses))
             print('='*80)
 
 

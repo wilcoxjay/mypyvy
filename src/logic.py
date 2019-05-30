@@ -13,7 +13,7 @@ import z3
 import utils
 from phases import Phase, Frame, PhaseTransition
 import syntax
-from syntax import Expr, Program, Scope, ConstantDecl, RelationDecl, SortDecl, \
+from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, DefinitionDecl
 
 z3.Forall = z3.ForAll
@@ -39,7 +39,6 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
 def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
-        prog: Program,
         keys: List[str]
 ) -> z3.CheckSatResult:
     start = datetime.now()
@@ -50,7 +49,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Model.from_z3(prog, keys, s.model())
+            m = Model.from_z3(keys, s.model())
 
             utils.logger.always_print('')
             if utils.args.print_counterexample:
@@ -74,9 +73,10 @@ def check_unsat(
     return res
 
 @utils.log_start_end_xml(utils.logger, logging.INFO)
-def check_init(s: Solver, prog: Program, safety_only: bool = False) -> None:
+def check_init(s: Solver, safety_only: bool = False) -> None:
     utils.logger.always_print('checking init:')
 
+    prog = syntax.the_program
     t = s.get_translator(KEY_ONE)
 
     with s:
@@ -97,11 +97,12 @@ def check_init(s: Solver, prog: Program, safety_only: bool = False) -> None:
                 sys.stdout.flush()
 
                 check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
-                            s, prog, [KEY_ONE])
+                            s, [KEY_ONE])
 
 
-def check_transitions(s: Solver, prog: Program) -> None:
+def check_transitions(s: Solver) -> None:
     t = s.get_translator(KEY_NEW, KEY_OLD)
+    prog = syntax.the_program
 
     with s:
         for inv in prog.invs():
@@ -137,7 +138,7 @@ def check_transitions(s: Solver, prog: Program) -> None:
                                       % (msg, trans.name)),
                                      (trans.tok, 'this transition may not preserve invariant%s'
                                       % (msg,))],
-                                    s, prog, [KEY_OLD, KEY_NEW])
+                                    s, [KEY_OLD, KEY_NEW])
 
 def check_implication(
         s: Solver,
@@ -162,11 +163,11 @@ def check_implication(
 
 def check_two_state_implication_all_transitions(
         s: Solver,
-        prog: Program,
         old_hyps: Iterable[Expr],
         new_conc: Expr
 ) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
+    prog = syntax.the_program
     with s:
         for h in old_hyps:
             s.add(t.translate_expr(h, old=True))
@@ -190,9 +191,10 @@ def check_two_state_implication_all_transitions(
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
-def assert_any_transition(s: Solver, prog: Program, uid: str,
+def assert_any_transition(s: Solver, uid: str,
                           key: str, key_old: str, allow_stutter: bool = False) -> None:
     t = s.get_translator(key, key_old)
+    prog = syntax.the_program
 
     tids = []
     for transition in prog.transitions():
@@ -207,8 +209,9 @@ def assert_any_transition(s: Solver, prog: Program, uid: str,
 
     s.add(z3.Or(*tids))
 
-def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
+def check_bmc(s: Solver, safety: Expr, depth: int) -> None:
     keys = ['state%2d' % i for i in range(depth + 1)]
+    prog = syntax.the_program
 
     if utils.logger.isEnabledFor(logging.DEBUG):
         utils.logger.debug('check_bmc property: %s' % safety)
@@ -226,23 +229,23 @@ def check_bmc(s: Solver, prog: Program, safety: Expr, depth: int) -> None:
         s.add(t.translate_expr(syntax.Not(safety)))
 
         for i in range(depth):
-            assert_any_transition(s, prog, str(i), keys[i + 1], keys[i], allow_stutter=True)
+            assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=True)
 
         # if utils.logger.isEnabledFor(logging.DEBUG):
         #     utils.logger.debug('assertions')
         #     utils.logger.debug(str(s.assertions()))
 
         check_unsat([(None, 'found concrete trace violating safety')],
-                    s, prog, keys)
+                    s, keys)
 
 def check_two_state_implication_along_transitions(
         s: Solver,
-        prog: Program,
         old_hyps: Iterable[Expr],
         transitions: Sequence[PhaseTransition],
         new_conc: Expr
 ) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
+    prog = syntax.the_program
     with s:
         for h in old_hyps:
             s.add(t.translate_expr(h, old=True))
@@ -264,8 +267,9 @@ def check_two_state_implication_along_transitions(
 
 
 class Solver(object):
-    def __init__(self, prog: Program) -> None:
+    def __init__(self) -> None:
         self.z3solver = z3.Solver()
+        prog = syntax.the_program
         assert prog.scope is not None
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
@@ -362,7 +366,7 @@ class Solver(object):
     def _minimal_model(self, assumptions: Optional[Sequence[z3.ExprRef]]) -> z3.ModelRef:
         m = self.z3solver.model()
         # logger.debug('computing minimal model from initial model')
-        # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
+        # logger.debug(str(Model(m, KEY_NEW, KEY_OLD)))
         # logger.debug('assertions')
         # logger.debug(str(self.assertions()))
 
@@ -401,7 +405,7 @@ class Solver(object):
             # assert self.check(assumptions) == z3.sat
             m = self.z3solver.model()
             # logger.debug('finished with minimal model')
-            # logger.debug(str(Model(prog, m, KEY_NEW, KEY_OLD)))
+            # logger.debug(str(Model(m, KEY_NEW, KEY_OLD)))
             return m
 
     def assertions(self) -> Sequence[z3.ExprRef]:
@@ -574,7 +578,8 @@ class Diagram(object):
         return syntax.Exists(vs, e)
 
     # TODO: can be removed? replaced with Frames.valid_in_initial_frame (YF)
-    def valid_in_init(self, s: Solver, prog: Program) -> Optional[z3.ModelRef]:
+    def valid_in_init(self, s: Solver) -> Optional[z3.ModelRef]:
+        prog = syntax.the_program
         return check_implication(s, (init.expr for init in prog.inits()),
                                  [syntax.Not(self.to_ast())])
 
@@ -652,30 +657,30 @@ class Diagram(object):
             yield
             S -= j
 
-    def smoke(self, s: Solver, prog: Program, depth: Optional[int]) -> None:
+    def smoke(self, s: Solver, depth: Optional[int]) -> None:
         if utils.args.smoke_test and depth is not None:
             utils.logger.debug('smoke testing at depth %s...' % (depth,))
             utils.logger.debug(str(self))
-            check_bmc(s, prog, syntax.Not(self.to_ast()), depth)
+            check_bmc(s, syntax.Not(self.to_ast()), depth)
 
     # TODO: merge similarities with clause_implied_by_transitions_from_frame...
     def check_valid_in_phase_from_frame(
-            self, s: Solver, prog: Program, f: Frame,
+            self, s: Solver, f: Frame,
             transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
             propagate_init: bool) -> Optional[z3.ModelRef]:
         for src, transitions in transitions_to_grouped_by_src.items():
             ans = check_two_state_implication_along_transitions(
-                s, prog, f.summary_of(src), transitions, syntax.Not(self.to_ast()))
+                s, f.summary_of(src), transitions, syntax.Not(self.to_ast()))
             if ans is not None:
                 return ans[0]
 
         if propagate_init:
-            return self.valid_in_init(s, prog)
+            return self.valid_in_init(s)
         return None
 
     @utils.log_start_end_xml(utils.logger)
     @utils.log_start_end_time(utils.logger)
-    def generalize(self, s: Solver, prog: Program, f: Frame,
+    def generalize(self, s: Solver, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                    propagate_init: bool,
                    depth: Optional[int] = None) -> None:
@@ -693,7 +698,7 @@ class Diagram(object):
         C: Iterable[_RelevantDecl] = self.consts
         F: Iterable[_RelevantDecl] = self.funcs
 
-        self.smoke(s, prog, depth)
+        self.smoke(s, depth)
 
         with utils.LogTag(utils.logger, 'eliminating-conjuncts', lvl=logging.DEBUG):
             for d in itertools.chain(I, R, C, F):
@@ -701,12 +706,12 @@ class Diagram(object):
                     continue
                 with self.without(d):
                     res = self.check_valid_in_phase_from_frame(
-                        s, prog, f, transitions_to_grouped_by_src, propagate_init)
+                        s, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
                     if utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
                     self.remove_clause(d)
-                    self.smoke(s, prog, depth)
+                    self.smoke(s, depth)
                     continue
                 if isinstance(d, RelationDecl):
                     l = self.rels[d]
@@ -718,22 +723,22 @@ class Diagram(object):
                             cs.add(j)
                     with self.without(d, cs):
                         res = self.check_valid_in_phase_from_frame(
-                            s, prog, f, transitions_to_grouped_by_src, propagate_init)
+                            s, f, transitions_to_grouped_by_src, propagate_init)
                     if res is None:
                         if utils.logger.isEnabledFor(logging.DEBUG):
                             utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
                         self.remove_clause(d, cs)
-                        self.smoke(s, prog, depth)
+                        self.smoke(s, depth)
 
             for d, j, c in self.conjuncts():
                 with self.without(d, j):
                     res = self.check_valid_in_phase_from_frame(
-                        s, prog, f, transitions_to_grouped_by_src, propagate_init)
+                        s, f, transitions_to_grouped_by_src, propagate_init)
                 if res is None:
                     if utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('eliminated clause %s' % c)
                     self.remove_clause(d, j)
-                    self.smoke(s, prog, depth)
+                    self.smoke(s, depth)
 
         self.prune_unused_vars()
 
@@ -744,10 +749,8 @@ class Diagram(object):
 class Model(object):
     def __init__(
             self,
-            prog: Program,
             keys: List[str],
     ) -> None:
-        self.prog = prog
         self.z3model: Optional[z3.ModelRef] = None
         self.keys = keys
 
@@ -766,8 +769,8 @@ class Model(object):
         self.transitions: List[str] = ['' for i in range(len(self.keys) - 1)]
 
     @staticmethod
-    def from_z3(prog: Program, keys: List[str], z3m: z3.ModelRef) -> Model:
-        m = Model(prog, keys)
+    def from_z3(keys: List[str], z3m: z3.ModelRef) -> Model:
+        m = Model(keys)
         m.z3model = z3m
         m.read_out(z3m)
         return m
@@ -865,9 +868,11 @@ class Model(object):
             assert bool(ans) is True or bool(ans) is False, (expr, ans)
             return ans
 
+        prog = syntax.the_program
+
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
         for z3sort in sorted(z3model.sorts(), key=str):
-            sort = self.prog.scope.get_sort(str(z3sort))
+            sort = prog.scope.get_sort(str(z3sort))
             assert sort is not None
             univ = z3model.get_universe(z3sort)
             self.univs[sort] = list(sorted(rename(str(x)) for x in univ))
@@ -893,7 +898,7 @@ class Model(object):
                 C = self.immut_const_interps
                 F = self.immut_func_interps
 
-            decl = self.prog.scope.get(name)
+            decl = prog.scope.get(name)
             assert not isinstance(decl, syntax.Sort) and \
                 not isinstance(decl, syntax.SortInferencePlaceholder)
             if decl is not None:
@@ -951,6 +956,8 @@ class Model(object):
         if i is None:
             i = 0
 
+        prog = syntax.the_program
+
         mut_rel_interps = self.rel_interps[i]
         mut_const_interps = self.const_interps[i]
         mut_func_interps = self.func_interps[i]
@@ -991,8 +998,8 @@ class Model(object):
         diag = Diagram(vs, ineqs, rels, consts, funcs)
         if utils.args.simplify_diagram:
             diag.simplify_consts()
-        assert self.prog.scope is not None
-        diag.resolve(self.prog.scope)
+        assert prog.scope is not None
+        diag.resolve(prog.scope)
 
         return diag
 
@@ -1004,6 +1011,8 @@ class Model(object):
 
         if i is None:
             i = 0
+
+        prog = syntax.the_program
 
         mut_rel_interps = self.rel_interps[i]
         mut_const_interps = self.const_interps[i]
@@ -1037,7 +1046,7 @@ class Model(object):
             ]
 
         # get a fresh variable, avoiding names of universe elements in vs
-        fresh = self.prog.scope.fresh('x', [v.name for v in vs])
+        fresh = prog.scope.fresh('x', [v.name for v in vs])
 
         e = syntax.Exists(vs, syntax.And(
             *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
@@ -1047,8 +1056,8 @@ class Model(object):
                                           for v in self.univs[sort])))
                 for sort in self.univs
             ))))
-        assert self.prog.scope is not None
-        e.resolve(self.prog.scope, None)
+        assert prog.scope is not None
+        e.resolve(prog.scope, None)
         return e
 
 class Blocked(object):

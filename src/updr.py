@@ -15,9 +15,9 @@ from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
 class Frames(object):
     @utils.log_start_end_xml(utils.logger, logging.DEBUG, 'Frames.__init__')
-    def __init__(self, solver: Solver, prog: Program) -> None:
+    def __init__(self, solver: Solver) -> None:
         self.solver = solver
-        self.prog = prog
+        prog = syntax.the_program
 
         if utils.args.automaton:
             automaton = prog.the_automaton()
@@ -26,9 +26,9 @@ class Frames(object):
         else:
             the_phase = 'the_phase'
             pcs: List[syntax.PhaseComponent] = []
-            for t in self.prog.transitions():
+            for t in prog.transitions():
                 pcs.append(syntax.PhaseTransitionDecl(None, t.name, None, the_phase))
-            for inv in self.prog.safeties():
+            for inv in prog.safeties():
                 pcs.append(inv)
 
             automaton = AutomatonDecl(None, [syntax.InitPhaseDecl(None, the_phase),
@@ -56,9 +56,6 @@ class Frames(object):
 
     def __len__(self) -> int:
         return len(self.fs)
-
-    def _fresh_solver(self) -> Solver:
-        return Solver(self.prog)
 
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
@@ -114,13 +111,14 @@ class Frames(object):
 
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Model.from_z3(self.prog, [KEY_ONE], z3m)
+            mod = Model.from_z3([KEY_ONE], z3m)
             diag = mod.as_diagram()
             return (p, diag)
 
         def edge_covering_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
             t = self.solver.get_translator(KEY_NEW, KEY_OLD)
             f = self.fs[-1]
+            prog = syntax.the_program
 
             with self.solver:
                 for c in f.summary_of(p):
@@ -128,7 +126,7 @@ class Frames(object):
 
                 transitions_from_phase = self.automaton.transitions_from(p)
 
-                for trans in self.prog.transitions():
+                for trans in prog.transitions():
                     edges_from_phase_matching_prog_trans = [t for t in transitions_from_phase
                                                                 if t.prog_transition_name() == trans.name]
                     if any(delta.precond is None for delta in edges_from_phase_matching_prog_trans):
@@ -145,7 +143,7 @@ class Frames(object):
                         if self.solver.check() != z3.unsat:
                             utils.logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Model.from_z3(self.prog, [KEY_OLD, KEY_NEW], z3m)
+                            mod = Model.from_z3([KEY_OLD, KEY_NEW], z3m)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
 
@@ -191,7 +189,7 @@ class Frames(object):
                     if utils.args.smoke_test and utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('jrw smoke testing...')
                         # TODO: phases
-                        logic.check_bmc(self.solver, self.prog, c, frame_no + 1)
+                        logic.check_bmc(self.solver, c, frame_no + 1)
 
                     # assert self.clause_implied_by_transitions_from_frame(f, p, c) is None
                     self[frame_no + 1].strengthen(p, c)
@@ -199,7 +197,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Model.from_z3(self.prog, [KEY_OLD, KEY_NEW], m)
+                mod = Model.from_z3([KEY_OLD, KEY_NEW], m)
                 diag = mod.as_diagram(i=0)
 
                 if utils.logger.isEnabledFor(logging.DEBUG):
@@ -239,7 +237,7 @@ class Frames(object):
             with utils.LogTag(utils.logger, 'inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
                     for c in self.fs[i+1].summary_of(p):
-                        res = self.clause_implied_by_transitions_from_frame(f, p, c, self._fresh_solver())
+                        res = self.clause_implied_by_transitions_from_frame(f, p, c, Solver())
                         assert res is None, "Non inductive trace:\n\t%s\n\t%s\n\t%s" % (p.name(), c, f)
 
     def push_phase_from_pred(self, i: int, f: Frame, p: Phase) -> None:
@@ -318,7 +316,7 @@ class Frames(object):
             utils.logger.debug('unminimized diag\n%s' % diag)
 
         diag.minimize_from_core(core)
-        diag.generalize(self.solver, self.prog,
+        diag.generalize(self.solver, 
                         self[j-1], self.automaton.transitions_to_grouped_by_src(p), p == self.automaton.init_phase(),
                         j)
 
@@ -382,7 +380,7 @@ class Frames(object):
 
         if utils.args.smoke_test and utils.logger.isEnabledFor(logging.DEBUG):
             utils.logger.debug('smoke testing at depth %s...' % (depth,))
-            logic.check_bmc(self.solver, self.prog, e, depth)
+            logic.check_bmc(self.solver, e, depth)
 
         self.assert_inductive_trace()
         for i in range(depth+1):
@@ -443,6 +441,7 @@ class Frames(object):
             core: Optional[MySet[int]]
     ) -> Tuple[z3.CheckSatResult, Optional[Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
 
+            prog = syntax.the_program
             solver = self.solver
             with solver:
 
@@ -451,7 +450,7 @@ class Frames(object):
 
                 for phase_transition in transitions:
                     delta = phase_transition.transition_decl()
-                    trans = self.prog.scope.get_definition(delta.transition)
+                    trans = prog.scope.get_definition(delta.transition)
                     assert trans is not None
                     precond = delta.precond
 
@@ -461,7 +460,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
-                            m = Model.from_z3(self.prog, [KEY_OLD, KEY_NEW], solver.model(diag.trackers))
+                            m = Model.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
@@ -501,7 +500,7 @@ class Frames(object):
         for src, transitions in self.automaton.transitions_to_grouped_by_src(current_phase).items():
             utils.logger.debug("check transition from %s by %s" % (src.name(), str(list(transitions))))
 
-            ans = logic.check_two_state_implication_along_transitions(solver, self.prog,
+            ans = logic.check_two_state_implication_along_transitions(solver,
                                                                       pre_frame.summary_of(src), transitions,
                                                                       c)
             if ans is not None:

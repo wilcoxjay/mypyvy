@@ -1,36 +1,43 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
+import syntax
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
 from logic import Model
 
 from typing import List, Dict, Optional, Set, Union
 
 def get_sort(m: Model, name: str) -> SortDecl:
-    s = m.prog.scope.get_sort(name)
+    prog = syntax.the_program
+    s = prog.scope.get_sort(name)
     assert s is not None, (name, s)
     return s
 
 def get_constant(m: Model, name: str) -> ConstantDecl:
-    c = m.prog.scope.get(name)
+    prog = syntax.the_program
+    c = prog.scope.get(name)
     assert isinstance(c, ConstantDecl), (name, c)
     return c
 
 def is_relation(m: Model, name: str) -> bool:
-    r = m.prog.scope.get(name)
+    prog = syntax.the_program
+    r = prog.scope.get(name)
     return isinstance(r, RelationDecl)
 
 def get_relation(m: Model, name: str) -> RelationDecl:
-    r = m.prog.scope.get(name)
+    prog = syntax.the_program
+    r = prog.scope.get(name)
     assert isinstance(r, RelationDecl), (name, r)
     return r
 
 def is_function(m: Model, name: str) -> bool:
-    f = m.prog.scope.get(name)
+    prog = syntax.the_program
+    f = prog.scope.get(name)
     return isinstance(f, FunctionDecl)
 
 def get_function(m: Model, name: str) -> FunctionDecl:
-    f = m.prog.scope.get(name)
+    prog = syntax.the_program
+    f = prog.scope.get(name)
     assert isinstance(f, FunctionDecl), (name, f)
     return f
 
@@ -129,7 +136,7 @@ class LogEntry(object):
 # These functions and relations give the elements at each index.
 # This printer assumes that there is a function 
 def log_printer(m: Model, s: SortDecl, elt: str, args: List[str]) -> str:
-    prog = m.prog
+    prog = syntax.the_program
     scope = prog.scope
 
     # args should at least hold an index total order and used relation

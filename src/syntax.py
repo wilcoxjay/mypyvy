@@ -6,7 +6,7 @@ import functools
 import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, Sequence
+    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, Sequence, cast
 from typing_extensions import Protocol
 import utils
 import z3
@@ -2122,3 +2122,5 @@ class Program(object):
 
     def __str__(self) -> str:
         return '\n'.join(str(d) for d in self.decls)
+
+the_program: Program = cast(Program, None)

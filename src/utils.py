@@ -90,7 +90,7 @@ class MypyvyArgs(object):
     depth: int
     filename: str
     sharp: bool
-    def main(self, solver: Any, prog: Any) -> None: ...
+    def main(self, solver: Any) -> None: ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
 

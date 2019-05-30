@@ -18,7 +18,8 @@ import utils
 
 import pd
 
-def get_safety(prog: Program) -> List[Expr]:
+def get_safety() -> List[Expr]:
+    prog = syntax.the_program
     if utils.args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
         for inv in prog.invs():
@@ -35,13 +36,13 @@ def get_safety(prog: Program) -> List[Expr]:
 
 @utils.log_start_end_xml(utils.logger, logging.INFO)
 @utils.log_start_end_time(utils.logger, logging.INFO)
-def do_updr(s: Solver, prog: Program) -> None:
+def do_updr(s: Solver) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
 
-    logic.check_init(s, prog, safety_only=True)
+    logic.check_init(s, safety_only=True)
 
-    fs = updr.Frames(s, prog)
+    fs = updr.Frames(s)
     fs.search()
 
 def debug_tokens(filename: str) -> None:
@@ -57,8 +58,10 @@ def debug_tokens(filename: str) -> None:
         utils.logger.always_print(str(tok))
 
 
-def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+def check_automaton_init(s: Solver, a: AutomatonDecl) -> None:
     utils.logger.always_print('checking automaton init:')
+
+    prog = syntax.the_program
 
     t = s.get_translator(KEY_ONE)
 
@@ -82,10 +85,12 @@ def check_automaton_init(s: Solver, prog: Program, a: AutomatonDecl) -> None:
                 utils.logger.always_print('  implies phase invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                logic.check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, prog, [KEY_ONE])
+                logic.check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, [KEY_ONE])
 
-def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
     utils.logger.always_print('checking automaton edge covering:')
+
+    prog = syntax.the_program
 
     t = s.get_translator(KEY_NEW, KEY_OLD)
 
@@ -110,12 +115,13 @@ def check_automaton_edge_covering(s: Solver, prog: Program, a: AutomatonDecl) ->
                     logic.check_unsat([(phase.tok, 'transition %s is not covered by this phase' %
                                         (trans.name, )),
                                        (trans.tok, 'this transition misses transitions from phase %s' % (phase.name,))],
-                                      s, prog, [KEY_OLD, KEY_NEW])
+                                      s, [KEY_OLD, KEY_NEW])
 
 
-def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) -> None:
+def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
     utils.logger.always_print('checking automaton inductiveness:')
 
+    prog = syntax.the_program
     t = s.get_translator(KEY_NEW, KEY_OLD)
 
     for phase in a.phases():
@@ -151,35 +157,36 @@ def check_automaton_inductiveness(s: Solver, prog: Program, a: AutomatonDecl) ->
                             logic.check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
                                                 (msg, trans_pretty, phase.name)),
                                                (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
-                                              s, prog, [KEY_OLD, KEY_NEW])
+                                              s, [KEY_OLD, KEY_NEW])
 
 @utils.log_start_end_time(utils.logger, logging.INFO)
-def verify(s: Solver, prog: Program) -> None:
+def verify(s: Solver) -> None:
     old_count = utils.error_count
+    prog = syntax.the_program
     a = prog.the_automaton()
     if a is None:
         if utils.args.automaton == 'only':
             utils.print_error_and_exit(None, "--automaton='only' requires the file to declare an automaton")
     elif utils.args.automaton != 'no':
-        check_automaton_full(s, prog, a)
+        check_automaton_full(s, a)
 
     if utils.args.automaton != 'only':
-        logic.check_init(s, prog)
-        logic.check_transitions(s, prog)
+        logic.check_init(s)
+        logic.check_transitions(s)
 
     if utils.error_count == old_count:
         utils.logger.always_print('all ok!')
     else:
         utils.logger.always_print('program has errors.')
 
-def check_automaton_full(s: Solver, prog: Program, a: AutomatonDecl) -> None:
-    check_automaton_init(s, prog, a)
-    check_automaton_inductiveness(s, prog, a)
-    check_automaton_edge_covering(s, prog, a)
+def check_automaton_full(s: Solver, a: AutomatonDecl) -> None:
+    check_automaton_init(s, a)
+    check_automaton_inductiveness(s, a)
+    check_automaton_edge_covering(s, a)
 
 @utils.log_start_end_time(utils.logger)
-def bmc(s: Solver, prog: Program) -> None:
-    safety = syntax.And(*get_safety(prog))
+def bmc(s: Solver) -> None:
+    safety = syntax.And(*get_safety())
 
     n = utils.args.depth
 
@@ -188,13 +195,14 @@ def bmc(s: Solver, prog: Program) -> None:
 
     start = datetime.now()
 
-    logic.check_bmc(s, prog, safety, n)
+    logic.check_bmc(s, safety, n)
 
 
 @utils.log_start_end_time(utils.logger)
-def theorem(s: Solver, prog: Program) -> None:
+def theorem(s: Solver) -> None:
     utils.logger.always_print('checking theorems:')
 
+    prog = syntax.the_program
     for th in prog.theorems():
         if th.twostate:
             keys = [KEY_OLD, KEY_NEW]
@@ -216,17 +224,18 @@ def theorem(s: Solver, prog: Program) -> None:
         with s:
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            logic.check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, prog, keys)
+            logic.check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, keys)
 
-def nop(s: Solver, prog: Program) -> None:
+def nop(s: Solver) -> None:
     pass
 
-def ipython(s:Solver, prog: Program) -> None:
+def ipython(s:Solver) -> None:
     import IPython  # type: ignore
     #IPython.embed()
     IPython.start_ipython(argv=[],user_ns=dict(locals()))
 
-def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
+def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
+    prog = syntax.the_program
     ition = prog.scope.get_definition(c.target)
     assert ition is not None
     lator = s.get_translator(key, key_old)
@@ -248,7 +257,8 @@ def translate_transition_call(s: Solver, prog: Program, key: str, key_old: str, 
     else:
         return body
 
-def trace(s: Solver, prog: Program) -> None:
+def trace(s: Solver) -> None:
+    prog = syntax.the_program
     if len(list(prog.traces())) > 0:
         utils.logger.always_print('finding traces:')
 
@@ -280,18 +290,18 @@ def trace(s: Solver, prog: Program) -> None:
                 else:
                     te: syntax.TransitionExpr = c.transition
                     if isinstance(te, syntax.AnyTransition):
-                        logic.assert_any_transition(s, prog, str(i), keys[i+1], keys[i], allow_stutter=True)
+                        logic.assert_any_transition(s, str(i), keys[i+1], keys[i], allow_stutter=True)
                     else:
                         l = []
                         for call in te.calls:
                             tid = z3.Bool(logic.get_transition_indicator(str(i), call.target))
                             l.append(tid)
-                            s.add(tid == translate_transition_call(s, prog, keys[i+1], keys[i], call))
+                            s.add(tid == translate_transition_call(s, keys[i+1], keys[i], call))
                         s.add(z3.Or(*l))
 
                     i += 1
 
-            res = logic.check_unsat([], s, prog, keys)
+            res = logic.check_unsat([], s, keys)
             if (res == z3.sat) != trace.sat:
                 utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
@@ -490,14 +500,15 @@ def main() -> None:
             utils.logger.always_print('program has resolution errors.')
             sys.exit(1)
 
-        s = Solver(prog)
+        syntax.the_program = prog
 
-        utils.args.main(s, prog)
+        s = Solver()
+        utils.args.main(s)
 
         utils.logger.info('total number of queries: %s' % s.nqueries)
 
         if utils.args.ipython:
-            ipython(s, prog)
+            ipython(s)
 
     sys.exit(1 if utils.error_count > 0 else 0)
 
