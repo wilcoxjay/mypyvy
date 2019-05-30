@@ -49,7 +49,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Model(prog, s.model(), s, keys)
+            m = Model.from_z3(prog, s, keys, s.model())
 
             utils.logger.always_print('')
             if utils.args.print_counterexample:
@@ -735,16 +735,34 @@ class Model(object):
     def __init__(
             self,
             prog: Program,
-            m: z3.ModelRef,
             solver: Solver,
             keys: List[str],
     ) -> None:
         self.prog = prog
-        self.z3model = m
+        self.z3model: Optional[z3.ModelRef] = None
         self.keys = keys
         self.solver = solver
 
-        self.read_out()
+        RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
+        CT = Dict[ConstantDecl, str]
+        FT = Dict[FunctionDecl, List[Tuple[List[str], str]]]
+
+        self.immut_rel_interps: RT = OrderedDict()
+        self.immut_const_interps: CT = OrderedDict()
+        self.immut_func_interps: FT = OrderedDict()
+
+        self.rel_interps: List[RT] = [OrderedDict() for i in range(len(self.keys))]
+        self.const_interps: List[CT] = [OrderedDict() for i in range(len(self.keys))]
+        self.func_interps: List[FT] = [OrderedDict() for i in range(len(self.keys))]
+
+        self.transitions: List[str] = ['' for i in range(len(self.keys) - 1)]
+
+    @staticmethod
+    def from_z3(prog: Program, solver: Solver, keys: List[str], z3m: z3.ModelRef) -> Model:
+        m = Model(prog, solver, keys)
+        m.z3model = z3m
+        m.read_out(z3m)
+        return m
 
     def try_printed_by(self, s: SortDecl, elt: str) -> Optional[str]:
         custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
@@ -829,51 +847,37 @@ class Model(object):
 
         return '\n'.join(l)
 
-    def _eval(self, expr: z3.ExprRef) -> z3.ExprRef:
-        ans = self.z3model.eval(expr, model_completion=True)
+    def _eval(self, z3model: z3.ModelRef, expr: z3.ExprRef) -> z3.ExprRef:
+        ans = z3model.eval(expr, model_completion=True)
         assert bool(ans) is True or bool(ans) is False, (expr, ans)
         return ans
 
-    def read_out(self) -> None:
+    def read_out(self, z3model: z3.ModelRef) -> None:
         # utils.logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
 
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
-        for z3sort in sorted(self.z3model.sorts(), key=str):
+        for z3sort in sorted(z3model.sorts(), key=str):
             sort = self.prog.scope.get_sort(str(z3sort))
             assert sort is not None
-            univ = self.z3model.get_universe(z3sort)
+            univ = z3model.get_universe(z3sort)
             self.univs[sort] = list(sorted(rename(str(x)) for x in univ))
             # if utils.logger.isEnabledFor(logging.DEBUG):
             #     utils.logger.debug(str(z3sort))
             #     for x in self.univs[sort]:
             #         utils.logger.debug('  ' + x)
 
-        RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
-        CT = Dict[ConstantDecl, str]
-        FT = Dict[FunctionDecl, List[Tuple[List[str], str]]]
-
-        self.immut_rel_interps: RT = OrderedDict()
-        self.immut_const_interps: CT = OrderedDict()
-        self.immut_func_interps: FT = OrderedDict()
-
-        self.rel_interps: List[RT] = [OrderedDict() for i in range(len(self.keys))]
-        self.const_interps: List[CT] = [OrderedDict() for i in range(len(self.keys))]
-        self.func_interps: List[FT] = [OrderedDict() for i in range(len(self.keys))]
-
-        self.transitions: List[str] = ['' for i in range(len(self.keys) - 1)]
-
-        model_decls = self.z3model.decls()
+        model_decls = z3model.decls()
         all_decls = model_decls
         for z3decl in sorted(all_decls, key=str):
             z3name = str(z3decl)
             for i, k in enumerate(self.keys):
                 if z3name.startswith(k):
                     name = z3name[len(k + '_'):]
-                    R: RT = self.rel_interps[i]
-                    C: CT = self.const_interps[i]
-                    F: FT = self.func_interps[i]
+                    R = self.rel_interps[i]
+                    C = self.const_interps[i]
+                    F = self.func_interps[i]
                     break
             else:
                 name = z3name
@@ -888,7 +892,7 @@ class Model(object):
                 if isinstance(decl, RelationDecl):
                     if len(decl.arity) > 0:
                         rl = []
-                        domains = [self.z3model.get_universe(z3decl.domain(i))
+                        domains = [z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
                         if not any(x is None for x in domains):
                             # Note: if any domain is None, we silently drop this symbol.
@@ -896,24 +900,24 @@ class Model(object):
                             g = itertools.product(*domains)
                             for row in g:
                                 relation_expr = z3decl(*row)
-                                ans = self._eval(relation_expr)
+                                ans = self._eval(z3model, relation_expr)
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
                             R[decl] = rl
                     else:
-                        ans = self.z3model.eval(z3decl())
+                        ans = z3model.eval(z3decl())
                         assert decl not in R
                         R[decl] = [([], bool(ans))]
                 elif isinstance(decl, FunctionDecl):
                     fl = []
-                    domains = [self.z3model.get_universe(z3decl.domain(i))
+                    domains = [z3model.get_universe(z3decl.domain(i))
                                for i in range(z3decl.arity())]
                     if not any(x is None for x in domains):
                         # Note: if any domain is None, we silently drop this symbol.
                         # It's not entirely clear that this is an ok thing to do.
                         g = itertools.product(*domains)
                         for row in g:
-                            ans = self.z3model.eval(z3decl(*row))
+                            ans = z3model.eval(z3decl(*row))
                             fl.append(([rename(str(col)) for col in row],
                                        rename(ans.decl().name())))
                         assert decl not in F
@@ -921,11 +925,11 @@ class Model(object):
 
                 else:
                     assert isinstance(decl, ConstantDecl)
-                    v = self.z3model.eval(z3decl()).decl().name()
+                    v = z3model.eval(z3decl()).decl().name()
                     assert decl not in C
                     C[decl] = rename(v)
             else:
-                if name.startswith(TRANSITION_INDICATOR + '_') and self.z3model.eval(z3decl()):
+                if name.startswith(TRANSITION_INDICATOR + '_') and z3model.eval(z3decl()):
                     name = name[len(TRANSITION_INDICATOR + '_'):]
                     istr, name = name.split('_', maxsplit=1)
                     i = int(istr)

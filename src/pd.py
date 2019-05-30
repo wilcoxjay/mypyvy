@@ -46,7 +46,11 @@ def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
-        cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
+        if m.z3model is not None:
+            cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
+        else:
+            cache[k] = check_implication(s, [m.as_onestate_formula(0)], [p]) is None
+
         cache['m'] += 1
         if len(cache) % 1000 == 1:
             print(f'_cache_eval_in_state length is {len(cache)}, h/m is {cache["h"]}/{cache["m"]}')
@@ -83,8 +87,8 @@ def check_two_state_implication(
                 cache[k] = None
             else:
                 z3m, _ = res
-                prestate = Model(prog, z3m, s, [KEY_OLD])
-                poststate = Model(prog, z3m, s, [KEY_NEW, KEY_OLD])
+                prestate = Model.from_z3(prog, s, [KEY_OLD], z3m)
+                poststate = Model.from_z3(prog, s, [KEY_NEW, KEY_OLD], z3m)
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
                 cache[k] = result
@@ -328,7 +332,7 @@ def forward_explore_marco(solver: Solver,
         if z3m is not None:
             print(f'Checking if init implies: {clause}... NO')
             print('Found new initial state:')
-            m = Model(prog, z3m, solver, [KEY_ONE])
+            m = Model.from_z3(prog, solver, [KEY_ONE], z3m)
             print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             return False
@@ -461,7 +465,7 @@ def forward_explore(s: Solver,
         z3m = check_implication(s, inits, a)
         if z3m is not None:
             print('NO')
-            m = Model(prog, z3m, s, [KEY_ONE])
+            m = Model.from_z3(prog, s, [KEY_ONE], z3m)
             print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             changes = True

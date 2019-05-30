@@ -118,7 +118,7 @@ class Frames(object):
 
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Model(self.prog, z3m, self.solver, [KEY_ONE])
+            mod = Model.from_z3(self.prog, self.solver, [KEY_ONE], z3m)
             diag = mod.as_diagram()
             return (p, diag)
 
@@ -149,7 +149,7 @@ class Frames(object):
                         if self.solver.check() != z3.unsat:
                             utils.logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Model(self.prog, z3m, self.solver, [KEY_OLD, KEY_NEW])
+                            mod = Model.from_z3(self.prog, self.solver, [KEY_OLD, KEY_NEW], z3m)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
 
@@ -203,7 +203,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Model(self.prog, m, self.solver, [KEY_OLD, KEY_NEW])
+                mod = Model.from_z3(self.prog, self.solver, [KEY_OLD, KEY_NEW], m)
                 diag = mod.as_diagram(i=0)
 
                 if utils.logger.isEnabledFor(logging.DEBUG):
@@ -465,7 +465,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
-                            m = Model(self.prog, solver.model(diag.trackers), self.solver, [KEY_OLD, KEY_NEW])
+                            m = Model.from_z3(self.prog, self.solver, [KEY_OLD, KEY_NEW], solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
