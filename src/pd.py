@@ -88,7 +88,7 @@ def check_two_state_implication(
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
                 cache[k] = result
-        if len(cache) % 10 == 1:
+        if len(cache) % 100 == 1:
             print(f'_cache_two_state_implication length is {len(cache)}, h/r is {cache["h"]}/{cache["r"]}')
     else:
         cache['h'] += 1
@@ -232,6 +232,209 @@ def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterab
     return tuple(p for p in predicates if all(eval_in_state(s, m, p) for m in states))
 
 
+
+def forward_explore_marco(solver: Solver,
+                          prog: Program,
+                          clauses: Sequence[Expr],
+                          _states: Optional[Iterable[State]] = None
+) -> Tuple[Sequence[State], Sequence[Expr]]:
+
+    states: List[State] = [] if _states is None else list(_states)
+
+    inits = tuple(init.expr for init in prog.inits())
+
+    class SubclausesMap(object):
+        def __init__(self, top_clause: Expr):
+            # TODO: why can't top_clause be quantifier free?
+            assert isinstance(top_clause, QuantifierExpr)
+            assert isinstance(top_clause.body, NaryExpr)
+            assert top_clause.body.op == 'OR'
+            self.literals = tuple(top_clause.body.args)
+            self.variables = tuple(top_clause.binder.vs)
+            self.n = len(self.literals)
+            self.all_n = set(range(self.n))  # used in complement fairly frequently
+            #self.satisfied : List[Sequence[int]] = []
+            #self.violated : List[Sequence[int]] = []
+            #self.wp_satisfied : List[Sequence[int]] = []
+            #self.wp_violated : List[Sequence[int]] = []
+            self.blocked_up : List[Set[int]] = []
+            self.blocked_down : List[Set[int]] = []
+            self.reset_solver([], [])
+
+        def reset_solver(self, up: List[Set[int]], down: List[Set[int]]) -> None:
+            self.solver = z3.Solver()
+            self.blocked_up = []
+            self.blocked_down = []
+            for s in up:
+                self.block_up(s)
+            for s in down:
+                self.block_down(s)
+            assert self.blocked_up == up
+            assert self.blocked_down == down
+
+        def next_seed(self, bias: bool = False) -> Optional[Set[int]]:
+            """Get the seed from the current model, if there is one.
+                Returns:
+                A seed as an array of 0-based constraint indexes.
+            """
+            if self.solver.check() == z3.unsat:
+                return None
+            m = self.solver.model()
+            if bias:
+                # default to all True for "high bias"
+                return self.all_n - set(
+                    int(x.name())
+                    for x in m
+                    if z3.is_false(m[x])
+                )
+            else:
+                # default to all False for "low bias"
+                result = set(
+                    int(x.name())
+                    for x in m
+                    if z3.is_true(m[x])
+                )
+                # minimize further
+                forced_to_false = list(self.all_n - result)
+                for i in range(self.n):
+                    if i not in forced_to_false and self.solver.check(*(z3.Not(z3.Bool(str(j))) for j in chain(forced_to_false, [i]))) == z3.sat:
+                        forced_to_false.append(i)
+                assert self.solver.check(*(z3.Not(z3.Bool(str(j))) for j in forced_to_false)) == z3.sat
+                return self.all_n - set(forced_to_false)
+
+        def block_down(self, frompoint: Set[int]) -> None:
+            """Block down from a given set."""
+            self.blocked_down.append(set(frompoint))
+            comp = self.all_n - frompoint
+            self.solver.add(z3.Or(*(z3.Bool(str(i)) for i in comp)))
+
+        def block_up(self, frompoint: Set[int]) -> None:
+            """Block up from a given set."""
+            self.blocked_up.append(set(frompoint))
+            self.solver.add(z3.Or(*(z3.Not(z3.Bool(str(i))) for i in frompoint)))
+
+        def to_clause(self, s: Set[int]) -> Expr:
+            lits = [self.literals[i] for i in sorted(s)]
+            free = set(chain(*(lit.free_ids() for lit in lits)))
+            vs = [v for v in self.variables if v.name in free]
+            return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
+
+    def valid(clause: Expr) -> bool:
+        # return True iff clause is implied by init and valid in all states
+        # when returning False, possibly learn a new state
+        if not all(eval_in_state(solver, m, clause) for m in states):
+            return False
+        z3m = check_implication(solver, inits, [clause])
+        if z3m is not None:
+            print(f'Checking if init implies: {clause}... NO')
+            print('Found new initial state:')
+            m = Model(prog, z3m, solver, [KEY_ONE])
+            print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
+            states.append(m)
+            return False
+        return True
+
+    def wp_valid(clause: Expr) -> bool:
+        # return True iff wp(clause) is implied by init and valid in all states
+        # when returning False, add a new transition to states
+        # assert valid(clause)
+        for precondition in chain((s for s in states), [None]): # TODO: why len(s.keys) > 1 ?
+            #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+            res = check_two_state_implication(
+                solver,
+                prog,
+                inits if precondition is None else precondition,
+                clause
+            )
+            if res is not None:
+                print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+                print('NO\nFound new transition:')
+                prestate, poststate = res
+                print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                if precondition is None:
+                    states.append(prestate)
+                states.append(poststate)
+                return False
+            else:
+                #print('YES')
+                pass
+        return True
+
+    N = len(clauses)
+    maps = [SubclausesMap(top_clause) for top_clause in clauses]
+    a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
+    for rotate in itertools.count(0):
+        # for p in a:
+        #     assert valid(p) and wp_valid(p)
+
+        for i in range(len(maps)):
+            mp = maps[(rotate + i) % N]
+            seed = mp.next_seed()
+            if seed is not None:
+                break
+        else:
+            # here init U states |= a /\ wp(a), and also there is no uncharted territory in the maps
+            #print(states)
+            #print(a)
+            return states, dedup_equivalent_predicates(solver, prog, a)
+
+        n_states = len(states)
+
+        if not valid(mp.to_clause(seed)):
+            # the clause is not valid, grow and block it
+            current = seed
+            for i in sorted(mp.all_n - seed):
+                if not valid(mp.to_clause(current | {i})):
+                    current.add(i)
+            # assert not valid(mp.to_clause(current))
+            mp.block_down(current)
+            # this may have added new (initial) states
+
+        elif not wp_valid(mp.to_clause(seed)):
+            # the clause is was valid, but its wp was not. we already learned a new state so now its not even valid
+            # grow the clause (while learning new sates)
+            assert len(states) > n_states
+            current = seed
+            for i in sorted(mp.all_n - seed):
+                cl = mp.to_clause(current | {i})
+                if not (valid(cl) and wp_valid(cl)):
+                    current.add(i)
+            # assert not valid(mp.to_clause(current))
+            mp.block_down(current)
+            # this surely added new states
+
+        else:
+            # the clause is valid, and its wp is also valid
+            # shrink it, but ignore new states from failed minimizations (TODO: does that make sense?)
+            print(f'shrinking from {len(seed)}... ', end='')
+            current = set(seed)
+            for i in sorted(seed):
+                if i not in current:
+                    assert False # this can happen once we have "unsat cores" from f
+                    continue
+                cl = mp.to_clause(current - {i})
+                if valid(cl) and wp_valid(cl):
+                    current.remove(i)
+                else:
+                    # we don't really want to learn any new states when shrinking, so discard what we found
+                    states = states[:n_states]
+            print(f'to {len(current)}')
+            cl = mp.to_clause(current)
+            # assert valid(cl) and wp_valid(cl)
+            assert len(states) == n_states
+            a.append(cl)
+            mp.block_up(current)
+
+        # maintain a and the solver in case we added new states
+        if len(states) > n_states:
+             # TODO: do something smarter
+            print(f'forward_explore_marco a was {len(a)} predicates, resetting')
+            a = []
+            for mp in maps:
+                mp.reset_solver(up=[], down=mp.blocked_down)
+    assert False
+
+
 def forward_explore(s: Solver,
                     prog: Program,
                     alpha: Callable[[Iterable[State]], Sequence[Expr]],
@@ -269,7 +472,7 @@ def forward_explore(s: Solver,
 
         # check for 1 transition from an initial state or a non-initial state in states
         for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
-            print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
+            # print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
                 s, prog,
                 inits if precondition is None else precondition,
@@ -277,6 +480,7 @@ def forward_explore(s: Solver,
             )
             # print(res)
             if res is not None:
+                print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
                 print('NO')
                 _, m = res
                 print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
@@ -285,7 +489,8 @@ def forward_explore(s: Solver,
                 a = alpha(states)
                 break
             else:
-                print('YES')
+                # print('YES')
+                pass
 
     # here init U states |= a, post(init U states) |= a
     # here init U states |= a /\ wp(a)
@@ -349,7 +554,8 @@ def repeated_houdini(s: Solver, prog: Program) -> str:
             key=lambda x: (len(str(x)),str(x))
         )
     while True:
-        reachable_states, a = forward_explore(s, prog, alpha_clauses, reachable_states)
+        # reachable_states, a = forward_explore(s, prog, alpha_clauses, reachable_states)
+        reachable_states, a = forward_explore_marco(s, prog, clauses, reachable_states)
         print(f'Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
             print(str(m) + '\n' + '-'*80)
