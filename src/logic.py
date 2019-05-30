@@ -675,7 +675,7 @@ class Diagram(object):
             with utils.LogTag(utils.logger, 'previous-frame', lvl=logging.DEBUG):
                 for p in f.phases():
                     utils.logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
-                                     [str(x) for x in f.summary_of(p)])
+                                          [str(x) for x in f.summary_of(p)])
 
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
@@ -724,18 +724,6 @@ class Diagram(object):
                         utils.logger.debug('eliminated clause %s' % c)
                     self.remove_clause(d, j)
                     self.smoke(s, prog, depth)
-    #            elif utils.logger.isEnabledFor(logging.DEBUG):
-    #
-    #                utils.logger.debug('failed to eliminate clause %s' % c)
-    #                utils.logger.debug('from diagram %s' % self)
-    #
-    #                if isinstance(res, tuple):
-    #                    m, t = res
-    #                    utils.logger.debug('because of transition %s' % t.name)
-    #                    utils.logger.debug('and model %s' % Model(prog, m, KEY_NEW, KEY_OLD))
-    #                else:
-    #                    utils.logger.debug('because the diagram is satisfiable in the initial state')
-    #                    utils.logger.debug('and model %s' % Model(prog, m, KEY_ONE))
 
         self.prune_unused_vars()
 
@@ -1041,12 +1029,12 @@ class Model(object):
 
         e = syntax.Exists(vs, syntax.And(
             *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
-                syntax.Forall([syntax.SortedVar(None, fresh, syntax.UninterpretedSort(None, sort.name))],
+                syntax.Forall([syntax.SortedVar(None, fresh,
+                                                syntax.UninterpretedSort(None, sort.name))],
                               syntax.Or(*(syntax.Eq(syntax.Id(None, fresh), syntax.Id(None, v))
                                           for v in self.univs[sort])))
                 for sort in self.univs
-            )
-        )))
+            ))))
         assert self.prog.scope is not None
         e.resolve(self.prog.scope, None)
         return e
