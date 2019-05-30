@@ -490,16 +490,7 @@ def main() -> None:
             utils.logger.always_print('program has resolution errors.')
             sys.exit(1)
 
-        scope = prog.scope
-        assert scope is not None
-        assert len(scope.stack) == 0
-
-        s = Solver(cast(Scope[z3.ExprRef], scope))
-        t = s.get_translator()
-        for a in prog.axioms():
-            s.add(t.translate_expr(a.expr))
-
-        s.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations() if r.derived_axiom is not None)
+        s = Solver(prog)
 
         utils.args.main(s, prog)
 

@@ -6,7 +6,8 @@ import itertools
 import io
 import logging
 import sys
-from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
+from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
+    cast
 import z3
 
 import utils
@@ -49,7 +50,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Model.from_z3(prog, s, keys, s.model())
+            m = Model.from_z3(prog, keys, s.model())
 
             utils.logger.always_print('')
             if utils.args.print_counterexample:
@@ -263,14 +264,23 @@ def check_two_state_implication_along_transitions(
 
 
 class Solver(object):
-    def __init__(self, scope: Scope[z3.ExprRef]) -> None:
+    def __init__(self, prog: Program) -> None:
         self.z3solver = z3.Solver()
-        self.scope = scope
+        assert prog.scope is not None
+        assert len(prog.scope.stack) == 0
+        self.scope = cast(Scope[z3.ExprRef], prog.scope)
         self.translators: Dict[Tuple[Optional[str], Optional[str]], syntax.Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
         self.known_keys: Set[str] = set()
         self.mutable_axioms: List[Expr] = []
+
+        self.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations()
+                                     if r.derived_axiom is not None)
+
+        t = self.get_translator()
+        for a in prog.axioms():
+            self.add(t.translate_expr(a.expr))
 
     def register_mutable_axioms(self, axioms: Iterable[Expr]) -> None:
         assert len(self.known_keys) == 0, \
@@ -735,13 +745,11 @@ class Model(object):
     def __init__(
             self,
             prog: Program,
-            solver: Solver,
             keys: List[str],
     ) -> None:
         self.prog = prog
         self.z3model: Optional[z3.ModelRef] = None
         self.keys = keys
-        self.solver = solver
 
         RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
         CT = Dict[ConstantDecl, str]
@@ -758,8 +766,8 @@ class Model(object):
         self.transitions: List[str] = ['' for i in range(len(self.keys) - 1)]
 
     @staticmethod
-    def from_z3(prog: Program, solver: Solver, keys: List[str], z3m: z3.ModelRef) -> Model:
-        m = Model(prog, solver, keys)
+    def from_z3(prog: Program, keys: List[str], z3m: z3.ModelRef) -> Model:
+        m = Model(prog, keys)
         m.z3model = z3m
         m.read_out(z3m)
         return m
@@ -847,15 +855,15 @@ class Model(object):
 
         return '\n'.join(l)
 
-    def _eval(self, z3model: z3.ModelRef, expr: z3.ExprRef) -> z3.ExprRef:
-        ans = z3model.eval(expr, model_completion=True)
-        assert bool(ans) is True or bool(ans) is False, (expr, ans)
-        return ans
-
     def read_out(self, z3model: z3.ModelRef) -> None:
         # utils.logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
+
+        def _eval(expr: z3.ExprRef) -> z3.ExprRef:
+            ans = z3model.eval(expr, model_completion=True)
+            assert bool(ans) is True or bool(ans) is False, (expr, ans)
+            return ans
 
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
         for z3sort in sorted(z3model.sorts(), key=str):
@@ -900,7 +908,7 @@ class Model(object):
                             g = itertools.product(*domains)
                             for row in g:
                                 relation_expr = z3decl(*row)
-                                ans = self._eval(z3model, relation_expr)
+                                ans = _eval(relation_expr)
                                 rl.append(([rename(str(col)) for col in row], bool(ans)))
                             assert decl not in R
                             R[decl] = rl

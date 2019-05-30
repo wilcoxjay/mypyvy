@@ -58,11 +58,7 @@ class Frames(object):
         return len(self.fs)
 
     def _fresh_solver(self) -> Solver:
-        scope = self.prog.scope
-        assert scope is not None
-        assert len(scope.stack) == 0
-
-        return Solver(cast(Scope[z3.ExprRef], scope))
+        return Solver(self.prog)
 
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
         if contents is None:
@@ -118,7 +114,7 @@ class Frames(object):
 
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Model.from_z3(self.prog, self.solver, [KEY_ONE], z3m)
+            mod = Model.from_z3(self.prog, [KEY_ONE], z3m)
             diag = mod.as_diagram()
             return (p, diag)
 
@@ -149,7 +145,7 @@ class Frames(object):
                         if self.solver.check() != z3.unsat:
                             utils.logger.debug('phase %s cex to edge covering of transition %s' % (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Model.from_z3(self.prog, self.solver, [KEY_OLD, KEY_NEW], z3m)
+                            mod = Model.from_z3(self.prog, [KEY_OLD, KEY_NEW], z3m)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
 
@@ -203,7 +199,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Model.from_z3(self.prog, self.solver, [KEY_OLD, KEY_NEW], m)
+                mod = Model.from_z3(self.prog, [KEY_OLD, KEY_NEW], m)
                 diag = mod.as_diagram(i=0)
 
                 if utils.logger.isEnabledFor(logging.DEBUG):
@@ -465,7 +461,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
-                            m = Model.from_z3(self.prog, self.solver, [KEY_OLD, KEY_NEW], solver.model(diag.trackers))
+                            m = Model.from_z3(self.prog, [KEY_OLD, KEY_NEW], solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
                             return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))

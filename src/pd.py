@@ -87,8 +87,8 @@ def check_two_state_implication(
                 cache[k] = None
             else:
                 z3m, _ = res
-                prestate = Model.from_z3(prog, s, [KEY_OLD], z3m)
-                poststate = Model.from_z3(prog, s, [KEY_NEW, KEY_OLD], z3m)
+                prestate = Model.from_z3(prog, [KEY_OLD], z3m)
+                poststate = Model.from_z3(prog, [KEY_NEW, KEY_OLD], z3m)
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
                 cache[k] = result
@@ -332,7 +332,7 @@ def forward_explore_marco(solver: Solver,
         if z3m is not None:
             print(f'Checking if init implies: {clause}... NO')
             print('Found new initial state:')
-            m = Model.from_z3(prog, solver, [KEY_ONE], z3m)
+            m = Model.from_z3(prog, [KEY_ONE], z3m)
             print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             return False
@@ -465,7 +465,7 @@ def forward_explore(s: Solver,
         z3m = check_implication(s, inits, a)
         if z3m is not None:
             print('NO')
-            m = Model.from_z3(prog, s, [KEY_ONE], z3m)
+            m = Model.from_z3(prog, [KEY_ONE], z3m)
             print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             changes = True
