@@ -405,38 +405,55 @@ def forward_explore_marco(solver: Solver,
     for i, trans in enumerate(prog.transitions()):
         transition_indicators.append(z3.Bool(f'@transition_{i}'))
         wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+    wp_checked_valid: Set[Tuple[Optional[State], SubclausesMap, Tuple[int,...]]] = set()
     def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
         # return True iff wp(clause) is implied by init and valid in all states
         # when returning False, add a new transition to states
         # assert valid(clause)
-        for precondition, transition_indicator in product(chain((s for s in states), [None]), transition_indicators): # TODO: why len(s.keys) > 1 ?
-            #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+        for precondition in chain((s for s in states), [None]):
+            k = (precondition, mp, tuple(s))
+            if k in wp_checked_valid:
+                continue
+            for transition_indicator in transition_indicators:
+                #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+                indicators = (
+                    precondition_indicator(precondition),
+                    transition_indicator,
+                    mp_indicators[mp],
+                ) + tuple(lit_indicators[i] for i in sorted(s))
+                print(f'checking {indicators}... ', end='')
+                z3res = wp_valid_solver.check(indicators)
+                print('', end='\r')
+                assert z3res == z3.unsat or z3res == z3.sat
+                if z3res == z3.unsat:
+                    # learn it for next time (TODO maybe z3 already does it)
+                    # TODO: maybe get unsat core, or even minimal unsat core
+                    wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
+                else:
+                    z3model = wp_valid_solver.model(indicators)
+                    # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
+                    prestate = Model.from_z3([KEY_OLD], z3model)
+                    poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3model)
+                    _cache_transitions.append((prestate, poststate))
+                    print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
+                    print('Found new transition:')
+                    print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                    if precondition is None:
+                        states.append(prestate)
+                    states.append(poststate)
+                    return False
+            wp_checked_valid.add(k)
             indicators = (
                 precondition_indicator(precondition),
-                transition_indicator,
                 mp_indicators[mp],
             ) + tuple(lit_indicators[i] for i in sorted(s))
-            print(f'checking {indicators}... ', end='')
-            z3res = wp_valid_solver.check(indicators)
-            print('', end='\r')
-            assert z3res == z3.unsat or z3res == z3.sat
-            if z3res == z3.unsat:
-                # learn it for next time (TODO maybe z3 already does it)
-                # TODO: maybe get unsat core, or even minimal unsat core
-                wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
-            else:
-                z3model = wp_valid_solver.model(indicators)
-                # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
-                prestate = Model.from_z3([KEY_OLD], z3model)
-                poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3model)
-                _cache_transitions.append((prestate, poststate))
-                print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
-                print('Found new transition:')
-                print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
-                if precondition is None:
-                    states.append(prestate)
-                states.append(poststate)
-                return False
+            # TODO: does this really help?
+            wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
+            wp_valid_solver.add(z3.Implies(
+                precondition_indicator(precondition),
+                t.translate_expr(mp.to_clause(s))
+            ))
+
         return True
 
     # a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
