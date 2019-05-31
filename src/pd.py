@@ -439,7 +439,10 @@ def forward_explore_marco(solver: Solver,
                 return False
         return True
 
-    a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
+    # a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
+    def get_a() -> List[Expr]:
+         # set of clauses such that: init U states |= a /\ wp(a)
+        return list(mp.to_clause(s) for mp in maps for s in mp.blocked_up)
     for rotate in itertools.count(0):
         # for p in a:
         #     assert valid(p) and wp_valid(p)
@@ -453,7 +456,8 @@ def forward_explore_marco(solver: Solver,
             # here init U states |= a /\ wp(a), and also there is no uncharted territory in the maps
             #print(states)
             #print(a)
-            return states, dedup_equivalent_predicates(solver, a)
+            # assert set(a) == set(get_a()), (a,get_a())
+            return states, dedup_equivalent_predicates(solver, get_a())
 
         n_states = len(states)
 
@@ -501,20 +505,32 @@ def forward_explore_marco(solver: Solver,
             cl = mp.to_clause(current)
             # assert valid(cl) and wp_valid(cl)
             assert len(states) == n_states
-            a.append(cl)
+            # a.append(cl)
             mp.block_up(current)
             print(f'block_up: {cl}')
 
         # maintain a and the solver in case we added new states
         if len(states) > n_states:
              # TODO: do something smarter
-            print(f'forward_explore_marco a was {len(a)} predicates, resetting')
-            a = []
+            # assert set(a) == set(get_a())
+            # a = []
+            print(f'forward_explore_marco a was {sum(len(mp.blocked_up) for mp in maps)} predicates, resetting')
             nd = 0
+            nu = 0
             for mp in maps:
-                mp.reset_solver(up=[], down=mp.blocked_down)
-                nd += len(mp.blocked_down)
-            print(f'forward_explore_marco kept {nd} blockings down')
+                down = mp.blocked_down
+                up = []
+                for s in mp.blocked_up:
+                    _states = states
+                    states = states[n_states:]
+                    if valid(mp.to_clause(s)) and wp_valid(mp, s):
+                        up.append(s)
+                    states = _states # TODO: we are throwing away states here, need something better, sor of forward_explore_predicates
+                mp.reset_solver(up=up, down=down)
+                nd += len(down)
+                nu += len(up)
+            print(f'forward_explore_marco kept {nd} blockings down and {nu} blockings up')
+            a = get_a()
     assert False
 
 
