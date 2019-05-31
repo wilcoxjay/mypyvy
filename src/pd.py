@@ -342,33 +342,103 @@ def forward_explore_marco(solver: Solver,
             return False
         return True
 
-    def wp_valid(clause: Expr) -> bool:
+    # def wp_valid(clause: Expr) -> bool:
+    #     # return True iff wp(clause) is implied by init and valid in all states
+    #     # when returning False, add a new transition to states
+    #     # assert valid(clause)
+    #     for precondition in chain((s for s in states), [None]): # TODO: why len(s.keys) > 1 ?
+    #         #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+    #         res = check_two_state_implication(
+    #             solver,
+    #             inits if precondition is None else precondition,
+    #             clause
+    #         )
+    #         if res is not None:
+    #             print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+    #             print('NO\nFound new transition:')
+    #             prestate, poststate = res
+    #             print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+    #             if precondition is None:
+    #                 states.append(prestate)
+    #             states.append(poststate)
+    #             return False
+    #         else:
+    #             #print('YES')
+    #             pass
+    #     return True
+
+    N = len(clauses)
+    maps = [SubclausesMap(top_clause) for top_clause in clauses]
+
+    wp_valid_solver = Solver()
+    t = wp_valid_solver.get_translator(KEY_NEW, KEY_OLD)
+    mp_indicators: Dict[SubclausesMap, z3.ExprRef] = {mp: z3.Bool(f'@mp_{i}') for i, mp in enumerate(maps)}
+    lit_indicators: Sequence[z3.ExprRef] = tuple(z3.Bool(f'@lit_{i}') for i in range(max(mp.n for mp in maps)))
+    for mp in maps:
+        # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
+        # some of this code is taken out of syntax.Z3Translator.translate_expr
+        # TODO: why can't top clause be quantifier free? it should be possible
+        top_clause = mp.to_clause(mp.all_n)
+        assert isinstance(top_clause, QuantifierExpr)
+        assert isinstance(top_clause.body, NaryExpr)
+        assert top_clause.body.op == 'OR'
+        assert tuple(mp.literals) == tuple(top_clause.body.args)
+        bs = t.bind(top_clause.binder)
+        with t.scope.in_scope(top_clause.binder, bs):
+            body = z3.Or(*(
+                z3.And(lit_indicators[i], t.translate_expr(lit))
+                for i, lit in enumerate(mp.literals)
+            ))
+        wp_valid_solver.add(z3.Implies(mp_indicators[mp], z3.Not(z3.ForAll(bs, body))))
+    init_indicator = z3.Bool('@init')
+    for init in prog.inits():
+        wp_valid_solver.add(z3.Implies(init_indicator, t.translate_expr(init.expr, old=True)))
+    precondition_indicators: Dict[Optional[State], z3.ExprRef] = {None: init_indicator}
+    def precondition_indicator(precondition: Optional[State]) -> z3.ExprRef:
+        if precondition not in precondition_indicators:
+            assert precondition is not None
+            x = z3.Bool(f'@state_{id(precondition)})')
+            wp_valid_solver.add(z3.Implies(x, t.translate_expr(precondition.as_onestate_formula(0), old=True)))
+            precondition_indicators[precondition] = x
+        return precondition_indicators[precondition]
+    transition_indicators = []
+    for i, trans in enumerate(prog.transitions()):
+        transition_indicators.append(z3.Bool(f'@transition_{i}'))
+        wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+    def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
         # return True iff wp(clause) is implied by init and valid in all states
         # when returning False, add a new transition to states
         # assert valid(clause)
-        for precondition in chain((s for s in states), [None]): # TODO: why len(s.keys) > 1 ?
+        for precondition, transition_indicator in product(chain((s for s in states), [None]), transition_indicators): # TODO: why len(s.keys) > 1 ?
             #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
-            res = check_two_state_implication(
-                solver,
-                inits if precondition is None else precondition,
-                clause
-            )
-            if res is not None:
-                print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
-                print('NO\nFound new transition:')
-                prestate, poststate = res
+            indicators = (
+                precondition_indicator(precondition),
+                transition_indicator,
+                mp_indicators[mp],
+            ) + tuple(lit_indicators[i] for i in sorted(s))
+            print(f'checking {indicators}... ', end='')
+            z3res = wp_valid_solver.check(indicators)
+            print('', end='\r')
+            assert z3res == z3.unsat or z3res == z3.sat
+            if z3res == z3.unsat:
+                # learn it for next time (TODO maybe z3 already does it)
+                # TODO: maybe get unsat core, or even minimal unsat core
+                wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
+            else:
+                z3model = wp_valid_solver.model(indicators)
+                # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
+                prestate = Model.from_z3([KEY_OLD], z3model)
+                poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3model)
+                _cache_transitions.append((prestate, poststate))
+                print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
+                print('Found new transition:')
                 print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 if precondition is None:
                     states.append(prestate)
                 states.append(poststate)
                 return False
-            else:
-                #print('YES')
-                pass
         return True
 
-    N = len(clauses)
-    maps = [SubclausesMap(top_clause) for top_clause in clauses]
     a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
     for rotate in itertools.count(0):
         # for p in a:
@@ -398,14 +468,14 @@ def forward_explore_marco(solver: Solver,
             print(f'block_down: {mp.to_clause(current)}')
             # this may have added new (initial) states
 
-        elif not wp_valid(mp.to_clause(seed)):
+        elif not wp_valid(mp, seed):
             # the clause is was valid, but its wp was not. we already learned a new state so now its not even valid
             # grow the clause (while learning new sates)
             assert len(states) > n_states
             current = seed
             for i in sorted(mp.all_n - seed):
                 cl = mp.to_clause(current | {i})
-                if not (valid(cl) and wp_valid(cl)):
+                if not (valid(cl) and wp_valid(mp, current | {i})):
                     current.add(i)
             # assert not valid(mp.to_clause(current))
             mp.block_down(current)
@@ -422,7 +492,7 @@ def forward_explore_marco(solver: Solver,
                     assert False # this can happen once we have "unsat cores" from f
                     continue
                 cl = mp.to_clause(current - {i})
-                if valid(cl) and wp_valid(cl):
+                if valid(cl) and wp_valid(mp, current - {i}):
                     current.remove(i)
                 else:
                     # we don't really want to learn any new states when shrinking, so discard what we found
