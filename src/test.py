@@ -5,10 +5,14 @@ import parser
 import syntax
 import mypyvy
 
+import collections
 import os
 from pathlib import Path
+import pickle
 import shlex
 import subprocess
+
+from typing import List
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -59,6 +63,25 @@ class SyntaxTests(unittest.TestCase):
             with self.subTest(expr=expr):
                 syntax.as_clauses(expr)
 
+    def test_consistent_hashing(self) -> None:
+        with open(PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+            prog1 = mypyvy.parse_program(f.read())
+        with open(PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+            prog2 = mypyvy.parse_program(f.read())
+
+        prog1.resolve()
+        prog2.resolve()
+        for d1, d2 in zip(prog1.decls_containing_exprs(), prog2.decls_containing_exprs()):
+            e1 = d1.expr
+            e2 = d2.expr
+            with self.subTest(msg='expr hash/eq', e1=e1, e2=e2):
+                self.assertEqual(e1, e2)
+                self.assertEqual(hash(e1), hash(e2))
+
+def build_python_cmd() -> List[str]:
+    python = os.getenv('PYTHON') or 'python3.7'
+    return [python, str((PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
+
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
         for p in sorted(Path(PROJECT_ROOT / 'examples' / 'regression').glob('*.pyv')):
@@ -71,7 +94,7 @@ class RegressionTests(unittest.TestCase):
                 python = os.getenv('PYTHON') or 'python3.7'
                 out_path = p.with_suffix('.output')
                 expect_path = p.with_suffix('.expect')
-                python_cmd = [python, str((PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())] + shlex.split(line) + [str(p)]
+                python_cmd = build_python_cmd() + shlex.split(line) + [str(p)]
                 with open(out_path, 'w') as f_out:
                     subprocess.run(python_cmd, stdout=f_out)
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]

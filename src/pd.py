@@ -56,30 +56,69 @@ def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
 
         cache['m'] += 1
         if len(cache) % 1000 == 1:
-            dump_caches()
+            # dump_caches()
             print(f'_cache_eval_in_state length is {len(cache)}, h/m is {cache["h"]}/{cache["m"]}')
     else:
         cache['h'] += 1
     return cache[k]
+
+_cache_initial: List[State] = []
+# TODO: could also cache expressions already found to be initial
+def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
+    prog = syntax.the_program
+    inits = tuple(init.expr for init in prog.inits())
+    for s in _cache_initial:
+        if not eval_in_state(solver, s, p):
+            print(f'Found cached initial state violating {p}:')
+            print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+            return s
+
+    z3m = check_implication(solver, inits, [p])
+    if z3m is not None:
+        s = Model.from_z3([KEY_ONE], z3m)
+        _cache_initial.append(s)
+        print(f'Found new initial state violating {p}:')
+        print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+        return s
+    return None
 
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
 _cache_transitions: List[Tuple[State,State]] = []
 def check_two_state_implication(
         s: Solver,
         precondition: Union[Iterable[Expr], State],
-        p: Expr
+        p: Expr,
+        msg: str = 'transition'
 ) -> Optional[Tuple[State,State]]:
     if not isinstance(precondition, State):
         precondition = tuple(precondition)
     k = (precondition, p)
     cache = _cache_two_state_implication
     if k not in cache:
+        if utils.args.cache_only:
+            print(f'loudly describing this unexpected cache miss for predicate {p} on precondition:')
+            if isinstance(precondition, State):
+                print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
+            else:
+                print('-'*80)
+                for e in precondition:
+                    print(e)
+                print('-'*80)
+            for _k in cache:
+                if isinstance(_k, tuple):
+                    x, y = _k
+                    if x == precondition:
+                        print(y, cache[_k], y == p, hash(y), hash(p))
+            assert False
+
         for prestate, poststate in _cache_transitions:
-            if ((prestate == precondition if isinstance(precondition, State) else
+            if ((prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0) if isinstance(precondition, State) else
                  all(eval_in_state(s, prestate, q) for q in precondition)) and
                 not eval_in_state(s, poststate, p)):
                 cache[k] = (prestate, poststate)
                 cache['r'] += 1
+                print(f'Found previous {msg} violating {p}:')
+                print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 break
         else:
             res = check_two_state_implication_all_transitions(
@@ -89,16 +128,57 @@ def check_two_state_implication(
             if res is None:
                 cache[k] = None
             else:
+                # print(f'loudly describing this unexpected cache miss for predicate {p} on precondition:')
+                # if isinstance(precondition, State):
+                #     print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
+                # else:
+                #     print('-'*80)
+                #     for e in precondition:
+                #         print(e)
+                #     print('-'*80)
+                #
+                # for prestate, poststate in _cache_transitions:
+                #     print('prestate:')
+                #     print('-'*80 + '\n' + str(prestate) + '\n' + '-'*80)
+                #     print('poststate:')
+                #     print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                #
+                #     if isinstance(precondition, State):
+                #         print(f'prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0): '
+                #               f'{prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0)}')
+                #     else:
+                #         print(f'all(eval_in_state(s, prestate, q) for q in precondition): '
+                #               f'{all(eval_in_state(s, prestate, q) for q in precondition)}')
+                #     print(f'not eval_in_state(s, poststate, p): {not eval_in_state(s, poststate, p)}')
+                #
+                #     if ((prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0) if isinstance(precondition, State) else
+                #          all(eval_in_state(s, prestate, q) for q in precondition)) and
+                #         not eval_in_state(s, poststate, p)):
+                #         cache[k] = (prestate, poststate)
+                #         cache['r'] += 1
+                #         print(f'Found cached {msg} violating {p}:')
+                #         print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                #         break
+                # assert False
+
                 z3m, _ = res
                 prestate = Model.from_z3([KEY_OLD], z3m)
                 poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
+                # TODO: check if either of these states is initial and populate _cache_initial
                 cache[k] = result
+                print(f'Found new {msg} violating {p}:')
+                print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+
         if len(cache) % 100 == 1:
-            dump_caches()
+            # dump_caches()
             print(f'_cache_two_state_implication length is {len(cache)}, h/r is {cache["h"]}/{cache["r"]}')
     else:
+        if cache[k] is not None:
+            prestate, poststate = cache[k]
+            print(f'Found cached {msg} violating {p}:')
+            print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
         cache['h'] += 1
     return cache[k]
 
@@ -332,129 +412,120 @@ def forward_explore_marco(solver: Solver,
         # when returning False, possibly learn a new state
         if not all(eval_in_state(solver, m, clause) for m in states):
             return False
-        z3m = check_implication(solver, inits, [clause])
-        if z3m is not None:
-            print(f'Checking if init implies: {clause}... NO')
-            print('Found new initial state:')
-            m = Model.from_z3([KEY_ONE], z3m)
-            print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
-            states.append(m)
+        s = check_initial(solver, clause)
+        if s is not None:
+            states.append(s)
             return False
-        return True
+        else:
+            return True
 
-    # def wp_valid(clause: Expr) -> bool:
-    #     # return True iff wp(clause) is implied by init and valid in all states
-    #     # when returning False, add a new transition to states
-    #     # assert valid(clause)
-    #     for precondition in chain((s for s in states), [None]): # TODO: why len(s.keys) > 1 ?
-    #         #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
-    #         res = check_two_state_implication(
-    #             solver,
-    #             inits if precondition is None else precondition,
-    #             clause
-    #         )
-    #         if res is not None:
-    #             print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
-    #             print('NO\nFound new transition:')
-    #             prestate, poststate = res
-    #             print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
-    #             if precondition is None:
-    #                 states.append(prestate)
-    #             states.append(poststate)
-    #             return False
-    #         else:
-    #             #print('YES')
-    #             pass
-    #     return True
+    def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
+        clause = mp.to_clause(s)
+        # return True iff wp(clause) is implied by init and valid in all states
+        # when returning False, add a new transition to states
+        # assert valid(clause)
+        for precondition in chain((s for s in states), [None]): # TODO: why len(s.keys) > 1 ?
+            res = check_two_state_implication(
+                solver,
+                inits if precondition is None else precondition,
+                clause
+            )
+            if res is not None:
+                prestate, poststate = res
+                if precondition is None:
+                    states.append(prestate)
+                states.append(poststate)
+                return False
+        return True
 
     N = len(clauses)
     maps = [SubclausesMap(top_clause) for top_clause in clauses]
 
-    wp_valid_solver = Solver()
-    t = wp_valid_solver.get_translator(KEY_NEW, KEY_OLD)
-    mp_indicators: Dict[SubclausesMap, z3.ExprRef] = {mp: z3.Bool(f'@mp_{i}') for i, mp in enumerate(maps)}
-    lit_indicators: Sequence[z3.ExprRef] = tuple(z3.Bool(f'@lit_{i}') for i in range(max(mp.n for mp in maps)))
-    for mp in maps:
-        # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
-        # some of this code is taken out of syntax.Z3Translator.translate_expr
-        # TODO: why can't top clause be quantifier free? it should be possible
-        top_clause = mp.to_clause(mp.all_n)
-        assert isinstance(top_clause, QuantifierExpr)
-        assert isinstance(top_clause.body, NaryExpr)
-        assert top_clause.body.op == 'OR'
-        assert tuple(mp.literals) == tuple(top_clause.body.args)
-        bs = t.bind(top_clause.binder)
-        with t.scope.in_scope(top_clause.binder, bs):
-            body = z3.Or(*(
-                z3.And(lit_indicators[i], t.translate_expr(lit))
-                for i, lit in enumerate(mp.literals)
-            ))
-        wp_valid_solver.add(z3.Implies(mp_indicators[mp], z3.Not(z3.ForAll(bs, body))))
-    init_indicator = z3.Bool('@init')
-    for init in prog.inits():
-        wp_valid_solver.add(z3.Implies(init_indicator, t.translate_expr(init.expr, old=True)))
-    precondition_indicators: Dict[Optional[State], z3.ExprRef] = {None: init_indicator}
-    def precondition_indicator(precondition: Optional[State]) -> z3.ExprRef:
-        if precondition not in precondition_indicators:
-            assert precondition is not None
-            x = z3.Bool(f'@state_{id(precondition)})')
-            wp_valid_solver.add(z3.Implies(x, t.translate_expr(precondition.as_onestate_formula(0), old=True)))
-            precondition_indicators[precondition] = x
-        return precondition_indicators[precondition]
-    transition_indicators = []
-    for i, trans in enumerate(prog.transitions()):
-        transition_indicators.append(z3.Bool(f'@transition_{i}'))
-        wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
-    wp_checked_valid: Set[Tuple[Optional[State], SubclausesMap, Tuple[int,...]]] = set()
-    def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
-        # return True iff wp(clause) is implied by init and valid in all states
-        # when returning False, add a new transition to states
-        # assert valid(clause)
-        for precondition in chain((s for s in states), [None]):
-            k = (precondition, mp, tuple(s))
-            if k in wp_checked_valid:
-                continue
-            for transition_indicator in transition_indicators:
-                #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
-                indicators = (
-                    precondition_indicator(precondition),
-                    transition_indicator,
-                    mp_indicators[mp],
-                ) + tuple(lit_indicators[i] for i in sorted(s))
-                print(f'checking {indicators}... ', end='')
-                z3res = wp_valid_solver.check(indicators)
-                print('', end='\r')
-                assert z3res == z3.unsat or z3res == z3.sat
-                if z3res == z3.unsat:
-                    # learn it for next time (TODO maybe z3 already does it)
-                    # TODO: maybe get unsat core, or even minimal unsat core
-                    wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
-                else:
-                    z3model = wp_valid_solver.model(indicators)
-                    # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
-                    prestate = Model.from_z3([KEY_OLD], z3model)
-                    poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3model)
-                    _cache_transitions.append((prestate, poststate))
-                    print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
-                    print('Found new transition:')
-                    print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
-                    if precondition is None:
-                        states.append(prestate)
-                    states.append(poststate)
-                    return False
-            wp_checked_valid.add(k)
-            indicators = (
-                precondition_indicator(precondition),
-                mp_indicators[mp],
-            ) + tuple(lit_indicators[i] for i in sorted(s))
-            # TODO: does this really help?
-            wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
-            wp_valid_solver.add(z3.Implies(
-                precondition_indicator(precondition),
-                t.translate_expr(mp.to_clause(s))
-            ))
+    # wp_valid_solver = Solver()
+    # t = wp_valid_solver.get_translator(KEY_NEW, KEY_OLD)
+    # mp_indicators: Dict[SubclausesMap, z3.ExprRef] = {mp: z3.Bool(f'@mp_{i}') for i, mp in enumerate(maps)}
+    # lit_indicators: Sequence[z3.ExprRef] = tuple(z3.Bool(f'@lit_{i}') for i in range(max(mp.n for mp in maps)))
+    # for mp in maps:
+    #     # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
+    #     # some of this code is taken out of syntax.Z3Translator.translate_expr
+    #     # TODO: why can't top clause be quantifier free? it should be possible
+    #     top_clause = mp.to_clause(mp.all_n)
+    #     assert isinstance(top_clause, QuantifierExpr)
+    #     assert isinstance(top_clause.body, NaryExpr)
+    #     assert top_clause.body.op == 'OR'
+    #     assert tuple(mp.literals) == tuple(top_clause.body.args)
+    #     bs = t.bind(top_clause.binder)
+    #     with t.scope.in_scope(top_clause.binder, bs):
+    #         body = z3.Or(*(
+    #             z3.And(lit_indicators[i], t.translate_expr(lit))
+    #             for i, lit in enumerate(mp.literals)
+    #         ))
+    #     wp_valid_solver.add(z3.Implies(mp_indicators[mp], z3.Not(z3.ForAll(bs, body))))
+    # init_indicator = z3.Bool('@init')
+    # for init in prog.inits():
+    #     wp_valid_solver.add(z3.Implies(init_indicator, t.translate_expr(init.expr, old=True)))
+    # precondition_indicators: Dict[Optional[State], z3.ExprRef] = {None: init_indicator}
+    # def precondition_indicator(precondition: Optional[State]) -> z3.ExprRef:
+    #     if precondition not in precondition_indicators:
+    #         assert precondition is not None
+    #         x = z3.Bool(f'@state_{id(precondition)})')
+    #         wp_valid_solver.add(z3.Implies(x, t.translate_expr(precondition.as_onestate_formula(0), old=True)))
+    #         precondition_indicators[precondition] = x
+    #     return precondition_indicators[precondition]
+    # transition_indicators = []
+    # for i, trans in enumerate(prog.transitions()):
+    #     transition_indicators.append(z3.Bool(f'@transition_{i}'))
+    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+    # wp_checked_valid: Set[Tuple[Optional[State], SubclausesMap, Tuple[int,...]]] = set()
+    # def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
+    #     # return True iff wp(clause) is implied by init and valid in all states
+    #     # when returning False, add a new transition to states
+    #     # assert valid(clause)
+    #     for precondition in chain((s for s in states), [None]):
+    #         k = (precondition, mp, tuple(s))
+    #         if k in wp_checked_valid:
+    #             continue
+    #         for transition_indicator in transition_indicators:
+    #             #print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {clause}... ',end='')
+    #             indicators = (
+    #                 precondition_indicator(precondition),
+    #                 transition_indicator,
+    #                 mp_indicators[mp],
+    #             ) + tuple(lit_indicators[i] for i in sorted(s))
+    #             print(f'checking {indicators}... ', end='')
+    #             z3res = wp_valid_solver.check(indicators)
+    #             print('', end='\r')
+    #             assert z3res == z3.unsat or z3res == z3.sat
+    #             if z3res == z3.unsat:
+    #                 # learn it for next time (TODO maybe z3 already does it)
+    #                 # TODO: maybe get unsat core, or even minimal unsat core
+    #                 wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
+    #             else:
+    #                 z3model = wp_valid_solver.model(indicators)
+    #                 # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
+    #                 prestate = Model.from_z3([KEY_OLD], z3model)
+    #                 poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3model)
+    #                 _cache_transitions.append((prestate, poststate))
+    #                 print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
+    #                 print('Found new transition:')
+    #                 print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+    #                 if precondition is None:
+    #                     states.append(prestate)
+    #                 states.append(poststate)
+    #                 return False
+    #         wp_checked_valid.add(k)
+    #         indicators = (
+    #             precondition_indicator(precondition),
+    #             mp_indicators[mp],
+    #         ) + tuple(lit_indicators[i] for i in sorted(s))
+    #         # TODO: does this really help?
+    #         wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
+    #         wp_valid_solver.add(z3.Implies(
+    #             precondition_indicator(precondition),
+    #             t.translate_expr(mp.to_clause(s))
+    #         ))
 
-        return True
+    #     return True
 
     # a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
     def get_a() -> List[Expr]:
@@ -574,11 +645,14 @@ def forward_explore(s: Solver,
             print(f'  {e}')
         print(f'Checking if init implies everything ({len(a)} predicates)... ', end='')
 
-        z3m = check_implication(s, inits, a)
-        if z3m is not None:
+        m = None
+        for p in a:
+            m = check_initial(s, p)
+            if m is not None:
+                break
+
+        if m is not None:
             print('NO')
-            m = Model.from_z3([KEY_ONE], z3m)
-            print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
             states.append(m)
             changes = True
             a = alpha(states)
@@ -596,17 +670,11 @@ def forward_explore(s: Solver,
             )
             # print(res)
             if res is not None:
-                print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
-                print('NO')
                 _, m = res
-                print('-'*80 + '\n' + str(m) + '\n' + '-'*80)
                 states.append(m)
                 changes = True
                 a = alpha(states)
                 break
-            else:
-                # print('YES')
-                pass
 
     # here init U states |= a, post(init U states) |= a
     # here init U states |= a /\ wp(a)
@@ -655,9 +723,13 @@ def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr
 cache_path: Optional[Path] = None
 
 def dump_caches() -> None:
-    return # TODO: enable this once hashes are consistent and make caches useful
     if cache_path is not None:
-        caches = ['_cache_eval_in_state', '_cache_two_state_implication', '_cache_transitions']
+        caches = [
+            '_cache_eval_in_state',
+            '_cache_two_state_implication',
+            '_cache_transitions',
+            '_cache_initial',
+        ]
         obj = {k: sys.modules['pd'].__dict__[k] for k in caches}
         print(f'dumping caches {tuple((k, len(v)) for k,v in obj.items())}... ', end='')
         sys.stdout.flush()
@@ -666,14 +738,13 @@ def dump_caches() -> None:
         print(f'cache dumped.')
 
 def load_caches() -> None:
-    return # TODO: enable this once hashes are consistent and make caches useful
     if cache_path is not None and cache_path.exists():
         print(f'loading caches from {cache_path!r}', end='... ')
         sys.stdout.flush()
         with open(cache_path, 'rb') as cache_file:
             obj = pickle.load(cache_file)
             sys.modules['pd'].__dict__.update(obj)
-        print(f'loeaded caches {tuple((k, len(v)) for k,v in obj.items())}')
+        print(f'loaded caches {tuple((k, len(obj[k])) for k in sorted(obj))}')
 
 def repeated_houdini(s: Solver) -> str:
     '''The (proof side) repeated Houdini algorith, either sharp or not.
@@ -706,6 +777,7 @@ def repeated_houdini(s: Solver) -> str:
             print(str(m) + '\n' + '-'*80)
         if check_implication(s, a, safety) is not None:
             print('Found safety violation!')
+            dump_caches()
             return 'UNSAFE'
         sharp_predicates = tuple(a)
         print(f'Current sharp predicates ({len(sharp_predicates)}):')
@@ -715,11 +787,9 @@ def repeated_houdini(s: Solver) -> str:
         unreachable = []
         while True:
             for p in a:
-                res = check_two_state_implication(s, a, p)
+                res = check_two_state_implication(s, a, p, 'CTI')
                 if res is not None:
-                    print(f'Found new CTI violating {p}')
                     prestate, poststate = res
-                    print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                     unreachable.append(prestate)
                     states, a = forward_explore(
                         s,
@@ -734,6 +804,7 @@ def repeated_houdini(s: Solver) -> str:
             print(p)
         if len(a) > 0 and check_implication(s, a, safety) is None:
             print('Implies safety!')
+            dump_caches()
             return 'SAFE'
         else:
             new_clauses = []
@@ -765,6 +836,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=repeated_houdini)
     s.add_argument('--sharp', action=utils.YesNoAction, default=True,
                    help='search for sharp invariants')
+
     result.append(s)
 
     return result

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import dataclasses
 from dataclasses import dataclass
 import functools
 import itertools
@@ -15,9 +16,33 @@ Token = ply.lex.LexToken
 
 B = TypeVar('B')
 
-class Sort(object):
+class Denotable(object):
     def __init__(self) -> None:
         self._hash: Optional[int] = None
+
+    def _denote(self) -> Tuple:
+        raise Exception('Unexpected denotable object %s does not implement _denote method' % repr(self))
+
+    def __getstate__(self) -> Any:
+        return dict(
+            self.__dict__,
+            _hash=None,
+        )
+
+    def __hash__(self) -> int:
+        if self._hash is None:
+            self._hash = hash((type(self), self._denote()))
+        return self._hash
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Denotable):
+            return False
+
+        return (type(self) is type(other) and
+                self._denote() == other._denote())
+
+
+class Sort(Denotable):
     def __repr__(self) -> str:
         raise Exception('Unexpected sort %s does not implement __repr__ method' % type(self))
 
@@ -29,19 +54,6 @@ class Sort(object):
 
     def to_z3(self) -> z3.SortRef:
         raise Exception('Unexpected sort %s does not implement to_z3 method' % repr(self))
-
-    def _denote(self) -> object:
-        raise Exception('Unexpected sort %s does not implement _denote method' % repr(self))
-
-    def __hash__(self) -> int:
-        if self._hash is None:
-            self._hash = hash(self._denote())
-        return self._hash
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Sort):
-            return False
-        return self._denote() == other._denote()
 
     def __ne__(self, other: object) -> bool:
         return not (self == other)
@@ -396,9 +408,9 @@ def as_clauses(expr: Expr) -> List[Expr]:
     return ans
 
 @functools.total_ordering
-class Expr(object):
+class Expr(Denotable):
     def __init__(self) -> None:
-        self._hash: Optional[int] = None
+        super().__init__()
 
     def __repr__(self) -> str:
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
@@ -411,19 +423,6 @@ class Expr(object):
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         raise Exception('Unexpected expression %s does not implement resolve method' %
                         repr(self))
-
-    def _denote(self) -> Tuple:
-        raise Exception('Unexpected expr %s does not implement _denote method' % repr(self))
-
-    def __hash__(self) -> int:
-        if self._hash is None:
-            self._hash = hash(self._denote())
-        return self._hash
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Expr):
-            return NotImplemented
-        return self._denote() == other._denote()
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Expr):
@@ -463,7 +462,7 @@ class Bool(Expr):
         return str(self.val)
 
     def _denote(self) -> Tuple:
-        return (Bool, self.val)
+        return (self.val,)
 
     def prec(self) -> int:
         return PREC_BOT
@@ -544,7 +543,7 @@ class UnaryExpr(Expr):
             return BoolSort
 
     def _denote(self) -> Tuple:
-        return (UnaryExpr, self.op, self.arg)
+        return (self.op, self.arg)
 
     def __repr__(self) -> str:
         return 'UnaryExpr(tok=None, op=%s, arg=%s)' % (repr(self.op), repr(self.arg))
@@ -614,7 +613,7 @@ class BinaryExpr(Expr):
 
 
     def _denote(self) -> Tuple:
-        return (BinaryExpr, self.op, self.arg1, self.arg2)
+        return (self.op, self.arg1, self.arg2)
 
     def __repr__(self) -> str:
         return 'BinaryExpr(tok=None, op=%s, arg1=%s, arg2=%s)' % (
@@ -685,7 +684,7 @@ class NaryExpr(Expr):
         return BoolSort
 
     def _denote(self) -> Tuple:
-        return (NaryExpr, self.op, tuple(self.args))
+        return (self.op, tuple(self.args))
 
     def __repr__(self) -> str:
         return 'NaryExpr(tok=None, op=%s, args=%s)' % (repr(self.op), self.args)
@@ -805,7 +804,7 @@ class AppExpr(Expr):
             return sort
 
     def _denote(self) -> Tuple:
-        return (AppExpr, self.callee, tuple(self.args))
+        return (self.callee, tuple(self.args))
 
     def __repr__(self) -> str:
         return 'AppExpr(tok=None, rel=%s, args=%s)' % (repr(self.callee), self.args)
@@ -834,11 +833,24 @@ class AppExpr(Expr):
                     s.add(x)
         return l
 
-class SortedVar(object):
+class SortedVar(Denotable):
     def __init__(self, tok: Optional[Token], name: str, sort: Optional[Sort]) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.sort: InferenceSort = sort
+
+    def _denote(self, allow_untyped: bool = False) -> Tuple:
+        assert allow_untyped or isinstance(self.sort, Sort), 'SortedVar._denote should only be called after type inference'
+        return (self.name, self.sort)
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, SortedVar) and
+                type(self) is type(other) and
+                self._denote(allow_untyped=True) == other._denote(allow_untyped=True))
+
+    def __hash__(self) -> int:
+        return super().__hash__()
 
     def resolve(self, scope: Scope[InferenceSort]) -> None:
         if self.sort is None:
@@ -859,12 +871,16 @@ class SortedVar(object):
             return '%s:%s' % (self.name, self.sort)
 
 
-class Binder(object):
+class Binder(Denotable):
     def __init__(self, vs: List[SortedVar]) -> None:
+        super().__init__()
         self.vs = vs
 
     def __repr__(self) -> str:
         return 'Binder(%s)' % self.vs
+
+    def _denote(self) -> Tuple:
+        return tuple(self.vs)
 
     def pre_resolve(self, scope: Scope[InferenceSort]) -> None:
         for sv in self.vs:
@@ -906,7 +922,7 @@ class QuantifierExpr(Expr):
         return 'QuantifierExpr(tok=None, quant=%s, vs=%s, body=%s)' % (repr(self.quant), self.binder.vs, repr(self.body))
 
     def _denote(self) -> Tuple:
-        return (QuantifierExpr, self.quant, self.body)
+        return (self.quant, self.binder, self.body)
 
     def prec(self) -> int:
         return PREC_QUANT
@@ -967,7 +983,7 @@ class Id(Expr):
             return vsort
 
     def _denote(self) -> Tuple:
-        return (Id, self.name)
+        return (self.name,)
 
     def __repr__(self) -> str:
         return 'Id(tok=None, name=%s)' % (repr(self.name),)
@@ -998,7 +1014,7 @@ class IfThenElse(Expr):
         return self.els.resolve(scope, sort)
 
     def _denote(self) -> Tuple:
-        return (IfThenElse, self.branch, self.then, self.els)
+        return (self.branch, self.then, self.els)
 
     def prec(self) -> int:
         return PREC_TOP
@@ -1043,7 +1059,7 @@ class Let(Expr):
         return sort
 
     def _denote(self) -> Tuple:
-        return (Let, self.binder, self.val, self.body)
+        return (self.binder, self.val, self.body)
 
     def prec(self) -> int:
         return PREC_TOP
@@ -1065,6 +1081,7 @@ Arity = List[Sort]
 
 class UninterpretedSort(Sort):
     def __init__(self, tok: Optional[Token], name: str) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.decl: Optional[SortDecl] = None
@@ -1085,8 +1102,8 @@ class UninterpretedSort(Sort):
 
         return self.decl.to_z3()
 
-    def _denote(self) -> object:
-        return (UninterpretedSort, self.name)
+    def _denote(self) -> Tuple:
+        return (self.name,)
 
 class _BoolSort(Sort):
     def __repr__(self) -> str:
@@ -1101,8 +1118,8 @@ class _BoolSort(Sort):
     def to_z3(self) -> z3.SortRef:
         return z3.BoolSort()
 
-    def _denote(self) -> object:
-        return _BoolSort
+    def _denote(self) -> Tuple:
+        return ()
 
 BoolSort = _BoolSort()
 

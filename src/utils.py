@@ -90,6 +90,7 @@ class MypyvyArgs(object):
     depth: int
     filename: str
     sharp: bool
+    cache_only: bool  # only for pd
     def main(self, solver: Any) -> None: ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
