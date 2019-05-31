@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import argparse
 from itertools import product, chain, combinations
+from pathlib import Path
+import pickle
+import sys
 
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -53,6 +56,7 @@ def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
 
         cache['m'] += 1
         if len(cache) % 1000 == 1:
+            dump_caches()
             print(f'_cache_eval_in_state length is {len(cache)}, h/m is {cache["h"]}/{cache["m"]}')
     else:
         cache['h'] += 1
@@ -79,7 +83,7 @@ def check_two_state_implication(
                 break
         else:
             res = check_two_state_implication_all_transitions(
-                s, 
+                s,
                 [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
                 p)
             if res is None:
@@ -92,6 +96,7 @@ def check_two_state_implication(
                 _cache_transitions.append(result)
                 cache[k] = result
         if len(cache) % 100 == 1:
+            dump_caches()
             print(f'_cache_two_state_implication length is {len(cache)}, h/r is {cache["h"]}/{cache["r"]}')
     else:
         cache['h'] += 1
@@ -476,7 +481,7 @@ def forward_explore(s: Solver,
         for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
             # print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
-                s, 
+                s,
                 inits if precondition is None else precondition,
                 p
             )
@@ -538,10 +543,37 @@ def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr
     print(f'{len(ans)} predicates')
     return ans
 
+cache_path: Optional[Path] = None
+
+def dump_caches() -> None:
+    return # TODO: enable this once hashes are consistent and make caches useful
+    if cache_path is not None:
+        caches = ['_cache_eval_in_state', '_cache_two_state_implication', '_cache_transitions']
+        obj = {k: sys.modules['pd'].__dict__[k] for k in caches}
+        print(f'dumping caches {tuple((k, len(v)) for k,v in obj.items())}... ', end='')
+        sys.stdout.flush()
+        with open(cache_path, 'wb') as cache_file:
+            pickle.dump(obj, cache_file)
+        print(f'cache dumped.')
+
+def load_caches() -> None:
+    return # TODO: enable this once hashes are consistent and make caches useful
+    if cache_path is not None and cache_path.exists():
+        print(f'loading caches from {cache_path!r}', end='... ')
+        sys.stdout.flush()
+        with open(cache_path, 'rb') as cache_file:
+            obj = pickle.load(cache_file)
+            sys.modules['pd'].__dict__.update(obj)
+        print(f'loeaded caches {tuple((k, len(v)) for k,v in obj.items())}')
+
 def repeated_houdini(s: Solver) -> str:
     '''The (proof side) repeated Houdini algorith, either sharp or not.
     '''
     prog = syntax.the_program
+    global cache_path
+    cache_path = Path(utils.args.filename).with_suffix('.cache')
+    load_caches()
+
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     reachable_states : Sequence[State] = ()

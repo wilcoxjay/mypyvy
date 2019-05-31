@@ -775,6 +775,16 @@ class Model(object):
         m.read_out(z3m)
         return m
 
+    # for pickling
+    def __getstate__(self) -> Any:
+        return dict(
+            self.__dict__,
+            z3model=None,
+        )
+    # __setstate__ is not really needed, since the following is the default:
+    # def __setstate__(self, state:Any) -> None:
+    #     self.__dict__.update(state)
+
     def try_printed_by(self, s: SortDecl, elt: str) -> Optional[str]:
         custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
 

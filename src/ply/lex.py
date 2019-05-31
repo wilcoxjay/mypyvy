@@ -68,6 +68,10 @@ class LexToken(object):
     def __repr__(self):
         return str(self)
 
+    # do not pickle, TODO: maybe this is wrong and we should somehow generate None instead of an empty LexToken
+    def __getstate__(self):
+        return {}
+
 
 # This object is a stand-in for a logging object created by the
 # logging module.

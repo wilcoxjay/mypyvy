@@ -1177,6 +1177,12 @@ class SortDecl(Decl):
         self.annotations = annotations
         self.z3: Optional[z3.SortRef] = None
 
+    def __getstate__(self) -> Any:
+        return dict(
+            self.__dict__,
+            z3=None,
+        )
+
     def resolve(self, scope: Scope) -> None:
         scope.add_sort(self)
 
@@ -1204,6 +1210,13 @@ class FunctionDecl(Decl):
         self.immut_z3: Optional[z3.FuncDeclRef] = None
 
         assert len(self.arity) > 0
+
+    def __getstate__(self) -> Any:
+        return dict(
+            self.__dict__,
+            mut_z3={},
+            immut_z3=None,
+        )
 
     def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
@@ -1252,6 +1265,13 @@ class RelationDecl(Decl):
         self.annotations = annotations
         self.mut_z3: Dict[str, Union[z3.FuncDeclRef, z3.ExprRef]] = {}
         self.immut_z3: Optional[Union[z3.FuncDeclRef, z3.ExprRef]] = None
+
+    def __getstate__(self) -> Any:
+        return dict(
+            self.__dict__,
+            mut_z3={},
+            immut_z3=None,
+        )
 
     def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
@@ -1308,6 +1328,12 @@ class ConstantDecl(Decl):
         self.mut_z3: Dict[str, z3.ExprRef] = {}
         self.immut_z3: Optional[z3.ExprRef] = None
 
+    def __getstate__(self) -> Any:
+        return dict(
+            self.__dict__,
+            mut_z3={},
+            immut_z3=None,
+        )
 
     def __repr__(self) -> str:
         return 'ConstantDecl(tok=None, name=%s, sort=%s, mutable=%s)' % (repr(self.name), self.sort, self.mutable)
