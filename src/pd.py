@@ -395,6 +395,7 @@ def forward_explore_marco(solver: Solver,
                     current.add(i)
             # assert not valid(mp.to_clause(current))
             mp.block_down(current)
+            print(f'block_down: {mp.to_clause(current)}')
             # this may have added new (initial) states
 
         elif not wp_valid(mp.to_clause(seed)):
@@ -408,6 +409,7 @@ def forward_explore_marco(solver: Solver,
                     current.add(i)
             # assert not valid(mp.to_clause(current))
             mp.block_down(current)
+            print(f'block_down: {mp.to_clause(current)}')
             # this surely added new states
 
         else:
@@ -431,14 +433,18 @@ def forward_explore_marco(solver: Solver,
             assert len(states) == n_states
             a.append(cl)
             mp.block_up(current)
+            print(f'block_up: {cl}')
 
         # maintain a and the solver in case we added new states
         if len(states) > n_states:
              # TODO: do something smarter
             print(f'forward_explore_marco a was {len(a)} predicates, resetting')
             a = []
+            nd = 0
             for mp in maps:
                 mp.reset_solver(up=[], down=mp.blocked_down)
+                nd += len(mp.blocked_down)
+            print(f'forward_explore_marco kept {nd} blockings down')
     assert False
 
 
