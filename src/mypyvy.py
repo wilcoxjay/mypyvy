@@ -374,8 +374,14 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='print counterexamples')
         s.add_argument('--print-cmdline', action=utils.YesNoAction, default=True,
                        help='print the command line passed to mypyvy')
+        s.add_argument('--clear-cache', action=utils.YesNoAction, default=False,
+                       help='do not load from cache, but dump to cache as usual (effectively clearing the cache before starting)')
+        s.add_argument('--clear-cache-memo', action=utils.YesNoAction, default=False,
+                       help='load only discovered states from the cache, but dump to cache as usual (effectively clearing the memoization cache before starting, while keeping discovered states and transitions)')
         s.add_argument('--cache-only', action=utils.YesNoAction, default=False,
                        help='assert that the caches already contain all the answers')
+        s.add_argument('--cache-only-discovered', action=utils.YesNoAction, default=False,
+                       help='assert that the discovered states already contain all the answers')
 
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,

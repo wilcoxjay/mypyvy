@@ -25,6 +25,40 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
 
 State = Model
 
+cache_path: Optional[Path] = None
+
+def dump_caches() -> None:
+    if cache_path is not None:
+        caches = [
+            '_cache_eval_in_state',
+            '_cache_two_state_implication',
+            '_cache_transitions',
+            '_cache_initial',
+        ]
+        cache = {k: sys.modules['pd'].__dict__[k] for k in caches}
+        print('dumping caches:', *(f'{k}:{len(cache[k])}' for k in sorted(cache)), end=' ... ')
+        with open(cache_path, 'wb') as cache_file:
+            pickle.dump(cache, cache_file)
+        print('done')
+
+def load_caches() -> None:
+    if cache_path is not None and cache_path.exists():
+        print(f'loading caches from {cache_path!r}', end='... ')
+        sys.stdout.flush()
+        with open(cache_path, 'rb') as cache_file:
+            cache = pickle.load(cache_file)
+        print('loaded caches:', *(f'{k}:{len(cache[k])}' for k in sorted(cache)))
+        if utils.args.clear_cache:
+            print('clearing caches')
+            cache = {}
+        elif utils.args.clear_cache_memo:
+            to_clear = [k for k, v in cache.items() if isinstance(v, dict)]
+            print(f'clearing memoization caches:', *sorted(to_clear))
+            for k in to_clear:
+                del cache[k]
+        sys.modules['pd'].__dict__.update(cache)
+
+
 # Here's a hacky way to eval a possibly-quantified z3 expression.
 # This function only works if e is either quantifier free, or has exactly one quantifier
 # (with arbitrarily many bound vars) at the root of the expression.  For example, this
@@ -72,9 +106,14 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
             print(f'Found cached initial state violating {p}:')
             print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
             return s
-
     z3m = check_implication(solver, inits, [p])
     if z3m is not None:
+        if utils.args.cache_only or utils.args.cache_only_discovered:
+            print(f'loudly describing this unexpected cache miss for predicate {p} on init:')
+            for s in _cache_initial:
+                print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+                print(eval_in_state, solver, s, p)
+            assert False
         s = Model.from_z3([KEY_ONE], z3m)
         _cache_initial.append(s)
         print(f'Found new initial state violating {p}:')
@@ -84,12 +123,23 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
 
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
 _cache_transitions: List[Tuple[State,State]] = []
+def isomorphic_states(solver: Solver, s: State, t: State) -> bool:
+    x = s.as_onestate_formula(0)
+    y = t.as_onestate_formula(0)
+    return x == y # or check_implication(solver, [], [Iff(x, y)]) is None
+    # TODO: we need to figure this out. are two isomorphic structures the same state or no? this showed up in:
+    # time ./src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache examples/lockserv.pyv > 1
+    # time ./src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache-memo --cache-only-discovered examples/lockserv.pyv > 2
+    # this can be fixed by checking equivalence between onestate formulas, but this is very slow
 def check_two_state_implication(
         s: Solver,
         precondition: Union[Iterable[Expr], State],
         p: Expr,
         msg: str = 'transition'
 ) -> Optional[Tuple[State,State]]:
+    prog = syntax.the_program
+    inits = tuple(init.expr for init in prog.inits())
+
     if not isinstance(precondition, State):
         precondition = tuple(precondition)
     k = (precondition, p)
@@ -112,7 +162,11 @@ def check_two_state_implication(
             assert False
 
         for prestate, poststate in _cache_transitions:
-            if ((prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0) if isinstance(precondition, State) else
+            # TODO: not sure if this should be ==, or alpha
+            # equivalent, or some other solution by making sure that
+            # the prestate of transition from state s is considered
+            # the same as state s
+            if ((isomorphic_states(s, prestate, precondition) if isinstance(precondition, State) else
                  all(eval_in_state(s, prestate, q) for q in precondition)) and
                 not eval_in_state(s, poststate, p)):
                 cache[k] = (prestate, poststate)
@@ -128,45 +182,38 @@ def check_two_state_implication(
             if res is None:
                 cache[k] = None
             else:
-                # print(f'loudly describing this unexpected cache miss for predicate {p} on precondition:')
-                # if isinstance(precondition, State):
-                #     print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
-                # else:
-                #     print('-'*80)
-                #     for e in precondition:
-                #         print(e)
-                #     print('-'*80)
-                #
-                # for prestate, poststate in _cache_transitions:
-                #     print('prestate:')
-                #     print('-'*80 + '\n' + str(prestate) + '\n' + '-'*80)
-                #     print('poststate:')
-                #     print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
-                #
-                #     if isinstance(precondition, State):
-                #         print(f'prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0): '
-                #               f'{prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0)}')
-                #     else:
-                #         print(f'all(eval_in_state(s, prestate, q) for q in precondition): '
-                #               f'{all(eval_in_state(s, prestate, q) for q in precondition)}')
-                #     print(f'not eval_in_state(s, poststate, p): {not eval_in_state(s, poststate, p)}')
-                #
-                #     if ((prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0) if isinstance(precondition, State) else
-                #          all(eval_in_state(s, prestate, q) for q in precondition)) and
-                #         not eval_in_state(s, poststate, p)):
-                #         cache[k] = (prestate, poststate)
-                #         cache['r'] += 1
-                #         print(f'Found cached {msg} violating {p}:')
-                #         print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
-                #         break
-                # assert False
-
+                if utils.args.cache_only_discovered:
+                    print(f'loudly describing this unexpected cache miss for predicate {p} on precondition:')
+                    if isinstance(precondition, State):
+                        print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
+                    else:
+                        print('-'*80)
+                        for e in precondition:
+                            print(e)
+                        print('-'*80)
+                    print('_cache_transitions:')
+                    for prestate, poststate in _cache_transitions:
+                        print('prestate:')
+                        print('-'*80 + '\n' + str(prestate) + '\n' + '-'*80)
+                        print('poststate:')
+                        print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                        if isinstance(precondition, State):
+                            print(f'prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0): '
+                                  f'{prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0)}')
+                        else:
+                            print(f'all(eval_in_state(s, prestate, q) for q in precondition): '
+                                  f'{all(eval_in_state(s, prestate, q) for q in precondition)}')
+                        print(f'eval_in_state(s, poststate, p): {eval_in_state(s, poststate, p)}')
+                    assert False
                 z3m, _ = res
                 prestate = Model.from_z3([KEY_OLD], z3m)
                 poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
-                # TODO: check if either of these states is initial and populate _cache_initial
+                for state in result:
+                    if all(eval_in_state(s, state, p) for p in inits):
+                        _cache_initial.append(state)
+                    # TODO: actually, we should first try to get (from Z3) a transition where the prestate is initial
                 cache[k] = result
                 print(f'Found new {msg} violating {p}:')
                 print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
@@ -177,7 +224,14 @@ def check_two_state_implication(
     else:
         if cache[k] is not None:
             prestate, poststate = cache[k]
-            print(f'Found cached {msg} violating {p}:')
+            print(f'Found cached {msg} violating {p} from precondition:')
+            if isinstance(precondition, State):
+                print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
+            else:
+                print('-'*80)
+                for e in precondition:
+                    print(e)
+                print('-'*80)
             print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
         cache['h'] += 1
     return cache[k]
@@ -685,15 +739,22 @@ def forward_explore(s: Solver,
 
 
 def forward_explore_inv(s: Solver) -> None:
-    #invs = list(itertools.chain(*(as_clauses(inv.expr) for inv in prog.invs())))
     prog = syntax.the_program
-    invs = [inv.expr for inv in prog.invs()]
+    global cache_path
+    cache_path = Path(utils.args.filename).with_suffix('.cache')
+    load_caches()
+    invs = [inv.expr for inv in prog.invs()] # see examples/lockserv_cnf.pyv
+    # invs = list(chain(*(as_clauses(inv.expr) for inv in prog.invs())))
     print('Performing forward explore w.r.t. the following clauses:')
     for p in sorted(invs, key=lambda x: len(str(x))):
         print(p)
     print('='*80)
-    alpha  = lambda states: list(set(chain(*(alpha_from_clause(s, states, inv) for inv in invs))))
-    states, a = forward_explore(s, alpha)
+    def alpha_inv(states: Iterable[State]) -> Sequence[Expr]:
+        return sorted(
+            dedup_equivalent_predicates(s, chain(*(alpha_from_clause(s, states, clause) for clause in invs))),
+            key=lambda x: (len(str(x)),str(x))
+        )
+    states, a = forward_explore(s, alpha_inv)
     len(states)
     print('Done!\n' + '='*80)
     print('The resulting invariant after forward exporation:')
@@ -704,6 +765,8 @@ def forward_explore_inv(s: Solver) -> None:
     for x in states:
         print(x)
         print('-'*80)
+    dump_caches()
+
 
 def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr]:
     ps = list(itr)
@@ -720,31 +783,6 @@ def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr
     print(f'{len(ans)} predicates')
     return ans
 
-cache_path: Optional[Path] = None
-
-def dump_caches() -> None:
-    if cache_path is not None:
-        caches = [
-            '_cache_eval_in_state',
-            '_cache_two_state_implication',
-            '_cache_transitions',
-            '_cache_initial',
-        ]
-        obj = {k: sys.modules['pd'].__dict__[k] for k in caches}
-        print(f'dumping caches {tuple((k, len(v)) for k,v in obj.items())}... ', end='')
-        sys.stdout.flush()
-        with open(cache_path, 'wb') as cache_file:
-            pickle.dump(obj, cache_file)
-        print(f'cache dumped.')
-
-def load_caches() -> None:
-    if cache_path is not None and cache_path.exists():
-        print(f'loading caches from {cache_path!r}', end='... ')
-        sys.stdout.flush()
-        with open(cache_path, 'rb') as cache_file:
-            obj = pickle.load(cache_file)
-            sys.modules['pd'].__dict__.update(obj)
-        print(f'loaded caches {tuple((k, len(obj[k])) for k in sorted(obj))}')
 
 def repeated_houdini(s: Solver) -> str:
     '''The (proof side) repeated Houdini algorith, either sharp or not.
@@ -827,7 +865,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     result : List[argparse.ArgumentParser] = []
 
     # forward_explore_inv
-    s = subparsers.add_parser('pd-forward-explore', help='Forward explore program w.r.t. its invariant')
+    s = subparsers.add_parser('pd-forward-explore-inv', help='Forward explore program w.r.t. its invariant')
     s.set_defaults(main=forward_explore_inv)
     result.append(s)
 

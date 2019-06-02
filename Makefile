@@ -35,17 +35,17 @@ bench:
 	time $(PYTHON) src/mypyvy.py updr $(MYPYVY_OPTS) $<
 
 pd:
-	make clear-cache
-	time $(PYTHON) src/mypyvy.py pd-forward-explore $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > /dev/null # ~2s
-	time $(PYTHON) src/mypyvy.py pd-forward-explore $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > /dev/null # TODO: --cache-only fails!
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > /dev/null
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --cache-only $(MYPYVY_OPTS)   examples/lockserv_cnf.pyv > /dev/null
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > /dev/null
 
-	make clear-cache
-	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null # ~30s
-	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp $(MYPYVY_OPTS) --cache-only  examples/lockserv.pyv > /dev/null # ~30s
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --cache-only $(MYPYVY_OPTS)   examples/lockserv.pyv > /dev/null
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null
 
-	make clear-cache
-	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null # ~5m
-	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp $(MYPYVY_OPTS) --cache-only  examples/lockserv.pyv > /dev/null # ~5m
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null
+	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --cache-only $(MYPYVY_OPTS)   examples/lockserv.pyv > /dev/null
+	# time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv.pyv > /dev/null # TODO: this currently fails
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
@@ -53,6 +53,6 @@ src/%.importable: src/%.py
 	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" || { echo "file $< is not importable"; exit 1; }
 
 clear-cache:
-	rm -fv examples/*.cache
+	rm -iv examples/*.cache
 
 .PHONY: check run test verify updr bench typecheck trace pd unit check-imports clear-cache
