@@ -12,7 +12,7 @@ import logic
 from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE
 import parser
 import syntax
-from syntax import Expr, Program, Scope, InvariantDecl, AutomatonDecl
+from syntax import Expr, Program, InvariantDecl, AutomatonDecl
 import updr
 import utils
 
@@ -193,8 +193,6 @@ def bmc(s: Solver) -> None:
     utils.logger.always_print('bmc checking the following property to depth %d' % n)
     utils.logger.always_print('  ' + str(safety))
 
-    start = datetime.now()
-
     logic.check_bmc(s, safety, n)
 
 
@@ -229,10 +227,10 @@ def theorem(s: Solver) -> None:
 def nop(s: Solver) -> None:
     pass
 
-def ipython(s:Solver) -> None:
+def ipython(s: Solver) -> None:
     import IPython  # type: ignore
-    #IPython.embed()
-    IPython.start_ipython(argv=[],user_ns=dict(locals()))
+    # IPython.embed()
+    IPython.start_ipython(argv=[], user_ns=dict(locals()))
 
 def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.TransitionCall) -> z3.ExprRef:
     prog = syntax.the_program
@@ -290,13 +288,13 @@ def trace(s: Solver) -> None:
                 else:
                     te: syntax.TransitionExpr = c.transition
                     if isinstance(te, syntax.AnyTransition):
-                        logic.assert_any_transition(s, str(i), keys[i+1], keys[i], allow_stutter=True)
+                        logic.assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=True)
                     else:
                         l = []
                         for call in te.calls:
                             tid = z3.Bool(logic.get_transition_indicator(str(i), call.target))
                             l.append(tid)
-                            s.add(tid == translate_transition_call(s, keys[i+1], keys[i], call))
+                            s.add(tid == translate_transition_call(s, keys[i + 1], keys[i], call))
                         s.add(z3.Or(*l))
 
                     i += 1
@@ -389,7 +387,6 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        default_description='yes for updr, else no',
                        help='in diagram generation, substitute existentially quantified variables that are equal to constants')
 
-
     updr_subparser.add_argument('--use-z3-unsat-cores', action=utils.YesNoAction, default=True,
                                 help='generalize diagrams using brute force instead of unsat cores')
     updr_subparser.add_argument('--smoke-test', action=utils.YesNoAction, default=False,
@@ -436,10 +433,10 @@ class MyFormatter(logging.Formatter):
         else:
             return super().format(record)
 
-    def formatTime(self, record: Any, datefmt: Optional[str]=None) -> str:
+    def formatTime(self, record: Any, datefmt: Optional[str] = None) -> str:
         return str((datetime.now() - self.start).total_seconds())
 
-def parse_program(input: str, force_rebuild: bool=False, filename: Optional[str]=None) -> Program:
+def parse_program(input: str, force_rebuild: bool = False, filename: Optional[str] = None) -> Program:
     l = parser.get_lexer()
     p = parser.get_parser(forbid_rebuild=force_rebuild)
     return p.parse(input=input, lexer=l, filename=filename)
