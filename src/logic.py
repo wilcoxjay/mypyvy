@@ -209,9 +209,12 @@ def assert_any_transition(s: Solver, uid: str,
 
     s.add(z3.Or(*tids))
 
-def check_bmc(s: Solver, safety: Expr, depth: int) -> None:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> None:
     keys = ['state%2d' % i for i in range(depth + 1)]
     prog = syntax.the_program
+
+    if preconds is None:
+        preconds = (init.expr for init in prog.inits())
 
     if utils.logger.isEnabledFor(logging.DEBUG):
         utils.logger.debug('check_bmc property: %s' % safety)
@@ -222,8 +225,8 @@ def check_bmc(s: Solver, safety: Expr, depth: int) -> None:
 
     with s:
         t = s.get_translator(keys[0])
-        for init in prog.inits():
-            s.add(t.translate_expr(init.expr))
+        for precond in preconds:
+            s.add(t.translate_expr(precond))
 
         t = s.get_translator(keys[-1])
         s.add(t.translate_expr(syntax.Not(safety)))
@@ -1017,7 +1020,6 @@ class Model(object):
             self.diagram_cache[i] = diag
 
         return self.diagram_cache[i]
-
 
     def as_onestate_formula(self, i: Optional[int] = None) -> Expr:
         assert len(self.keys) == 1 or i is not None, \
