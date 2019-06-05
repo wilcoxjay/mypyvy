@@ -163,7 +163,6 @@ class Frames(object):
                 utils.logger.debug('all edges covered from phase %s' % p.name())
                 return None
 
-        # TODO: also check edge covering
         safety_checkers = [safety_property_checker, edge_covering_checker]
         for p in self.automaton.phases():
             for checker in safety_checkers:
