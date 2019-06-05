@@ -246,7 +246,6 @@ def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.Trans
                 qs[j] = None
             else:
                 assert isinstance(a, syntax.Star)
-                pass
     qs1 = [q for q in qs if q is not None]
     with lator.scope.in_scope(ition.binder, bs):
         body = lator.translate_transition_body(ition)
