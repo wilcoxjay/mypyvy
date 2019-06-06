@@ -369,11 +369,10 @@ class Solver(object):
                     else:
                         for k in self.known_keys:
                             z3r = r.to_z3(k)
+                            if isinstance(z3r, z3.ExprRef):
+                                z3r = z3r.decl()
                             if z3r in ds:
-                                if isinstance(z3r, z3.ExprRef):
-                                    rels_to_minimize.append(z3r.decl())
-                                else:
-                                    rels_to_minimize.append(z3r)
+                                rels_to_minimize.append(z3r)
 
             return self._minimal_model(assumptions, sorts_to_minimize, rels_to_minimize)
         else:
@@ -395,6 +394,9 @@ class Solver(object):
         return z3.Forall(x, z3.Or(*disjs))
 
     def _relational_cardinality_constraint(self, relation: z3.FuncDeclRef, n: int) -> z3.ExprRef:
+        if relation.arity() == 0:
+            return z3.BoolVal(True)
+
         consts = [[z3.Const(f'card$_{relation}_{i}_{j}', relation.domain(j))
                    for j in range(relation.arity())]
                   for i in range(n)]
