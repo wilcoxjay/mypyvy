@@ -5,6 +5,7 @@ from datetime import datetime
 import itertools
 import io
 import logging
+import re
 import sys
 from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
     cast
@@ -749,6 +750,8 @@ class Diagram(object):
             utils.logger.debug('generalized diag')
             utils.logger.debug(str(self))
 
+_digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
+
 class Model(object):
     def __init__(
             self,
@@ -826,7 +829,15 @@ class Model(object):
         l = []
         for s in sorted(self.univs.keys(), key=str):
             l.append(str(s))
-            for x in sorted(self.univs[s], key=lambda x: self.print_element(s, x)):
+
+            def key(x: str) -> Tuple[str, int]:
+                ans = self.print_element(s, x)
+                m = _digits_re.match(ans)
+                if m is not None:
+                    return (m['prefix'], int(m['suffix']))
+                else:
+                    return (ans, 0)
+            for x in sorted(self.univs[s], key=key):
                 l.append('  %s' % self.print_element(s, x))
         return l
 
