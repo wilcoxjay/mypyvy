@@ -343,74 +343,92 @@ class Solver(object):
         self.nqueries += 1
         return self.z3solver.check(*assumptions)
 
-    def model(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.ModelRef:
-        if utils.args.minimize_models:
-            return self._minimal_model(assumptions)
+    def model(
+            self,
+            assumptions: Optional[Sequence[z3.ExprRef]] = None,
+            minimize: Optional[bool] = None,
+            sorts_to_minimize: Optional[Iterable[z3.SortRef]] = None,
+            relations_to_minimize: Optional[Iterable[z3.FuncDeclRef]] = None,
+    ) -> z3.ModelRef:
+        if minimize is None:
+            minimize = utils.args.minimize_models
+        if minimize:
+            if sorts_to_minimize is None:
+                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values()]
+            if relations_to_minimize is None:
+                m = self.z3solver.model()
+                ds = m.decls()
+                rels_to_minimize = []
+                for r in self.scope.relations.values():
+                    if not r.mutable:
+                        z3r = r.to_z3(None)
+                        if isinstance(z3r, z3.ExprRef):
+                            rels_to_minimize.append(z3r.decl())
+                        else:
+                            rels_to_minimize.append(z3r)
+                    else:
+                        for k in self.known_keys:
+                            z3r = r.to_z3(k)
+                            if z3r in ds:
+                                if isinstance(z3r, z3.ExprRef):
+                                    rels_to_minimize.append(z3r.decl())
+                                else:
+                                    rels_to_minimize.append(z3r)
+
+            return self._minimal_model(assumptions, sorts_to_minimize, rels_to_minimize)
         else:
             return self.z3solver.model()
 
-    def _cardinality_constraint(self, s: z3.SortRef, n: int) -> z3.ExprRef:
-        x = z3.Const('x', s)
+    def _cardinality_constraint(self, x: Union[z3.SortRef, z3.FuncDeclRef], n: int) -> z3.ExprRef:
+        if isinstance(x, z3.SortRef):
+            return self._sort_cardinality_constraint(x, n)
+        else:
+            return self._relational_cardinality_constraint(x, n)
+
+    def _sort_cardinality_constraint(self, s: z3.SortRef, n: int) -> z3.ExprRef:
+        x = z3.Const('x$', s)
         disjs = []
         for i in range(n):
-            c = z3.Const('card_%s_%s' % (s.name(), i), s)
+            c = z3.Const(f'card$_{s.name()}_{i}', s)
             disjs.append(x == c)
 
         return z3.Forall(x, z3.Or(*disjs))
 
-    def _relational_cardinality_constraint(self, d: z3.FuncDeclRef, n: int) -> z3.ExprRef:
-        assert d.arity() == 1 and n == 1
+    def _relational_cardinality_constraint(self, relation: z3.FuncDeclRef, n: int) -> z3.ExprRef:
+        consts = [[z3.Const(f'card$_{relation}_{i}_{j}', relation.domain(j))
+                   for j in range(relation.arity())]
+                  for i in range(n)]
 
-        s = d.domain(0)
+        vs = [z3.Const(f'x$_{relation}_{j}', relation.domain(j)) for j in range(relation.arity())]
 
-        x, y = z3.Consts('x y', s)
+        result = z3.Forall(vs, z3.Implies(relation(*vs), z3.Or(*(
+            z3.And(*(
+                c == v for c, v in zip(cs, vs)
+            ))
+            for cs in consts
+        ))))
+        return result
 
-        return z3.Forall([x, y], z3.Implies(z3.And(d(x), d(y)), x == y))
-
-    def _minimal_model(self, assumptions: Optional[Sequence[z3.ExprRef]]) -> z3.ModelRef:
-        m = self.z3solver.model()
-        # logger.debug('computing minimal model from initial model')
-        # logger.debug(str(Model(m, KEY_NEW, KEY_OLD)))
-        # logger.debug('assertions')
-        # logger.debug(str(self.assertions()))
-
+    def _minimal_model(
+            self,
+            assumptions: Optional[Sequence[z3.ExprRef]],
+            sorts_to_minimize: Iterable[z3.SortRef],
+            relations_to_minimize: Iterable[z3.FuncDeclRef],
+    ) -> z3.ModelRef:
         with self:
-            for s in m.sorts():
+            for x in itertools.chain(
+                    cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
+                    relations_to_minimize):
                 for n in itertools.count(1):
                     with self:
-                        self.add(self._cardinality_constraint(s, n))
+                        self.add(self._cardinality_constraint(x, n))
                         res = self.check(assumptions)
                         if res == z3.sat:
                             break
-                self.add(self._cardinality_constraint(s, n))
-            assert self.check(assumptions) == z3.sat
+                self.add(self._cardinality_constraint(x, n))
 
-            # # TODO: ODED: there's actually a similar problem here too,
-            # # but I don't fix it now since there's anyway something
-            # # funny happening with n < 2
-            # for d in m.decls():
-            #     nm = d.name()
-            #     if nm.startswith(KEY_OLD) or nm.startswith(KEY_ONE):
-            #         arity = d.arity()
-            #         if arity == 1 and d.range() == z3.BoolSort():
-            #             s = d.domain(0)
-            #             u = m.get_universe(s)
-            #             hi = sum(1 if m.eval(d(x)) else 0 for x in u)
-            #             n = 1
-            #             while n < hi and n < 2:  # hehe
-            #                 with self:
-            #                     self.add(self._relational_cardinality_constraint(d, n))
-            #                     res = self.check(assumptions)
-            #                     if res == z3.sat:
-            #                         break
-            #                 n += 1
-            #             if n < hi and n < 2:
-            #                 self.add(self._relational_cardinality_constraint(d, n))
-            # assert self.check(assumptions) == z3.sat
-            m = self.z3solver.model()
-            # logger.debug('finished with minimal model')
-            # logger.debug(str(Model(m, KEY_NEW, KEY_OLD)))
-            return m
+            assert self.check(assumptions) == z3.sat
+            return self.z3solver.model()
 
     def assertions(self) -> Sequence[z3.ExprRef]:
         asserts = self.z3solver.assertions()
