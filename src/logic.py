@@ -521,16 +521,6 @@ class Diagram(object):
         for t4 in self.func_conjuncts():
             yield t4
 
-    def conjuncts_simple(self) -> Iterable[Tuple[_RelevantDecl, int, Expr]]:
-        subst = self.const_subst()
-        s: Union[SortDecl, RelationDecl, FunctionDecl]
-        for (s, r, e) in self.ineq_conjuncts():
-            yield (s, r, syntax.subst_vars_simple(e, subst))
-        for (s, r, e) in self.rel_conjuncts():
-            yield (s, r, syntax.subst_vars_simple(e, subst))
-        for (s, r, e) in self.func_conjuncts():
-            yield (s, r, syntax.subst_vars_simple(e, subst))
-
     def simplify_consts(self) -> None:
         subst = self.const_subst()
         I: Dict[SortDecl, List[Expr]]
