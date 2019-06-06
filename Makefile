@@ -8,7 +8,7 @@ check:
 
 test: check check-imports unit typecheck verify trace updr pd
 
-unit:
+unit: check
 	$(PYTHON) -m unittest discover -s src -v
 
 typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv examples/*/*.pyv))
