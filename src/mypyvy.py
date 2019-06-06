@@ -385,6 +385,9 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        default=(s is updr_subparser),
                        default_description='yes for updr, else no',
                        help='in diagram generation, substitute existentially quantified variables that are equal to constants')
+        s.add_argument('--diagrams-subclause-complete', action=utils.YesNoAction, default=False,
+                       help='in diagram generation, "complete" the diagram so that every stronger '
+                            'clause is a subclause')
 
     updr_subparser.add_argument('--use-z3-unsat-cores', action=utils.YesNoAction, default=True,
                                 help='generalize diagrams using brute force instead of unsat cores')

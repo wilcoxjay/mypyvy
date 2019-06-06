@@ -994,10 +994,13 @@ class Model(object):
                     i = int(istr)
                     self.transitions[i] = name
 
-    def as_diagram(self, i: Optional[int] = None) -> Diagram:
+    def as_diagram(self, i: Optional[int] = None, subclause_complete: Optional[bool] = None) -> Diagram:
         assert len(self.keys) == 1 or i is not None, \
             'to generate a diagram from a multi-state model, you must specify which state you want'
         assert i is None or (0 <= i and i < len(self.keys))
+
+        if subclause_complete is None:
+            subclause_complete = utils.args.diagrams_subclause_complete
 
         if i is None:
             i = 0
@@ -1009,25 +1012,42 @@ class Model(object):
             mut_const_interps = self.const_interps[i]
             mut_func_interps = self.func_interps[i]
 
-            vs: List[syntax.SortedVar] = []
+            vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
+            if subclause_complete:
+                from networkx.utils.union_find import UnionFind  # type: ignore
+                ufs: Dict[SortDecl, UnionFind] = {}
             ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
             rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
             consts: Dict[ConstantDecl, Expr] = OrderedDict()
             funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
             for sort in self.univs:
-                vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
-                          for v in self.univs[sort])
-
-                u = [syntax.Id(None, s) for s in self.univs[sort]]
-                ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+                vars_by_sort[sort] = [syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
+                                      for v in self.univs[sort]]
+                if subclause_complete:
+                    ufs[sort] = UnionFind(self.univs[sort])
+                    ineqs[sort] = []
+                else:
+                    u = [syntax.Id(None, s) for s in self.univs[sort]]
+                    ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
 
             for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
                 rels[R] = []
                 for tup, ans in l:
                     e: Expr
                     if len(tup) > 0:
-                        e = syntax.AppExpr(None, R.name, [syntax.Id(None, col) for col in tup])
-
+                        args: List[Expr] = []
+                        for (col, col_sort) in zip(tup, R.arity):
+                            assert isinstance(col_sort, syntax.UninterpretedSort)
+                            assert col_sort.decl is not None
+                            if subclause_complete:
+                                nm = col_sort.name + str(len(vars_by_sort[col_sort.decl]))
+                                vars_by_sort[col_sort.decl].append(syntax.SortedVar(None, nm, col_sort))
+                                arg = syntax.Id(None, nm)
+                                args.append(arg)
+                                ufs[col_sort.decl].union(col, nm)
+                            else:
+                                args.append(syntax.Id(None, col))
+                        e = syntax.AppExpr(None, R.name, args)
                     else:
                         e = syntax.Id(None, R.name)
                     e = e if ans else syntax.Not(e)
@@ -1042,6 +1062,17 @@ class Model(object):
                     e = syntax.Eq(e, syntax.Id(None, res))
                     funcs[F].append(e)
 
+            if subclause_complete:
+                for sort, uf in ufs.items():
+                    sets = list(uf.to_sets())
+                    for s1, s2 in itertools.combinations(sets, 2):
+                        for x1, x2 in itertools.product(s1, s2):
+                            ineqs[sort].append(syntax.Neq(syntax.Id(None, x1), syntax.Id(None, x2)))
+                    for s in sets:
+                        for x1, x2 in itertools.combinations(s, 2):
+                            ineqs[sort].append(syntax.Eq(syntax.Id(None, x1), syntax.Id(None, x2)))
+
+            vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
             diag = Diagram(vs, ineqs, rels, consts, funcs)
             if utils.args.simplify_diagram:
                 diag.simplify_consts()

@@ -77,6 +77,7 @@ class MypyvyArgs(object):
     print_counterexample: bool
     print_cmdline: bool
     simplify_diagram: bool
+    diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
     smoke_test: bool
     assert_inductive_trace: bool
