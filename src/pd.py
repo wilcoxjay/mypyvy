@@ -5,15 +5,17 @@ This file contains code for the Primal Dual research project
 from __future__ import annotations
 
 import argparse
-from itertools import product, chain, combinations
+from itertools import product, chain, combinations, repeat
+from collections import defaultdict
 from pathlib import Path
 import pickle
 import sys
+import math
 
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -478,7 +480,7 @@ def forward_explore_marco(solver: Solver,
         # return True iff wp(clause) is implied by init and valid in all states
         # when returning False, add a new transition to states
         # assert valid(clause)
-        for precondition in chain((s for s in states), [None]): # TODO: why len(s.keys) > 1 ?
+        for precondition in chain((s for s in states), [None]):
             res = check_two_state_implication(
                 solver,
                 inits if precondition is None else precondition,
@@ -495,6 +497,10 @@ def forward_explore_marco(solver: Solver,
     N = len(clauses)
     maps = [SubclausesMap(top_clause) for top_clause in clauses]
 
+    # TODO: here lies commented out the version that uses one big
+    # solver, since it does not use caches appropriately. Maybe we
+    # should bring this back at some point
+    #
     # wp_valid_solver = Solver()
     # t = wp_valid_solver.get_translator(KEY_NEW, KEY_OLD)
     # mp_indicators: Dict[SubclausesMap, z3.ExprRef] = {mp: z3.Bool(f'@mp_{i}') for i, mp in enumerate(maps)}
@@ -795,7 +801,7 @@ def repeated_houdini(s: Solver) -> str:
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     reachable_states : Sequence[State] = ()
-    clauses : List[Expr] = list(itertools.chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
+    clauses : List[Expr] = list(chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
     def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
         return sorted(
@@ -859,6 +865,207 @@ def repeated_houdini(s: Solver) -> str:
             assert len(clauses) == len(set(clauses))
             assert clauses == list(dedup_equivalent_predicates(s, clauses))
             print('='*80)
+
+NatInf = Optional[int] # None represents infinity
+Point = Tuple[Union[FrozenSet[int],NatInf],...]
+Constraint = Union[Dict[int,bool],int]
+# a constraint for a set some elements to be there or not, and a constraint for NatInf is an upper bound
+class MonotoneFunction(object):
+    '''This class represents information about a monotone function to
+    {0,1}. The domain of the function is D_1 x ... x D_n, where each
+    D_i is either the powerset domain of some (finite or countably
+    infinite) set, or NatInf. In each of its arguments, the function
+    can either be monotonically increasing ('+') or decreasing
+    ('-'). For powerset domain, the function can also be disjunctive
+    ('|') or conjunctive ('&'), meaning that it disributes over union,
+    so it is actually determined by its values for singleton sets
+    (naturally, disjunctive is increasing, conjunctive is decreasing,
+    and for the empty set the are 0 and 1 respectively.)
+
+    An instance represents partial knowledge of the actual monotone
+    function, encoded by some (possibly maximal) points where it is
+    known to evaluate to 0, and some (possibly minimal) points where
+    it is known to be 1. This partial knowledge is formally a partial
+    monotone function.
+
+    The class supports the following interface:
+
+    query(x_1,...,x_n) -> Optional[bool]: evaluates the partial function
+
+    learn(x_1,...,x_n,v) -> None: add more information
+
+    seed(C_1,...,C_n) -> Optional[Tuple[D_1,...,D_n]]: each C_i is a
+    constraint, which represents a subset of D_i (e.g., instead of the
+    full powerset, a powerset contained in some finite set and
+    contains some other set, or instead of NatInf some finite set of
+    possible numbers). The result is either None, meaning the partial
+    function is total on C_1 x ... x C_n, or an element of C_1 x ... x
+    C_n for which the partial function is underfined.
+
+    seed supports several biasing modes, causing it to procedure lower
+    or higher seeds, with varying levels of strictness.
+
+    '''
+    def __init__(self, dms: Sequence[Tuple[Optional[List], str]]):
+        # None represents NatInf, List represents powerset domain of
+        # list elements. The passed list can be extended, but
+        # otherwise should not be modified
+        for d, m in dms:
+            assert m in ('+', '-', '|', '&'), f'Illegal monotonicity: {m!r}'
+        self.n = len(dms)
+        self.domains = tuple(d for d, m in dms)
+        self.directions = tuple(m for d, m in dms)
+        self.zeros: List[Point] = []
+        self.ones: List[Point] = []
+
+    def assert_points(self, *points: Point) -> None:
+        # assert points are well typed points
+        for xs in points:
+            assert isinstance(xs, tuple)
+            assert len(xs) == self.n
+            for x, d in zip(xs, self.domains):
+                if d is None:
+                    assert (x is None) or (isinstance(x, int) and 0 <= x), f'Bad value {x!r} for domain NatInf'
+                else:
+                     assert isinstance(x, frozenset) and all(
+                         isinstance(i, int) and 0 <= i < len(d)
+                         for i in x
+                     ), f'Bad value {x!r} for domain list of length {len(d)}'
+
+    def leq(self, xs: Point, ys: Point) -> bool:
+        self.assert_points(xs, ys)
+        return all(
+            xx <= yy if m in ('+', '|') else yy <= xx  # type: ignore
+            for x, y, m in zip(xs, ys, self.directions)
+            for xx in [x if x is not None else math.inf]
+            for yy in [y if y is not None else math.inf]
+        )
+
+    def __getitem__(self, xs: Point) -> Optional[bool]:
+        self.assert_points(xs)
+        if any(xs <= ys for ys in self.zeros):
+            return False
+        elif any(ys <= xs for ys in self.ones):
+            return True
+        else:
+            return None
+
+    def __setitem__(self, xs: Point, v: bool) -> None:
+        self.assert_points(xs)
+        assert self[xs] is None
+        if v:
+            self.ones.append(xs)
+        else:
+            self.zeros.append(xs)
+        # TODO: maybe remove some reduntetd points
+        # TODO: maybe store wethat or not the point is min/max
+
+    def seed(self, constraints: Sequence[Constraint]) -> Optional[Point]:
+        assert len(constraints) == self.n
+        assert all(
+            isinstance(c, int) if d is None else
+            isinstance(c, dict)
+            for c, d in zip(constraints, self.domains)
+        )
+        # TODO: for now we use a fresh z3 solver every time, but this should be made incremental
+        solver = z3.Solver()
+        vss: List[Union[List[z3.ExprRef], z3.ExprRef]] = [
+            [z3.Bool(f'{i}_{j}') for j in range(len(d))] if d is not None else
+            z3.Int(f'{i}')
+            for i, d in enumerate(self.domains)
+        ]
+
+        for c, d, vs in zip(constraints, self.domains, vss):
+            if isinstance(c, int):
+                assert d is None
+                assert isinstance(vs, z3.ExprRef)
+                solver.add(vs < c)  # type: ignore
+                # TODO: fix the stup of z3 to support this
+            else:
+                assert isinstance(d, list)
+                assert isinstance(vs, list)
+                for i, v in c.items():
+                    assert 0 <= i < len(d)
+                    solver.add(vs[i] if v else z3.Not(vs[i]))
+
+        # block down from the zero points
+        for xs, v in chain(zip(self.zeros,repeat(False)), zip(self.ones,repeat(True))):
+            lits: List[z3.ExprRef] = []
+            for x, vs, d, m in zip(xs, vss, self.domains, self.directions):
+                if d is None:
+                    # TODO: get this right
+                    continue
+                    assert (x is None) or (isinstance(x, int) and 0 <= x)
+                    assert isinstance(vs, z3.ExprRef)
+                    assert m in ('+', '-')
+                    if x is None and m == '+':
+                        pass
+                    elif x is None and m == '-':
+                        pass # TODO: not really sure, need to think of the encoding of Inf in z3
+                else:
+                    assert isinstance(x, frozenset) and all(
+                        isinstance(i, int) and 0 <= i < len(d)
+                        for i in x
+                    ), f'Bad value {x!r} for domain list of length {len(d)}'
+                    assert isinstance(vs, list)
+                    assert m in ('+', '|', '-', '&')
+                    if v != (m in ('+', '|')):
+                        # "block down"
+                        lits.extend(vs[i] for i in range(len(d)) if i not in x)
+                    else:
+                        # "block up"
+                        lits.extend(z3.Not(vs[i]) for i in range(len(d)) if i in x)
+            solver.add(z3.Or(*lits))
+
+        res = solver.check()
+        assert res in (z3.unsat, z3.sat)
+        if res == z3.unsat:
+            return None
+        else:
+            model = solver.model()
+            # default to "low bias" (small sets for +, large sets for -) TODO: make the bias more flexible
+            result: Point = ()
+            for vs, d, m in zip(vss, self.domains, self.directions):
+                if d is None:
+                    assert isinstance(vs, z3.ExprRef)
+                    k = model[vs]
+                    if k is None:
+                        # k undefined in the model, default to 0
+                        result += (0,)
+                    else:
+                        assert isinstance(k, z3.z3.IntNumRef)  # type: ignore # TODO
+                        result += (k.as_long(),)
+                else:
+                    assert isinstance(vs, list)
+                    assert m in ('+', '|', '-', '&')
+                    if (m in ('+', '|')):
+                        # bias to small set
+                        result += (frozenset(
+                            i
+                            for i in range(len(d))
+                            if z3.is_true(model[vs[i]])
+                        ),)
+                    else:
+                        # bias to large set
+                        (frozenset(
+                            i
+                            for i in range(len(d))
+                            if not z3.is_false(model[vs[i]])
+                        ),)
+            return result
+
+    def to_elems(self, xs: Point) -> Tuple:
+        self.assert_points(xs)
+        result: Tuple = ()
+        for x, d in zip(xs, self.domains):
+            if d is None:
+                assert x is None or isinstance(x, int)
+                result += (x,)
+            else:
+                assert isinstance(x, frozenset)
+                result += ([e for i,e in enumerate(d) if i in x],)
+        return result
+
 
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:

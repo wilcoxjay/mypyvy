@@ -100,3 +100,57 @@ class RegressionTests(unittest.TestCase):
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
+
+
+class MonotoneFunctionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        utils.args = mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
+
+    def test_mononte_function(self) -> None:
+        from pd import MonotoneFunction
+        elems: List[str] = []
+        mf = MonotoneFunction([(elems,'+')])
+        with self.assertRaises(Exception): mf[0]  # type: ignore
+        with self.assertRaises(Exception): mf[0,]
+        with self.assertRaises(Exception): mf[()]
+        with self.assertRaises(Exception): mf[(),]  # type: ignore
+        with self.assertRaises(Exception): mf[[],]  # type: ignore
+        with self.assertRaises(Exception): mf[set(),]  # type: ignore
+        self.assertIsNone(mf[frozenset(),])
+        with self.assertRaises(Exception): mf[frozenset([0]),]
+        with self.assertRaises(Exception): mf[frozenset([0,1]),]
+        self.assertEqual( mf.seed([{}]), (frozenset(),) )
+        mf[frozenset(),] = False
+        with self.assertRaises(Exception): mf[frozenset(),] = False
+        with self.assertRaises(Exception): mf[frozenset(),] = True
+        self.assertEqual( mf[frozenset(),], False )
+        self.assertIsNone(mf.seed([{}]))
+        elems.append('hello')
+        self.assertEqual( mf.seed([{}]), (frozenset([0]),) )
+        self.assertIsNone(mf.seed([{0: False}]))
+        self.assertIsNone(mf[frozenset([0]),])
+        with self.assertRaises(Exception): mf[frozenset([0,1]),]
+        mf[frozenset([0]),] = False
+        with self.assertRaises(Exception): mf[frozenset([0]),] = False
+        with self.assertRaises(Exception): mf[frozenset([0]),] = True
+        self.assertEqual( mf[frozenset([0]),], False )
+        self.assertIsNone(mf.seed([{}]))
+        elems.append('world')
+        self.assertIsNotNone(mf.seed([{}]))
+        self.assertIsNone(mf.seed([{1: False}]))
+        mf[frozenset([1]),] = False
+        self.assertEqual( mf.seed([{}]), (frozenset([0,1]),) )
+        mf[frozenset([0,1]),] = True
+        self.assertEqual( mf[frozenset([0,1]),], True )
+        self.assertIsNone(mf.seed([{}]))
+        elems.append('!')
+        self.assertEqual( mf[frozenset([0,1,2]),], True )
+        self.assertIsNone(mf[frozenset([0,2]),])
+        self.assertIsNone(mf[frozenset([2]),])
+        # TODO: test multiple domains, test NatInf domains
+        self.assertEqual(mf.to_elems((frozenset(),)), ([],))
+        self.assertEqual(mf.to_elems((frozenset([0]),)), (['hello'],))
+        self.assertEqual(mf.to_elems((frozenset([0,1]),)), (['hello', 'world'],))
+        self.assertEqual(mf.to_elems((frozenset([1,0]),)), (['hello', 'world'],))
+        self.assertEqual(mf.to_elems((frozenset([0,2]),)), (['hello', '!'],))
+        with self.assertRaises(Exception): mf.to_elems((frozenset([3]),))
