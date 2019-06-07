@@ -867,8 +867,13 @@ def repeated_houdini(s: Solver) -> str:
             print('='*80)
 
 NatInf = Optional[int] # None represents infinity
+# TODO: maybe these should be classes with their own methds
 Point = Tuple[Union[FrozenSet[int],NatInf],...]
-Constraint = Union[Dict[int,bool],int]
+Constraint = Union[
+    Dict[int,bool], # constraint for a set forcing some elements to be in or out
+    Tuple[Optional[int],Optional[int]], # constraint for NatInf, range
+    None, # no constraint
+]
 # a constraint for a set some elements to be there or not, and a constraint for NatInf is an upper bound
 class MonotoneFunction(object):
     '''This class represents information about a monotone function to
@@ -943,9 +948,9 @@ class MonotoneFunction(object):
 
     def __getitem__(self, xs: Point) -> Optional[bool]:
         self.assert_points(xs)
-        if any(xs <= ys for ys in self.zeros):
+        if any(self.leq(xs, ys) for ys in self.zeros):
             return False
-        elif any(ys <= xs for ys in self.ones):
+        elif any(self.leq(ys, xs) for ys in self.ones):
             return True
         else:
             return None
@@ -958,50 +963,73 @@ class MonotoneFunction(object):
         else:
             self.zeros.append(xs)
         # TODO: maybe remove some reduntetd points
-        # TODO: maybe store wethat or not the point is min/max
+        # TODO: maybe store whether or not the point is min/max
 
     def seed(self, constraints: Sequence[Constraint]) -> Optional[Point]:
+        # TODO: support configurable biases
         assert len(constraints) == self.n
         assert all(
-            isinstance(c, int) if d is None else
-            isinstance(c, dict)
+            (c is None) or
+            (isinstance(c, tuple) and d is None) or
+            (isinstance(c, dict) and isinstance(d, list))
             for c, d in zip(constraints, self.domains)
         )
         # TODO: for now we use a fresh z3 solver every time, but this should be made incremental
         solver = z3.Solver()
         vss: List[Union[List[z3.ExprRef], z3.ExprRef]] = [
-            [z3.Bool(f'{i}_{j}') for j in range(len(d))] if d is not None else
-            z3.Int(f'{i}')
+            [z3.Bool(f'x_{i}_{j}') for j in range(len(d))] if d is not None else
+            z3.Int(f'k_{i}')
             for i, d in enumerate(self.domains)
         ]
 
+        # add non-negativity constraints
+        for d, vs in zip(self.domains, vss):
+            if d is None:
+                solver.add(vs >= 0)  # type: ignore
+
+        # add constraints
         for c, d, vs in zip(constraints, self.domains, vss):
-            if isinstance(c, int):
+            if c is None:
+                continue
+            elif isinstance(c, tuple):
                 assert d is None
                 assert isinstance(vs, z3.ExprRef)
-                solver.add(vs < c)  # type: ignore
-                # TODO: fix the stup of z3 to support this
+                lo, hi = c
+                if lo is not None:
+                    solver.add(lo <= vs)  # type: ignore
+                if hi is not None:
+                    solver.add(vs < hi)  # type: ignore
+                # TODO: fix the stub of z3 to support the above
             else:
                 assert isinstance(d, list)
                 assert isinstance(vs, list)
                 for i, v in c.items():
                     assert 0 <= i < len(d)
                     solver.add(vs[i] if v else z3.Not(vs[i]))
+        # print(f'Solver after constraints: {solver}')
 
-        # block down from the zero points
+        # block according to self.zeros and self.ones
         for xs, v in chain(zip(self.zeros,repeat(False)), zip(self.ones,repeat(True))):
             lits: List[z3.ExprRef] = []
             for x, vs, d, m in zip(xs, vss, self.domains, self.directions):
                 if d is None:
-                    # TODO: get this right
-                    continue
                     assert (x is None) or (isinstance(x, int) and 0 <= x)
                     assert isinstance(vs, z3.ExprRef)
-                    assert m in ('+', '-')
-                    if x is None and m == '+':
-                        pass
-                    elif x is None and m == '-':
-                        pass # TODO: not really sure, need to think of the encoding of Inf in z3
+                    if v != (m == '+'):
+                        # "block down"
+                        if x is not None:
+                            lits.append(vs > x)  # type: ignore
+                        else:
+                            # nothing larger than infinity
+                            pass
+                    else:
+                        # "block up"
+                        if x is not None:
+                            lits.append(vs < x)  # type: ignore
+                        else:
+                             # anything is smaller than infinity (we
+                             # never return infinity in seeds)
+                            lits.append(z3.BoolVal(True))
                 else:
                     assert isinstance(x, frozenset) and all(
                         isinstance(i, int) and 0 <= i < len(d)
@@ -1015,9 +1043,11 @@ class MonotoneFunction(object):
                     else:
                         # "block up"
                         lits.extend(z3.Not(vs[i]) for i in range(len(d)) if i in x)
-            solver.add(z3.Or(*lits))
+            solver.add(z3.Or(*lits) if len(lits) > 0 else z3.BoolVal(False))
+        # print(f'Solver after blocking: {solver}')
 
         res = solver.check()
+        # print(f'solver.check() = {res}')
         assert res in (z3.unsat, z3.sat)
         if res == z3.unsat:
             return None
@@ -1033,7 +1063,7 @@ class MonotoneFunction(object):
                         # k undefined in the model, default to 0
                         result += (0,)
                     else:
-                        assert isinstance(k, z3.z3.IntNumRef)  # type: ignore # TODO
+                        assert isinstance(k, z3.IntNumRef)  # type: ignore # TODO
                         result += (k.as_long(),)
                 else:
                     assert isinstance(vs, list)
@@ -1047,7 +1077,7 @@ class MonotoneFunction(object):
                         ),)
                     else:
                         # bias to large set
-                        (frozenset(
+                        result += (frozenset(
                             i
                             for i in range(len(d))
                             if not z3.is_false(model[vs[i]])
@@ -1062,7 +1092,7 @@ class MonotoneFunction(object):
                 assert x is None or isinstance(x, int)
                 result += (x,)
             else:
-                assert isinstance(x, frozenset)
+                assert isinstance(x, frozenset) and all(0 <= i < len(d) for i in x)
                 result += ([e for i,e in enumerate(d) if i in x],)
         return result
 

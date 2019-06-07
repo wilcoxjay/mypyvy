@@ -119,14 +119,14 @@ class MonotoneFunctionTests(unittest.TestCase):
         self.assertIsNone(mf[frozenset(),])
         with self.assertRaises(Exception): mf[frozenset([0]),]
         with self.assertRaises(Exception): mf[frozenset([0,1]),]
-        self.assertEqual( mf.seed([{}]), (frozenset(),) )
+        self.assertEqual( mf.seed([None]), (frozenset(),) )
         mf[frozenset(),] = False
         with self.assertRaises(Exception): mf[frozenset(),] = False
         with self.assertRaises(Exception): mf[frozenset(),] = True
         self.assertEqual( mf[frozenset(),], False )
-        self.assertIsNone(mf.seed([{}]))
+        self.assertIsNone(mf.seed([None]))
         elems.append('hello')
-        self.assertEqual( mf.seed([{}]), (frozenset([0]),) )
+        self.assertEqual( mf.seed([None]), (frozenset([0]),) )
         self.assertIsNone(mf.seed([{0: False}]))
         self.assertIsNone(mf[frozenset([0]),])
         with self.assertRaises(Exception): mf[frozenset([0,1]),]
@@ -134,23 +134,101 @@ class MonotoneFunctionTests(unittest.TestCase):
         with self.assertRaises(Exception): mf[frozenset([0]),] = False
         with self.assertRaises(Exception): mf[frozenset([0]),] = True
         self.assertEqual( mf[frozenset([0]),], False )
-        self.assertIsNone(mf.seed([{}]))
+        self.assertIsNone(mf.seed([None]))
         elems.append('world')
-        self.assertIsNotNone(mf.seed([{}]))
+        self.assertIsNotNone(mf.seed([None]))
         self.assertIsNone(mf.seed([{1: False}]))
         mf[frozenset([1]),] = False
-        self.assertEqual( mf.seed([{}]), (frozenset([0,1]),) )
+        self.assertEqual( mf.seed([None]), (frozenset([0,1]),) )
         mf[frozenset([0,1]),] = True
         self.assertEqual( mf[frozenset([0,1]),], True )
-        self.assertIsNone(mf.seed([{}]))
+        self.assertIsNone(mf.seed([None]))
         elems.append('!')
         self.assertEqual( mf[frozenset([0,1,2]),], True )
         self.assertIsNone(mf[frozenset([0,2]),])
         self.assertIsNone(mf[frozenset([2]),])
-        # TODO: test multiple domains, test NatInf domains
         self.assertEqual(mf.to_elems((frozenset(),)), ([],))
         self.assertEqual(mf.to_elems((frozenset([0]),)), (['hello'],))
         self.assertEqual(mf.to_elems((frozenset([0,1]),)), (['hello', 'world'],))
         self.assertEqual(mf.to_elems((frozenset([1,0]),)), (['hello', 'world'],))
         self.assertEqual(mf.to_elems((frozenset([0,2]),)), (['hello', '!'],))
         with self.assertRaises(Exception): mf.to_elems((frozenset([3]),))
+
+        mf = MonotoneFunction([(None, '+')])
+        with self.assertRaises(Exception): mf[0]  # type: ignore
+        with self.assertRaises(Exception): mf[frozenset(),]
+        with self.assertRaises(Exception): mf[()]
+        with self.assertRaises(Exception): mf[(),]  # type: ignore
+        with self.assertRaises(Exception): mf[[],]  # type: ignore
+        with self.assertRaises(Exception): mf[set(),]  # type: ignore
+        self.assertIsNone(mf[0,])
+        with self.assertRaises(Exception): mf[-1,]
+        self.assertIsNone(mf.seed([(0,0)]))
+        self.assertIsNone(mf.seed([(None,0)]))
+        self.assertIsNotNone(mf.seed([(None,None)]))
+        self.assertIsNotNone(mf.seed([(100,None)]))
+        v = mf.seed([(100,200)])
+        self.assertIsNotNone(v)
+        assert v is not None
+        k = v[0]
+        self.assertIsInstance(k, int)
+        self.assertLessEqual(100, k)
+        self.assertLess(k, 200)
+        self.assertIsNone(mf.seed([(5,5)]))
+        self.assertEqual(mf.seed([(5,6)]), (5,))
+        mf[5,] = False
+        self.assertIsNone(mf.seed([(None,6)]))
+        mf[50,] = True
+        self.assertIsNone(mf.seed([(50,None)]))
+        self.assertEqual(mf.seed([(None,7)]), (6,))
+        self.assertEqual(mf.seed([(49,None)]), (49,))
+        with self.assertRaises(Exception): mf[None,] = True
+        with self.assertRaises(Exception): mf[None,] = False
+
+        elems = []
+        mf = MonotoneFunction([(elems,'-')])
+        with self.assertRaises(Exception): mf[0]  # type: ignore
+        with self.assertRaises(Exception): mf[0,]
+        with self.assertRaises(Exception): mf[()]
+        with self.assertRaises(Exception): mf[(),]  # type: ignore
+        with self.assertRaises(Exception): mf[[],]  # type: ignore
+        with self.assertRaises(Exception): mf[set(),]  # type: ignore
+        self.assertIsNone(mf[frozenset(),])
+        with self.assertRaises(Exception): mf[frozenset([0]),]
+        with self.assertRaises(Exception): mf[frozenset([0,1]),]
+        self.assertEqual( mf.seed([None]), (frozenset(),) )
+        mf[frozenset(),] = True
+        with self.assertRaises(Exception): mf[frozenset(),] = False
+        with self.assertRaises(Exception): mf[frozenset(),] = True
+        self.assertEqual( mf[frozenset(),], True )
+        self.assertIsNone(mf.seed([None]))
+        elems.append('hello')
+        self.assertEqual( mf.seed([None]), (frozenset([0]),) )
+        self.assertIsNone(mf.seed([{0: False}]))
+        self.assertIsNone(mf[frozenset([0]),])
+        with self.assertRaises(Exception): mf[frozenset([0,1]),]
+        mf[frozenset([0]),] = True
+        with self.assertRaises(Exception): mf[frozenset([0]),] = False
+        with self.assertRaises(Exception): mf[frozenset([0]),] = True
+        self.assertEqual( mf[frozenset([0]),], True )
+        self.assertIsNone(mf.seed([None]))
+        elems.append('world')
+        self.assertIsNotNone(mf.seed([None]))
+        self.assertIsNone(mf.seed([{1: False}]))
+        mf[frozenset([1]),] = True
+        self.assertEqual( mf.seed([None]), (frozenset([0,1]),) )
+        mf[frozenset([0,1]),] = False
+        self.assertEqual( mf[frozenset([0,1]),], False )
+        self.assertIsNone(mf.seed([None]))
+        elems.append('!')
+        self.assertEqual( mf[frozenset([0,1,2]),], False )
+        self.assertIsNone(mf[frozenset([0,2]),])
+        self.assertIsNone(mf[frozenset([2]),])
+        self.assertEqual(mf.to_elems((frozenset(),)), ([],))
+        self.assertEqual(mf.to_elems((frozenset([0]),)), (['hello'],))
+        self.assertEqual(mf.to_elems((frozenset([0,1]),)), (['hello', 'world'],))
+        self.assertEqual(mf.to_elems((frozenset([1,0]),)), (['hello', 'world'],))
+        self.assertEqual(mf.to_elems((frozenset([0,2]),)), (['hello', '!'],))
+        with self.assertRaises(Exception): mf.to_elems((frozenset([3]),))
+
+        # TODO: test multiple domains together, more tests with infinity
