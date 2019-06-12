@@ -210,7 +210,7 @@ def assert_any_transition(s: Solver, uid: str,
 
     s.add(z3.Or(*tids))
 
-def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> None:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> z3.CheckSatResult:
     keys = ['state%02d' % i for i in range(depth + 1)]
     prog = syntax.the_program
 
