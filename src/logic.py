@@ -201,17 +201,17 @@ def assert_any_transition(s: Solver, uid: str,
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
         tids.append(tid)
-        s.add(tid == t.translate_transition(transition))
+        s.add(z3.Implies(tid, t.translate_transition(transition)))
 
     if allow_stutter:
-        tid = z3.Bool(get_transition_indicator(uid, 'stutter'))
+        tid = z3.Bool(get_transition_indicator(uid, '$stutter'))
         tids.append(tid)
-        s.add(tid == z3.And(*t.frame([])))
+        s.add(z3.Implies(tid, z3.And(*t.frame([]))))
 
     s.add(z3.Or(*tids))
 
 def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> None:
-    keys = ['state%2d' % i for i in range(depth + 1)]
+    keys = ['state%02d' % i for i in range(depth + 1)]
     prog = syntax.the_program
 
     if preconds is None:
@@ -233,14 +233,13 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
         s.add(t.translate_expr(syntax.Not(safety)))
 
         for i in range(depth):
-            assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=True)
+            if i != len(keys) - 1:
+                t = s.get_translator(keys[i])
+                s.add(t.translate_expr(safety))
+            assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=False)
 
-        # if utils.logger.isEnabledFor(logging.DEBUG):
-        #     utils.logger.debug('assertions')
-        #     utils.logger.debug(str(s.assertions()))
-
-        check_unsat([(None, 'found concrete trace violating safety')],
-                    s, keys)
+        return check_unsat([(None, 'found concrete trace violating safety')],
+                           s, keys)
 
 def check_two_state_implication_along_transitions(
         s: Solver,

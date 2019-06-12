@@ -190,10 +190,13 @@ def bmc(s: Solver) -> None:
 
     n = utils.args.depth
 
-    utils.logger.always_print('bmc checking the following property to depth %d' % n)
+    utils.logger.always_print('bmc checking the following property up to depth %d' % n)
     utils.logger.always_print('  ' + str(safety))
 
-    logic.check_bmc(s, safety, n)
+    for k in range(1, n+1):
+        res = logic.check_bmc(s, safety, k)
+        if res != z3.unsat:
+            break
 
 
 @utils.log_start_end_time(utils.logger)
