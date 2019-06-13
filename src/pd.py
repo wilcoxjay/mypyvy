@@ -15,7 +15,7 @@ import math
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -26,6 +26,8 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
 
 
 State = Model
+Predicate = Expr
+
 
 cache_path: Optional[Path] = None
 
@@ -1096,6 +1098,458 @@ class MonotoneFunction(object):
                 result += ([e for i,e in enumerate(d) if i in x],)
         return result
 
+# The following 3 commented out functions are a very basic and naive
+# implementation of "cdcl_invariant" that does not really work well,
+# but it can be run
+#
+# def separate(solver: Solver, A: Sequence[State], B: Sequence[State], k: int) -> Optional[Sequence[Predicate]]:
+#     '''
+#     Find a conjunction of at most k universally quantified clauses
+#     that are positive on all of the A states, and eliminate all of the
+#     B states, or return None if that's impossible.
+#     '''
+#     # for now, a naive implementation that eagerly finds all the
+#     # minimal subclauses of the negations of diagrams of B that are
+#     # true on A, and then does set cover using z3.
+#     top_clauses: List[Predicate] = []
+#     for s in B:
+#         cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+#         assert len(cs) == 1
+#         c = cs[0]
+#         if c not in top_clauses:
+#             top_clauses.append(c)
+#     predicates = sorted(
+#         dedup_equivalent_predicates(solver, chain(*(alpha_from_clause(solver, A, clause) for clause in top_clauses))),
+#         key=lambda x: (len(str(x)),str(x))
+#     )
+#     print(f'Separating using the following {len(predicates)} predicates:')
+#     for c in predicates:
+#         print(f'  {c}')
+#     covers = [
+#         set(i for i, s in enumerate(B) if not eval_in_state(solver, s, p))
+#         for p in predicates
+#     ]
+#     print(f'The set cover problem is: {covers}')
+#     vs = [z3.Bool(f'p{i}') for i, p in enumerate(predicates)]
+#     z3s = z3.Solver()
+#     for i, t in enumerate(B):
+#         z3s.add(z3.Or(*(
+#             vs[j] for j in range(len(predicates))
+#             if i in covers[j]
+#         )))
+#     if len(vs) > k:
+#         z3s.add(z3.AtMost(*vs, k))  # type: ignore # TODO fix this typing issue
+#     res = z3s.check()
+#     assert res in (z3.unsat, z3.sat)
+#     if res == z3.unsat:
+#         return None
+#     else:
+#         model = z3s.model()
+#         return [p for p, v in zip(predicates,vs) if z3.is_true(model[v])]
+
+
+# def find_invariant(solver: Solver,
+#                    states: Sequence[State],
+#                    reachable: Sequence[int], # indices into states
+#                    bad: Sequence[int], # indices into states
+#                    transitions: Sequence[Tuple[int, int]], # indices into states
+#                    k: int) -> Optional[Sequence[Predicate]]:
+#     '''Find an inductive invariant with at most k predicates that is
+#     positive on reachable, negative on bad, and respects transitions
+#     '''
+#     z3s = z3.Solver()
+#     vs = [z3.Bool(f's_{i}') for i in range(len(states))] # s_i encodes that the invariant is satisfied by state i
+#     for i in reachable:
+#         z3s.add(vs[i])
+#     for i in bad:
+#         z3s.add(z3.Not(vs[i]))
+#     for i,j in transitions:
+#         z3s.add(z3.Implies(vs[i], vs[j]))
+#     while True:
+#         res = z3s.check()
+#         assert res in (z3.unsat, z3.sat)
+#         if res == z3.unsat:
+#             # no invariant with less than k predicates
+#             return None
+#         else:
+#             model = z3s.model()
+#             A = [s for s, v in zip(states, vs) if z3.is_true(model[v])]
+#             B = [s for s, v in zip(states, vs) if z3.is_false(model[v])]
+#             inv = separate(solver, A, B, k)
+#             if inv is None:
+#                 # learn an unseparability conflict clause TODO: minimize it
+#                 z3s.add(z3.Or(*chain(
+#                     (z3.Not(v) for v in vs if z3.is_true(model[v])),
+#                     (v for v in vs if z3.is_false(model[v])),
+#                 )))
+#             else:
+#                 # found invariant
+#                 return inv
+
+# def cdcl_invariant(solver:Solver) -> str:
+#     prog = syntax.the_program
+#     global cache_path
+#     cache_path = Path(utils.args.filename).with_suffix('.cache')
+#     load_caches()
+
+#     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+
+#     states : List[State] = []
+#     reachable: List[int] = []
+#     bad: List[int] = []
+#     transitions: List[Tuple[int, int]] = []
+
+#     k = 0
+#     while True:
+#         print(f'Current reachable states ({len(reachable)}):')
+#         for i in reachable:
+#             print(str(states[i]) + '\n' + '-'*80)
+#             if check_implication(solver, [states[i].as_onestate_formula(0)], safety) is not None:
+#                 print('Found safety violation!')
+#                 dump_caches()
+#                 return 'UNSAFE'
+#         inv = find_invariant(solver, states, reachable, bad, transitions, k)
+#         if inv is None:
+#             print(f'No invariant with {k} predicates, increasing bound\n\n')
+#             k += 1
+#             continue
+#         inv = list(chain(safety, inv))
+#         print(f'Candidate inductive invariant ({len(inv)} predicates) is:' if len(inv) > 0 else 'Candidate inductive invariant is true')
+#         for p in sorted(inv, key=lambda x: len(str(x))):
+#             print(f'  {p}')
+#         for p in inv:
+#             s = check_initial(solver, p)
+#             if s is not None:
+#                 states.append(s)
+#                 reachable.append(len(states) - 1)
+#                 break
+#         else:
+#             for i, p in enumerate(inv):
+#                 res = check_two_state_implication(solver, inv, p, 'CTI')
+#                 if res is not None:
+#                     prestate, poststate = res
+#                     states.append(prestate)
+#                     states.append(poststate)
+#                     transitions.append((len(states) - 2, len(states) - 1))
+#                     if i < len(safety):
+#                         assert p == safety[i]
+#                         bad.append(len(states) - 1)
+#                     break
+#             else:
+#                 print('Inductive invariant foundlies safety!')
+#                 dump_caches()
+#                 return 'SAFE'
+
+
+class SeparabilitySubclausesMap(object):
+    '''
+    Class used to store a map of subclauses of a certain clause, and
+    obtain subclauses that are positive and negative on some given
+    states.
+    '''
+    def __init__(self, top_clause: Expr, states: List[State]):
+        '''
+        states is assumed to be a list that is increasing but never modified
+        '''
+        self.states = states
+        # TODO: why can't top_clause be quantifier free?
+        assert isinstance(top_clause, QuantifierExpr)
+        assert isinstance(top_clause.body, NaryExpr)
+        assert top_clause.body.op == 'OR'
+        self.literals = tuple(top_clause.body.args)
+        self.variables = tuple(top_clause.binder.vs)
+        self.n = len(self.literals)
+        self.all_n = set(range(self.n))  # used in complement fairly frequently
+        self.solver = z3.Solver()
+        self.lit_vs = [z3.Bool(f'lit_{i}') for i, _ in enumerate(self.literals)]
+        self.state_vs: List[z3.ExprRef] = []
+        self._newstates()
+
+    def _newstates(self) -> None:
+        self.state_vs.extend(z3.Bool(f's_{i}') for i in range(len(self.state_vs), len(self.states)))
+
+    def separate(self, pos: Collection[int], neg: Collection[int]) -> Optional[FrozenSet[int]]:
+        '''
+        find a subclause that is positive on pos and negative on neg. pos,neg are indices to self.states.
+
+        TODO: to we need an unsat core in case there is no subclause?
+        '''
+        self._newstates()
+        assert all(0 <= i < len(self.states) for i in chain(pos, neg))
+        sep = list(chain(
+            (self.state_vs[i] for i in sorted(pos)),
+            (z3.Not(self.state_vs[i]) for i in sorted(neg)),
+        ))
+        while True:
+            res = self.solver.check(*sep)
+            assert res in (z3.unsat, z3.sat)
+            if res == z3.unsat:
+                return None
+            # minimize for strongest possible clause
+            model = self.solver.model()
+            forced_to_false = set(
+                i for i, v in enumerate(self.lit_vs)
+                if not z3.is_true(model[v])
+            )
+            for i, _ in enumerate(self.lit_vs):
+                if i in forced_to_false:
+                    continue
+                res = self.solver.check(*sep, *(z3.Not(self.lit_vs[j]) for j in sorted(chain(forced_to_false, [i]))))
+                assert res in (z3.unsat, z3.sat)
+                if res == z3.sat:
+                    forced_to_false.add(i)
+            assert self.solver.check(*sep, *(z3.Not(self.lit_vs[j]) for j in sorted(forced_to_false))) == z3.sat
+            result = frozenset(self.all_n - forced_to_false)
+            clause = self.to_clause(result)
+            # now check if this clause does the job w.r.t. pos and neg
+            bad = False
+            for i in pos:
+                if not eval_in_state(Solver(), self.states[i], clause):
+                    # grow and block down
+                    current = result
+                    for j in sorted(self.all_n - result):
+                        if not eval_in_state(Solver(), self.states[i], self.to_clause(current | {j})):
+                            current = current | {j}
+                    self.solver.add(z3.Or(z3.Not(self.state_vs[i]), *(
+                        self.lit_vs[j] for j in sorted(self.all_n - current)
+                    )))
+                    bad = True
+                    break
+            if bad:
+                continue
+            for i in neg:
+                if eval_in_state(Solver(), self.states[i], clause):
+                    # shrink and block up
+                    current = result
+                    for j in sorted(result):
+                        if eval_in_state(Solver(), self.states[i], self.to_clause(current - {j})):
+                            current = current - {j}
+                    self.solver.add(z3.Or(self.state_vs[i], *(
+                        z3.Not(self.lit_vs[j]) for j in sorted(current)
+                    )))
+                    bad = True
+                    break
+            if bad:
+                continue
+            return result
+
+    def to_clause(self, s: Iterable[int]) -> Expr:
+        lits = [self.literals[i] for i in sorted(s)]
+        free = set(chain(*(lit.free_ids() for lit in lits)))
+        vs = [v for v in self.variables if v.name in free]
+        return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
+
+
+class SeparabilityMap(object):
+    '''
+    Marco map for function sep: 2^states x 2^states -> {0,1}
+    0 means they can be separated, 1 means they cannot.
+    '''
+    def __init__(self, states: List[State]):
+        '''
+        states is assumed to be a list that is increasing but never modified
+        '''
+        self.states = states
+        self.maps: List[SeparabilitySubclausesMap] = []
+        # self.solver = z3.Solver()
+        # self.pos: List[z3.ExprRef] = []
+        # self.neg: List[z3.ExprRef] = []
+        self.separable: List[Tuple[FrozenSet[int], FrozenSet[int], Predicate]] = []
+        self.inseparable: List[Tuple[FrozenSet[int], FrozenSet[int]]] = []
+        self._newstates()
+
+    def _newstates(self) -> None:
+        # for i in range(len(self.pos), len(self.states)):
+        #     self.pos.append(z3.Bool(f'pos_{i}'))
+        #     self.neg.append(z3.Bool(f'neg_{i}'))
+        #     self.solver.add(z3.Or(z3.Not(self.pos[i]), z3.Not(self.neg[i])))
+
+        # create new SeparabilitySubclausesMap's
+        for i in range(len(self.maps), len(self.states)):
+            cs = as_clauses(Not(self.states[i].as_diagram(0).to_ast()))
+            assert len(cs) == 1
+            c = cs[0]
+            self.maps.append(SeparabilitySubclausesMap(c, self.states))
+
+        # update separable with predicate values on new states
+        allstates = frozenset(range(len(self.states)))
+        for i, (pos, neg, p) in enumerate(self.separable):
+            for j in sorted(allstates - pos - neg):
+                if eval_in_state(Solver(), self.states[j], p):
+                    pos = pos | {j}
+                else:
+                    neg = neg | {j}
+            self.separable[i] = (pos, neg, p)
+
+    def separate(self, pos: FrozenSet[int], neg: FrozenSet[int]) -> Union[Predicate, Tuple[FrozenSet[int],FrozenSet[int]]]:
+        '''Try to find a predicate positive on pos and negative on neg. Either
+        return it, or return subsets of pos,neg that already make
+        it impossible
+        '''
+        p: Optional[Predicate] = None
+        self._newstates()
+        for _pos, _neg, p in self.separable:
+            if pos <= _pos and neg <= _neg:
+                return p
+        for _pos, _neg in self.inseparable:
+            if _pos <= pos and _neg <= neg:
+                return _pos, _neg
+        p = self._new_separator(pos, neg)
+        if p is not None:
+            # grow is trivial
+            pos = frozenset(i for i, s in enumerate(self.states) if eval_in_state(Solver(), s, p))
+            neg = frozenset(range(len(self.states))) - pos
+            self.separable.append((pos, neg, p))
+            return p
+        else:
+            # shrink neg
+            for i in sorted(neg):
+                if i not in neg:
+                    assert False # TODO this can happen once we have "unsat cores" from new_separator
+                    continue
+                if self._new_separator(pos, neg - {i}) is None:
+                    neg = neg - {i}
+            # shrink pos
+            for i in sorted(pos):
+                if i not in pos:
+                    assert False # TODO this can happen once we have "unsat cores" from new_separator
+                    continue
+                if self._new_separator(pos - {i}, neg) is None:
+                    pos = pos - {i}
+            self.inseparable.append((pos, neg))
+            return pos, neg
+
+    def _new_separator(self, pos: FrozenSet[int], neg: FrozenSet[int]) -> Optional[Predicate]:
+        # TODO: this should also give "unsat cores"
+        assert len(self.states) == len(self.maps) # otherwise we should do self._newstates()
+        if len(neg) == 0:
+            return TrueExpr
+        for i in sorted(neg):
+            p = self.maps[i].separate(pos, neg) # TODO neg - {i} ??
+            if p is not None:
+                return self.maps[i].to_clause(p)
+        return None
+
+def cdcl_invariant(solver:Solver) -> str:
+    '''this implementation of "BMC for invariants" does not use Set Cover
+    and does not try to do something smart about the permutation
+    symmetry betwen predicates. It tries to be close, in spirit, to
+    BMC by "unroll and cdcl", without trying to localize decisions of
+    conflicts to specific predicates
+    '''
+    prog = syntax.the_program
+    global cache_path
+    cache_path = Path(utils.args.filename).with_suffix('.cache')
+    load_caches()
+
+    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+
+    states : List[State] = []
+    #reachable: List[int] = []
+    #bad: List[int] = []
+    #transitions: List[Tuple[int, int]] = []
+    sm = SeparabilityMap(states)
+
+    z3s = z3.Solver()
+    k = 0
+    xs: List[List[z3.ExprRef]] = [] # xs[i][j] - state i satisfied by predicate j
+    cs: List[List[z3.ExprRef]] = [] # cs[i][j] - state i satisfied by predicates j, j+1, ..., so cs[i][0] means state i is satisfied by the inductive invariant
+
+    def add_inseparability(j: int, pos: FrozenSet[int], neg: FrozenSet[int]) -> None:
+        assert len(pos) > 0 and len(neg) > 0
+        z3s.add(z3.Or(*chain(
+            (z3.Not(xs[i][j]) for i in sorted(pos)),
+            (xs[i][j] for i in sorted(neg)),
+        )))
+    def add_state(s: State) -> int:
+        i = len(states)
+        states.append(s)
+        xs.append([z3.Bool(f'x_{i}_{j}') for j in range(k)])
+        cs.append([z3.Bool(f'c_{i}_{j}') for j in range(k + 1)])
+        for j in range(k):
+            z3s.add(cs[i][j] == z3.And(xs[i][j], cs[i][j + 1]))
+        return i
+
+    while True:
+        # TODO: figure this out, we need a way to report UNSAFE
+        # print(f'Current reachable states ({len(reachable)}):')
+        # for i in reachable:
+        #     print(str(states[i]) + '\n' + '-'*80)
+        #     if check_implication(solver, [states[i].as_onestate_formula(0)], safety) is not None:
+        #         print('Found safety violation!')
+        #         dump_caches()
+        #         return 'UNSAFE'
+        print(f'Current states ({len(states)}):')
+        for i in range(len(states)):
+            print(f'states[{i}]:\n{states[i]}\n' + '-' * 80)
+
+        # find an invariant that meets the currently known states,
+        # learning new inseparability constraints, and possibly
+        # increasing k
+        while True:
+            z3res = z3s.check(*(cs[i][k] for i in range(len(states))))
+            assert z3res in (z3.unsat, z3.sat)
+            if z3res == z3.unsat:
+                print(f'No inductive invariant with {k} predicates, increasing bound')
+                print('-' * 80 + f'\n{z3s}\n' + '-' * 80)
+                k += 1
+                assert k < 20
+                for i, _ in enumerate(states):
+                    xs[i].append(z3.Bool(f'x_{i}_{k - 1}'))
+                    cs[i].append(z3.Bool(f'c_{i}_{k}'))
+                    z3s.add(cs[i][k - 1] == z3.And(xs[i][k - 1], cs[i][k]))
+                for pos, neg in sm.inseparable:
+                    add_inseparability(k - 1, pos, neg)
+            else:
+                z3m = z3s.model()
+                ps: List[Predicate] = []
+                for j in range(k):
+                    pos = frozenset(i for i in range(len(states)) if z3.is_true(z3m[xs[i][j]]))
+                    neg = frozenset(i for i in range(len(states)) if z3.is_false(z3m[xs[i][j]]))
+                    print(f'Trying to separate: pos={sorted(pos)}, neg={sorted(neg)}')
+                    p = sm.separate(pos, neg)
+                    if isinstance(p, Predicate):
+                        print(f'Found separator: {p}')
+                        ps.append(p)
+                    else:
+                        pos, neg = p
+                        print(f'Learned new inseparability: pos={sorted(pos)}, neg={sorted(neg)}')
+                        for jj in range(k):
+                            add_inseparability(jj, pos, neg)
+                        break
+                else:
+                    assert len(ps) == k
+                    inv = ps
+                    break
+
+        # now inv is a list of predicates whos conjunction does not have a CTI in states
+        inv = list(chain(safety, inv))
+        print(f'Candidate inductive invariant ({len(inv)} predicates) is:' if len(inv) > 0 else 'Candidate inductive invariant is true')
+        for p in sorted(inv, key=lambda x: len(str(x))):
+            print(f'  {p}')
+        for p in inv:
+            s = check_initial(solver, p)
+            if s is not None:
+                i = add_state(s)
+                z3s.add(cs[i][0])
+                break
+        else:
+            for i, p in enumerate(inv):
+                res = check_two_state_implication(solver, inv, p, 'CTI')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    if i < len(safety):
+                        assert p == safety[i]
+                        z3s.add(z3.Not(cs[i_pre][0]))
+                    else:
+                        z3s.add(z3.Implies(cs[i_pre][0], cs[i_post][0]))
+                    break
+            else:
+                print('Inductive invariant found!')
+                dump_caches()
+                return 'SAFE'
 
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
