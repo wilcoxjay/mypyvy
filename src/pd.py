@@ -708,6 +708,7 @@ def forward_explore(s: Solver,
         changes = False
 
         # check for initial states violating a
+        print(f'have {len(states)} states')
         print(f'a is ({len(a)} predicates):' if len(a) > 0 else 'a is true')
         for e in a:
             print(f'  {e}')
@@ -728,18 +729,44 @@ def forward_explore(s: Solver,
         else:
             print('YES')
 
+        m = None
         # check for 1 transition from an initial state or a non-initial state in states
         for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
-            # print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
+            print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
                 s,
                 inits if precondition is None else precondition,
                 p
             )
-            # print(res)
+            print(res)
             if res is not None:
                 _, m = res
                 states.append(m)
+                changes = True
+                a = alpha(states)
+                break
+        if m is not None:
+            continue
+
+        if utils.args.unroll_to_depth is None:
+            continue
+
+        for i, precondition, p in product(range(2, utils.args.unroll_to_depth+1), chain([None], (s for s in states if len(s.keys) > 1)), a):
+            print(f'Checking if {"init" if precondition is None else "state"} satisfies WP_{i} of {p}... ',end='')
+            if precondition is None:
+                pres = inits
+            else:
+                pres = (precondition.as_onestate_formula(0),)
+            om = check_bmc(
+                s,
+                p,
+                i,
+                preconds = pres
+            )
+            print(om)
+            sys.stdout.flush()
+            if om is not None:
+                states.append(om)
                 changes = True
                 a = alpha(states)
                 break
@@ -757,8 +784,8 @@ def forward_explore_inv(s: Solver) -> None:
     global cache_path
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
-    invs = [inv.expr for inv in prog.invs()] # see examples/lockserv_cnf.pyv
-    # invs = list(chain(*(as_clauses(inv.expr) for inv in prog.invs())))
+    # invs = [inv.expr for inv in prog.invs()] # see examples/lockserv_cnf.pyv
+    invs = list(chain(*(as_clauses(inv.expr) for inv in prog.invs())))
     print('Performing forward explore w.r.t. the following clauses:')
     for p in sorted(invs, key=lambda x: len(str(x))):
         print(p)
@@ -808,7 +835,13 @@ def repeated_houdini(s: Solver) -> str:
 
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
-    reachable_states : Sequence[State] = ()
+    with open('reachable-states.cache', 'rb') as cache_file:
+        reachable_states : Sequence[State] = tuple(pickle.load(cache_file))
+
+    print('initialized reachable states:')
+    for m in reachable_states:
+        print(str(m) + '\n' + '-'*80)
+
     clauses : List[Expr] = list(chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
     def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
@@ -1575,6 +1608,92 @@ def cdcl_invariant(solver:Solver) -> str:
                 dump_caches()
                 return 'SAFE'
 
+def enumerate_reachable_states(s: Solver) -> None:
+    prog = syntax.the_program
+    states: List[Model] = []
+    with s:
+        for sort in prog.sorts():
+            if sort.name == 'round':
+                b = 3
+            else:
+                b = 2
+            print(f'bounding {sort} to candinality {b}')
+            s.add(s._sort_cardinality_constraint(sort.to_z3(), b))
+
+        unknown = False
+
+        print('looking for initial states')
+        with s:
+            t = s.get_translator(KEY_ONE)
+            for init in prog.inits():
+                s.add(t.translate_expr(init.expr))
+
+            while True:
+                print(f'{len(states)} total states so far')
+                sys.stdout.flush()
+
+                res = s.check()
+                if res == z3.unsat:
+                    break
+                elif res == z3.unknown:
+                    unknown = True
+                    break
+
+                m = Model.from_z3([KEY_ONE], s.model(minimize=False))
+                states.append(m)
+                s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast())))
+                # s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0))))
+        print(f'done finding initial states! found {len(states)} states')
+
+        print('looking for transitions to new states')
+        with s:
+            t = s.get_translator(KEY_NEW, KEY_OLD)
+            for state in states:
+                s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+
+            import itertools
+            worklist = list(itertools.product(states, prog.transitions()))
+            while len(worklist) > 0:
+                print(f'worklist has length {len(worklist)}')
+                sys.stdout.flush()
+                state, ition = worklist.pop()
+                new_states = []
+                with s:
+                    s.add(t.translate_expr(state.as_onestate_formula(0), old=True))
+                    s.add(t.translate_transition(ition))
+
+                    while True:
+                        res = s.check()
+                        if res == z3.unsat:
+                            break
+                        elif res == z3.unknown:
+                            unknown = True
+                            break
+
+                        m = Model.from_z3([KEY_NEW, KEY_OLD], s.model(minimize=False))
+                        new_states.append(m)
+                        s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+                for state in new_states:
+                    worklist.extend([(state, x) for x in prog.transitions()])
+                    s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+                states.extend(new_states)
+                if len(new_states) > 0:
+                    print(f'found {len(new_states)} new states via transition {ition.name}')
+                    print(f'{len(states)} total states so far')
+                    sys.stdout.flush()
+
+        print(f'exhausted all transitions from known states! found {len(states)} states')
+        for state in states:
+            print(state)
+
+        import pickle
+        with open('reachable-states.cache', 'wb') as cache_file:
+            pickle.dump(states, cache_file)
+
+        if unknown:
+            print('encountered unknown! all bets are off.')
+
+
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
@@ -1582,6 +1701,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     # forward_explore_inv
     s = subparsers.add_parser('pd-forward-explore-inv', help='Forward explore program w.r.t. its invariant')
     s.set_defaults(main=forward_explore_inv)
+    s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
     result.append(s)
 
     # repeated_houdini
@@ -1591,5 +1711,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                    help='search for sharp invariants')
 
     result.append(s)
+
+
+    s = subparsers.add_parser('enumerate-reachable-states')
+    s.set_defaults(main=enumerate_reachable_states)
+    result.append(s)
+
 
     return result
