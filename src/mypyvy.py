@@ -20,14 +20,18 @@ import pd
 
 def get_safety() -> List[Expr]:
     prog = syntax.the_program
+    safety: List[Expr]
     if utils.args.safety is not None:
         the_inv: Optional[InvariantDecl] = None
         for inv in prog.invs():
             if inv.name == utils.args.safety:
                 the_inv = inv
-        if the_inv is None:
-            raise Exception('No safety invariant named %s' % utils.args.safety)
-        safety: List[Expr] = [the_inv.expr]
+        if the_inv is not None:
+            safety = [the_inv.expr]
+        else:
+            e = syntax.close_free_vars(None, parser.parse_expr(utils.args.safety))
+            e.resolve(prog.scope, syntax.BoolSort)
+            safety = [e]
     else:
         safety = [s.expr for s in prog.safeties()]
 
@@ -193,10 +197,15 @@ def bmc(s: Solver) -> None:
     utils.logger.always_print('bmc checking the following property up to depth %d' % n)
     utils.logger.always_print('  ' + str(safety))
 
-    for k in range(1, n+1):
-        res = logic.check_bmc(s, safety, k)
-        if res != z3.unsat:
+    for k in range(0, n + 1):
+        m = logic.check_bmc(s, safety, k)
+        if m is not None:
+            if utils.args.print_counterexample:
+                print('found violation')
+                print(str(m))
             break
+    else:
+        print('no violation found.')
 
 
 @utils.log_start_end_time(utils.logger)
@@ -463,15 +472,6 @@ def main() -> None:
     logging.root.addHandler(handler)
     # utils.logger.addHandler(handler)
 
-    if utils.args.key_prefix is not None:
-        global KEY_ONE
-        global KEY_NEW
-        global KEY_OLD
-
-        KEY_ONE = utils.args.key_prefix + '_' + KEY_ONE
-        KEY_NEW = utils.args.key_prefix + '_' + KEY_NEW
-        KEY_OLD = utils.args.key_prefix + '_' + KEY_OLD
-
     with utils.LogTag(utils.logger, 'main', lvl=logging.INFO):
         if utils.args.print_cmdline:
             utils.logger.info(' '.join([sys.executable] + sys.argv))
@@ -513,6 +513,12 @@ def main() -> None:
         syntax.the_program = prog
 
         s = Solver()
+
+        # initialize common keys
+        s.get_translator(KEY_ONE)
+        s.get_translator(KEY_NEW)
+        s.get_translator(KEY_OLD)
+
         utils.args.main(s)
 
         utils.logger.info('total number of queries: %s' % s.nqueries)

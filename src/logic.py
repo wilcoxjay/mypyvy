@@ -210,7 +210,7 @@ def assert_any_transition(s: Solver, uid: str,
 
     s.add(z3.Or(*tids))
 
-def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> z3.CheckSatResult:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Model]:
     keys = ['state%02d' % i for i in range(depth + 1)]
     prog = syntax.the_program
 
@@ -238,8 +238,14 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
                 s.add(t.translate_expr(safety))
             assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=False)
 
-        return check_unsat([(None, 'found concrete trace violating safety')],
-                           s, keys)
+        res = s.check()
+        if res == z3.sat:
+            m = Model.from_z3(list(reversed(keys)), s.model())
+            return m
+        elif res == z3.unknown:
+            print('unknown!')
+        return None
+
 
 def check_two_state_implication_along_transitions(
         s: Solver,
