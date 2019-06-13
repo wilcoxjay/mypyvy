@@ -83,7 +83,13 @@ def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
 
 
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
-def eval_in_state(s: Solver, m: State, p: Expr) -> bool:
+_solver: Optional[Solver] = None
+def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
+    global _solver
+    if s is None:
+        if _solver is None:
+            _solver = Solver()
+        s = _solver
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
@@ -1304,11 +1310,11 @@ class SeparabilitySubclausesMap(object):
             # now check if this clause does the job w.r.t. pos and neg
             bad = False
             for i in pos:
-                if not eval_in_state(Solver(), self.states[i], clause):
+                if not eval_in_state(None, self.states[i], clause):
                     # grow and block down
                     current = result
                     for j in sorted(self.all_n - result):
-                        if not eval_in_state(Solver(), self.states[i], self.to_clause(current | {j})):
+                        if not eval_in_state(None, self.states[i], self.to_clause(current | {j})):
                             current = current | {j}
                     self.solver.add(z3.Or(z3.Not(self.state_vs[i]), *(
                         self.lit_vs[j] for j in sorted(self.all_n - current)
@@ -1318,11 +1324,11 @@ class SeparabilitySubclausesMap(object):
             if bad:
                 continue
             for i in neg:
-                if eval_in_state(Solver(), self.states[i], clause):
+                if eval_in_state(None, self.states[i], clause):
                     # shrink and block up
                     current = result
                     for j in sorted(result):
-                        if eval_in_state(Solver(), self.states[i], self.to_clause(current - {j})):
+                        if eval_in_state(None, self.states[i], self.to_clause(current - {j})):
                             current = current - {j}
                     self.solver.add(z3.Or(self.state_vs[i], *(
                         z3.Not(self.lit_vs[j]) for j in sorted(current)
@@ -1375,7 +1381,7 @@ class SeparabilityMap(object):
         allstates = frozenset(range(len(self.states)))
         for i, (pos, neg, p) in enumerate(self.separable):
             for j in sorted(allstates - pos - neg):
-                if eval_in_state(Solver(), self.states[j], p):
+                if eval_in_state(None, self.states[j], p):
                     pos = pos | {j}
                 else:
                     neg = neg | {j}
@@ -1390,6 +1396,7 @@ class SeparabilityMap(object):
         self._newstates()
         for _pos, _neg, p in self.separable:
             if pos <= _pos and neg <= _neg:
+                # TODO: this results in separators that are not minimal w.r.t. pos, maybe we should minimize here, or skip this check altogether
                 return p
         for _pos, _neg in self.inseparable:
             if _pos <= pos and _neg <= neg:
@@ -1397,7 +1404,7 @@ class SeparabilityMap(object):
         p = self._new_separator(pos, neg)
         if p is not None:
             # grow is trivial
-            pos = frozenset(i for i, s in enumerate(self.states) if eval_in_state(Solver(), s, p))
+            pos = frozenset(i for i, s in enumerate(self.states) if eval_in_state(None, s, p))
             neg = frozenset(range(len(self.states))) - pos
             self.separable.append((pos, neg, p))
             return p
@@ -1424,6 +1431,8 @@ class SeparabilityMap(object):
         assert len(self.states) == len(self.maps) # otherwise we should do self._newstates()
         if len(neg) == 0:
             return TrueExpr
+        if len(pos) == 0:
+            return FalseExpr
         for i in sorted(neg):
             p = self.maps[i].separate(pos, neg) # TODO neg - {i} ??
             if p is not None:
@@ -1445,7 +1454,7 @@ def cdcl_invariant(solver:Solver) -> str:
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
 
     states : List[State] = []
-    #reachable: List[int] = []
+    reachable: List[int] = []
     #bad: List[int] = []
     #transitions: List[Tuple[int, int]] = []
     sm = SeparabilityMap(states)
@@ -1479,16 +1488,18 @@ def cdcl_invariant(solver:Solver) -> str:
         #         print('Found safety violation!')
         #         dump_caches()
         #         return 'UNSAFE'
-        print(f'Current states ({len(states)}):')
+        print(f'Current states ({len(states)} total, {len(reachable)} reachable):')
         for i in range(len(states)):
-            print(f'states[{i}]:\n{states[i]}\n' + '-' * 80)
+            print(f'states[{i}]{" (reachable)" if i in reachable else ""}:\n{states[i]}\n' + '-' * 80)
 
         # find an invariant that meets the currently known states,
         # learning new inseparability constraints, and possibly
         # increasing k
         while True:
+            print(f'Finding new consistent invariant with {k} predicates', end='... ')
             z3res = z3s.check(*(cs[i][k] for i in range(len(states))))
             assert z3res in (z3.unsat, z3.sat)
+            print(z3res)
             if z3res == z3.unsat:
                 print(f'No inductive invariant with {k} predicates, increasing bound')
                 print('-' * 80 + f'\n{z3s}\n' + '-' * 80)
@@ -1527,13 +1538,26 @@ def cdcl_invariant(solver:Solver) -> str:
         print(f'Candidate inductive invariant ({len(inv)} predicates) is:' if len(inv) > 0 else 'Candidate inductive invariant is true')
         for p in sorted(inv, key=lambda x: len(str(x))):
             print(f'  {p}')
-        for p in inv:
-            s = check_initial(solver, p)
-            if s is not None:
+
+        reachable_states, a = forward_explore(
+            solver,
+            lambda states: sorted(
+                alpha_from_predicates(solver, states, inv),
+                key=lambda x: (len(str(x)),str(x))
+            ),
+            [states[i] for i in reachable],
+        )
+        if len(reachable_states) > len(reachable):
+            # we eliminated a predicate with a reachable state
+            assert len(a) < len(inv)
+            for s in reachable_states[len(reachable):]:
                 i = add_state(s)
+                reachable.append(i)
                 z3s.add(cs[i][0])
-                break
         else:
+            assert len(a) == len(inv)
+            # we need to check for CTIs
+            # TODO: actually do Houdini and not just one CTI, maybe learn somethings to be inductive
             for i, p in enumerate(inv):
                 res = check_two_state_implication(solver, inv, p, 'CTI')
                 if res is not None:
