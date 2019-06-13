@@ -113,3 +113,31 @@ invariant member(N,Q) & left_round(N,R) & !vote(N,R,V) ->
 # choosable invariant
 invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
     member(choosable_node(R1,V1,Q),Q) & left_round(choosable_node(R1,V1,Q),R1) & !vote(choosable_node(R1,V1,Q),R1,V1)
+
+sat trace {
+  assert init
+  send_1a
+  assert exists R. one_a(R)
+  join_round
+  propose
+  cast_vote
+  decide
+  assert exists R,V. decision(R,V)
+}
+
+sat trace {
+  assert init
+  send_1a
+  assert exists R. one_a(R)
+  join_round
+  propose
+  cast_vote
+  decide
+  assert exists R,V. decision(R,V)
+  send_1a
+  join_round
+  propose
+  cast_vote
+  decide
+  assert exists R1, R2, V. R1 != R2 & decision(R1,V) & decision(R2,V)
+}
