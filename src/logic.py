@@ -987,7 +987,12 @@ class Model(object):
                     name = name[len(TRANSITION_INDICATOR + '_'):]
                     istr, name = name.split('_', maxsplit=1)
                     i = int(istr)
-                    self.transitions[i] = name
+                    if i < len(self.transitions):
+                        self.transitions[i] = name
+                    else:
+                        # TODO: not sure what's going on here with check_bmc and pd.check_k_state_implication
+                        # assert False
+                        pass
 
     def as_diagram(self, i: Optional[int] = None, subclause_complete: Optional[bool] = None) -> Diagram:
         assert len(self.keys) == 1 or i is not None, \

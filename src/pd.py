@@ -250,6 +250,39 @@ def check_two_state_implication(
     return cache[k]
 
 
+def check_k_state_implication(
+        s: Solver,
+        precondition: Union[Iterable[Expr], State],
+        p: Expr,
+        k: int,
+        msg: str = 'transition',
+) -> Optional[Tuple[State,...]]:
+    # TODO: we should cache these
+
+    if not isinstance(precondition, State):
+        precondition = tuple(precondition)
+
+    om = check_bmc(
+        s,
+        p,
+        k,
+        [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
+    )
+    if om is None:
+        return None
+    else:
+        z3m = om.z3model
+        assert z3m is not None
+        keys = list(om.keys)
+        states = tuple(
+            Model.from_z3(keys[i:], z3m)
+            for i in reversed(range(len(keys)))
+        )
+        print(f'Found new {k}-{msg} violating {p}:')
+        print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
+        return states
+
+
 class MapSolver(object):
     def __init__(self, n: int):
         """Initialization.
@@ -694,10 +727,19 @@ def forward_explore_marco(solver: Solver,
 
 
 def forward_explore(s: Solver,
-                    alpha: Callable[[Iterable[State]], Sequence[Expr]],
+                    alpha: Callable[[Collection[State]], Sequence[Expr]],
                     states: Optional[Iterable[State]] = None
-) -> Tuple[Sequence[State], Sequence[Expr]]:
+) -> Tuple[List[State], Sequence[Expr], List[int], List[Tuple[int, int]]]:
+    '''
+    forward exploration from given states
+    result is: more_states, a, initial, transitions
+    more_states is an extension of states
+    a is the abstract value of more_states
+    initial are indicies to more_states of initial states
+    transitions are indicies to more_states of transitions
+    '''
     # TODO: make cleanup pass and reduce printing (added when adding BMC unrolling)
+    res: Optional[Tuple[State,...]] = None
 
     if states is None:
         states = []
@@ -706,17 +748,19 @@ def forward_explore(s: Solver,
     a = alpha(states)
     prog = syntax.the_program
     inits = tuple(init.expr for init in prog.inits())
+    initial: List[int] = []
+    transitions: List[Tuple[int, int]] = []
 
     changes = True
     while changes:
         changes = False
 
         # check for initial states violating a
-        print(f'have {len(states)} states')
-        print(f'a is ({len(a)} predicates):' if len(a) > 0 else 'a is true')
-        for e in a:
-            print(f'  {e}')
-        print(f'Checking if init implies everything ({len(a)} predicates)... ', end='')
+        # print(f'have {len(states)} states')
+        # print(f'a is ({len(a)} predicates):' if len(a) > 0 else 'a is true')
+        # for e in a:
+        #     print(f'  {e}')
+        # print(f'Checking if init implies everything ({len(a)} predicates)... ', end='')
 
         m = None
         for p in a:
@@ -724,67 +768,90 @@ def forward_explore(s: Solver,
             if m is not None:
                 break
         if m is not None:
+            initial.append(len(states))
             states.append(m)
             changes = True
             a = alpha(states)
             continue
         else:
-            print('YES')
+            # print('YES')
+            pass
 
         m = None
-        # check for 1 transition from an initial state or a non-initial state in states
-        # TODO: len(s.keys) > 1 issue
-        for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
-            print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
+        # check for 1 transition from an initial state or a state in states
+        preconditions = chain(
+            (s for s in states if len(s.keys) == 1), # discovered initial states
+            [None], # general initial state
+            (s for s in states if len(s.keys) > 1) # discovered non-initial states
+        )
+        label = lambda s: 'init' if s is None else 'initial state' if len(s.keys) == 1 else 'state'
+        for precondition, p in product(preconditions, a):
+            # print(f'Checking if {label(precondition)} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
                 s,
                 inits if precondition is None else precondition,
-                p
+                p,
             )
             if res is not None:
-                # TODO: why not add prestate too if it's initial
-                _, m = res
-                states.append(m)
+                prestate, poststate = res
+                if precondition is None:
+                    # add new initial state
+                    initial.append(len(states))
+                    states.append(prestate)
+                    precondition = prestate
+                transitions.append((states.index(precondition), len(states)))
+                states.append(poststate)
                 changes = True
                 a = alpha(states)
                 break
             else:
-                print('YES')
+                # print('YES')
+                pass
         if m is not None:
             continue
 
         if utils.args.unroll_to_depth is None:
             continue
 
-        for i, precondition, p in product(range(2, utils.args.unroll_to_depth+1), chain([None], (s for s in states if len(s.keys) > 1)), a):
-            print(f'Checking if {"init" if precondition is None else "state"} satisfies WP_{i} of {p}... ',end='')
-            if precondition is None:
-                pres = inits
-            else:
-                pres = (precondition.as_onestate_formula(0),)
-            # TODO: we should cache these...
-            om = check_bmc(
+        # check for k-transition from an initial state or a state in states
+        preconditions = chain(
+            (s for s in states if len(s.keys) == 1), # discovered initial states
+            [None], # general initial state
+            (s for s in states if len(s.keys) > 1) # discovered non-initial states
+        )
+        for k, precondition, p in product(range(2, utils.args.unroll_to_depth + 1), preconditions, a):
+            print(f'Checking if {label(precondition)} satisfies WP_{k} of {p}... ',end='')
+            res = check_k_state_implication(
                 s,
+                inits if precondition is None else precondition,
                 p,
-                i,
-                preconds = pres
+                k,
             )
-            if om is not None:
-                print(f'NO\nFound new {i}-transition violating {p}:')
-                print('-'*80 + '\n' + str(om) + '\n' + '-'*80)
-                states.append(om)
+            if res is not None:
+                prestate, *poststates = res
+                # add all states, including first one if it's a new initial state
+                if precondition is None:
+                    # add new initial state
+                    initial.append(len(states))
+                    states.append(prestate)
+                    precondition = prestate
+                i = states.index(precondition)
+                for poststate in poststates:
+                    transitions.append((i, len(states)))
+                    i = len(states)
+                    states.append(poststate)
                 changes = True
                 a = alpha(states)
                 break
             else:
                 print('YES')
 
-    # here init U states |= a, post(init U states) |= a
-    # here init U states |= a /\ wp(a)
+    # here init U states |= a, post^k(init U states) |= a
+    # here init U states |= a /\ wp^k(a)
 
     #print(states)
     #print(a)
-    return states, a
+    return states, a, initial, transitions
 
 
 def forward_explore_inv(s: Solver) -> None:
@@ -803,7 +870,7 @@ def forward_explore_inv(s: Solver) -> None:
             dedup_equivalent_predicates(s, chain(*(alpha_from_clause(s, states, clause) for clause in invs))),
             key=lambda x: (len(str(x)),str(x))
         )
-    states, a = forward_explore(s, alpha_inv)
+    states, a, _, _ = forward_explore(s, alpha_inv)
     len(states)
     print('Done!\n' + '='*80)
     print('The resulting invariant after forward exporation (V/X - inductive or not):')
@@ -856,18 +923,18 @@ def repeated_houdini(s: Solver) -> str:
 
     clauses : List[Expr] = list(chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
-    def alpha_clauses(states: Iterable[State]) -> Sequence[Expr]:
+    def alpha_clauses(states: Collection[State]) -> Sequence[Expr]:
         return sorted(
             dedup_equivalent_predicates(s, chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
             key=lambda x: (len(str(x)),str(x))
         )
-    def alpha_sharp(states: Iterable[State]) -> Sequence[Expr]:
+    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
         return sorted(
             alpha_from_predicates(s, states, sharp_predicates),
             key=lambda x: (len(str(x)),str(x))
         )
     while True:
-        # reachable_states, a = forward_explore(s, alpha_clauses, reachable_states)
+        # reachable_states, a, _, _ = forward_explore(s, alpha_clauses, reachable_states)
         reachable_states, a = forward_explore_marco(s, clauses, reachable_states)
         print(f'Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
@@ -888,7 +955,7 @@ def repeated_houdini(s: Solver) -> str:
                 if res is not None:
                     prestate, poststate = res
                     unreachable.append(prestate)
-                    states, a = forward_explore(
+                    states, a, _, _ = forward_explore(
                         s,
                         alpha_sharp if sharp else alpha_clauses,
                         chain(states, [prestate, poststate]) # so that forward_explore also considers extensions of the prestate
@@ -1452,9 +1519,9 @@ class SeparabilitySubclausesMap(object):
                         self.lit_vs[j] for j in sorted(self.all_n - current)
                     )))
                     bad = True
-                    # break # TODO: should we be eager or lazy here?
-            #if bad:
-            #    continue # TODO: should we be eager or lazy here?
+                    break # TODO: should we be eager or lazy here?
+            if bad:
+                continue # TODO: should we be eager or lazy here?
             for i in neg:
                 if eval_in_state(None, self.states[i], clause):
                     # shrink and block up
@@ -1466,7 +1533,7 @@ class SeparabilitySubclausesMap(object):
                         z3.Not(self.lit_vs[j]) for j in sorted(current)
                     )))
                     bad = True
-                    #break # TODO: should we be eager or lazy here?
+                    break # TODO: should we be eager or lazy here?
             if bad:
                 continue
             return result
@@ -1558,6 +1625,12 @@ class SeparabilityMap(object):
             # grow is trivial
             pos = frozenset(i for i, s in enumerate(self.states) if eval_in_state(None, s, p))
             neg = frozenset(range(len(self.states))) - pos
+            sharp = frozenset(
+                i for i in range(len(self.predicates))
+                if not is_strict_subclause(self.predicates[i], p)
+                # TODO: should this be strict or not?
+            )
+            print(f'Managed to separate: pos={sorted(pos)}, neg={sorted(neg)}, sharp={sorted(sharp)} with: {p}')
             self.separable.append((pos, neg, sharp, p))
             return p
         else:
@@ -1593,17 +1666,19 @@ class SeparabilityMap(object):
         # TODO: this should also give "unsat cores"
         assert len(self.states) == len(self.maps) # otherwise we should do self._new_states()
         assert len(self.predicates) == self._n_predicates # otherwise we should do self._new_predicates()
+        print(f'_new_separator: pos={sorted(pos)}, neg={sorted(neg)}, sharp={sorted(sharp)}')
         if len(neg) == 0:
             return TrueExpr
         if len(pos) == 0:
             return FalseExpr
         for i in sorted(neg):
+            print(f'  trying maps[{i}]')
             p = self.maps[i].separate(pos, neg, sharp) # TODO neg - {i} ??, doesn't seem important, but should check that it isn't
             if p is not None:
                 return self.maps[i].to_clause(p)
         return None
 
-def cdcl_invariant(solver:Solver) -> str:
+def cdcl_invariant(solver: Solver) -> str:
     '''this implementation of "BMC for invariants" does not use Set Cover
     and does not try to do something smart about the permutation
     symmetry betwen predicates. It tries to be close, in spirit, to
@@ -1616,6 +1691,8 @@ def cdcl_invariant(solver:Solver) -> str:
     load_caches()
 
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    def safe(s: State) -> bool:
+        return all(eval_in_state(solver, s, p) for p in safety)
 
     states : List[State] = []
     reachable: List[int] = []
@@ -1624,6 +1701,17 @@ def cdcl_invariant(solver:Solver) -> str:
     predicates: List[Predicate] = []
     sharp_predicates: FrozenSet[int] = frozenset()
     invariant: FrozenSet[int] = frozenset()
+
+    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+        return sorted(
+            alpha_from_predicates(
+                solver,
+                states,
+                [predicates[i] for i in sharp_predicates],
+                #list(chain(safety, (predicates[i] for i in sharp_predicates))), # TODO: safety shoudn't be special
+                ),
+            key=lambda x: (len(str(x)),str(x))
+        )
 
     k = 0
     K = 0
@@ -1648,19 +1736,65 @@ def cdcl_invariant(solver:Solver) -> str:
         cs.append([z3.Bool(f'c_{i}_{j}') for j in range(K + 1)])
         for j in range(K):
             z3s.add(cs[i][j] == z3.And(xs[i][j], cs[i][j + 1]))
+        if not safe(s):
+            backward_reachable.append(i)
+            z3s.add(z3.Not(cs[i][0]))
         return i
+    def houdini(a: Sequence[Predicate]) -> Sequence[Predicate]:
+        _states: List[State] = [states[i] for i in reachable]
+        assert (_states, a, [], []) == forward_explore(solver, alpha_sharp, _states)
+        # assert set(safety) <= set(a) # TODO: I'm not sure about the handling of the safety property in forward_explore below
+        while True:
+            for p in a:
+                res = check_two_state_implication(solver, a, p, 'CTI')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    _states.append(prestate)
+                    i_post = add_state(poststate)
+                    _states.append(poststate)
+                    transitions.append((i_pre, i_post))
+                    z3s.add(z3.Implies(cs[i_pre][0], cs[i_post][0]))
+                    _states, a, _initials, _transitions = forward_explore(
+                        # TODO: this does not resue existing states in states, and adds duplicates
+                        solver,
+                        alpha_sharp,
+                        _states,
+                    )
+                    index_map: Dict[int, int] = dict()
+                    for i in range(len(_states)):
+                        try:
+                            index_map[i] = states.index(_states[i])
+                        except ValueError:
+                            index_map[i] = add_state(_states[i])
+                    for i in _initials:
+                        ii = index_map[i]
+                        reachable.append(ii)
+                        z3s.add(cs[ii][0])
+                    for i, j in _transitions:
+                        i_pre = index_map[i]
+                        i_post = index_map[j]
+                        transitions.append((i_pre, i_post))
+                        z3s.add(z3.Implies(cs[i_pre][0], cs[i_post][0]))
+                    break
+            else:
+                break
+        return a
 
     while True:
-        print(f'Current states ({len(states)} total, {len(reachable)} reachable):')
+        print(f'Current states ({len(states)} total, {len(reachable)} reachable, {len(backward_reachable)} backward reachable):')
         for i in range(len(states)):
-            print(f'states[{i}]{" (reachable)" if i in reachable else ""}:\n{states[i]}\n' + '-' * 80)
+            note = (' (reachable)' if i in reachable else
+                    ' (backward reachable)' if i in backward_reachable else
+                    '')
+            print(f'states[{i}]{note}:\n{states[i]}\n' + '-' * 80)
         for i in reachable:
             if check_implication(solver, [states[i].as_onestate_formula(0)], safety) is not None:
                 print(f'Found safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
         print(f'Current sharp predicates ({len(sharp_predicates)}):')
-        for i in sharp_predicates:
+        for i in sorted(sharp_predicates):
             print(f'  predicates[{i:3}]: {predicates[i]}')
 
 
@@ -1695,7 +1829,7 @@ def cdcl_invariant(solver:Solver) -> str:
                 for j in range(k):
                     pos = frozenset(i for i in range(len(states)) if z3.is_true(z3m[xs[i][j]]))
                     neg = frozenset(i for i in range(len(states)) if z3.is_false(z3m[xs[i][j]]))
-                    print(f'Trying to separate: pos={sorted(pos)}, neg={sorted(neg)}')
+                    print(f'Trying to separate: pos={sorted(pos)}, neg={sorted(neg)}, sharp={sorted(sharp_predicates)}')
                     p = sm.separate(pos, neg, sharp_predicates)
                     if isinstance(p, Predicate):
                         print(f'Found separator: {p}')
@@ -1708,12 +1842,9 @@ def cdcl_invariant(solver:Solver) -> str:
                             sharp_predicates |= {i}
                             rs.append(z3.Bool(f'r_{i}'))
                             # try to grow reachable states based on new sharp predicate
-                            reachable_states, a = forward_explore(
+                            reachable_states, a, _, _ = forward_explore( # ignoring initial and transitions, ass all these state are simply reachable
                                 solver,
-                                lambda states: sorted(
-                                    alpha_from_predicates(solver, states, [predicates[i] for i in sharp_predicates]),
-                                    key=lambda x: (len(str(x)),str(x))
-                                ),
+                                alpha_sharp,
                                 [states[i] for i in reachable],
                             )
                             if len(reachable_states) > len(reachable):
@@ -1729,6 +1860,7 @@ def cdcl_invariant(solver:Solver) -> str:
                                 k = 0
                                 break
                             # TODO: maybe we should do Houdini here. This would be eager on the Houdini process
+                            a = houdini(a)
                         if sharp_p != p:
                             break  # TODO: should we continue rather than break ?
                         else:
@@ -1745,53 +1877,69 @@ def cdcl_invariant(solver:Solver) -> str:
                     break
 
         # now inv is a list of predicates whos conjunction does not have a CTI in states
-        inv = list(chain(safety, inv))
         print(f'Candidate inductive invariant ({len(inv)} predicates) is:' if len(inv) > 0 else 'Candidate inductive invariant is true')
         for p in sorted(inv, key=lambda x: len(str(x))):
             print(f'  {p}')
 
-        reachable_states, a = forward_explore(
+        reachable_states, a,_ ,_ = forward_explore(
             solver,
-            lambda states: sorted(
-                alpha_from_predicates(solver, states, [predicates[i] for i in sharp_predicates]),
-                key=lambda x: (len(str(x)),str(x))
-            ),
+            alpha_sharp,
             [states[i] for i in reachable],
         )
-        if len(reachable_states) > len(reachable):
-            # we eliminated a predicate with a reachable state
-            assert False # we are already doing that above
-            assert len(a) < len(sharp_predicates)
-            for s in reachable_states[len(reachable):]:
-                i = add_state(s)
-                reachable.append(i)
-                z3s.add(cs[i][0])
-            sharp_predicates = frozenset(i for i, p in enumerate(predicates) if p in a)
-            k = 0
+        assert len(reachable_states) == len(reachable)
+        assert len(a) == len(sharp_predicates)
+
+
+        # # we need to check for CTIs
+        # # TODO: actually do Houdini and not just one CTI, maybe learn somethings to be inductive
+        # for i, p in enumerate(inv):
+        #     res = check_two_state_implication(solver, inv, p, 'CTI')
+        #     if res is not None:
+        #         prestate, poststate = res
+        #         i_pre = add_state(prestate)
+        #         if i < len(safety):
+        #             assert p == safety[i]
+        #             backward_reachable.append(i_pre)
+        #             z3s.add(z3.Not(cs[i_pre][0]))
+        #         else:
+        #             i_post = add_state(poststate)
+        #             transitions.append((i_pre, i_post))
+        #             z3s.add(z3.Implies(cs[i_pre][0], cs[i_post][0]))
+        #         break
+        # else:
+        #     print(f'Inductive invariant with {len(inv)} predicates found:')
+        #     for p in sorted(inv, key=lambda x: (len(str(x)),str(x))):
+        #         print(f'  {p}')
+        #     dump_caches()
+        #     return 'SAFE'
+
+        # first check if inv |= wp(safety)
+        for p in safety:
+            res = check_two_state_implication(solver, inv, p, 'safety CTI')
+            if res is not None:
+                prestate, poststate = res
+                i_pre = add_state(prestate)
+                i_post = add_state(poststate)
+                transitions.append((i_pre, i_post))
+                z3s.add(z3.Implies(cs[i_pre][0], cs[i_post][0]))
+                break
         else:
-            assert len(a) == len(sharp_predicates)
-            # we need to check for CTIs
-            # TODO: actually do Houdini and not just one CTI, maybe learn somethings to be inductive
-            for i, p in enumerate(inv):
-                res = check_two_state_implication(solver, inv, p, 'CTI')
-                if res is not None:
-                    prestate, poststate = res
-                    i_pre = add_state(prestate)
-                    if i < len(safety):
-                        assert p == safety[i]
-                        backward_reachable.append(i_pre)
-                        z3s.add(z3.Not(cs[i_pre][0]))
-                    else:
-                        i_post = add_state(poststate)
-                        transitions.append((i_pre, i_post))
-                        z3s.add(z3.Implies(cs[i_pre][0], cs[i_post][0]))
-                    break
-            else:
-                print(f'Inductive invariant with {len(inv)} predicates found:')
-                for p in sorted(inv, key=lambda x: (len(str(x)),str(x))):
-                    print(f'  {p}')
-                dump_caches()
-                return 'SAFE'
+            print('Invariant implies wp(safety)')
+
+
+        # run Houdini over the sharp predicates
+        # TODO: do it in a more stratified manner to collect frames
+        # TODO: learn transitions directly from forward_explore
+        a = houdini(a)
+        print(f'Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else 'Current inductive invariant is true')
+        for p in sorted(a, key=lambda x: len(str(x))):
+            print(p)
+        if len(a) > 0 and check_implication(solver, a, safety) is None:
+            print('Implies safety!')
+            dump_caches()
+            return 'SAFE'
+        #inductive = frozenset(i for i, p in enumerate(predicates) if p in a)
+
 
 
 def enumerate_reachable_states(s: Solver) -> None:
