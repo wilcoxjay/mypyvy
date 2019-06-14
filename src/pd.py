@@ -48,7 +48,6 @@ def dump_caches() -> None:
 def load_caches() -> None:
     if cache_path is not None and cache_path.exists():
         print(f'loading caches from {cache_path!r}', end='... ')
-        sys.stdout.flush()
         with open(cache_path, 'rb') as cache_file:
             cache = pickle.load(cache_file)
         print('loaded caches:', *(f'{k}:{len(cache[k])}' for k in sorted(cache)))
@@ -820,7 +819,6 @@ def forward_explore_inv(s: Solver) -> None:
 def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr]:
     ps = list(itr)
     print(f'Deduping {len(ps)} predicates to...',end=' ')
-    sys.stdout.flush()
     ans: List[Expr] = []
     for x in ps:
         for y in ans:
@@ -1621,53 +1619,59 @@ def cdcl_invariant(solver:Solver) -> str:
 
 def enumerate_reachable_states(s: Solver) -> None:
     # TODO: this function is hacky for paxos, clean up
+    # TODO: this does not use caches at all
     prog = syntax.the_program
     states: List[Model] = []
     with s:
         for sort in prog.sorts():
-            if sort.name == 'round':
-                b = 3
-            else:
-                b = 2
+            b = 2
+            # an old hack for paxos that is commented out below
+            # if sort.name == 'round':
+            #     b = 3
+            # else:
+            #     b = 2
             print(f'bounding {sort} to candinality {b}')
             s.add(s._sort_cardinality_constraint(sort.to_z3(), b))
 
         unknown = False
+
+        def block_state(t: Z3Translator, m: Model) -> None:
+            # TODO: with the diagram, smaller states block larger
+            # ones, but with onestate it's slower (paxos can't get
+            # beyond initial states with 2 of everything). we should
+            # collect states by the sizes of their universe
+
+            # s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+            s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0), old=False)))
 
         print('looking for initial states')
         with s:
             t = s.get_translator(KEY_ONE)
             for init in prog.inits():
                 s.add(t.translate_expr(init.expr))
-
             while True:
                 print(f'{len(states)} total states so far')
-                sys.stdout.flush()
-
                 res = s.check()
                 if res == z3.unsat:
                     break
                 elif res == z3.unknown:
                     unknown = True
                     break
-
-                m = Model.from_z3([KEY_ONE], s.model(minimize=False))
-                states.append(m)
-                s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast())))
-                # s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0))))
+                else:
+                    m = Model.from_z3([KEY_ONE], s.model(minimize=False))
+                    states.append(m)
+                    block_state(t, m)
         print(f'done finding initial states! found {len(states)} states')
 
         print('looking for transitions to new states')
         with s:
             t = s.get_translator(KEY_NEW, KEY_OLD)
             for state in states:
-                s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+                block_state(t, m)
 
-            import itertools
-            worklist = list(itertools.product(states, prog.transitions()))
+            worklist = list(product(states, prog.transitions()))
             while len(worklist) > 0:
                 print(f'worklist has length {len(worklist)}')
-                sys.stdout.flush()
                 state, ition = worklist.pop()
                 new_states = []
                 with s:
@@ -1684,23 +1688,21 @@ def enumerate_reachable_states(s: Solver) -> None:
 
                         m = Model.from_z3([KEY_NEW, KEY_OLD], s.model(minimize=False))
                         new_states.append(m)
-                        s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+                        block_state(t, m)
                 for state in new_states:
                     worklist.extend([(state, x) for x in prog.transitions()])
-                    s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
+                    block_state(t, m)
                 states.extend(new_states)
                 if len(new_states) > 0:
                     print(f'found {len(new_states)} new states via transition {ition.name}')
                     print(f'{len(states)} total states so far')
-                    sys.stdout.flush()
+                    # TODO: get this file from command line or somewhere that's at least per example
+                    # with open('reachable-states.cache', 'wb') as cache_file:
+                    #     pickle.dump(states, cache_file)
 
         print(f'exhausted all transitions from known states! found {len(states)} states')
         for state in states:
-            print(state)
-
-        import pickle
-        with open('reachable-states.cache', 'wb') as cache_file:
-            pickle.dump(states, cache_file)
+            print('-' * 80 + '\n' + str(state))
 
         if unknown:
             print('encountered unknown! all bets are off.')

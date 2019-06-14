@@ -35,6 +35,10 @@ bench:
 	time $(PYTHON) src/mypyvy.py updr $(MYPYVY_OPTS) $<
 
 pd:
+	# enumerate-reachable-states
+	time $(PYTHON) src/mypyvy.py enumerate-reachable-states $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.enumerate_reachable_states.log
+	grep "found 25 states" lockserv.enumerate_reachable_states.log
+
 	# forward-explore-inv
 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > lockserv_cnf_clear_cache.log
 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --cache-only $(MYPYVY_OPTS)   examples/lockserv_cnf.pyv > lockserv_cnf_cache_only.log
