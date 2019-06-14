@@ -98,6 +98,7 @@ invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
 invariant vote(N,R,V) -> proposal(R,V)
 
 # decisions come from quorums of votes
+# invariant decision(R, V) & member(N, decision_quorum(R, V)) -> vote(N, R, V)
 invariant decision(R, V) & member(N, Q) & Q = decision_quorum(R, V) -> vote(N, R, V)
 
 # properties of none
@@ -107,10 +108,14 @@ invariant !vote(N,none,V)
 invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
 
 # choosable_node is a witness
+# invariant member(N,Q) & left_round(N,R) & !vote(N,R,V) ->
+#     member(choosable_node(R,V,Q),Q) & left_round(choosable_node(R,V,Q),R) & !vote(choosable_node(R,V,Q),R,V)
 invariant member(N1,Q) & left_round(N1,R) & !vote(N1,R,V) & N2 = choosable_node(R,V,Q) ->
     member(N2,Q) & left_round(N2,R) & !vote(N2,R,V)
 
 # choosable invariant
+# invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
+#     member(choosable_node(R1,V1,Q),Q) & left_round(choosable_node(R1,V1,Q),R1) & !vote(choosable_node(R1,V1,Q),R1,V1)
 invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 & N = choosable_node(R1,V1,Q)->
     member(N,Q) & left_round(N,R1) & !vote(N,R1,V1)
 

@@ -1,5 +1,5 @@
-PYTHON := python3.7
-MYPYVY_OPTS := --seed=0 --log=warning --timeout 2000
+PYTHON := python3.7 -u
+MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
@@ -35,14 +35,31 @@ bench:
 	time $(PYTHON) src/mypyvy.py updr $(MYPYVY_OPTS) $<
 
 pd:
+	# forward-explore-inv
 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > lockserv_cnf_clear_cache.log
 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --cache-only $(MYPYVY_OPTS)   examples/lockserv_cnf.pyv > lockserv_cnf_cache_only.log
-	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > lockserv_cnf_only_discovered.log
+	# time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > lockserv_cnf_only_discovered.log  # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
 
+	# forward-explore-inv with unrolling
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.1.log
+	grep "  X  " lockserv.forward_explore_inv.1.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.2.log
+	! grep "  X  " lockserv.forward_explore_inv.2.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.3.log
+	! grep "  X  " lockserv.forward_explore_inv.3.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.1.log
+	grep "  X  " paxos_forall.forward_explore_inv.1.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.2.log
+	grep "  X  " paxos_forall.forward_explore_inv.2.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.3.log # ~4m
+	grep "  X  " paxos_forall.forward_explore_inv.3.log
+
+	# repeated-houdini --sharp
 	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv_clear_cache.log
 	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --cache-only $(MYPYVY_OPTS)   examples/lockserv.pyv > lockserv_cache_only.log
 	# time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv_only_discovered.log  # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
 
+	# repeated-houdini --no-sharp
 	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv_nosharp_clear_cache.log
 	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --cache-only $(MYPYVY_OPTS)   examples/lockserv.pyv > lockserv_nosharp_cache_only.log
 	# time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv_nosharp_only_discovered.log # TODO: this currently fails due to not accurately detecting isomorphic states in the cache

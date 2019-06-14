@@ -214,7 +214,7 @@ def check_two_state_implication(
                             print(f'all(eval_in_state(s, prestate, q) for q in precondition): '
                                   f'{all(eval_in_state(s, prestate, q) for q in precondition)}')
                         print(f'eval_in_state(s, poststate, p): {eval_in_state(s, poststate, p)}')
-                    assert False
+                    assert False, 'Probably because state isomorphism is not handled correctly yet...'
                 z3m, _ = res
                 prestate = Model.from_z3([KEY_OLD], z3m)
                 poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
@@ -694,6 +694,7 @@ def forward_explore(s: Solver,
                     alpha: Callable[[Iterable[State]], Sequence[Expr]],
                     states: Optional[Iterable[State]] = None
 ) -> Tuple[Sequence[State], Sequence[Expr]]:
+    # TODO: make cleanup pass and reduce printing (added when adding BMC unrolling)
 
     if states is None:
         states = []
@@ -719,9 +720,7 @@ def forward_explore(s: Solver,
             m = check_initial(s, p)
             if m is not None:
                 break
-
         if m is not None:
-            print('NO')
             states.append(m)
             changes = True
             a = alpha(states)
@@ -731,6 +730,7 @@ def forward_explore(s: Solver,
 
         m = None
         # check for 1 transition from an initial state or a non-initial state in states
+        # TODO: len(s.keys) > 1 issue
         for precondition, p in product(chain([None], (s for s in states if len(s.keys) > 1)), a):
             print(f'Checking if {"init" if precondition is None else "state"} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
@@ -738,13 +738,15 @@ def forward_explore(s: Solver,
                 inits if precondition is None else precondition,
                 p
             )
-            print(res)
             if res is not None:
+                # TODO: why not add prestate too if it's initial
                 _, m = res
                 states.append(m)
                 changes = True
                 a = alpha(states)
                 break
+            else:
+                print('YES')
         if m is not None:
             continue
 
@@ -757,19 +759,22 @@ def forward_explore(s: Solver,
                 pres = inits
             else:
                 pres = (precondition.as_onestate_formula(0),)
+            # TODO: we should cache these...
             om = check_bmc(
                 s,
                 p,
                 i,
                 preconds = pres
             )
-            print(om)
-            sys.stdout.flush()
             if om is not None:
+                print(f'NO\nFound new {i}-transition violating {p}:')
+                print('-'*80 + '\n' + str(om) + '\n' + '-'*80)
                 states.append(om)
                 changes = True
                 a = alpha(states)
                 break
+            else:
+                print('YES')
 
     # here init U states |= a, post(init U states) |= a
     # here init U states |= a /\ wp(a)
@@ -798,9 +803,12 @@ def forward_explore_inv(s: Solver) -> None:
     states, a = forward_explore(s, alpha_inv)
     len(states)
     print('Done!\n' + '='*80)
-    print('The resulting invariant after forward exporation:')
+    print('The resulting invariant after forward exporation (V/X - inductive or not):')
     for p in sorted(a, key=lambda x: len(str(x))):
-        print(p)
+        print(
+            ('  V  ' if check_two_state_implication_all_transitions(s, a, p) is None else '  X  ') +
+            str(p)
+        )
     print('='*80)
     print(f'Found {len(states)} states and transitions:\n' + '-'*80)
     for x in states:
@@ -835,12 +843,14 @@ def repeated_houdini(s: Solver) -> str:
 
     sharp = utils.args.sharp
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
-    with open('reachable-states.cache', 'rb') as cache_file:
-        reachable_states : Sequence[State] = tuple(pickle.load(cache_file))
+    reachable_states : Sequence[State] = ()
 
-    print('initialized reachable states:')
-    for m in reachable_states:
-        print(str(m) + '\n' + '-'*80)
+    # TODO: get this from command line option, and from the right file
+    # with open('reachable-states.cache', 'rb') as cache_file:
+    #     reachable_states = tuple(pickle.load(cache_file))
+    # print('initialized reachable states:')
+    # for m in reachable_states:
+    #     print(str(m) + '\n' + '-'*80)
 
     clauses : List[Expr] = list(chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
@@ -1608,7 +1618,9 @@ def cdcl_invariant(solver:Solver) -> str:
                 dump_caches()
                 return 'SAFE'
 
+
 def enumerate_reachable_states(s: Solver) -> None:
+    # TODO: this function is hacky for paxos, clean up
     prog = syntax.the_program
     states: List[Model] = []
     with s:
@@ -1694,14 +1706,12 @@ def enumerate_reachable_states(s: Solver) -> None:
             print('encountered unknown! all bets are off.')
 
 
-
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
 
     # forward_explore_inv
     s = subparsers.add_parser('pd-forward-explore-inv', help='Forward explore program w.r.t. its invariant')
     s.set_defaults(main=forward_explore_inv)
-    s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
     result.append(s)
 
     # repeated_houdini
@@ -1709,13 +1719,13 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=repeated_houdini)
     s.add_argument('--sharp', action=utils.YesNoAction, default=True,
                    help='search for sharp invariants')
-
     result.append(s)
-
 
     s = subparsers.add_parser('enumerate-reachable-states')
     s.set_defaults(main=enumerate_reachable_states)
     result.append(s)
 
+    for s in result:
+        s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
 
     return result
