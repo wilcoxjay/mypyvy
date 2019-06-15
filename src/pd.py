@@ -81,14 +81,35 @@ def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
         )))
 
 
-_cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
 _solver: Optional[Solver] = None
-def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
+def get_solver() -> Solver:
     global _solver
+    if _solver is None:
+        _solver = Solver()
+    return _solver
+
+
+def cheap_check_implication(
+        hyps: Iterable[Expr],
+        concs: Iterable[Expr],
+) -> bool:
+    s = get_solver()
+    t = s.get_translator(KEY_ONE)
+    with s:
+        for e in hyps:
+            s.add(t.translate_expr(e))
+        for e in concs:
+            with s:
+                s.add(z3.Not(t.translate_expr(e)))
+                if s.check() != z3.unsat:
+                    return False
+    return True
+
+
+_cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
+def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
     if s is None:
-        if _solver is None:
-            _solver = Solver()
-        s = _solver
+        s = get_solver()
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
@@ -99,7 +120,7 @@ def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
                 print(m)
                 raise
         else:
-            cache[k] = check_implication(s, [m.as_onestate_formula(0)], [p]) is None
+            cache[k] = cheap_check_implication([m.as_onestate_formula(0)], [p])
 
         cache['m'] += 1
         if len(cache) % 1000 == 1:
@@ -139,7 +160,7 @@ _cache_transitions: List[Tuple[State,State]] = []
 def isomorphic_states(solver: Solver, s: State, t: State) -> bool:
     x = s.as_onestate_formula(0)
     y = t.as_onestate_formula(0)
-    return x == y # or check_implication(solver, [], [Iff(x, y)]) is None
+    return x == y # or cheap_check_implication([], [Iff(x, y)])
     # TODO: we need to figure this out. are two isomorphic structures the same state or no? this showed up in:
     # time ./src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache examples/lockserv.pyv > 1
     # time ./src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache-memo --cache-only-discovered examples/lockserv.pyv > 2
@@ -893,8 +914,7 @@ def dedup_equivalent_predicates(s: Solver, itr: Iterable[Expr]) -> Sequence[Expr
     ans: List[Expr] = []
     for x in ps:
         for y in ans:
-            if x == y:# or (check_implication(s, [x], [y], never_minimize=True) is None and
-                      #    check_implication(s, [y], [x], never_minimize=True) is None):
+            if x == y:# or cheap_check_implication([], [Iff(x, y)]):
                 break
         else:
             ans.append(x)
@@ -939,7 +959,7 @@ def repeated_houdini(s: Solver) -> str:
         print(f'Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
             print(str(m) + '\n' + '-'*80)
-        if check_implication(s, a, safety) is not None:
+        if not cheap_check_implication(a, safety):
             print('Found safety violation!')
             dump_caches()
             return 'UNSAFE'
@@ -966,7 +986,7 @@ def repeated_houdini(s: Solver) -> str:
         print(f'Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else 'Current inductive invariant is true')
         for p in sorted(a, key=lambda x: len(str(x))):
             print(p)
-        if len(a) > 0 and check_implication(s, a, safety) is None:
+        if len(a) > 0 and cheap_check_implication(a, safety):
             print('Implies safety!')
             dump_caches()
             return 'SAFE'
@@ -1496,7 +1516,7 @@ class SeparabilitySubclausesMap(object):
                 i for i, v in enumerate(self.lit_vs)
                 if not z3.is_true(model[v])
             )
-            for i, _ in enumerate(self.lit_vs):
+            for i in range(self.n):
                 if i in forced_to_false:
                     continue
                 res = self.solver.check(*sep, *(z3.Not(self.lit_vs[j]) for j in sorted(chain(forced_to_false, [i]))))
@@ -1789,7 +1809,7 @@ def cdcl_invariant(solver: Solver) -> str:
                     '')
             print(f'states[{i}]{note}:\n{states[i]}\n' + '-' * 80)
         for i in reachable:
-            if check_implication(solver, [states[i].as_onestate_formula(0)], safety) is not None:
+            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
                 print(f'Found safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
@@ -1934,7 +1954,7 @@ def cdcl_invariant(solver: Solver) -> str:
         print(f'Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else 'Current inductive invariant is true')
         for p in sorted(a, key=lambda x: len(str(x))):
             print(p)
-        if len(a) > 0 and check_implication(solver, a, safety) is None:
+        if len(a) > 0 and cheap_check_implication(a, safety):
             print('Implies safety!')
             dump_caches()
             return 'SAFE'
