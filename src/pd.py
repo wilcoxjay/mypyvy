@@ -441,6 +441,267 @@ def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterab
     return tuple(p for p in predicates if all(eval_in_state(s, m, p) for m in states))
 
 
+class SubclausesMapTurbo(object):
+    '''
+    Class used to store a map of subclauses of a certain clause, and
+    obtain subclauses that are positive and negative on some given
+    states.
+    '''
+    def __init__(self,
+                 top_clause: Expr,
+                 states: List[State],  # assumed to only grow
+                 predicates: List[Expr],  # assumed to only grow
+    ):
+        '''
+        states is assumed to be a list that is increasing but never modified
+        '''
+        self.states = states
+        self.predicates = predicates
+        self.variables, self.literals = destruct_clause(top_clause)
+        self.n = len(self.literals)
+        self.all_n = set(range(self.n))  # used in complement fairly frequently
+        self.solver = z3.Solver()
+        self.lit_vs = [z3.Bool(f'lit_{i}') for i in range(self.n)]
+        self.state_vs: List[z3.ExprRef] = []
+        self.predicate_vs: List[z3.ExprRef] = []
+        self._new_states()
+        self._new_predicates()
+
+    def _new_states(self) -> None:
+        new = range(len(self.state_vs), len(self.states))
+        if len(new) == 0:
+            return
+        self.state_vs.extend(z3.Bool(f's_{i}') for i in new)
+        print(f'Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(self.all_n)}')
+        total_cdnf = 0
+        for i in new:
+            print(f'Mapping out subclauses-state interaction with states[{i}]... ', end='')
+            cdnf = 0
+            mus = 0
+            mss = 0
+            def f(s: Set[int]) -> bool:
+                # TODO: use unsat cores here
+                return eval_in_state(None, self.states[i], self.to_clause(s))
+            for k, v in marco(self.n, f):
+                cdnf += 1
+                if k == 'MUS':
+                    mus += 1
+                    print('mus ', end='')
+                    # v is a minimal subclause satisfies by self.states[i]
+                    self.solver.add(z3.Or(self.state_vs[i], *(
+                        z3.Not(self.lit_vs[j]) for j in sorted(v)
+                    )))
+                elif k == 'MSS':
+                    print('mss ', end='')
+                    mss += 1
+                    # v is a maximal subclause not satisfies by self.states[i]
+                    self.solver.add(z3.Or(z3.Not(self.state_vs[i]), *(
+                        self.lit_vs[j] for j in sorted(self.all_n - v)
+                    )))
+                else:
+                    assert False
+            print(f'done (cdnf={cdnf}, mus={mus}, mss={mss})')
+            total_cdnf += cdnf
+        # parallel version of the above (doesn't work):
+        # def get_constrains(i: int) -> List[z3.ExprRef]:
+        #     result: List[z3.ExprRef] = []
+        #     def f(s: Set[int]) -> bool:
+        #         # TODO: use unsat cores here
+        #         return eval_in_state(None, self.states[i], self.to_clause(s))
+        #     for k, v in marco(self.n, f):
+        #         if k == 'MUS':
+        #             # v is a minimal subclause satisfies by self.states[i]
+        #             result.append(z3.Or(self.state_vs[i], *(
+        #                 z3.Not(self.lit_vs[j]) for j in sorted(v)
+        #             )))
+        #         elif k == 'MSS':
+        #             # v is a maximal subclause not satisfies by self.states[i]
+        #             result.append(z3.Or(z3.Not(self.state_vs[i]), *(
+        #                 self.lit_vs[j] for j in sorted(self.all_n - v)
+        #             )))
+        #         else:
+        #             assert False
+        #     return result
+        # from multiprocessing import Pool
+        # pool = Pool(4)
+        # constraints = pool.map(get_constrains, new)
+        # for c in chain(*constraints):
+        #     self.solver.add(c)
+        #     total_cdnf += 1
+
+        print(f'Done (total_cdnf={total_cdnf})')
+
+    def _new_predicates(self) -> None:
+        new = range(len(self.predicate_vs), len(self.predicates))
+        if len(new) == 0:
+            return
+        self.predicate_vs.extend(z3.Bool(f'p_{i}') for i in new)
+        print(f'Mapping out subclauses-predicate interaction with {len(new)} new predicates')
+        total = 0
+        solver = Solver()
+        for i in new:
+            def f(s: Set[int]) -> bool:
+                # TODO: use unsat cores here
+                return cheap_check_implication([self.predicates[i]], [self.to_clause(s)])
+            for k, v in marco(self.n, f):
+                total += 1
+                if k == 'MUS':
+                    # v is a minimal subclause subsumed by satisfies by self.predicates[i], block upwards conditioned on self.predicate_vs[i]
+                    self.solver.add(z3.Or(z3.Not(self.predicate_vs[i]), *(
+                        z3.Not(self.lit_vs[j]) for j in sorted(v)
+                    )))
+        print(f'Done (total={total})')
+
+    def separate(self,
+                 pos: Collection[int],
+                 neg: Collection[int],
+                 ps: Collection[int],
+    ) -> Optional[FrozenSet[int]]:
+        '''
+        find a subclause that is positive on pos and negative on neg. pos,neg are indices to self.states.
+
+        TODO: to we need an unsat core in case there is no subclause?
+        '''
+        self._new_states()
+        self._new_predicates()
+        assert all(0 <= i < len(self.states) for i in chain(pos, neg))
+        assert all(0 <= i < len(self.predicates) for i in ps)
+        sep = list(chain(
+            (self.state_vs[i] for i in sorted(pos)),
+            (z3.Not(self.state_vs[i]) for i in sorted(neg)),
+            (self.predicate_vs[i] for i in sorted(ps)),
+        ))
+        res = self.solver.check(*sep)
+        assert res in (z3.unsat, z3.sat)
+        if res == z3.unsat:
+            return None
+        # minimize for strongest possible clause
+        # TODO: just use z3's Optimize instead of minimizing manually
+        model = self.solver.model()
+        forced_to_false = set(
+            i for i, v in enumerate(self.lit_vs)
+            if not z3.is_true(model[v])
+        )
+        for i in range(self.n):
+            if i not in forced_to_false:
+                res = self.solver.check(*sep, *(z3.Not(self.lit_vs[j]) for j in sorted(chain(forced_to_false, [i]))))
+                assert res in (z3.unsat, z3.sat)
+                if res == z3.sat:
+                    forced_to_false.add(i)
+        assert self.solver.check(*sep, *(z3.Not(self.lit_vs[j]) for j in sorted(forced_to_false))) == z3.sat
+        result = frozenset(self.all_n - forced_to_false)
+        if False:
+            # just some paranoid tests
+            clause = self.to_clause(result)
+            assert all(eval_in_state(None, self.states[i], clause) for i in pos)
+            assert all(not eval_in_state(None, self.states[i], clause) for i in neg)
+            assert all(not cheap_check_implication([self.predicates[i]], [clause]) for i in ps)
+        return result
+
+    def to_clause(self, s: Iterable[int]) -> Expr:
+        lits = [self.literals[i] for i in sorted(s)]
+        free = set(chain(*(lit.free_ids() for lit in lits)))
+        vs = [v for v in self.variables if v.name in free]
+        return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
+
+
+def forward_explore_marco_turbo(solver: Solver,
+                                clauses: Sequence[Expr],
+                                _states: Optional[Iterable[State]] = None
+) -> Tuple[Sequence[State], Sequence[Expr]]:
+
+    prog = syntax.the_program
+    inits = tuple(init.expr for init in prog.inits())
+
+    states: List[State] = [] if _states is None else list(_states)
+    predicates: List[Expr] = []  # growing list of predicates considered
+    live: FrozenSet[int] = frozenset()  # indices into predicates for predicates p s.t. init U states |= p /\ wp(p)
+
+    def alpha_live(states: Collection[State]) -> Sequence[Expr]:
+        return alpha_from_predicates(solver, states, [predicates[i] for i in sorted(live)])
+
+    def valid(clause: Expr) -> bool:
+        # return True iff clause is implied by init and valid in all states
+        # when returning False, possibly learn a new state
+        if not all(eval_in_state(solver, m, clause) for m in states):
+            return False
+        s = check_initial(solver, clause)
+        if s is not None:
+            states.append(s)
+            return False
+        else:
+            return True
+
+    def wp_valid(clause: Expr) -> bool:
+        # return True iff wp(clause) is implied by init and valid in all states
+        # when returning False, add a new transition to states
+        assert valid(clause)
+        for precondition in chain((s for s in states), [None]):
+            res = check_two_state_implication(
+                solver,
+                inits if precondition is None else precondition,
+                clause
+            )
+            if res is not None:
+                prestate, poststate = res
+                if precondition is None:
+                    states.append(prestate)
+                states.append(poststate)
+                return False
+        return True
+
+    maps = [SubclausesMapTurbo(top_clause, states, predicates) for top_clause in clauses]
+
+    for rotate in itertools.count(0):
+        assert all(valid(predicates[i]) and wp_valid(predicates[i]) for i in live)
+
+        for i in range(len(maps)):
+            mp = maps[(rotate + i) % len(maps)]
+            while True:
+                seed = mp.separate(frozenset(range(len(states))), frozenset(), live)
+                if seed is not None:
+                    clause = mp.to_clause(seed)
+                    print(f'Potential predicate is: {clause}')
+                    s = check_initial(solver, clause)
+                    if s is not None:
+                        states.append(s)
+                    else:
+                        break
+                else:
+                    break
+            if seed is not None:
+                break
+        else:
+            # here init U states |= live /\ wp(live), and also there is no uncharted territory in the maps
+            live_predicates = [predicates[i] for i in sorted(live)]
+            assert live_predicates == dedup_equivalent_predicates(solver, live_predicates)
+            return states, live_predicates
+
+        n_states = len(states)
+        assert valid(clause)
+        if wp_valid(clause):
+            # the clause is valid, and its wp is also valid
+            assert len(states) == n_states
+            live = live | {len(predicates)}
+            predicates.append(clause)
+            print(f'Potential predicate is wp_valid: {clause}')
+        else:
+            assert len(states) > n_states
+            print(f'Potential predicate is not wp_valid: {clause}')
+            # the clause was valid, but its wp was not. we already learned a new state so now it's not even valid
+            # we no do forward_explore with the live predicates to see which ones are left
+            print(f'Starting forward_explore')
+            _states, a, _, _ = forward_explore(solver, alpha_live, states)
+            print(f'Finished forward_explore, found {len(_states) - len(states)} new states and killed {len(live) - len(a)} predicates')
+            assert states == _states[:len(states)]
+            states.extend(_states[len(states):])
+            assert states == _states
+            live = frozenset(
+                i for i in live
+                if predicates[i] in a
+            )
+    assert False
+
 
 def forward_explore_marco(solver: Solver,
                           clauses: Sequence[Expr],
@@ -956,6 +1217,7 @@ def repeated_houdini(s: Solver) -> str:
     while True:
         # reachable_states, a, _, _ = forward_explore(s, alpha_clauses, reachable_states)
         reachable_states, a = forward_explore_marco(s, clauses, reachable_states)
+        # reachable_states, a = forward_explore_marco_turbo(s, clauses, reachable_states)
         print(f'Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
             print(str(m) + '\n' + '-'*80)
