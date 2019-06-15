@@ -64,6 +64,16 @@ def load_caches() -> None:
                 del cache[k]
         sys.modules['pd'].__dict__.update(cache)
 
+# signal handler to dump caches
+import signal
+def handler(signum: Any, frame: Any) -> None:
+    print(f'\n\nSignal handler called with signal {signum}')
+    dump_caches()
+    print('Moving on...\n\n')
+    return
+# Set the signal handler and a 5-second alarm
+signal.signal(signal.SIGALRM, handler)
+
 
 # Here's a hacky way to eval a possibly-quantified z3 expression.
 # This function only works if e is either quantifier free, or has exactly one quantifier
@@ -535,6 +545,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
         # block down
         solver.add(z3.Or(*(lit_indicators[i] for i in sorted(all_n - mss))))
     print(f'total mss: {len(all_mss)}')
+    assert len(all_mss) > 0
 
     # find all mus - minimal subclauses satisfied by the state
     all_mus: List[FrozenSet[int]] = []
@@ -560,8 +571,8 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
                     forced_to_false.add(i)
         assert solver.check(indicators + [z3.Not(lit_indicators[j]) for j in sorted(forced_to_false)]) == z3.sat
         mus = frozenset(all_n - forced_to_false)
-        print(f'mus({len(mus)}) ', end='')
-        # print(f'mus({to_clause(mus)}) ')
+        # print(f'mus({len(mus)}) ', end='')
+        print(f'mus({to_clause(mus)}) ')
         all_mus.append(mus)
         # block up
         solver.add(z3.Or(*(z3.Not(lit_indicators[i]) for i in sorted(mus))))
@@ -658,6 +669,7 @@ class SubclausesMapTurbo(object):
         self.predicate_vs.extend(z3.Bool(f'p_{i}') for i in new)
         print(f'Mapping out subclauses-predicate interaction with {len(new)} new predicates')
         total = 0
+        mus = 0
         solver = Solver()
         for i in new:
             def f(s: Set[int]) -> bool:
@@ -666,11 +678,13 @@ class SubclausesMapTurbo(object):
             for k, v in marco(self.n, f):
                 total += 1
                 if k == 'MUS':
+                    mus += 1
                     # v is a minimal subclause subsumed by satisfies by self.predicates[i], block upwards conditioned on self.predicate_vs[i]
+                    print(f'  {self.predicates[i]} |= {self.to_clause(v)}')
                     self.solver.add(z3.Or(z3.Not(self.predicate_vs[i]), *(
                         z3.Not(self.lit_vs[j]) for j in sorted(v)
                     )))
-        print(f'Done (total={total})')
+        print(f'Done (total_cdnf={total}, total_mus={mus}, total_mss={total - mus})')
 
     def separate(self,
                  pos: Collection[int],
