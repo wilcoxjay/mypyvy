@@ -1666,13 +1666,13 @@ class SeparabilityMap(object):
         # TODO: this should also give "unsat cores"
         assert len(self.states) == len(self.maps) # otherwise we should do self._new_states()
         assert len(self.predicates) == self._n_predicates # otherwise we should do self._new_predicates()
-        print(f'_new_separator: pos={sorted(pos)}, neg={sorted(neg)}, sharp={sorted(sharp)}')
+        # print(f'_new_separator: pos={sorted(pos)}, neg={sorted(neg)}, sharp={sorted(sharp)}')
         if len(neg) == 0:
             return TrueExpr
         if len(pos) == 0:
             return FalseExpr
         for i in sorted(neg):
-            print(f'  trying maps[{i}]')
+            # print(f'  trying maps[{i}]')
             p = self.maps[i].separate(pos, neg, sharp) # TODO neg - {i} ??, doesn't seem important, but should check that it isn't
             if p is not None:
                 return self.maps[i].to_clause(p)
@@ -1940,6 +1940,120 @@ def cdcl_invariant(solver: Solver) -> str:
             return 'SAFE'
         #inductive = frozenset(i for i, p in enumerate(predicates) if p in a)
 
+#
+# Here lies a previous (premature) attempt to formalize the primal
+# dual algorithm using monotone functions:
+#
+# Primal Dual Algorithm (WIP)
+# class PrimalDualBoundsAlgorithm(object):
+#
+#
+#     '''
+#     The primal dual algorithm that tracks bounds and tries to increase the lowest bound
+#     '''
+#     def __init__(self, solver: Solver):
+#         global cache_path
+#         cache_path = Path(utils.args.filename).with_suffix('.cache')
+#         load_caches()
+#
+#         self.solver = solver
+#         self.prog = syntax.the_program
+#         self.sharp = utils.args.sharp
+#         self.safety = tuple(inv.expr for inv in self.prog.invs() if inv.is_safety)
+#
+#         self.states : List[State] = []
+#         self.predicates : List[Predicate] = list(chain(*(as_clauses(x) for x in self.safety)))
+#         # TODO: we are not taking sharp subclauses of safety, maybe to get
+#         # the same effect we can take the powerset (safety is usually not
+#         # so many literals)
+#
+#         self.reachable_states: Set[State] = set()  # subset of states
+#         self.invariant_predicates: Set[Predicate]  # subset of predicates
+#
+#         """
+#         self.transition_state: Dict[Tuple[State, State], bool] = dict()  # partial function, is there a transition or not, or maybe we don't know yet
+#         self.transition_predicate: Dict[Tuple[FrozenSet[Predicate],State,Predicate], bool] = dict()  # monotone, needs symbolic representation
+#         self.path: Dict[Tuple[State, State], bool] = dict()
+#         self.hoare:  Dict[Tuple[FrozenSet[Predicate], FrozenSet[Predicate], Predicate], bool] = dict() # monotone partial function, TODO: should be stored differently
+#         self.induction: Dict[Tuple[FrozenSet[State], FrozenSet[Predicate], Predicate], bool] = dict() # anti-monotone in states, monotone in predicates, TODO: should be stored differently
+#         self.inseperable: Dict[Tuple[FrozenSet[State], FrozenSet[State]], Optional[int]] = dict() # monotone Nat_inf (None represents inf), TODO: should be stored differently
+#         assert not self.sharp #  TODO: inseprable does not support sharp, should be made Dict[Tuple[FrozenSet[State], FrozenSet[State], FrozenSet[State]], Optional[int]]
+#         # TODO: bounds
+#         """
+#
+#         # version with BMC in mind:
+#         NatInf = Optional(int) # None represents infinity, -k represents that the object whose size we are trying to bound actually exists with size k
+#         self.transition_state: Dict[Tuple[FrozenSet[Predicate], State, State], NatInf] = defaultdict(int) # lower bound (from BMC) on trace from state to state, all satisfying P
+#         self.transition_predicate: Dict[Tuple[FrozenSet[Predicate],State,Predicate], NatInf] = defaultdict(int)  # as above, but for predicate
+#
+#         self.path: Dict[Tuple[State, State], bool] = dict()
+#         self.hoare:  Dict[Tuple[FrozenSet[Predicate], FrozenSet[Predicate], Predicate], bool] = dict() # monotone partial function, TODO: should be stored differently
+#         self.induction: Dict[Tuple[FrozenSet[State], FrozenSet[Predicate], Predicate], bool] = dict() # anti-monotone in states, monotone in predicates, TODO: should be stored differently
+#         self.inseperable: Dict[Tuple[FrozenSet[State], FrozenSet[State]], Optional[int]] = dict() # monotone Nat_inf (None represents inf), TODO: should be stored differently
+#         assert not self.sharp #  TODO: inseprable does not support sharp, should be made Dict[Tuple[FrozenSet[State], FrozenSet[State], FrozenSet[State]], Optional[int]]
+#         # TODO: bounds
+#
+#         # Taking the monotone perspective even futrther:
+#         states = self.states
+#         predicates = self.predicates
+#         T = ((predicates,'-'), (states,'+'), (states,'+'), (states,'|'), (NatInf, '+'))
+#         # T[G,S,A,B,k] = is there a state t in B that is reachable
+#         # from A by a trace of states that satisfy G, and
+#         # uses states from S "for free", but < k new states
+#         I = ((states,'-'), (predicates,'+'), (predicates,'+'), (predicates,'|'), (NatInf, '+'))
+#         # I[R,D,P,Q,k] = is there a predicate q in Q that is provable
+#         # from P by an inductive invariant that is satisfied by R, and
+#         # uses predicates from D "for free", but at < k new predicates
+#         H = ((predicates,'+'), (states, '-'), (predicates,'+'), (predicates,'+'), (NatInf, '-'))
+#         # H[G,S,P,Q,k] = is the Hoare triple {/\P} ((TRANS \cup paths(S)) \cap [G]x[G])^i {\/Q} valid for all i < k
+#         U = ((states,'-'), (predicates,'+'), (states,'+'), (states,'|'), (NatInf, '-'))
+#         # U[R,D,A,B,k] = is any invariant with at most k predicates
+#         # not from D that is satisfied by R and has no CTI in A also
+#         # satisfied by at least one state in B
+#         W = ((states,'+'), (states,'+'), (NatInf, '+'))
+#         # W[A,B,k] = is there a conjunction of < k predicates that are satisfied by A and not satisfied by any state in B
+#         HH =  ((predicates,'+'), (states, '-'), (predicates,'+'), (predicates,'+'), (NatInf, '-'), (NatInf, '-'))
+#
+#     def check_transition_state_state(self, s: State, t: State) -> None:
+#         assert (s, t) not in self.transition
+#         res = check_two_state_implication_all_transitions(
+#             self.solver,
+#             [s.as_onestate_formula(0)],
+#             Not(t.as_onestate_formula(0)),
+#         )
+#         if res is None:
+#             self.transition[(s, t)] = False
+#             print('No transition between states:')
+#             print('prestate:')
+#             print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+#             print('postistate:')
+#             print('-'*80 + '\n' + str(t) + '\n' + '-'*80)
+#             # TODO: maybe here we should learn a Hoare triple that
+#             # excludes this transition
+#         else:
+#             self.transition[(s, t)] = True
+#             print('Found transition between states:')
+#             print('prestate:')
+#             print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+#             print('postistate:')
+#             print('-'*80 + '\n' + str(t) + '\n' + '-'*80)
+#             # for debugging:
+#             z3m, _ = res
+#             prestate = Model.from_z3([KEY_OLD], z3m)
+#             poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+#             assert isomorphic_states(self.solver, s, prestate)
+#             assert isomorphic_states(self.solver, t, poststate)
+#
+#     def check_transition_state_predicate(self, G: Sequence[Predicate], s: State, q: Predicate) -> None:
+#         assert (s, q) not in self.transition
+#         res = check_two_state_implication(self.solver, s, Implies(And(*G), q))
+#         if res is None:
+#             self.transition[(s, q)] = False
+#         else:
+#             prestate, poststate = res
+#             self.transition[(s, q)] = True
+#             self.states.append(poststate)
+#             self.transition[(s, poststate)] = True
 
 
 def enumerate_reachable_states(s: Solver) -> None:
