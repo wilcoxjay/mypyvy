@@ -538,7 +538,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
 
     # find all mus - minimal subclauses satisfied by the state
     all_mus: List[FrozenSet[int]] = []
-    while True:
+    while False:  # not really needed if we have all the mss, TODO: should examine why so many mus and not so many mss, could be a bug
         indicators = [clause_indicator]
         res = solver.check(indicators)
         assert res in (z3.unsat, z3.sat)
@@ -612,13 +612,23 @@ class SubclausesMapTurbo(object):
             # print(f'Mapping out subclauses-state interaction with states[{i}]... ', end='')
             # all_mus, all_mss = map_clause_state_interaction(self.variables, self.literals, self.states[i])
             all_mus, all_mss = results.pop(0)
-            for v in all_mus:
-                self.solver.add(z3.Or(self.state_vs[i], *(
-                    z3.Not(self.lit_vs[j]) for j in sorted(v)
-                )))
-            for v in all_mss:
-                self.solver.add(z3.Or(z3.Not(self.state_vs[i]), *(
-                    self.lit_vs[j] for j in sorted(self.all_n - v)
+            if len(all_mus) > 0:
+                # use both all_mus and all_mss
+                for v in all_mus:
+                    self.solver.add(z3.Or(self.state_vs[i], *(
+                        z3.Not(self.lit_vs[j]) for j in sorted(v)
+                    )))
+                for v in all_mss:
+                    self.solver.add(z3.Or(z3.Not(self.state_vs[i]), *(
+                        self.lit_vs[j] for j in sorted(self.all_n - v)
+                    )))
+            else:
+                # use only all_mss
+                self.solver.add(self.state_vs[i] == z3.And(*(
+                    z3.Or(*(
+                        self.lit_vs[j] for j in sorted(self.all_n - v)
+                    ))
+                    for v in all_mss
                 )))
             print(f'done (cdnf={len(all_mus) + len(all_mss)}, mus={len(all_mus)}, mss={len(all_mss)})')
             total_cdnf += len(all_mus) + len(all_mss)
