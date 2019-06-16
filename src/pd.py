@@ -467,8 +467,8 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
 ]]) -> List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]]:
     real_work = [k for k in work if k not in _cache_map_clause_state_interaction]
     if len(real_work) > 0:
-        n = min(len(real_work), len(os.sched_getaffinity(0)) - 1) # TODO: get from cmdline
-        if False:
+        n = min(len(real_work), len(os.sched_getaffinity(0)) - 2) # TODO: get from cmdline
+        if True:
             with multiprocessing.Pool(n) as pool:
                 results = pool.map_async(
                     _map_clause_state_interaction_helper,
@@ -822,12 +822,17 @@ def forward_explore_marco_turbo(solver: Solver,
 
     maps = [SubclausesMapTurbo(top_clause, states, predicates) for top_clause in clauses]
 
-    for rotate in itertools.count(0):
+
+    rotate = 0
+    # for rotate in itertools.count(0):
+    while True:
         assert all(valid(predicates[i]) and wp_valid(predicates[i]) for i in live)
 
         for i in range(len(maps)):
-            mp = maps[(rotate + i) % len(maps)]
+            ii = (rotate + i) % len(maps)
+            mp = maps[ii]
             while True:
+                print(f'Trying maps[{ii}]')
                 seed = mp.separate(frozenset(range(len(states))), frozenset(), live)
                 if seed is not None:
                     clause = mp.to_clause(seed)
@@ -838,8 +843,10 @@ def forward_explore_marco_turbo(solver: Solver,
                     else:
                         break
                 else:
+                    print(f'maps[{ii}] is covered')
                     break
             if seed is not None:
+                rotate = ii # so next time we start here
                 break
         else:
             # here init U states |= live /\ wp(live), and also there is no uncharted territory in the maps
