@@ -53,9 +53,9 @@ pd:
 	! grep "  X  " lockserv.forward_explore_inv.3.log
 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.1.log
 	grep "  X  " paxos_forall.forward_explore_inv.1.log
-	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.2.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.2.log # ~5m
 	grep "  X  " paxos_forall.forward_explore_inv.2.log
-	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.3.log # ~4m
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 $(MYPYVY_OPTS) examples/oded/paxos_forall.pyv > paxos_forall.forward_explore_inv.3.log # ~5m
 	grep "  X  " paxos_forall.forward_explore_inv.3.log
 
 	# repeated-houdini --sharp
