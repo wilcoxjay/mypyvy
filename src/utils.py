@@ -96,6 +96,7 @@ class MypyvyArgs(object):
     cache_only: bool
     cache_only_discovered: bool
     unroll_to_depth: Optional[int]
+    cpus: Optional[int]
     def main(self, solver: Any) -> None: ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined

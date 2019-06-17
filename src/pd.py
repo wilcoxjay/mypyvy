@@ -467,15 +467,18 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
 ]]) -> List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]]:
     real_work = [k for k in work if k not in _cache_map_clause_state_interaction]
     if len(real_work) > 0:
-        n = min(len(real_work), len(os.sched_getaffinity(0)) - 2, 32) # TODO: get from cmdline
-        if True:
+        if utils.args.cpus is None:
+            n = 1
+        else:
+            n = min(utils.args.cpus, len(real_work))
+        if n > 1:
             with multiprocessing.Pool(n) as pool:
                 results = pool.map_async(
                     _map_clause_state_interaction_helper,
                     real_work,
                 ).get(9999999) # see: https://stackoverflow.com/a/1408476
         else:
-            results = map(_map_clause_state_interaction_helper, real_work)
+            results = list(map(_map_clause_state_interaction_helper, real_work))
         for k, v in zip(real_work, results):
             _cache_map_clause_state_interaction[k] = v
     return [_cache_map_clause_state_interaction[k] for k in work]
@@ -2736,5 +2739,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     for s in result:
         s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
+        s.add_argument('--cpus', type=int, help='Number of CPUs to use in parallel')
 
     return result
