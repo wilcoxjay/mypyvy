@@ -169,6 +169,12 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
         return s
     return None
 
+def is_substructure(s: State, t: State) -> bool:
+    '''Returns true if s is a sub structure of t'''
+    x = s.as_diagram(0).to_ast()
+    y = t.as_diagram(0).to_ast()
+    return cheap_check_implication([y], [x])
+
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
 _cache_transitions: List[Tuple[State,State]] = []
 def isomorphic_states(solver: Solver, s: State, t: State) -> bool:
@@ -1462,7 +1468,8 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     load_caches()
 
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
-    assert all(check_initial(solver, p) is None for p in safety), 'Initial states not safe'
+    inits = tuple(init.expr for init in prog.inits())
+    assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[State] = []
     maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram
@@ -1473,6 +1480,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     ctis: FrozenSet[int] = frozenset()  # states that are "roots" of forward reachability trees that came from top-level Houdini
     covered: FrozenSet[int] = frozenset()  # we found all sharp predicates that rule out this state
+    bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
 
     def add_state(s: State) -> int:
         nonlocal live_states
@@ -1485,13 +1493,12 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         predicates_of_state.append([])
         sharp_predicates_of_state.append(frozenset())
         live_states |= {i}
-        # TODO:
-        # for j in range(i):
-        #     t = states[j]
-        #     if is_substructure(s, t):
-        #         substructure.append((j, i))
-        #     if is_substructure(t, s):
-        #         substructure.append((i, j))
+        for j in range(i):
+            t = states[j]
+            if is_substructure(s, t):
+                substructure.append((j, i))
+            if is_substructure(t, s):
+                substructure.append((i, j))
         cs = as_clauses(Not(s.as_diagram(0).to_ast()))
         assert len(cs) == 1
         c = cs[0]
@@ -1750,7 +1757,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
 
         # select a state with "high score"
         score: Dict[int,int] = defaultdict(int)
-        min_bound = min(bounds.values())
+        min_bound = min(x for x in bounds.values() if x > 0)
         for i in sorted(sharp_predicates - inductive_invariant):
             if bounds[i] == min_bound:
                 for j in still_uncovered[i]:
@@ -1760,11 +1767,42 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         for i in sorted(live_states):
             if score[i] > 0:
                 assert i not in covered
-                print(f'  states[{i}]: {score[i]}')
+                print(f'  states[{i}]: score={score[i]}, sharp_predicates={len(sharp_predicates_of_state[i])}, total_predicates={len(predicates_of_state[i])}')
 
-        max_score = max(score.values())
-        ii = min(i for i in live_states if score[i] == max_score)
-        print(f'Selected states[{ii}] for refinement')
+        f = lambda i: score[i] - len(sharp_predicates_of_state[i])
+        candidates = [i for i in live_states if score[i] > 0]
+        max_score = max(map(f, candidates))
+        ii = min(i for i in candidates if f(i) == max_score)
+        print(f'Selected states[{ii}] for refinement\n')
+
+        if ii not in bmced:
+            print(f'Trying to reach states[{ii}] in up to 5 steps')
+            p = maps[ii].to_clause(maps[ii].all_n)
+            changes = False
+            for k in range(1, 6):
+                print(f'Checking if init satisfies WP_{k} of ~states[{ii}]... ',end='')
+                res = check_k_state_implication(solver, inits, p, k)
+                if res is not None:
+                    prestate, *poststates = res
+                    # add all states, including first one that is an initial state
+                    # add new initial state
+                    i_pre = add_state(prestate)
+                    reachable |= {i_pre}
+                    for poststate in poststates:
+                        i_post = add_state(poststate)
+                        transitions.append((i_pre, i_post))
+                        reachable |= {i_post}
+                        i_pre = i_post
+                    changes = True
+                    break
+                else:
+                    print('YES')
+            if changes:
+                print(f'Managed to reach states[{ii}], looping\n')
+                continue
+            else:
+                bmced |= {ii}
+
         mp = maps[ii]
         while True:
             seed = mp.separate(reachable, frozenset(), sharp_predicates_of_state[ii])
