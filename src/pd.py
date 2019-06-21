@@ -1791,7 +1791,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     for poststate in poststates:
                         i_post = add_state(poststate)
                         transitions.append((i_pre, i_post))
-                        reachable |= {i_post}
+                        # reachable |= {i_post} # not doing this to trigger discovery of new reachable states on the next loop iteration
                         i_pre = i_post
                     changes = True
                     break
