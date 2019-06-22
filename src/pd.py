@@ -772,9 +772,9 @@ class SubclausesMapTurbo(object):
         if False:
             # just some paranoid tests
             clause = self.to_clause(result)
-            assert all(eval_in_state(None, self.states[i], clause) for i in pos)
-            assert all(not eval_in_state(None, self.states[i], clause) for i in neg)
-            assert all(not cheap_check_implication([self.predicates[i]], [clause]) for i in ps)
+            assert all(eval_in_state(None, self.states[i], clause) for i in sorted(pos))
+            assert all(not eval_in_state(None, self.states[i], clause) for i in sorted(neg))
+            assert all(not cheap_check_implication([self.predicates[i]], [clause]) for i in sorted(ps))
         return result
 
     def to_clause(self, s: Iterable[int]) -> Expr:
@@ -1485,7 +1485,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
 
     def add_state(s: State) -> int:
         nonlocal live_states
-        assert all(eval_in_state(None, s, predicates[j]) for j in inductive_invariant)
+        assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         if s in states:
             # assert False
             return states.index(s)
@@ -1546,16 +1546,21 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     changes = True
         return r
 
-    def forward_explore_from_state(i: Optional[int],
+    def forward_explore_from_state(src: Optional[int],
                                    # k: int
     ) -> None:
         # forward explore (concretley) either from the initial states
-        # or from state i, according to the current sharp predicates,
+        # or from states[src], according to the current sharp predicates,
         # using unrolling of k
+
+        # NOTE: this finds new reachable states, presumably only if i
+        # is None assuming that forward_explore_from_state(None) was
+        # called before with the same predicates
+
         nonlocal reachable
-        r = frozenset(reachable)
-        if i is not None:
-            r |= {i}
+        r: FrozenSet[int] = reachable
+        if src is not None:
+            r |= {src}
         a = [predicates[j] for j in sorted(sharp_predicates)]
         def alpha_a(states: Collection[State]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
@@ -1579,11 +1584,13 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 except ValueError:
                     index_map[i] = add_state(_states[i])
             assert [index_map[i] for i in range(len(r))] == sorted(r)
+            n_reachable = len(reachable)
             reachable |= set(index_map[i] for i in _initials)
             for i, j in _transitions:
                 ii, jj = index_map[i], index_map[j]
                 transitions.append((ii, jj))
             reachable = close_forward(reachable)
+            assert src is None or len(reachable) == n_reachable
             r = close_forward(r)
             assert frozenset(index_map.values()) <= r
         # return a
@@ -1598,11 +1605,11 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         p_cti = None
         a = [predicates[i] for i in sorted(sharp_predicates)]
         r = reachable
-        assert all(eval_in_state(None, states[i], p) for i, p in product(reachable, a))
+        assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(reachable), a))
         p_cti = None
         while True:
             r = close_forward(r)
-            a = [p for p in a if all(eval_in_state(None, states[i], p) for i in r)]
+            a = [p for p in a if all(eval_in_state(None, states[i], p) for i in sorted(r))]
             for i in sorted(ctis - r):
                 if all(eval_in_state(None, states[i], p) for p in a):
                     r |= {i}
@@ -1611,7 +1618,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     solver,
                     a,
                     maps[i].to_clause(maps[i].all_n),
-                    'backward-transition'
+                    f'backward-transition from states[{i}]'
                 )
                 if res is not None:
                     prestate, poststate = res
@@ -1658,17 +1665,17 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         '''
         a = [predicates[i] for i in ps]
         r = reachable
-        assert all(eval_in_state(None, states[i], p) for i, p in product(reachable, a))
+        assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(reachable), a))
         result: FrozenSet[int] = frozenset()
         while True:
             r = close_forward(r)
-            a = [p for p in a if all(eval_in_state(None, states[i], p) for i in r)]
+            a = [p for p in a if all(eval_in_state(None, states[i], p) for i in sorted(r))]
             for i in sorted(ctis - r):
                 # note: we bias toward earlier discovered ctis TODO:
                 # minimize the set instead, or bias toward covered
                 # ones, or explore all of them
                 if (    all(eval_in_state(None, states[i], p) for p in a) and
-                    not all(eval_in_state(None, states[j], p) for j, p in product(close_forward(frozenset([i])), a))):
+                    not all(eval_in_state(None, states[j], p) for j, p in product(sorted(close_forward(frozenset([i]))), a))):
                     r |= {i}
                     result |= {i}
                     break
@@ -1687,7 +1694,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
             sharp_predicates = frozenset(
                 j for j, p in enumerate(predicates)
                 if all(eval_in_state(None, states[k], p)
-                       for k in reachable
+                       for k in sorted(reachable)
                 )
             )
             for i in range(len(states)):
@@ -1744,7 +1751,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         bounds: Dict[int, int] = dict()  # mapping from predicate index to its bound
         still_uncovered: Dict[int, FrozenSet[int]] = dict()  # mapping from predicate index to set of uncovered states that prevent increasing its bound
         for i in sorted(sharp_predicates - inductive_invariant):
-            if all(eval_in_state(None, states[j], predicates[i]) for j in live_states):
+            if all(eval_in_state(None, states[j], predicates[i]) for j in sorted(live_states)):
                 # TODO: revisit this
                 bounds[i] = 0
                 still_uncovered[i] = frozenset()
@@ -1753,8 +1760,12 @@ def repeated_houdini_bounds(solver: Solver) -> str:
             ps = frozenset([i])
             n = 0
             while True:
+                assert n < 100
+                assert ctis_so_far <= covered
                 new_ctis = houdini_with_existing(ps) # TODO: we don't need to reach all the way to TOP, can stop at {i}, or maybe lower
                 n += 1
+                if new_ctis <= ctis_so_far:
+                    assert False
                 ctis_so_far |= new_ctis
                 assert len(ctis_so_far & reachable) == 0
                 assert ctis_so_far <= live_states
@@ -1834,13 +1845,17 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     i = add_state(s)
                     reachable |= {i}
                 else:
-                    j = len(predicates)
-                    predicates.append(clause)
-                    sharp_predicates |= {j}
                     k = len(predicates_of_state[ii])
                     predicates_of_state[ii].append(clause)
                     sharp_predicates_of_state[ii] |= {k}
-                    print(f'Learned new predicate, looping\n')
+                    if clause in predicates:
+                        print(f'Already had this predicate, looping\n')
+                        assert predicates.index(clause) in sharp_predicates
+                    else:
+                        print(f'Learned new predicate, looping\n')
+                        j = len(predicates)
+                        predicates.append(clause)
+                        sharp_predicates |= {j}
                     break
             else:
                 print(f'maps[{ii}] is covered, looping\n')
@@ -2705,9 +2720,9 @@ def cdcl_invariant(solver: Solver) -> str:
             r = close_forward(r)
             assert frozenset(index_map.values()) <= r
             # close downward
-            assert all(eval_in_state(None, states[i], p) for i, p in product(r, a))
+            assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(r), a))
             r = r | frozenset(
-                i for i in (frozenset(range(len(states))) - r)
+                i for i in sorted(frozenset(range(len(states))) - r)
                 if all(eval_in_state(None, states[i], p) for p in a)
             )
         return a
