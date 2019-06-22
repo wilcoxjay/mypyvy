@@ -1610,10 +1610,16 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         while True:
             r = close_forward(r)
             a = [p for p in a if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            if len(a) == 0:
+                break
+            changes = False
             for i in sorted(ctis - r):
                 if all(eval_in_state(None, states[i], p) for p in a):
                     r |= {i}
-                    break
+                    changes = True
+            if changes:
+                continue
+            for i in sorted(ctis - r):
                 res = check_two_state_implication(
                     solver,
                     a,
@@ -1628,32 +1634,30 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     assert i_post == i or (i_post, i) in substructure
                     ctis |= {i_pre} # TODO: rethink this?
                     r |= {i_pre}
+                    changes = True
+                    break # TODO: not sure we should break here, for now we do, like in the next loop
+            if changes:
+                continue
+            assert p_cti not in a, f'Predicate for which we added a CTI was not eliminated: {p_cti}'
+            print(f'\nChecking for new disconnected CTIs')
+            # TODO: this maybe this should be biased toward
+            # finding prestates or poststates of existing states
+            # (right now it is not even really biased toward using
+            # existing transitions)
+            for p in a:
+                res = check_two_state_implication(solver, a, p, 'CTI')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    transitions.append((i_pre, i_post))
+                    ctis |= {i_pre}
+                    forward_explore_from_state(i_pre)
+                    p_cti = p
                     break
             else:
-                if len(a) == 0:
-                    break
-                assert p_cti not in a, f'Predicate for which we added a CTI was not eliminated: {p_cti}'
-                print(f'\nChecking for new disconnected CTIs')
-                # TODO: this maybe this should be biased toward
-                # finding prestates or poststates of existing states
-                # (right now it is not even really biased toward using
-                # existing transitions)
-                for p in a:
-                    res = check_two_state_implication(solver, a, p, 'CTI')
-                    if res is not None:
-                        prestate, poststate = res
-                        i_pre = add_state(prestate)
-                        i_post = add_state(poststate)
-                        transitions.append((i_pre, i_post))
-                        ctis |= {i_pre}
-                        _n = len(reachable)
-                        forward_explore_from_state(i_pre)
-                        assert _n == len(reachable)
-                        p_cti = p
-                        break
-                else:
-                    print(f'No disconnected CTIs found')
-                    break
+                print(f'No disconnected CTIs found')
+                break
         # here, a is inductive (but it may not imply safety)
         inv = frozenset(predicates.index(p) for p in a)
         assert inductive_invariant <= inv
