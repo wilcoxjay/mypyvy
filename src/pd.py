@@ -1481,6 +1481,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     ctis: FrozenSet[int] = frozenset()  # states that are "roots" of forward reachability trees that came from top-level Houdini
     covered: FrozenSet[int] = frozenset()  # we found all sharp predicates that rule out this state
     bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
+    score: Dict[int,float] = defaultdict(float)
 
     def add_state(s: State) -> int:
         nonlocal live_states
@@ -1605,6 +1606,21 @@ def repeated_houdini_bounds(solver: Solver) -> str:
             for i in sorted(ctis - r):
                 if all(eval_in_state(None, states[i], p) for p in a):
                     r |= {i}
+                    break
+                res = check_two_state_implication(
+                    solver,
+                    a,
+                    maps[i].to_clause(maps[i].all_n),
+                    'backward-transition'
+                )
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    transitions.append((i_pre, i_post))
+                    assert i_post == i or (i_post, i) in substructure
+                    ctis |= {i_pre} # TODO: rethink this?
+                    r |= {i_pre}
                     break
             else:
                 if len(a) == 0:
@@ -1756,7 +1772,8 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         print()
 
         # select a state with "high score"
-        score: Dict[int,int] = defaultdict(int)
+        for k in score:
+            score[k] *= 0.9
         min_bound = min(x for x in bounds.values() if x > 0)
         for i in sorted(sharp_predicates - inductive_invariant):
             if bounds[i] == min_bound:
@@ -1769,7 +1786,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 assert i not in covered
                 print(f'  states[{i}]: score={score[i]}, sharp_predicates={len(sharp_predicates_of_state[i])}, total_predicates={len(predicates_of_state[i])}')
 
-        f = lambda i: score[i] - len(sharp_predicates_of_state[i])
+        f = lambda i: score[i] # - len(sharp_predicates_of_state[i])
         candidates = [i for i in live_states if score[i] > 0]
         max_score = max(map(f, candidates))
         ii = min(i for i in candidates if f(i) == max_score)
@@ -1827,6 +1844,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
             else:
                 print(f'maps[{ii}] is covered, looping\n')
                 covered |= {ii}
+                score[ii] = 0
                 break
 
 NatInf = Optional[int] # None represents infinity
