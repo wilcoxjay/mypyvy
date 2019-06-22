@@ -1773,21 +1773,22 @@ def repeated_houdini_bounds(solver: Solver) -> str:
 
         # select a state with "high score"
         for k in score:
-            score[k] *= 0.9
+            score[k] = 0  # TODO: explore other decay, i.e., *= 0.9
         min_bound = min(x for x in bounds.values() if x > 0)
+        candidates: Set[int] = set()
         for i in sorted(sharp_predicates - inductive_invariant):
             if bounds[i] == min_bound:
                 for j in still_uncovered[i]:
                     assert j not in reachable and j in live_states
                     score[j] += 1
+                    candidates.add(j)
         print(f'\nCurrent scores:')
-        for i in sorted(live_states):
-            if score[i] > 0:
-                assert i not in covered
-                print(f'  states[{i}]: score={score[i]}, sharp_predicates={len(sharp_predicates_of_state[i])}, total_predicates={len(predicates_of_state[i])}')
+        for i in sorted(candidates):
+            assert i not in covered
+            assert score[i] > 0
+            print(f'  states[{i}]: score={score[i]:.2e}, sharp_predicates={len(sharp_predicates_of_state[i])}, total_predicates={len(predicates_of_state[i])}')
 
         f = lambda i: score[i] # - len(sharp_predicates_of_state[i])
-        candidates = [i for i in live_states if score[i] > 0]
         max_score = max(map(f, candidates))
         ii = min(i for i in candidates if f(i) == max_score)
         print(f'Selected states[{ii}] for refinement\n')
