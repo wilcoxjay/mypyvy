@@ -1688,43 +1688,83 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 break
         return result
 
-    while True:
-        n = len(reachable)
-        list(map(forward_explore_from_state, chain([None], ctis))) # TODO: parallel?, TODO: can be more frugal here and compute less
-        if len(reachable) > n:
-            # new reachable states
-            print(f'Found {len(reachable) - n} new reachable states')
-            covered = frozenset()
-            sharp_predicates = frozenset(
-                j for j, p in enumerate(predicates)
+    def new_reachable_states() -> None:
+        nonlocal sharp_predicates
+        nonlocal sharp_predicates_of_state
+        nonlocal covered
+        sharp_predicates = frozenset(
+            j for j, p in enumerate(predicates)
+            if all(eval_in_state(None, states[k], p)
+                   for k in sorted(reachable)
+            )
+        )
+        for i in range(len(states)):
+            n = len(sharp_predicates_of_state[i])
+            sharp_predicates_of_state[i] = frozenset(
+                j for j, p in enumerate(predicates_of_state[i])
                 if all(eval_in_state(None, states[k], p)
                        for k in sorted(reachable)
                 )
             )
-            for i in range(len(states)):
-                # TODO: some states can stay covered if here there is no change
-                sharp_predicates_of_state[i] = frozenset(
-                    j for j, p in enumerate(predicates_of_state[i])
-                    if all(eval_in_state(None, states[k], p)
-                           for k in reachable
-                    )
+            if len(sharp_predicates_of_state[i]) < n:
+                covered -= {i}
+        # TODO: as the code above demonstrates, it would be better to keep the connection between predicates and predicates_of_state
+
+    def assert_invariants() -> None:
+        # for debugging
+        assert reachable == close_forward(reachable)
+        assert sharp_predicates == frozenset(
+            j for j, p in enumerate(predicates)
+            if all(eval_in_state(None, states[k], p)
+                   for k in sorted(reachable)
+            )
+        )
+        for i in range(len(states)):
+            assert sharp_predicates_of_state[i] == frozenset(
+                j for j, p in enumerate(predicates_of_state[i])
+                if all(eval_in_state(None, states[k], p)
+                       for k in sorted(reachable)
                 )
+            )
+        assert live_states == frozenset(
+            i for i, s in enumerate(states)
+            if all(eval_in_state(None, s, predicates[j])
+                   for j in sorted(inductive_invariant)
+            )
+        )
+
+
+    while True:
+        assert_invariants()
+        n_reachable = len(reachable)
+        list(map(forward_explore_from_state, chain([None], ctis))) # TODO: parallel?, TODO: can be more frugal here and compute less
+        if len(reachable) > n_reachable:
+            print(f'Forward explore found {len(reachable) - n_reachable} new reachable states')
+            new_reachable_states()
+        assert_invariants()
 
         # Houdini, to check if anything new is inductive, adding new
         # ctis, which will be used later when computing bounds
-        n = len(inductive_invariant)
+        assert_invariants()
+        n_inductive_invariant = len(inductive_invariant)
+        n_reachable = len(reachable)
         houdini()
-        if len(inductive_invariant) > n:
+        if len(reachable) > n_reachable:
+            assert False
+            print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
+            new_reachable_states()
+        if len(inductive_invariant) > n_inductive_invariant:
             # TODO - reset all kinds of bounds, unrefince, etc
-            print(f'Found {len(inductive_invariant) - n} new inductive predicates')
+            print(f'Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             live_states = frozenset(
                 i for i, s in enumerate(states)
                 if all(eval_in_state(None, s, predicates[j])
-                       for j in inductive_invariant
+                       for j in sorted(inductive_invariant)
                 )
             )
             ctis = ctis & live_states
             # TODO: maybe remove all predicates that were used only to rule out states that are already ruled out
+        assert_invariants()
 
         # print status and possibly terminate
         print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable, {len(ctis)} ctis, {len(covered)} covered):\n' + '-' * 80)
@@ -1755,6 +1795,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         bounds: Dict[int, int] = dict()  # mapping from predicate index to its bound
         still_uncovered: Dict[int, FrozenSet[int]] = dict()  # mapping from predicate index to set of uncovered states that prevent increasing its bound
         for i in sorted(sharp_predicates - inductive_invariant):
+            assert_invariants()
             if all(eval_in_state(None, states[j], predicates[i]) for j in sorted(live_states)):
                 # TODO: revisit this
                 bounds[i] = 0
