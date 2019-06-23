@@ -610,6 +610,7 @@ class SubclausesMapTurbo(object):
                  top_clause: Expr,
                  states: List[State],  # assumed to only grow
                  predicates: List[Expr],  # assumed to only grow
+                 optimize: bool = False,
     ):
         '''
         states is assumed to be a list that is increasing but never modified
@@ -619,7 +620,8 @@ class SubclausesMapTurbo(object):
         self.variables, self.literals = destruct_clause(top_clause)
         self.n = len(self.literals)
         self.all_n = set(range(self.n))  # used in complement fairly frequently
-        self.solver = z3.Solver()
+        self.optimize = optimize
+        self.solver = z3.Optimize() if optimize else z3.Solver()  # type: ignore # TODO - fix typing
         self.lit_vs = [z3.Bool(f'lit_{i}') for i in range(self.n)]
         self.state_vs: List[z3.ExprRef] = []
         self.predicate_vs: List[z3.ExprRef] = []
@@ -735,6 +737,9 @@ class SubclausesMapTurbo(object):
                  pos: Collection[int],
                  neg: Collection[int],
                  ps: Collection[int],
+                 soft_pos: Collection[int] = frozenset(),
+                 soft_neg: Collection[int] = frozenset(),
+                 soft_ps: Collection[int] = frozenset(),
     ) -> Optional[FrozenSet[int]]:
         '''
         find a subclause that is positive on pos and negative on neg. pos,neg are indices to self.states.
@@ -743,16 +748,28 @@ class SubclausesMapTurbo(object):
         '''
         self._new_states()
         self._new_predicates()
-        assert all(0 <= i < len(self.states) for i in chain(pos, neg))
-        assert all(0 <= i < len(self.predicates) for i in ps)
+        assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
+        assert all(0 <= i < len(self.predicates) for i in chain(ps, soft_ps))
         sep = list(chain(
             (self.state_vs[i] for i in sorted(pos)),
             (z3.Not(self.state_vs[i]) for i in sorted(neg)),
             (self.predicate_vs[i] for i in sorted(ps)),
         ))
+        soft = list(chain(
+            (self.state_vs[i] for i in sorted(soft_pos)),
+            (z3.Not(self.state_vs[i]) for i in sorted(soft_neg)),
+            (self.predicate_vs[i] for i in sorted(soft_ps)),
+        ))
+        if len(soft) > 0:
+            assert self.optimize
+            self.solver.push()
+            for c in soft:
+                self.solver.add_soft(c)
         res = self.solver.check(*sep)
         assert res in (z3.unsat, z3.sat)
         if res == z3.unsat:
+            if len(soft) > 0:
+                self.solver.pop()
             return None
         # minimize for strongest possible clause
         # TODO: just use z3's Optimize instead of minimizing manually
@@ -775,6 +792,8 @@ class SubclausesMapTurbo(object):
             assert all(eval_in_state(None, self.states[i], clause) for i in sorted(pos))
             assert all(not eval_in_state(None, self.states[i], clause) for i in sorted(neg))
             assert all(not cheap_check_implication([self.predicates[i]], [clause]) for i in sorted(ps))
+        if len(soft) > 0:
+            self.solver.pop()
         return result
 
     def to_clause(self, s: Iterable[int]) -> Expr:
@@ -1503,7 +1522,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         cs = as_clauses(Not(s.as_diagram(0).to_ast()))
         assert len(cs) == 1
         c = cs[0]
-        maps.append(SubclausesMapTurbo(c, states, predicates_of_state[i]))
+        maps.append(SubclausesMapTurbo(c, states, predicates_of_state[i], True))
         return i
 
     predicates: List[Predicate] = []
@@ -1879,7 +1898,12 @@ def repeated_houdini_bounds(solver: Solver) -> str:
 
         mp = maps[ii]
         while True:
-            seed = mp.separate(reachable, frozenset(), sharp_predicates_of_state[ii])
+            seed = mp.separate(
+                pos=reachable,
+                neg=frozenset(),
+                ps=sharp_predicates_of_state[ii],
+                soft_neg=frozenset(candidates),
+            )
             if seed is not None:
                 clause = mp.to_clause(seed)
                 print(f'Potential predicate is: {clause}')
