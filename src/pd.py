@@ -1528,6 +1528,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     predicates: List[Predicate] = []
     sharp_predicates: FrozenSet[int] = frozenset()   # indices into predicates for predicates for current set of sharp predicates
     inductive_invariant: FrozenSet[int] = frozenset()  # indices into predicates for current inductive invariant
+    frames: List[List[Predicate]] = []
 
     #ctis_of_predicate: List[List[FrozenSet[int]]] = [] # ctis_of_predicate[i] is a list of sets of CTIs (indices into states). For each i and n, ctis_of_predicate[i][:n] show how why predicates[i] does not have an inductive invariant with n predicates. Once all ctis in ctis_of_predicate[i][:-1] are covered, then it can be extened, and the bound is increased
     predicates_of_state: List[List[Predicate]] = [] # for every state, list of predicates ruling out this state, which grows until the state is covered
@@ -1582,7 +1583,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
             r |= {src}
         r = close_forward(r)
         a = list(chain(
-            (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
+            ## (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
             (predicates[j] for j in sorted(sharp_predicates)),
         ))
         def alpha_a(states: Collection[State]) -> Sequence[Expr]:
@@ -1682,7 +1683,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     i_post = add_state(poststate)
                     transitions.append((i_pre, i_post))
                     ctis |= {i_pre}
-                    forward_explore_from_state(None) # we could have learned that i_pre is reachable here....
+                    ## forward_explore_from_state(None) # we could have learned that i_pre is reachable here....
                     forward_explore_from_state(i_pre)
                     p_cti = p
                     break
@@ -1690,6 +1691,81 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 print(f'No disconnected CTIs found')
                 break
         # here, a is inductive (but it may not imply safety)
+        inv = frozenset(predicates.index(p) for p in a)
+        assert inductive_invariant <= inv
+        inductive_invariant = inv
+
+    def houdini_frames() -> None:
+        '''Check if any subset of the sharp predicates is inductive, and
+        possibly add new ctis. This version is stratified, and
+        computes "frames" similar to IC3, but since multi-transition
+        CTIs are used they have a slightly different meaning.
+
+        NOTE: This may actually find new reachable states even after
+        forward_explore_from_state(None) ran, since we may find a CTI
+        and then discover that the prestate is reachable all at
+        once. Maybe this should be changed to be more consistent by
+        treating negations of diagrams as predicates and not as a
+        special case
+
+        '''
+        nonlocal ctis
+        nonlocal reachable
+        nonlocal inductive_invariant
+        nonlocal frames
+        assert_invariants()
+        frames = [[predicates[i] for i in sorted(sharp_predicates)]]
+        r = reachable
+        while True:
+            assert r == close_forward(r)
+            a = frames[-1]
+            assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(r), a))
+            for i in sorted(ctis):  # TODO: ctis or live_states?
+                if i not in r and all(eval_in_state(None, states[i], p) for p in a):
+                    r |= {i}
+                    r = close_forward(r)
+            for i in sorted(ctis):  # TODO: ctis or live_states?
+                if i in r:
+                    continue
+                res = check_two_state_implication(
+                    solver,
+                    a,
+                    maps[i].to_clause(maps[i].all_n),
+                    f'backward-transition from states[{i}]'
+                )
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    transitions.append((i_pre, i_post))
+                    assert i_post == i or (i_post, i) in substructure
+                    ctis |= {i_pre} # TODO: rethink this?
+                    forward_explore_from_state(None) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
+                    forward_explore_from_state(i_pre)
+                    r |= {i_pre}
+                    r = close_forward(r)
+            b = [p for p in a if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            for p in b[:]:
+                if p not in b:
+                    continue
+                res = check_two_state_implication(solver, a, p, 'CTI')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    transitions.append((i_pre, i_post))
+                    ctis |= {i_pre}
+                    forward_explore_from_state(None) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
+                    forward_explore_from_state(i_pre)
+                    r |= {i_pre}
+                    r = close_forward(r)
+                    b = [p for p in b if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            if a == b:
+                break
+            else:
+                frames.append(b)
+        # here, frames[-1] is inductive (but it may not imply safety)
+        assert frames[-1] == a == b
         inv = frozenset(predicates.index(p) for p in a)
         assert inductive_invariant <= inv
         inductive_invariant = inv
@@ -1779,8 +1855,10 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         assert_invariants()
         n_inductive_invariant = len(inductive_invariant)
         n_reachable = len(reachable)
-        houdini()
+        # houdini()
+        houdini_frames()
         if len(reachable) > n_reachable:
+            assert False
             print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
@@ -1814,7 +1892,9 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 return 'UNSAFE'
         print(f'\nCurrent sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
         for i in sorted(sharp_predicates):
-            note = (' (invariant)' if i in inductive_invariant else '')
+            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
+            assert max_frame < len(frames) - 1 or i in inductive_invariant
+            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
             print(f'  predicates[{i:3}]{note}: {predicates[i]}')
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
             print('Proved safety!')
