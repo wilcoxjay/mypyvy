@@ -1580,7 +1580,11 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         r: FrozenSet[int] = reachable
         if src is not None:
             r |= {src}
-        a = [predicates[j] for j in sorted(sharp_predicates)]
+        r = close_forward(r)
+        a = list(chain(
+            (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
+            (predicates[j] for j in sorted(sharp_predicates)),
+        ))
         def alpha_a(states: Collection[State]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
         n = -1
@@ -1615,8 +1619,15 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         # return a
 
     def houdini() -> None:
-        '''
-        Check if any subset of the sharp predicates is inductive, and possibly add new ctis
+        '''Check if any subset of the sharp predicates is inductive, and possibly add new ctis
+
+        NOTE: This may actually find new reachable states even after
+        forward_explore_from_state(None) ran, since we may find a CTI
+        and then discover that the prestate is reachable all at
+        once. Maybe this should be changed to be more consistent by
+        treating negations of diagrams as predicates and not as a
+        special case
+
         '''
         nonlocal ctis
         nonlocal reachable
@@ -1671,6 +1682,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     i_post = add_state(poststate)
                     transitions.append((i_pre, i_post))
                     ctis |= {i_pre}
+                    forward_explore_from_state(None) # we could have learned that i_pre is reachable here....
                     forward_explore_from_state(i_pre)
                     p_cti = p
                     break
@@ -1769,7 +1781,6 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         n_reachable = len(reachable)
         houdini()
         if len(reachable) > n_reachable:
-            assert False
             print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
