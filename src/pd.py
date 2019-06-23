@@ -1754,7 +1754,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
 
 
     while True:
-        assert_invariants()
+        # assert_invariants() -- not true because of BMC, TODO rethink this
         n_reachable = len(reachable)
         list(map(forward_explore_from_state, chain([None], ctis))) # TODO: parallel?, TODO: can be more frugal here and compute less
         if len(reachable) > n_reachable:
