@@ -1800,8 +1800,8 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         nonlocal sharp_predicates_of_state
         nonlocal covered
         sharp_predicates = frozenset(
-            j for j, p in enumerate(predicates)
-            if all(eval_in_state(None, states[k], p)
+            j for j in sorted(sharp_predicates)
+            if all(eval_in_state(None, states[k], predicates[j])
                    for k in sorted(reachable)
             )
         )
@@ -1820,7 +1820,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     def assert_invariants() -> None:
         # for debugging
         assert reachable == close_forward(reachable)
-        assert sharp_predicates == frozenset(
+        assert sharp_predicates <= frozenset(
             j for j, p in enumerate(predicates)
             if all(eval_in_state(None, states[k], p)
                    for k in sorted(reachable)
@@ -1871,7 +1871,19 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 )
             )
             ctis = ctis & live_states
-            # TODO: maybe remove all predicates that were used only to rule out states that are already ruled out
+            # keep only predicates used to rule out live states, TODO: not sure if this is good or bad
+            live_predicates = set(
+                predicates_of_state[i][j]
+                for i in sorted(live_states)
+                for j in sharp_predicates_of_state[i]
+            ) | set(safety)
+            n_sharp_predicates = len(sharp_predicates)
+            sharp_predicates = inductive_invariant | frozenset(
+                j for j in sharp_predicates
+                if predicates[j] in live_predicates
+            )
+            print(f'Unrefined {n_sharp_predicates - len(sharp_predicates)} predicates')
+
         assert_invariants()
 
         # print status and possibly terminate
@@ -2009,8 +2021,11 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     predicates_of_state[ii].append(clause)
                     sharp_predicates_of_state[ii] |= {k}
                     if clause in predicates:
-                        print(f'Already had this predicate, looping\n')
-                        assert predicates.index(clause) in sharp_predicates
+                        if predicates.index(clause) in sharp_predicates:
+                            print(f'Already have this predicate, looping\n')
+                        else:
+                            print(f'Learned previous predicate, looping\n')
+                            sharp_predicates |= {predicates.index(clause)}
                     else:
                         print(f'Learned new predicate, looping\n')
                         j = len(predicates)
