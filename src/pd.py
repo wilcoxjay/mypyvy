@@ -2228,6 +2228,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     ctis: FrozenSet[int] = frozenset()  # states that are "roots" of forward reachability trees that came from top-level Houdini
     # bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
+    state_bounds: Dict[int, int] = dict()  # mapping from state index to its bound
 
     def add_state(s: State) -> int:
         nonlocal live_states
@@ -2518,6 +2519,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                        for j in sorted(inductive_invariant)
                 )
             )
+            ctis = ctis & live_states
             # TODO: garbage collect predicates somehow
 
         assert_invariants()
@@ -2550,9 +2552,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
         # and add new predicates
 
         n_predicates = len(predicates)
-        state_bounds: Dict[int, int] = dict()  # mapping from state index to its bound
-        state_predicates: Dict[int, List[Predicate]] = dict() # mapping from state to candidate inductive invariant excluding it
-        for i in sorted(ctis - reachable): # TODO: live_states - reachable? this was too much work
+        states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
+        for i in states_to_bound:
             assert_invariants()
             n = 0
             worklist: List[Tuple[int, ...]] = [(i, )]
@@ -2593,6 +2594,13 @@ def cdcl_state_bounds(solver: Solver) -> str:
                 print(f'  {p}')
             print()
         assert len(predicates) > n_predicates
+
+        print(f'Current bounds:')
+        for i in sorted(live_states):
+            if i in state_bounds:
+                print(f'  states[{i:3}]: bound is {state_bounds[i]}')
+        print()
+
         print(f'Learned {len(predicates) - n_predicates} new predicates, looping\n')
 
 NatInf = Optional[int] # None represents infinity
