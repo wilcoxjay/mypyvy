@@ -2599,7 +2599,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
         # new CTIs, and add new predicates
 
         n_predicates = len(predicates)
-
+        n_sharp_predicates = len(sharp_predicates)
         # Different alternatives for which states to bound:
         #
         # states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
@@ -2669,9 +2669,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
             for p in _inv:
                 print(f'  {p}')
             print()
-        assert len(predicates) > n_predicates
-
-        print(f'Learned {len(predicates) - n_predicates} new predicates, looping\n')
+        assert len(sharp_predicates) > n_sharp_predicates
+        print(f'Learned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
 
 NatInf = Optional[int] # None represents infinity
 # TODO: maybe these should be classes with their own methds
