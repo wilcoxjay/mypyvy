@@ -2215,7 +2215,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
 
-    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
     inits = tuple(init.expr for init in prog.inits())
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
@@ -2227,8 +2228,9 @@ def cdcl_state_bounds(solver: Solver) -> str:
     transitions: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     ctis: FrozenSet[int] = frozenset()  # states that are "roots" of forward reachability trees that came from top-level Houdini
+    current_ctis: FrozenSet[int] = frozenset()  # states were used in the last Houdini run
     # bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
-    state_bounds: Dict[int, int] = dict()  # mapping from state index to its bound
+    state_bounds: Dict[int, int] = defaultdict(int)  # mapping from state index to its bound
 
     def add_state(s: State) -> int:
         nonlocal live_states
@@ -2255,10 +2257,12 @@ def cdcl_state_bounds(solver: Solver) -> str:
     inductive_invariant: FrozenSet[int] = frozenset()  # indices into predicates for current inductive invariant
     sharp_predicates: FrozenSet[int] = frozenset()  # TODO: change name, not necessarily sharp
     frames: List[List[Predicate]] = []
+    reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude
 
-    def add_predicate(p: Predicate) -> int:
+    def add_predicate(p: Predicate, reason: Optional[int] = None) -> int:
         nonlocal predicates
         nonlocal sharp_predicates
+        nonlocal reason_for_predicate
         if p not in predicates:
             print(f'add_predicate: adding new predicate: {p}')
             j = len(predicates)
@@ -2271,6 +2275,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
                 print(f'add_predicate: reviving previous predicate: {p}')
         sharp_predicates |= {j}
         assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
+        if reason is not None:
+            reason_for_predicate[j] |= {reason}
         return j
 
     for p in safety:
@@ -2367,6 +2373,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
 
         '''
         nonlocal ctis
+        nonlocal current_ctis
         nonlocal reachable
         nonlocal inductive_invariant
         nonlocal frames
@@ -2378,9 +2385,12 @@ def cdcl_state_bounds(solver: Solver) -> str:
             a = frames[-1]
             assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(r), a))
             for i in sorted(ctis):  # TODO: ctis or live_states?
-                if i not in r and all(eval_in_state(None, states[i], p) for p in a):
+                if (i not in r and
+                        all(eval_in_state(None, states[i], p) for p in a) and
+                    not all(eval_in_state(None, states[j], p) for j, p in product(sorted(close_forward(frozenset([i]))), a))):
                     r |= {i}
                     r = close_forward(r)
+                    current_ctis |= {i}
             for i in sorted(ctis):  # TODO: ctis or live_states?
                 if i in r:
                     continue
@@ -2397,6 +2407,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     transitions.append((i_pre, i_post))
                     assert i_post == i or (i_post, i) in substructure
                     ctis |= {i_pre} # TODO: rethink this?
+                    current_ctis |= {i_pre}
                     forward_explore_from_state(None) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
                     forward_explore_from_state(i_pre)
                     r |= {i_pre}
@@ -2412,6 +2423,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     i_post = add_state(poststate)
                     transitions.append((i_pre, i_post))
                     ctis |= {i_pre}
+                    current_ctis |= {i_pre}
                     forward_explore_from_state(None) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
                     forward_explore_from_state(i_pre)
                     r |= {i_pre}
@@ -2422,6 +2434,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
             else:
                 frames.append(b)
         # here, frames[-1] is inductive (but it may not imply safety)
+        assert current_ctis <= ctis
         assert frames[-1] == a == b
         inv = frozenset(predicates.index(p) for p in a)
         assert inductive_invariant <= inv
@@ -2483,6 +2496,12 @@ def cdcl_state_bounds(solver: Solver) -> str:
                    for j in sorted(inductive_invariant)
             )
         )
+        assert ctis <= live_states
+        assert current_ctis <= ctis
+        for i in sorted(sharp_predicates - inductive_invariant):
+            assert predicates[i] in safety or len(reason_for_predicate[i]) > 0
+        for x in reason_for_predicate.values():
+            assert x <= live_states
 
     while True:
         assert_invariants() # not true if we have BMC, TODO rethink this
@@ -2504,14 +2523,13 @@ def cdcl_state_bounds(solver: Solver) -> str:
         assert_invariants()
         n_inductive_invariant = len(inductive_invariant)
         n_reachable = len(reachable)
-        # houdini()
+        current_ctis = frozenset()
         houdini_frames()
         if len(reachable) > n_reachable:
             assert False
             print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
-            # TODO - reset all kinds of bounds, unrefince, etc
             print(f'Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             live_states = frozenset(
                 i for i, s in enumerate(states)
@@ -2519,17 +2537,39 @@ def cdcl_state_bounds(solver: Solver) -> str:
                        for j in sorted(inductive_invariant)
                 )
             )
-            ctis = ctis & live_states
-            # TODO: garbage collect predicates somehow
+            ctis &= live_states
+            state_bounds.clear()  # TODO: maybe do something a bit better, i.e., record the set of states explaining the bound, and keep it if they are still live
+            for i in reason_for_predicate:
+                reason_for_predicate[i] &= live_states
+            n_sharp_predicates = len(sharp_predicates)
+            sharp_predicates = inductive_invariant | frozenset(
+                j for j in sharp_predicates
+                if len(reason_for_predicate[j]) > 0 or predicates[j] in safety
+            )
+            if n_sharp_predicates > len(sharp_predicates):
+                print(f'Unrefined {n_sharp_predicates - len(sharp_predicates)} predicates')
+                # TODO: we may have to run Houdini again, as we may get less ctis but no invariants. we can actually get new states.
+                # n_states = len(states)
+                # n_inductive_invariant = len(inductive_invariant)
+                # n_reachable = len(reachable)
+                # current_ctis = frozenset()
+                # houdini_frames()
+                # assert n_states == len(states)
+                # assert n_inductive_invariant == len(inductive_invariant)
+                # assert n_reachable == len(reachable)
 
         assert_invariants()
 
         # print status and possibly terminate
-        print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable):\n' + '-' * 80)
+        print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable, {len(ctis)} ctis, {len(current_ctis)} current ctis):\n' + '-' * 8)
         for i in sorted(live_states):
             notes: List[str] = []
             if i in reachable:
                 notes.append('reachable')
+            if i in current_ctis:
+                notes.append('current cti')
+            elif i in ctis:
+                notes.append('cti')
             note = '(' + ', '.join(notes) + ')'
             print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
         for i in reachable:
@@ -2547,27 +2587,63 @@ def cdcl_state_bounds(solver: Solver) -> str:
             print('Proved safety!')
             dump_caches()
             return 'SAFE'
+        print(f'\nCurrent bounds:')
+        for i in sorted(live_states - reachable):
+            if i in state_bounds or i in current_ctis:
+                note = ' (current cti)' if i in current_ctis else ''
+                n = sum(len(u) for u in states[i].univs.values())
+                print(f'  states[{i:3}]{note}: universe is {n}, bound is {state_bounds[i]}')
+        print()
 
-        # compute bounds for each state, without discovering new CTIs,
-        # and add new predicates
+        # try to increase bounds for some states, without discovering
+        # new CTIs, and add new predicates
 
         n_predicates = len(predicates)
-        states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
+
+        # Different alternatives for which states to bound:
+        #
+        # states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
+        #
+        # states_to_bound = sorted(current_ctis)
+        states_to_bound = [
+            # bound only a single state, with minimal current bound, then minimal universe size, then minimal index (oldest)
+            min(current_ctis, key=lambda i: (
+                state_bounds[i],
+                sum(len(u) for u in states[i].univs.values()),
+                i)
+            )
+        ]
+        print(f'Selected the following states for refinement: {states_to_bound}\n')
         for i in states_to_bound:
             assert_invariants()
             n = 0
             worklist: List[Tuple[int, ...]] = [(i, )]
             while len(worklist) > 0:
-                print(f'Working on the bound of states[{i}], current bound is {n}, worklist is {len(worklist)} long:')
+                print(f'\nWorking on the bound of states[{i}], current bound is {n}, worklist is {len(worklist)} long:')
                 for w in worklist:
                     print(f'  {w}')
                 next_worklist: List[Tuple[int, ...]] = []
                 for states_to_exclude in worklist:
-                    _inv, _ctis = get_invariant(states_to_exclude)
+                    while True:
+                        _inv, _ctis = get_invariant(states_to_exclude)
+                        if _inv is None:
+                            break
+                        else:
+                            # check if inv is initial
+                            initial = True
+                            for p in _inv:
+                                s = check_initial(solver, p)
+                                if s is not None:
+                                    print(f'Suggested predicate ({p}) not initial, learned a new initial state')
+                                    assert s not in states
+                                    reachable |= {add_state(s)}
+                                    initial = False
+                            if initial:
+                                break
                     if _inv is not None:
                         # found potential invariant that does not currently has a CTI
                         for p in _inv:
-                            add_predicate(p)
+                            add_predicate(p, i)
                             # TODO: remember that this state caused
                             # this predicate to be added, and cleanup
                             # predicates where all the states that
@@ -2581,7 +2657,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     else:
                         assert _ctis is not None
                         assert len(_ctis) > 0
-                        print(f'Could not find invariant, ctis: {sorted(_ctis)}\n')
+                        print(f'Could not find invariant, ctis: {sorted(_ctis)}')
                         for j in _ctis:
                             next_worklist.append(states_to_exclude + (j,))
                 else:
@@ -2594,12 +2670,6 @@ def cdcl_state_bounds(solver: Solver) -> str:
                 print(f'  {p}')
             print()
         assert len(predicates) > n_predicates
-
-        print(f'Current bounds:')
-        for i in sorted(live_states):
-            if i in state_bounds:
-                print(f'  states[{i:3}]: bound is {state_bounds[i]}')
-        print()
 
         print(f'Learned {len(predicates) - n_predicates} new predicates, looping\n')
 
