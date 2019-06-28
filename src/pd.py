@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 from itertools import product, chain, combinations, repeat
+from functools import reduce
 from collections import defaultdict
 from pathlib import Path
 import pickle
@@ -465,13 +466,30 @@ def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterab
 _cache_map_clause_state_interaction: Dict[Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[State, Expr]] ,Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = dict()
 # TODO: --cache-only checks for this cache (nothign right now)
 def _map_clause_state_interaction_helper(vls: Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[State, Expr]]) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]:
-    return map_clause_state_interaction(*vls)
+    if isinstance(vls[2], State):
+        all_mss = map_clause_state_interaction_instantiate(vls[0], vls[1], vls[2])
+        if False: # TODO: run at some point to verify
+            _, all_mss2 = map_clause_state_interaction(*vls)
+            assert len(all_mss) == len(set(all_mss))
+            assert len(all_mss2) == len(set(all_mss2))
+            assert set(all_mss) == set(all_mss2), (sorted(all_mss), sorted(all_mss2))
+        return [], all_mss
+    else:
+        return map_clause_state_interaction(*vls)
 def multiprocessing_map_clause_state_interaction(work: List[Tuple[
         Tuple[SortedVar,...],
         Tuple[Expr,...],
         Union[State, Expr],
 ]]) -> List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]]:
     real_work = [k for k in work if k not in _cache_map_clause_state_interaction]
+    # for debugging, compare results from cache to map_clause_state_interaction_instantiate
+    for k in work:
+        if k in _cache_map_clause_state_interaction and isinstance(k[2], State):
+            all_mus, all_mss = _cache_map_clause_state_interaction[k]
+            all_mss2 = map_clause_state_interaction_instantiate(k[0], k[1], k[2])
+            assert len(all_mss) == len(set(all_mss))
+            assert len(all_mss2) == len(set(all_mss2))
+            assert set(all_mss) == set(all_mss2), (sorted(all_mss), sorted(all_mss2))
     if len(real_work) > 0:
         if utils.args.cpus is None:
             n = 1
@@ -598,6 +616,83 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
 
     cache[k] = (all_mus, all_mss)
     return cache[k]
+
+def map_clause_state_interaction_instantiate(
+        variables: Tuple[SortedVar,...],
+        literals: Tuple[Expr,...],
+        state: State,
+) -> List[FrozenSet[int]]:
+    '''Return a list of maximal subclauses of the given clause (indices to
+    literals) that are violated by the given state (equivalent to
+    all_mss computed by map_clause_state_interaction), using explicit
+    iteration over all quantifier instantiations.
+    '''
+    def ev(values: Sequence[str], lit: Expr) -> bool:
+        # TODO: rewrite this with James, this is a hacky partial implementation of first-order logic semantics for class Model (written on a plane from Phoenix to SF)
+        assert len(variables) == len(values)
+        consts_and_vars: Dict[str, str] = dict(chain(
+            ((var.name, val) for var, val in zip(variables, values)),
+            ((d.name, val) for d, val in state.immut_const_interps.items()),
+            ((d.name, val) for d, val in state.const_interps[0].items()),
+        ))
+        functions: Dict[str, Dict[Tuple[str,...], str]] = dict(
+            (d.name, dict((tuple(args), val) for args, val in func))
+            for d, func in chain(state.immut_func_interps.items(), state.func_interps[0].items())
+        )
+        relations: Dict[str, Dict[Tuple[str,...], bool]] = dict(
+            (d.name, dict((tuple(args), val) for args, val in func))
+            for d, func in chain(state.immut_rel_interps.items(), state.rel_interps[0].items())
+        )
+        def get_term(t: Expr) -> str:
+            if isinstance(t, Id):
+                return consts_and_vars[t.name]
+            elif isinstance(t, AppExpr):
+                return functions[t.callee][tuple(get_term(a) for a in t.args)]
+            else:
+                assert False, t
+        if isinstance(lit, Bool):
+            return lit.val
+        elif isinstance(lit, UnaryExpr):
+            assert lit.op == 'NOT'
+            return not ev(values, lit.arg)
+        elif isinstance(lit, BinaryExpr):
+            assert lit.op in ('EQUAL', 'NOTEQ')
+            eq = get_term(lit.arg1) == get_term(lit.arg2)
+            return eq if lit.op == 'EQUAL' else not eq
+        elif isinstance(lit, AppExpr):
+            return relations[lit.callee][tuple(get_term(a) for a in lit.args)]
+        elif isinstance(lit, Id):
+            # nullary relation
+            return relations[lit.name][()]
+        else:
+            assert False, lit
+    result: List[FrozenSet[int]] = []
+    universes = []
+    for v in variables:
+        assert isinstance(v.sort, UninterpretedSort), v
+        if v.sort.decl is not None and v.sort.decl in state.univs:
+            assert v.sort.name == v.sort.decl.name, v
+            universes.append(state.univs[v.sort.decl])
+        else:
+            # assert False, v # TODO: ask James why does this happen
+            ds = [d for d in state.univs if d.name == v.sort.name]
+            assert len(ds) == 1, v
+            universes.append(state.univs[ds[0]])
+    n = reduce(lambda x, y: x * y, [len(u) for u in universes], 1)
+    print(f'map_clause_state_interaction_instantiate: iterating over {n} instantiations... ')
+    for tup in product(*universes):
+        mss = frozenset(
+            i
+            for i, lit in enumerate(literals)
+            if not ev(tup, lit)
+        )
+        if not any(mss <= other for other in result):
+            result = [
+                other for other in result if not other <= mss
+            ] + [mss]
+    print(f'map_clause_state_interaction_instantiate: iterated over {n} instantiations, found {len(result)} MSSs')
+    return result
+
 
 
 class SubclausesMapTurbo(object):
