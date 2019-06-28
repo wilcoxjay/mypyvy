@@ -2120,7 +2120,8 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         # houdini()
         houdini_frames()
         if len(reachable) > n_reachable:
-            assert False
+            # this can happen since we may have some ctis without any predicate excluding them, and we do have backward transitions
+            # assert False
             print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
