@@ -2574,12 +2574,14 @@ def cdcl_state_bounds(solver: Solver) -> str:
 
     def new_reachable_states() -> None:
         nonlocal sharp_predicates
+        nonlocal current_ctis
         sharp_predicates = frozenset(
             j for j in sorted(sharp_predicates)
             if all(eval_in_state(None, states[k], predicates[j])
                    for k in sorted(reachable)
             )
         )
+        current_ctis -= reachable
 
     def assert_invariants() -> None:
         # for debugging
@@ -2598,6 +2600,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
         )
         assert ctis <= live_states
         assert current_ctis <= ctis
+        assert len(current_ctis & reachable) == 0
         for i in sorted(sharp_predicates - inductive_invariant):
             assert predicates[i] in safety or len(reason_for_predicate[i]) > 0
         for x in reason_for_predicate.values():
