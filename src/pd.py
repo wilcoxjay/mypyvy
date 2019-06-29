@@ -2622,6 +2622,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
     def new_reachable_states() -> None:
         nonlocal sharp_predicates
         nonlocal current_ctis
+        nonlocal reachable
+        reachable = close_forward(reachable)
         sharp_predicates = frozenset(
             j for j in sorted(sharp_predicates)
             if all(eval_in_state(None, states[k], predicates[j])
@@ -2776,7 +2778,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
             assert_invariants()
             n = 0
             worklist: List[Tuple[int, ...]] = [(i, )]
-            while len(worklist) > 0:
+            while len(worklist) > 0:  # TODO: rethink the condition of this loop and its structure
                 print(f'\nWorking on the bound of states[{i}], current bound is {n}, worklist is {len(worklist)} long:')
                 for w in worklist:
                     print(f'  {w}')
@@ -2795,6 +2797,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                                     print(f'Suggested predicate ({p}) not initial, learned a new initial state')
                                     # assert s not in states # TODO: this can be violated by a backward transition finding an initial state, and should be fixed by a better forward_explore
                                     reachable |= {add_state(s)}
+                                    new_reachable_states()
                                     initial = False
                             if initial:
                                 break
@@ -2803,30 +2806,34 @@ def cdcl_state_bounds(solver: Solver) -> str:
                         for p in _inv:
                             add_predicate(p, i)
                             added_so_far.append(p)
-                            # TODO: remember that this state caused
-                            # this predicate to be added, and cleanup
-                            # predicates where all the states that
-                            # added them get removed (i.e., become
-                            # reachable or deemed irrelevant) TODO:
-                            # cleanup irrelevant states, i.e., states
-                            # that do not contribute to the bound of
-                            # any other state.
+                            # TODO: cleanup irrelevant states, i.e.,
+                            # states that do not contribute to the
+                            # bound of any other state.
                         worklist = []
                         break
                     else:
                         assert _ctis is not None
-                        assert len(_ctis) > 0
-                        print(f'Could not find invariant, ctis: {sorted(_ctis)}')
-                        for j in _ctis:
-                            next_worklist.append(states_to_exclude + (j,))
+                        if len(set(states_to_exclude) & reachable) > 0:
+                            print(f'Learned that states{sorted(set(states_to_exclude) & reachable)} are reachable, so they cannot be excluded')
+                        else:
+                            assert len(_ctis) > 0
+                            print(f'Could not find invariant, ctis: {sorted(_ctis)}')
+                            next_worklist.extend(states_to_exclude + (j,) for j in _ctis)
                 else:
                     n += 1
                     worklist = sorted(set(next_worklist))
-            assert _inv is not None
-            state_bounds[i] = n
-            print(f'The bound for states[{i}] is {n}, the candidate invariant is:')
-            for p in _inv:
-                print(f'  {p}')
+                    if len(worklist) == 0:
+                        assert i in reachable
+            if i in reachable:
+                print(f'Learned that states[{i}] is reachable, so it cannot be excluded')
+                if i in state_bounds:
+                    del state_bounds[i]
+            else:
+                assert _inv is not None
+                state_bounds[i] = n
+                print(f'The bound for states[{i}] is {n}, the candidate invariant is:')
+                for p in _inv:
+                    print(f'  {p}')
         assert len(sharp_predicates) > n_sharp_predicates
         print(f'\nLearned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
 
