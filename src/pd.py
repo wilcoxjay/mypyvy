@@ -653,10 +653,10 @@ def map_clause_state_interaction_instantiate(
         if isinstance(lit, Bool):
             return lit.val
         elif isinstance(lit, UnaryExpr):
-            assert lit.op == 'NOT'
+            assert lit.op == 'NOT', lit
             return not ev(values, lit.arg)
         elif isinstance(lit, BinaryExpr):
-            assert lit.op in ('EQUAL', 'NOTEQ')
+            assert lit.op in ('EQUAL', 'NOTEQ'), lit
             eq = get_term(lit.arg1) == get_term(lit.arg2)
             return eq if lit.op == 'EQUAL' else not eq
         elif isinstance(lit, AppExpr):
@@ -2276,7 +2276,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 s = check_initial(solver, clause)
                 if s is not None:
                     print(f'This predicate is not initial, learned a new initial state')
-                    assert s not in states
+                    # assert s not in states # TODO: this can be violated by a backward transition finding an initial state, and should be fixed by a better forward_explore
                     i = add_state(s)
                     reachable |= {i}
                 else:
@@ -2490,12 +2490,14 @@ def cdcl_state_bounds(solver: Solver) -> str:
             for i in sorted(ctis):  # TODO: ctis or live_states?
                 if i in r:
                     continue
+                print(f'houdini_frames: checking for backward-transition from states[{i}]')
                 res = check_two_state_implication(
                     solver,
                     a,
                     maps[i].to_clause(maps[i].all_n),
                     f'backward-transition from states[{i}]'
                 )
+                print(f'houdini_frames: done checking for backward-transition from states[{i}]')
                 if res is not None:
                     prestate, poststate = res
                     i_pre = add_state(prestate)
@@ -2512,7 +2514,9 @@ def cdcl_state_bounds(solver: Solver) -> str:
             for p in b[:]:
                 if p not in b:
                     continue
+                print(f'houdini_frames: checking for CTI to {p}')
                 res = check_two_state_implication(solver, a, p, 'CTI')
+                print(f'houdini_frames: done checking for CTI to {p}')
                 if res is not None:
                     prestate, poststate = res
                     i_pre = add_state(prestate)
@@ -3158,7 +3162,7 @@ def destruct_clause(clause: Expr) -> Tuple[Tuple[SortedVar,...], Tuple[Expr,...]
     else:
         assert isinstance(body, (Id, UnaryExpr, Bool, AppExpr, BinaryExpr)), f'{clause}\n{isinstance(clause, QuantifierExpr)}\n{body}\n{type(body)}'
         literals = (body, )
-    assert len(set(literals)) == len(literals)
+    assert len(set(literals)) == len(literals), clause
     return variables, literals
 
 
