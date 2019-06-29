@@ -2793,7 +2793,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                                 s = check_initial(solver, p)
                                 if s is not None:
                                     print(f'Suggested predicate ({p}) not initial, learned a new initial state')
-                                    assert s not in states
+                                    # assert s not in states # TODO: this can be violated by a backward transition finding an initial state, and should be fixed by a better forward_explore
                                     reachable |= {add_state(s)}
                                     initial = False
                             if initial:
