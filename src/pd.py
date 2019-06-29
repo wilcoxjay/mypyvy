@@ -2626,7 +2626,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
         current_ctis = frozenset()
         houdini_frames()
         if len(reachable) > n_reachable:
-            assert False
+            # this can happen since we may have some ctis without any predicate excluding them, and we do have backward transitions. TODO: figure out something more consistent
+            # assert False
             print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
