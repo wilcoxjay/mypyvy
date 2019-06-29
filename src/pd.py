@@ -5,6 +5,7 @@ This file contains code for the Primal Dual research project
 from __future__ import annotations
 
 import argparse
+import itertools
 from itertools import product, chain, combinations, repeat
 from functools import reduce
 from collections import defaultdict
@@ -186,6 +187,49 @@ def isomorphic_states(solver: Solver, s: State, t: State) -> bool:
     # time ./src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache examples/lockserv.pyv > 1
     # time ./src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache-memo --cache-only-discovered examples/lockserv.pyv > 2
     # this can be fixed by checking equivalence between onestate formulas, but this is very slow
+def check_two_state_implication_multiprocessing_helper(
+        seed: Optional[int],
+        s: Optional[Solver],
+        old_hyps: Iterable[Expr],
+        new_conc: Expr
+) -> Optional[Tuple[Model, Model]]:
+    if s is None:
+        s = Solver()
+    if seed is not None:
+        print(f'PID={os.getpid()} setting z3 seed to {seed}')
+        z3.set_param('smt.random_seed', seed)
+    res = check_two_state_implication_all_transitions(s, old_hyps, new_conc)
+    if seed is not None:
+        print(f'PID={os.getpid()} z3 returned {"unsat" if res is None else "sat"}')
+    if res is None:
+        return None
+    else:
+        z3m, _ = res
+        prestate = Model.from_z3([KEY_OLD], z3m)
+        poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+        return (prestate, poststate)
+def check_two_state_implication_multiprocessing(
+        s: Solver,
+        old_hyps: Iterable[Expr],
+        new_conc: Expr
+) -> Optional[Tuple[Model, Model]]:
+    # this function uses multiprocessing to start multiple solvers
+    # with different random seeds and return the first result obtained
+    if utils.args.cpus is None or utils.args.cpus == 1:
+        return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc)
+    with multiprocessing.Pool(utils.args.cpus) as pool:
+        results = []
+        for i in itertools.count():
+            if i < utils.args.cpus:
+                results.append(pool.apply_async(
+                    check_two_state_implication_multiprocessing_helper,
+                    (i, None, list(old_hyps), new_conc)
+                ))
+            results[0].wait(1)
+            ready = [r for r in results if r.ready()]
+            if len(ready) > 0:
+                return ready[0].get(1)  # the context manager of pool will terminate the processes
+    assert False
 def check_two_state_implication(
         s: Solver,
         precondition: Union[Iterable[Expr], State],
@@ -230,7 +274,7 @@ def check_two_state_implication(
                 print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 break
         else:
-            res = check_two_state_implication_all_transitions(
+            res = check_two_state_implication_multiprocessing(
                 s,
                 [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
                 p)
@@ -260,9 +304,7 @@ def check_two_state_implication(
                                   f'{all(eval_in_state(s, prestate, q) for q in precondition)}')
                         print(f'eval_in_state(s, poststate, p): {eval_in_state(s, poststate, p)}')
                     assert False, 'Probably because state isomorphism is not handled correctly yet...'
-                z3m, _ = res
-                prestate = Model.from_z3([KEY_OLD], z3m)
-                poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+                prestate, poststate = res
                 result = (prestate, poststate)
                 _cache_transitions.append(result)
                 for state in result:
@@ -482,14 +524,15 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
         Union[State, Expr],
 ]]) -> List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]]:
     real_work = [k for k in work if k not in _cache_map_clause_state_interaction]
-    # for debugging, compare results from cache to map_clause_state_interaction_instantiate
-    for k in work:
-        if k in _cache_map_clause_state_interaction and isinstance(k[2], State):
-            all_mus, all_mss = _cache_map_clause_state_interaction[k]
-            all_mss2 = map_clause_state_interaction_instantiate(k[0], k[1], k[2])
-            assert len(all_mss) == len(set(all_mss))
-            assert len(all_mss2) == len(set(all_mss2))
-            assert set(all_mss) == set(all_mss2), (sorted(all_mss), sorted(all_mss2))
+    if False:
+        # for debugging, compare results from cache to map_clause_state_interaction_instantiate
+        for k in work:
+            if k in _cache_map_clause_state_interaction and isinstance(k[2], State):
+                all_mus, all_mss = _cache_map_clause_state_interaction[k]
+                all_mss2 = map_clause_state_interaction_instantiate(k[0], k[1], k[2])
+                assert len(all_mss) == len(set(all_mss))
+                assert len(all_mss2) == len(set(all_mss2))
+                assert set(all_mss) == set(all_mss2), (sorted(all_mss), sorted(all_mss2))
     if len(real_work) > 0:
         if utils.args.cpus is None:
             n = 1
@@ -679,7 +722,7 @@ def map_clause_state_interaction_instantiate(
             assert len(ds) == 1, v
             universes.append(state.univs[ds[0]])
     n = reduce(lambda x, y: x * y, [len(u) for u in universes], 1)
-    print(f'map_clause_state_interaction_instantiate: iterating over {n} instantiations... ')
+    print(f'map_clause_state_interaction_instantiate: PID={os.getpid()}, iterating over {n} instantiations... ')
     for tup in product(*universes):
         mss = frozenset(
             i
@@ -690,7 +733,7 @@ def map_clause_state_interaction_instantiate(
             result = [
                 other for other in result if not other <= mss
             ] + [mss]
-    print(f'map_clause_state_interaction_instantiate: iterated over {n} instantiations, found {len(result)} MSSs')
+    print(f'map_clause_state_interaction_instantiate: PID={os.getpid()}, iterated over {n} instantiations, found {len(result)} MSSs')
     return result
 
 
@@ -2311,6 +2354,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
 
+    print(f'\nStarting cdcl_state_bounds, PID={os.getpid()} [{datetime.now()}]\n')
+
     # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
     inits = tuple(init.expr for init in prog.inits())
@@ -2411,6 +2456,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
         # NOTE: this finds new reachable states, presumably only if i
         # is None assuming that forward_explore_from_state(None) was
         # called before with the same predicates
+        print(f'Starting forward_explore_from_state({src})')
 
         nonlocal reachable
         r: FrozenSet[int] = reachable
@@ -2452,6 +2498,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
             assert src is None or len(reachable) == n_reachable
             r = close_forward(r)
             assert frozenset(index_map.values()) <= r
+        print(f'Finished forward_explore_from_state({src})')
         # return a
 
     def houdini_frames() -> None:
@@ -2718,7 +2765,14 @@ def cdcl_state_bounds(solver: Solver) -> str:
         #     )
         # ]
         print(f'Selected the following states for refinement: {states_to_bound}\n')
+        added_so_far: List[Predicate] = []
         for i in states_to_bound:
+            if not all(eval_in_state(None, states[i], p) for p in added_so_far):
+                print(f'\nstates[{i}] already ruled out by previously added predicates, skipping it')
+                continue
+                # TODO: this is not entirely consistent with the
+                # bounds, since it may be eliminated by predicates
+                # with a higher bound
             assert_invariants()
             n = 0
             worklist: List[Tuple[int, ...]] = [(i, )]
@@ -2748,6 +2802,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                         # found potential invariant that does not currently has a CTI
                         for p in _inv:
                             add_predicate(p, i)
+                            added_so_far.append(p)
                             # TODO: remember that this state caused
                             # this predicate to be added, and cleanup
                             # predicates where all the states that
@@ -2772,9 +2827,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
             print(f'The bound for states[{i}] is {n}, the candidate invariant is:')
             for p in _inv:
                 print(f'  {p}')
-            print()
         assert len(sharp_predicates) > n_sharp_predicates
-        print(f'Learned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
+        print(f'\nLearned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
 
 NatInf = Optional[int] # None represents infinity
 # TODO: maybe these should be classes with their own methds
