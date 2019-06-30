@@ -2757,15 +2757,15 @@ def cdcl_state_bounds(solver: Solver) -> str:
         #
         # states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
         #
-        states_to_bound = sorted(current_ctis)
-        # states_to_bound = [
-        #     # bound only a single state, with minimal current bound, then minimal universe size, then minimal index (oldest)
-        #     min(current_ctis, key=lambda i: (
-        #         state_bounds[i],
-        #         sum(len(u) for u in states[i].univs.values()),
-        #         i)
-        #     )
-        # ]
+        # states_to_bound = sorted(current_ctis)
+        states_to_bound = [
+            # bound only a single state, with minimal current bound, then minimal universe size, then minimal index (oldest)
+            min(current_ctis, key=lambda i: (
+                state_bounds[i],
+                sum(len(u) for u in states[i].univs.values()),
+                i)
+            )
+        ]
         print(f'Selected the following states for refinement: {states_to_bound}\n')
         added_so_far: List[Predicate] = []
         for i in states_to_bound:
