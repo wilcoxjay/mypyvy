@@ -65,6 +65,14 @@ def load_caches() -> None:
             for k in to_clear:
                 del cache[k]
         sys.modules['pd'].__dict__.update(cache)
+        if False: # check _cache_eval_in_state against current implementation
+            for k, v in _cache_eval_in_state.items():
+                if type(k) is not tuple:
+                    continue
+                m, p = k
+                assert v == all(eval_clause_in_state(clause, m) for clause in as_clauses(p)), f'{p}\n=========\n{m}'
+                # assert v == cheap_check_implication([m.as_onestate_formula(0)], [p]), f'{p}\n=========\n{m}'
+            sys.exit(0)
 
 # signal handler to dump caches
 import signal
@@ -96,6 +104,66 @@ def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
             m.get_universe(e.var_sort(i)) for i in range(e.num_vars() - 1, -1, -1) # de Bruijn
         )))
 
+def eval_clause_in_state(
+        clause: Expr,
+        state: State,
+) -> bool:
+    variables, literals = destruct_clause(clause)
+    def ev(values: Sequence[str], lit: Expr) -> bool:
+        # TODO: rewrite this with James, this is a hacky partial implementation of first-order logic semantics for class Model (written on a plane from Phoenix to SF)
+        assert len(variables) == len(values)
+        consts_and_vars: Dict[str, str] = dict(chain(
+            ((var.name, val) for var, val in zip(variables, values)),
+            ((d.name, val) for d, val in state.immut_const_interps.items()),
+            ((d.name, val) for d, val in state.const_interps[0].items()),
+        ))
+        functions: Dict[str, Dict[Tuple[str,...], str]] = dict(
+            (d.name, dict((tuple(args), val) for args, val in func))
+            for d, func in chain(state.immut_func_interps.items(), state.func_interps[0].items())
+        )
+        relations: Dict[str, Dict[Tuple[str,...], bool]] = dict(
+            (d.name, dict((tuple(args), val) for args, val in func))
+            for d, func in chain(state.immut_rel_interps.items(), state.rel_interps[0].items())
+        )
+        def get_term(t: Expr) -> str:
+            if isinstance(t, Id):
+                return consts_and_vars[t.name]
+            elif isinstance(t, AppExpr):
+                return functions[t.callee][tuple(get_term(a) for a in t.args)]
+            else:
+                assert False, t
+        if isinstance(lit, Bool):
+            return lit.val
+        elif isinstance(lit, UnaryExpr):
+            assert lit.op == 'NOT', lit
+            return not ev(values, lit.arg)
+        elif isinstance(lit, BinaryExpr):
+            assert lit.op in ('EQUAL', 'NOTEQ'), lit
+            eq = get_term(lit.arg1) == get_term(lit.arg2)
+            return eq if lit.op == 'EQUAL' else not eq
+        elif isinstance(lit, AppExpr):
+            return relations[lit.callee][tuple(get_term(a) for a in lit.args)]
+        elif isinstance(lit, Id):
+            # nullary relation
+            return relations[lit.name][()]
+        else:
+            assert False, lit
+    universes = []
+    for v in variables:
+        assert isinstance(v.sort, UninterpretedSort), v
+        if v.sort.decl is not None and v.sort.decl in state.univs:
+            assert v.sort.name == v.sort.decl.name, v
+            universes.append(state.univs[v.sort.decl])
+        else:
+            # assert False, v # TODO: ask James why does this happen
+            ds = [d for d in state.univs if d.name == v.sort.name]
+            assert len(ds) == 1, v
+            universes.append(state.univs[ds[0]])
+    n = reduce(lambda x, y: x * y, [len(u) for u in universes], 1)
+    print(f'eval_clause_in_state: iterating over {n} instantiations... ', end='')
+    result = all(any(ev(tup,lit) for lit in literals) for tup in product(*universes))
+    print(f'done.')
+    return result
 
 _solver: Optional[Solver] = None
 def get_solver() -> Solver:
@@ -129,14 +197,15 @@ def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
-        if m.z3model is not None:
-            try:
-                cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
-            except:
-                print(m)
-                raise
-        else:
-            cache[k] = cheap_check_implication([m.as_onestate_formula(0)], [p])
+        cache[k] = eval_clause_in_state(p, m)
+        # if m.z3model is not None:
+        #     try:
+        #         cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
+        #     except:
+        #         print(m)
+        #         raise
+        # else:
+        #     cache[k] = cheap_check_implication([m.as_onestate_formula(0)], [p])
 
         cache['m'] += 1
         if len(cache) % 1000 == 1:
