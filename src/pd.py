@@ -1028,7 +1028,7 @@ class MultiSubclausesMapICE(object):
         self.predicates = predicates
         self.top_clauses = tuple(top_clauses)
         self.m = len(self.top_clauses)
-        assert self.m > 0
+        # assert self.m > 0
         self.variables = [destruct_clause(self.top_clauses[k])[0] for k in range(self.m)]
         self.literals = [destruct_clause(self.top_clauses[k])[1] for k in range(self.m)]
         self.n = [len(self.literals[k]) for k in range(self.m)]
@@ -1040,6 +1040,8 @@ class MultiSubclausesMapICE(object):
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
 
     def _new_states(self) -> None:
+        if self.m == 0:
+            return
         new = range(len(self.state_vs[0]), len(self.states))
         if len(new) == 0:
             return
@@ -1067,6 +1069,8 @@ class MultiSubclausesMapICE(object):
             print(f'Done subclauses-states (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
 
     def _new_predicates(self) -> None:
+        if self.m == 0:
+            return
         new = range(len(self.predicate_vs[0]), len(self.predicates))
         if len(new) == 0:
             return
@@ -2903,7 +2907,475 @@ def cdcl_state_bounds(solver: Solver) -> str:
                 print(f'The bound for states[{i}] is {n}, the candidate invariant is:')
                 for p in _inv:
                     print(f'  {p}')
-        assert len(sharp_predicates) > n_sharp_predicates
+        # assert len(sharp_predicates) > n_sharp_predicates # this may not be true if the state(s) we selected to refine turns out to be reachable, TODO: rethink this
+        print(f'\nLearned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
+
+
+def cdcl_predicate_bounds(solver: Solver) -> str:
+    '''
+    Another attempt at CDCL with bounds (not sharp), this time all bounds are for predicates
+    '''
+    prog = syntax.the_program
+    global cache_path
+    cache_path = Path(utils.args.filename).with_suffix('.cache')
+    load_caches()
+
+    print(f'\nStarting cdcl_predicate_bounds, PID={os.getpid()} [{datetime.now()}]\n')
+
+    # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
+    inits = tuple(init.expr for init in prog.inits())
+    assert cheap_check_implication(inits, safety), 'Initial states not safe'
+
+    states: List[State] = []
+    maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram
+    # the following are indices into states:
+    reachable: FrozenSet[int] = frozenset()
+    live_states: FrozenSet[int] = frozenset() # not yet ruled out by invariant
+    transitions: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
+    substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
+
+    def add_state(s: State) -> int:
+        nonlocal live_states
+        assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
+        if s in states:
+            # assert False
+            return states.index(s)
+        i = len(states)
+        states.append(s)
+        live_states |= {i}
+        for j in range(i):
+            t = states[j]
+            if is_substructure(s, t):
+                substructure.append((j, i))
+            if is_substructure(t, s):
+                substructure.append((i, j))
+        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        assert len(cs) == 1
+        c = cs[0]
+        maps.append(SubclausesMapTurbo(c, states, [], True))
+        return i
+
+    predicates: List[Predicate] = []
+    inductive_invariant: FrozenSet[int] = frozenset()  # indices into predicates for current inductive invariant
+    sharp_predicates: FrozenSet[int] = frozenset()  # TODO: change name, not necessarily sharp
+    frames: List[List[Predicate]] = []
+    reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude
+    predicate_bounds: Dict[int, int] = defaultdict(int)  # mapping from predicate index to its invariant
+
+    def add_predicate(p: Predicate, reason: Optional[int] = None) -> int:
+        nonlocal predicates
+        nonlocal sharp_predicates
+        nonlocal reason_for_predicate
+        if p not in predicates:
+            print(f'add_predicate: adding new predicate: {p}')
+            j = len(predicates)
+            predicates.append(p)
+        else:
+            j = predicates.index(p)
+            if j in sharp_predicates:
+                print(f'add_predicate: already have this predicate: {p}')
+            else:
+                print(f'add_predicate: reviving previous predicate: {p}')
+        sharp_predicates |= {j}
+        assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
+        if reason is not None:
+            reason_for_predicate[j] |= {reason}
+        return j
+
+    for p in safety:
+        add_predicate(p)
+
+    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+        return alpha_from_predicates(
+            solver,
+            states,
+            [predicates[i] for i in sorted(sharp_predicates)],
+        )
+
+    def close_forward(s: FrozenSet[int]) -> FrozenSet[int]:
+        '''
+        return closure under *abstract* post, also adds all known reachable states.
+        abstract post meanst we consider an abstract transition from s to t if t is a substructure of s.
+        '''
+        r = s | frozenset(reachable)
+        changes = True
+        while changes:
+            changes = False
+            # close under transitions and substructure
+            for i, j in chain(transitions, substructure):
+                if i in r and j not in r:
+                    r |= {j}
+                    changes = True
+        return r
+
+    def forward_explore_from_states(src: FrozenSet[int],
+                                   # k: int
+    ) -> None:
+        # forward explore (concretley) either from the given states,
+        # according to the current sharp predicates, using unrolling
+        # of k
+
+        # NOTE: this may find new reachable states
+        print(f'Starting forward_explore_from_states({sorted(src)})')
+
+        nonlocal reachable
+        r: FrozenSet[int] = reachable | src
+        r = close_forward(r)
+        a = list(chain(
+            ## (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
+            (predicates[j] for j in sorted(sharp_predicates)),
+        ))
+        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+            return alpha_from_predicates(solver, states, a)
+        n = -1
+        while len(r) > n:
+            n = len(r)
+            r = close_forward(r)
+            _states, _a, _initials, _transitions = forward_explore(
+                # TODO: this does not connect already discovered states
+                # TODO: use unrolling
+                solver,
+                alpha_a,
+                [states[i] for i in sorted(r)],
+            )
+            a = list(_a)
+            assert _states[:len(r)] == [states[i] for i in sorted(r)]
+            index_map: Dict[int, int] = dict()
+            for i in range(len(_states)):
+                try:
+                    index_map[i] = states.index(_states[i])
+                except ValueError:
+                    index_map[i] = add_state(_states[i])
+            assert [index_map[i] for i in range(len(r))] == sorted(r)
+            n_reachable = len(reachable)
+            reachable |= set(index_map[i] for i in _initials)
+            for i, j in _transitions:
+                ii, jj = index_map[i], index_map[j]
+                transitions.append((ii, jj))
+            reachable = close_forward(reachable)
+            r = close_forward(r)
+            assert frozenset(index_map.values()) <= r
+        print(f'Finished forward_explore_from_states({sorted(src)})')
+
+    def houdini_frames() -> None:
+        '''Check if any subset of the sharp predicates is inductive, and
+        possibly add new ctis. This version is stratified, and
+        computes "frames" similar to IC3, but since multi-transition
+        CTIs are used they have a slightly different meaning. This
+
+        This version calls forward_explore_from_states on its own, and
+        may find new reachable states, both when doing
+        forward_explore_from_states of the reachable states, but also
+        since we may find a CTI and then discover that the prestate is
+        reachable all at once. Maybe this should be changed to be more
+        consistent by treating negations of diagrams as predicates and
+        not as a special case
+
+        '''
+        nonlocal reachable
+        nonlocal inductive_invariant
+        nonlocal frames
+        assert_invariants()
+
+        # first forward_explore from the reachable states
+        n_reachable = len(reachable)
+        n_sharp_predicates = len(sharp_predicates)
+        forward_explore_from_states(reachable)
+        new_reachable_states()
+        print(f'Forward explore of reachable states found {len(reachable) - n_reachable} new reachable states, eliminating {len(sharp_predicates) - n_sharp_predicates} predicates')
+        assert_invariants()
+
+        frames = [[predicates[i] for i in sorted(sharp_predicates)]]
+        r = reachable
+        while True:
+            assert r == close_forward(r)
+            a = frames[-1]
+            assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(r), a))
+            for i in sorted(live_states):
+                if i not in r and all(eval_in_state(None, states[i], p) for p in a):
+                    r |= {i}
+                    r = close_forward(r)
+            n_reachable = len(reachable)
+            forward_explore_from_states(r) # TODO: not sure if we should do this here or not
+            assert n_reachable == len(reachable)
+            r = close_forward(r)
+            for i in sorted(live_states):
+                if i in r:
+                    continue
+                print(f'houdini_frames: checking for backward-transition from states[{i}]')
+                res = check_two_state_implication(
+                    solver,
+                    a,
+                    maps[i].to_clause(maps[i].all_n),
+                    f'backward-transition from states[{i}]'
+                )
+                print(f'houdini_frames: done checking for backward-transition from states[{i}]')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    transitions.append((i_pre, i_post))
+                    assert i_post == i or (i_post, i) in substructure
+                    reachable = close_forward(reachable) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
+                    r |= {i_pre}
+                    r = close_forward(r)
+            n_reachable = len(reachable)
+            forward_explore_from_states(r) # this is probably a good place for this
+            assert n_reachable == len(reachable)
+            r = close_forward(r)
+            b = [p for p in a if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            for p in b[:]:
+                if p not in b:
+                    continue
+                print(f'houdini_frames: checking for CTI to {p}')
+                res = check_two_state_implication(solver, a, p, 'CTI')
+                print(f'houdini_frames: done checking for CTI to {p}')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate)
+                    i_post = add_state(poststate)
+                    transitions.append((i_pre, i_post))
+                    reachable = close_forward(reachable) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
+                    r |= {i_pre}
+                    r = close_forward(r)
+                    n_reachable = len(reachable)
+                    forward_explore_from_states(r) # this is probably a good place for this
+                    assert n_reachable == len(reachable)
+                    r = close_forward(r)
+                    b = [p for p in b if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            if a == b:
+                break
+            else:
+                frames.append(b)
+        # here, frames[-1] is inductive (but it may not imply safety)
+        assert frames[-1] == a == b
+        inv = frozenset(predicates.index(p) for p in a)
+        assert inductive_invariant <= inv
+        inductive_invariant = inv
+
+    def get_invariant(top_clauses: Sequence[Expr], states_to_exclude: FrozenSet[int]) -> Tuple[Optional[List[Predicate]], Optional[List[int]]]:
+        '''Check if there is an inductive invariant that is a conjunction of
+        one subclause from each top clause, that excludes all given
+        states. Either return an invariant (list of Predicates) or a
+        list of CTIs (which may be some of the states_to_exclude).
+
+        '''
+        mp = MultiSubclausesMapICE(
+            top_clauses,
+            states,
+            [],
+            False
+        )
+        def check_sep(s: FrozenSet[int]) -> Optional[List[Predicate]]:
+            res = mp.separate(
+                pos=sorted(reachable),
+                imp=[(i, j) for i in sorted(s) for j in sorted(close_forward(frozenset([i])))],
+                neg=(states_to_exclude & s),
+            )
+            if res is None:
+                return None
+            else:
+                return [mp.to_clause(k, res[k]) for k in range(mp.m)]
+        ctis = live_states - reachable
+        res = check_sep(ctis)
+        if res is not None:
+            return res, None
+        # minimize ctis
+        # TODO: use unsat cores
+        for i in sorted(ctis):
+            if i in ctis and check_sep(ctis - {i}) is None:
+                ctis -= {i}
+        assert check_sep(ctis) is None
+        return None, sorted(ctis)
+
+    def new_reachable_states() -> None:
+        nonlocal sharp_predicates
+        nonlocal reachable
+        reachable = close_forward(reachable)
+        sharp_predicates = frozenset(
+            j for j in sorted(sharp_predicates)
+            if all(eval_in_state(None, states[k], predicates[j])
+                   for k in sorted(reachable)
+            )
+        )
+
+    def assert_invariants() -> None:
+        # for debugging
+        assert reachable == close_forward(reachable)
+        assert sharp_predicates <= frozenset(
+            j for j, p in enumerate(predicates)
+            if all(eval_in_state(None, states[k], p)
+                   for k in sorted(reachable)
+            )
+        )
+        assert live_states == frozenset(
+            i for i, s in enumerate(states)
+            if all(eval_in_state(None, s, predicates[j])
+                   for j in sorted(inductive_invariant)
+            )
+        )
+        for i in sorted(sharp_predicates - inductive_invariant):
+            assert predicates[i] in safety or len(reason_for_predicate[i]) > 0
+        for x in reason_for_predicate.values():
+            assert x <= live_states
+
+    while True:
+        assert_invariants() # not true if we have BMC, TODO rethink this
+
+        # Houdini, to check if anything new is inductive, adding new
+        # reachable states and new ctis, which will be used later when
+        # computing bounds
+        n_inductive_invariant = len(inductive_invariant)
+        n_reachable = len(reachable)
+        houdini_frames()
+        if len(reachable) > n_reachable:
+            print(f'Houdini found {len(reachable) - n_reachable} new reachable states')
+            new_reachable_states()
+        if len(inductive_invariant) > n_inductive_invariant:
+            print(f'Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            live_states = frozenset(
+                i for i, s in enumerate(states)
+                if all(eval_in_state(None, s, predicates[j])
+                       for j in sorted(inductive_invariant)
+                )
+            )
+            predicate_bounds.clear()  # TODO: maybe do something a bit better, i.e., record the set of states explaining the bound, and keep it if they are still live
+            for i in reason_for_predicate:
+                reason_for_predicate[i] &= live_states
+            n_sharp_predicates = len(sharp_predicates)
+            sharp_predicates = inductive_invariant | frozenset(
+                j for j in sharp_predicates
+                if len(reason_for_predicate[j]) > 0 or predicates[j] in safety
+            )
+            if n_sharp_predicates > len(sharp_predicates):
+                print(f'Unrefined {n_sharp_predicates - len(sharp_predicates)} predicates')
+                # TODO: we may have to run Houdini again, as we may get less ctis but no invariants. we can actually get new states.
+                # n_states = len(states)
+                # n_inductive_invariant = len(inductive_invariant)
+                # n_reachable = len(reachable)
+                # current_ctis = frozenset()
+                # houdini_frames()
+                # assert n_states == len(states)
+                # assert n_inductive_invariant == len(inductive_invariant)
+                # assert n_reachable == len(reachable)
+
+        assert_invariants()
+
+        # print status and possibly terminate
+        print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable):\n' + '-' * 8)
+        for i in sorted(live_states):
+            notes: List[str] = []
+            if i in reachable:
+                notes.append('reachable')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
+        for i in reachable:
+            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
+                print(f'\nFound safety violation by reachable state (states[{i}]).')
+                dump_caches()
+                return 'UNSAFE'
+        print(f'\nCurrent sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
+        for i in sorted(sharp_predicates):
+            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
+            assert max_frame < len(frames) - 1 or i in inductive_invariant
+            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
+            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
+            print('Proved safety!')
+            dump_caches()
+            return 'SAFE'
+        print(f'\nCurrent bounds:')
+        for i in sorted(sharp_predicates - inductive_invariant):
+            if i in predicate_bounds:
+                # TODO: actually the bound for every predicate here is at least 1
+                print(f'  predicates[{i:3}]: bound is {predicate_bounds[i]}, ({predicates[i]})')
+        print()
+
+        # try to increase bounds for some predicates, without
+        # discovering new CTIs (but may discover new reachable
+        # states), and add new predicates
+
+        n_predicates = len(predicates)
+        n_sharp_predicates = len(sharp_predicates)
+        predicates_to_bound = sorted(sharp_predicates - inductive_invariant)
+        print(f'Selected the following predicates for refinement: {predicates_to_bound}\n')
+        # live_so_far: live_states
+        for j in predicates_to_bound:
+            # TODO: maybe skip predicates that have already been proven using existing new predicates
+            assert_invariants()
+            states_to_exclude = frozenset(
+                i for i in live_states - reachable
+                if not eval_in_state(None, states[i], predicates[j])
+            )
+            n = 0
+            worklist: List[Tuple[int, ...]] = [()]
+            while len(worklist) > 0:  # TODO: rethink the condition of this loop and its structure
+                print(f'\nWorking on the bound of predicates[{j}], current bound is {n}, worklist is {len(worklist)} long:')
+                for w in worklist:
+                    print(f'  {w}')
+                next_worklist: List[Tuple[int, ...]] = []
+                for ii in worklist:
+                    n_reachable = len(reachable)
+                    while True:
+                        _inv, _ctis = get_invariant(
+                            # TODO: should the predicate we are trying
+                            # to prove also be used in the invariant?
+                            # right now it is not
+                            [maps[i].to_clause(maps[i].all_n) for i in ii],
+                            states_to_exclude,
+                        )
+                        if _inv is None:
+                            break
+                        else:
+                            # check if inv is initial
+                            initial = True
+                            for p in _inv:
+                                s = check_initial(solver, p)
+                                if s is not None:
+                                    print(f'Suggested predicate ({p}) not initial, learned a new initial state')
+                                    # assert s not in states # TODO: this can be violated by a backward transition finding an initial state, and should be fixed by a better forward_explore
+                                    reachable |= {add_state(s)}
+                                    new_reachable_states()
+                                    initial = False
+                            if initial:
+                                break
+                    print(f'Learned {len(reachable) - n_reachable} new reachable states')
+                    if _inv is not None:
+                        # found potential invariant that does not currently has a CTI
+                        assert len(_inv) == len(ii)
+                        for p, i in zip(_inv, ii):
+                            add_predicate(p, i)
+                        worklist = []
+                        break
+                    else:
+                        assert _ctis is not None
+                        # note: _ctis may be empty here
+                        print(f'Could not find invariant, ctis: {sorted(_ctis)}')
+                        next_worklist.extend(ii + (i,) for i in sorted(_ctis))
+                else:
+                    n += 1
+                    worklist = sorted(set(next_worklist))
+                    if len(worklist) == 0:
+                        assert len(states_to_exclude & reachable) > 0
+            if len(states_to_exclude & reachable) > 0:
+                print(f'Learned that predicates[{j}] is violated by a reachable state')
+                if j in predicate_bounds:
+                    del predicate_bounds[j]
+            else:
+                assert _inv is not None
+                predicate_bounds[j] = n
+                print(f'The bound for predicates[{j}] is {n}, the candidate invariant is:')
+                for p in _inv:
+                    print(f'  {p}')
+
+        print(f'\nCurrent bounds:')
+        for i in sorted(sharp_predicates - inductive_invariant):
+            if i in predicate_bounds:
+                # TODO: actually the bound for every predicate here is at least 1
+                print(f'  predicates[{i:3}]: bound is {predicate_bounds[i]}, ({predicates[i]})')
+        print()
+
         print(f'\nLearned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
 
 NatInf = Optional[int] # None represents infinity
@@ -4194,6 +4666,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     # cdcl_state_bounds
     s = subparsers.add_parser('pd-cdcl-state-bounds', help='Run the "CDCL state bounds" algorithm')
     s.set_defaults(main=cdcl_state_bounds)
+    result.append(s)
+
+    # cdcl_predicate_bounds
+    s = subparsers.add_parser('pd-cdcl-predicate-bounds', help='Run the "CDCL predicate bounds" algorithm')
+    s.set_defaults(main=cdcl_predicate_bounds)
     result.append(s)
 
     # cdcl_invariant
