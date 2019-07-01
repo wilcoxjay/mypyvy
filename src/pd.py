@@ -219,7 +219,8 @@ _cache_initial: List[State] = []
 # TODO: could also cache expressions already found to be initial
 def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
     prog = syntax.the_program
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     for s in _cache_initial:
         if not eval_in_state(solver, s, p):
             print(f'Found cached initial state violating {p}:')
@@ -306,7 +307,8 @@ def check_two_state_implication(
         msg: str = 'transition'
 ) -> Optional[Tuple[State,State]]:
     prog = syntax.the_program
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
     if not isinstance(precondition, State):
         precondition = tuple(precondition)
@@ -1187,7 +1189,8 @@ def forward_explore_marco_turbo(solver: Solver,
 ) -> Tuple[List[State], Sequence[Expr]]:
 
     prog = syntax.the_program
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
     states: List[State] = [] if _states is None else list(_states)
     predicates: List[Expr] = []  # growing list of predicates considered
@@ -1294,7 +1297,8 @@ def forward_explore_marco(solver: Solver,
     prog = syntax.the_program
     states: List[State] = [] if _states is None else list(_states)
 
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
     class SubclausesMap(object):
         def __init__(self, top_clause: Expr):
@@ -1612,7 +1616,8 @@ def forward_explore(s: Solver,
         states = list(states)
     a = alpha(states)
     prog = syntax.the_program
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     initial: List[int] = []
     transitions: List[Tuple[int, int]] = []
 
@@ -1775,7 +1780,8 @@ def repeated_houdini(s: Solver) -> str:
     load_caches()
 
     sharp = utils.args.sharp
-    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
     reachable_states : List[State] = []
 
     # TODO: get this from command line option, and from the right file
@@ -1864,8 +1870,10 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
 
-    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
-    inits = tuple(init.expr for init in prog.inits())
+    # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[State] = []
@@ -2431,7 +2439,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
 
     # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[State] = []
@@ -2974,7 +2983,8 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
 
     # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
-    inits = tuple(init.expr for init in prog.inits())
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[State] = []
@@ -4088,7 +4098,8 @@ def cdcl_invariant(solver: Solver) -> str:
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
 
-    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
     def safe(s: State) -> bool:
         return all(eval_in_state(solver, s, p) for p in safety)
 
