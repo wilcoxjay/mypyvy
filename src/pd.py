@@ -160,9 +160,9 @@ def eval_clause_in_state(
             assert len(ds) == 1, v
             universes.append(state.univs[ds[0]])
     n = reduce(lambda x, y: x * y, [len(u) for u in universes], 1)
-    print(f'eval_clause_in_state: iterating over {n} instantiations... ', end='')
+    # print(f'eval_clause_in_state: iterating over {n} instantiations... ', end='')
     result = all(any(ev(tup,lit) for lit in literals) for tup in product(*universes))
-    print(f'done.')
+    # print(f'done.')
     return result
 
 _solver: Optional[Solver] = None
@@ -2471,6 +2471,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     inductive_invariant: FrozenSet[int] = frozenset()  # indices into predicates for current inductive invariant
     sharp_predicates: FrozenSet[int] = frozenset()  # TODO: change name, not necessarily sharp
     frames: List[List[Predicate]] = []
+    step_frames: List[List[Predicate]] = []
     reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude
 
     def add_predicate(p: Predicate, reason: Optional[int] = None) -> int:
@@ -2660,6 +2661,29 @@ def cdcl_state_bounds(solver: Solver) -> str:
         assert inductive_invariant <= inv
         inductive_invariant = inv
 
+    def compute_step_frames() -> None:
+        nonlocal step_frames
+        step_frames = [[predicates[i] for i in sorted(sharp_predicates)]]
+        while True:
+            a = step_frames[-1]
+
+            b = []
+            for p in a:
+                res = check_two_state_implication(solver, a, p, 'step-CTI')
+                if res is not None:
+                    prestate, poststate = res
+                    # TODO: should we add these states or not? they may not necessarily already be in states
+                else:
+                    b.append(p)
+            if a == b:
+                break
+            else:
+                step_frames.append(b)
+        # here, frames[-1] is inductive (but it may not imply safety)
+        assert step_frames[-1] == a == b
+        inv = frozenset(predicates.index(p) for p in a)
+        assert inductive_invariant == inv
+
     def get_invariant(states_to_exclude: Sequence[int]) -> Tuple[Optional[List[Predicate]], Optional[List[int]]]:
         '''Check if there is an inductive invariant that is a conjunction a
         subclause from the negation of the diagram of states. Either
@@ -2671,9 +2695,9 @@ def cdcl_state_bounds(solver: Solver) -> str:
             [],
             False
         )
-        def check_sep(s: Collection[int]) -> Optional[List[Predicate]]:
+        def check_sep(s: Collection[int], pos: Collection[int]) -> Optional[List[Predicate]]:
             res = mp.separate(
-                pos=sorted(reachable),
+                pos=sorted(pos),
                 imp=[(i, j) for i in sorted(s) for j in sorted(close_forward(frozenset([i])))],
             )
             if res is None:
@@ -2681,16 +2705,37 @@ def cdcl_state_bounds(solver: Solver) -> str:
             else:
                 return [mp.to_clause(k, res[k]) for k in range(mp.m)]
         ctis = live_states - reachable
-        res = check_sep(ctis)
+        res = check_sep(ctis, reachable)
         if res is not None:
+            if False:
+                # try to include more states, prioratized by step_frames
+                # TODO: use z3.Optimize instead of this loop
+                # TODO: not sure if this is a good idea
+                state_frames = [reachable] + [
+                    frozenset(i for i, s in enumerate(states) if all(eval_in_state(None, s, p) for p in a))
+                    for a in step_frames
+                ]
+                for i, pos in enumerate(state_frames):
+                    print(f'Trying pos=state_frames[{i}]={sorted(pos)}')
+                    _res = check_sep(ctis, pos)
+                    if _res is None:
+                        print(f'pos=state_frames[{i}] returned None')
+                        break
+                    else:
+                        print(f'pos=state_frames[{i}] returned:')
+                        for p in _res:
+                            print(f'  {p}')
+                        res = _res
+                    assert res is not None
             return res, None
-        # minimize ctis
-        # TODO: use unsat cores
-        for i in sorted(ctis):
-            if i in ctis and check_sep(ctis - {i}) is None:
-                ctis -= {i}
-        assert check_sep(ctis) is None
-        return None, sorted(ctis)
+        else:
+            # minimize ctis
+            # TODO: use unsat cores
+            for i in sorted(ctis):
+                if i in ctis and check_sep(ctis - {i}, reachable) is None:
+                    ctis -= {i}
+            assert check_sep(ctis, reachable) is None
+            return None, sorted(ctis)
 
     def new_reachable_states() -> None:
         nonlocal sharp_predicates
@@ -2750,6 +2795,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
         n_reachable = len(reachable)
         current_ctis = frozenset()
         houdini_frames()
+        compute_step_frames()
         if len(reachable) > n_reachable:
             # this can happen since we may have some ctis without any predicate excluding them, and we do have backward transitions. TODO: figure out something more consistent
             # assert False
@@ -2808,6 +2854,10 @@ def cdcl_state_bounds(solver: Solver) -> str:
             max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
             assert max_frame < len(frames) - 1 or i in inductive_invariant
             note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
+            max_frame = max(j for j, f in enumerate(step_frames) if predicates[i] in f)
+            assert max_frame < len(step_frames) - 1 or i in inductive_invariant
+            if i not in inductive_invariant:
+                note += f' ({max_frame + 1})'
             print(f'  predicates[{i:3}]{note}: {predicates[i]}')
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
             print('Proved safety!')
@@ -2830,15 +2880,15 @@ def cdcl_state_bounds(solver: Solver) -> str:
         #
         # states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
         #
-        # states_to_bound = sorted(current_ctis)
-        states_to_bound = [
-            # bound only a single state, with minimal current bound, then minimal universe size, then minimal index (oldest)
-            min(current_ctis, key=lambda i: (
-                state_bounds[i],
-                sum(len(u) for u in states[i].univs.values()),
-                i)
-            )
-        ]
+        states_to_bound = sorted(current_ctis)
+        # states_to_bound = [
+        #     # bound only a single state, with minimal current bound, then minimal universe size, then minimal index (oldest)
+        #     min(current_ctis, key=lambda i: (
+        #         state_bounds[i],
+        #         sum(len(u) for u in states[i].univs.values()),
+        #         i)
+        #     )
+        # ]
         print(f'Selected the following states for refinement: {states_to_bound}\n')
         added_so_far: List[Predicate] = []
         for i in states_to_bound:
