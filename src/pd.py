@@ -2452,7 +2452,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     ctis: FrozenSet[int] = frozenset()  # states that are "roots" of forward reachability trees that came from top-level Houdini
     current_ctis: FrozenSet[int] = frozenset()  # states were used in the last Houdini run
-    # bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
+    bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
     state_bounds: Dict[int, int] = defaultdict(int)  # mapping from state index to its bound
 
     def add_state(s: State) -> int:
@@ -2783,7 +2783,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
             assert x <= live_states
 
     while True:
-        assert_invariants() # not true if we have BMC, TODO rethink this
+        # assert_invariants() # not true if we have BMC, TODO rethink this
         n_reachable = len(reachable)
         #m = -1
         #while m != len(states):
@@ -2901,6 +2901,34 @@ def cdcl_state_bounds(solver: Solver) -> str:
         print(f'Selected the following states for refinement: {states_to_bound}\n')
         added_so_far: List[Predicate] = []
         for i in states_to_bound:
+            if i not in bmced:
+                print(f'Trying to reach states[{i}] in up to 5 steps')
+                p = maps[i].to_clause(maps[i].all_n)
+                changes = False
+                for k in range(1, 6):
+                    print(f'Checking if init satisfies WP_{k} of ~states[{i}]... ',end='')
+                    res = check_k_state_implication(solver, inits, p, k)
+                    if res is not None:
+                        prestate, *poststates = res
+                        # add all states, including first one that is an initial state
+                        # add new initial state
+                        i_pre = add_state(prestate)
+                        reachable |= {i_pre}
+                        for poststate in poststates:
+                            i_post = add_state(poststate)
+                            transitions.append((i_pre, i_post))
+                            # reachable |= {i_post} # not doing this to trigger discovery of new reachable states on the next loop iteration
+                            i_pre = i_post
+                        changes = True
+                        break
+                    else:
+                        print('YES')
+                if changes:
+                    print(f'Managed to reach states[{i}], looping\n')
+                    break # TODO: think about this
+                else:
+                    bmced |= {i}
+
             if not all(eval_in_state(None, states[i], p) for p in added_so_far):
                 print(f'\nstates[{i}] already ruled out by previously added predicates, skipping it')
                 continue
