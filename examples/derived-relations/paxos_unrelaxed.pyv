@@ -80,18 +80,24 @@ transition decide(r: round, v: value, q: quorum)
 #      & vote(N0,R1,V0)
 #   )
 
-derived relation r(node, round, value):
-  r(N, R, V) <->
-  left_round(N, R) & !vote(N, R, V)
+# derived relation r(node, round, value):
+#   r(N, R, V) <->
+#   left_round(N, R) & !vote(N, R, V)
+# 
+# derived relation s(round, round, quorum, value):
+#   (s(R1, R2, Q, V1) <->
+#    exists N.
+#      & member(N,Q)
+#      & left_round(N,R1)
+#      & one_b(N,R2)
+#      & r(N,R1,V1))
 
-derived relation s(round, round, quorum, value):
-  (s(R1, R2, Q, V1) <->
-   exists N.
-     & member(N,Q)
-     & left_round(N,R1)
-     & one_b(N,R2)
-     & r(N,R1,V1))
-
+derived relation r(quorum, round):
+  (r(Q0, R0) <->
+   (exists N0.
+     member(N0, Q0) &
+     left_round(N0, R0) &
+     one_b(N0, R0)))
 
 
 safety decision(R1, V1) & decision(R2, V2) -> V1 = V2

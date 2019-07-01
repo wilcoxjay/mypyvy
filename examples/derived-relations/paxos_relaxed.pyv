@@ -96,7 +96,7 @@ transition decide(r: round, v: value, q: quorum)
   & decision_quorum(r, v) = q
 
 transition decrease_domain()
-  modifies node_active, value_active, quorum_active, round_active
+  modifies node_active, value_active, quorum_active, round_active, r
   (forall N. node_active(N) -> old(node_active(N))) &
   (forall V. value_active(V) -> old(value_active(V))) &
   (forall Q. quorum_active(Q) -> old(quorum_active(Q))) &
@@ -104,6 +104,7 @@ transition decrease_domain()
 
   & (forall R, V. round_active(R) & value_active(V) -> quorum_active(old(decision_quorum(R,V))))
   & (forall R, V, N. round_active(R) & value_active(V) & node_active(N) -> old(decision(R,V)) & member(N, old(decision_quorum(R, V))) -> old(vote(N, R, V)))
+  & (forall Q, R. quorum_active(Q) & round_active(R) -> (old(r(Q,R)) -> r(Q,R)))
 
 # derived relation r(quorum, round, round, value):
 #   quorum_active(Q0) & round_active(R1) & round_active(R2) & value_active(V0) -> 
@@ -116,22 +117,31 @@ transition decrease_domain()
 #      & vote(N0,R1,V0)
 #   ))
 
-derived relation r(node, round, value):
-  node_active(N) & round_active(R) & value_active(V) -> 
-  (r(N, R, V) <->
-  left_round(N, R) & !vote(N, R, V))
+# derived relation r(node, round, value):
+#   node_active(N) & round_active(R) & value_active(V) -> 
+#   (r(N, R, V) <->
+#   left_round(N, R) & !vote(N, R, V))
+# 
+# derived relation s(round, round, quorum, value):
+#   round_active(R1) & round_active(R2) & quorum_active(Q) &
+#   value_active(V1) ->
+#   (s(R1, R2, Q, V1) <->
+#    exists N.
+#      & node_active(N)
+#      & member(N,Q)
+#      & left_round(N,R1)
+#      & one_b(N,R2)
+#      & r(N,R1,V1))
 
-derived relation s(round, round, quorum, value):
-  round_active(R1) & round_active(R2) & quorum_active(Q) &
-  value_active(V1) ->
-  (s(R1, R2, Q, V1) <->
-   exists N.
-     & node_active(N)
-     & member(N,Q)
-     & left_round(N,R1)
-     & one_b(N,R2)
-     & r(N,R1,V1))
-
+derived relation r(quorum, round):
+  quorum_active(Q0) & round_active(R0)
+  -> 
+  (r(Q0, R0) <->
+   (exists N0.
+     node_active(N0) &
+     member(N0, Q0) &
+     left_round(N0, R0) &
+     one_b(N0, R0)))
 
 # vote(node0,round0,value0)
 
