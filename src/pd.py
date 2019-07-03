@@ -2896,9 +2896,9 @@ def cdcl_state_bounds(solver: Solver) -> str:
         n_sharp_predicates = len(sharp_predicates)
         # Different alternatives for which states to bound:
         #
-        # states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
+        states_to_bound = sorted(ctis - reachable)  # TODO: live_states - reachable? this was too much work TODO: maybe just pick state with minimal bound
         #
-        states_to_bound = sorted(current_ctis)
+        # states_to_bound = sorted(current_ctis)
         # states_to_bound = [
         #     # bound only a single state, with minimal current bound, then minimal universe size, then minimal index (oldest)
         #     min(current_ctis, key=lambda i: (
