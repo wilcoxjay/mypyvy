@@ -2466,23 +2466,28 @@ def cdcl_state_bounds(solver: Solver) -> str:
     def add_state(s: State) -> int:
         nonlocal live_states
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
-        if s in states:
-            # assert False
-            return states.index(s)
-        i = len(states)
-        states.append(s)
-        live_states |= {i}
-        for j in range(i):
-            t = states[j]
-            if is_substructure(s, t):
-                substructure.append((j, i))
-            if is_substructure(t, s):
-                substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
-        assert len(cs) == 1
-        c = cs[0]
-        maps.append(SubclausesMapTurbo(c, states, [], True))
-        return i
+        if s not in states:
+            i = len(states)
+            print(f'add_state: adding new state: states[{i}]')
+            states.append(s)
+            live_states |= {i}
+            for j in range(i):
+                t = states[j]
+                if is_substructure(s, t):
+                    substructure.append((j, i))
+                if is_substructure(t, s):
+                    substructure.append((i, j))
+            cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+            assert len(cs) == 1
+            c = cs[0]
+            maps.append(SubclausesMapTurbo(c, states, [], True))
+            return i
+        else:
+            i = states.index(s)
+            if i not in live_states:
+                print(f'add_state: reviving previous state: states[{i}]')
+                live_states |= {i}
+            return  i
 
     predicates: List[Predicate] = []
     inductive_invariant: FrozenSet[int] = frozenset()  # indices into predicates for current inductive invariant
@@ -2755,6 +2760,33 @@ def cdcl_state_bounds(solver: Solver) -> str:
             assert check_sep(ctis, reachable) is None
             return None, sorted(ctis)
 
+    def restart_states_and_predicates() -> None:
+        nonlocal sharp_predicates
+        nonlocal live_states
+        nonlocal ctis
+        nonlocal current_ctis
+        nonlocal state_bounds
+        nonlocal reason_for_predicate
+        # keep only inductive invariant and safety
+        sharp_predicates = inductive_invariant | frozenset(
+            j for j in sharp_predicates
+            if predicates[j] in safety
+        )
+        reason_for_predicate.clear()
+        # keep only reachable and backward reachable states
+        bad_states = frozenset(
+            i for i in sorted(live_states) if
+            not all(eval_in_state(None, states[i], p) for p in safety)
+        )
+        live_states = frozenset(i for i in sorted(live_states) if (
+            i in reachable or
+            i in bad_states or
+            len(close_forward(frozenset([i])) & bad_states) > 0
+        ))
+        ctis &= live_states
+        current_ctis &= live_states
+        state_bounds.clear()
+
     def new_reachable_states() -> None:
         nonlocal sharp_predicates
         nonlocal current_ctis
@@ -2768,6 +2800,27 @@ def cdcl_state_bounds(solver: Solver) -> str:
         )
         current_ctis -= reachable
 
+    def new_inductive_invariants() -> None:
+        nonlocal live_states
+        nonlocal ctis
+        nonlocal sharp_predicates
+        nonlocal state_bounds
+        live_states = frozenset(
+            i for i, s in enumerate(states)
+            if all(eval_in_state(None, s, predicates[j])
+                   for j in sorted(inductive_invariant)
+            )
+        )
+        ctis &= live_states
+        state_bounds.clear()  # TODO: maybe do something a bit better, i.e., record the set of states explaining the bound, and keep it if they are still live
+        for i in reason_for_predicate:
+            reason_for_predicate[i] &= live_states
+
+        sharp_predicates = inductive_invariant | frozenset(
+            j for j in sharp_predicates
+            if len(reason_for_predicate[j]) > 0 or predicates[j] in safety
+        )
+
     def assert_invariants() -> None:
         # for debugging
         assert reachable == close_forward(reachable)
@@ -2777,7 +2830,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                    for k in sorted(reachable)
             )
         )
-        assert live_states == frozenset(
+        assert live_states <= frozenset(
             i for i, s in enumerate(states)
             if all(eval_in_state(None, s, predicates[j])
                    for j in sorted(inductive_invariant)
@@ -2804,6 +2857,9 @@ def cdcl_state_bounds(solver: Solver) -> str:
         if len(reachable) > n_reachable:
             print(f'Forward explore found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
+            print(f'Restarting...')
+            restart_states_and_predicates()
+            continue
         assert_invariants()
 
         # Houdini, to check if anything new is inductive, adding new
@@ -2821,21 +2877,11 @@ def cdcl_state_bounds(solver: Solver) -> str:
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
             print(f'Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
-            live_states = frozenset(
-                i for i, s in enumerate(states)
-                if all(eval_in_state(None, s, predicates[j])
-                       for j in sorted(inductive_invariant)
-                )
-            )
-            ctis &= live_states
-            state_bounds.clear()  # TODO: maybe do something a bit better, i.e., record the set of states explaining the bound, and keep it if they are still live
-            for i in reason_for_predicate:
-                reason_for_predicate[i] &= live_states
             n_sharp_predicates = len(sharp_predicates)
-            sharp_predicates = inductive_invariant | frozenset(
-                j for j in sharp_predicates
-                if len(reason_for_predicate[j]) > 0 or predicates[j] in safety
-            )
+            new_inductive_invariants()
+            print(f'Restarting...')
+            restart_states_and_predicates()
+            continue
             if n_sharp_predicates > len(sharp_predicates):
                 print(f'Unrefined {n_sharp_predicates - len(sharp_predicates)} predicates')
                 # TODO: we may have to run Houdini again, as we may get less ctis but no invariants. we can actually get new states.
