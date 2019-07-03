@@ -268,7 +268,10 @@ def check_two_state_implication_multiprocessing_helper(
         s = Solver()
     if seed is not None:
         print(f'PID={os.getpid()} setting z3 seed to {seed}')
-        z3.set_param('smt.random_seed', seed)
+        # z3.set_param('smt.random_seed', seed) -- this probably needs to be called before creating the solver
+        # TODO: figure out if this is a good way to set the seed
+        s.z3solver.set(seed=seed)  # type: ignore  # TODO: fix typing
+
     res = check_two_state_implication_all_transitions(s, old_hyps, new_conc, minimize)
     if seed is not None:
         print(f'PID={os.getpid()} z3 returned {"unsat" if res is None else "sat"}')
