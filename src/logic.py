@@ -165,7 +165,8 @@ def check_implication(
 def check_two_state_implication_all_transitions(
         s: Solver,
         old_hyps: Iterable[Expr],
-        new_conc: Expr
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
 ) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
     prog = syntax.the_program
@@ -184,7 +185,7 @@ def check_two_state_implication_all_transitions(
                 #     utils.logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
-                    return s.model(), trans
+                    return s.model(minimize=minimize), trans
 
     return None
 

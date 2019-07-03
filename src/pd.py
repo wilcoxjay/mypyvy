@@ -261,14 +261,15 @@ def check_two_state_implication_multiprocessing_helper(
         seed: Optional[int],
         s: Optional[Solver],
         old_hyps: Iterable[Expr],
-        new_conc: Expr
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
 ) -> Optional[Tuple[Model, Model]]:
     if s is None:
         s = Solver()
     if seed is not None:
         print(f'PID={os.getpid()} setting z3 seed to {seed}')
         z3.set_param('smt.random_seed', seed)
-    res = check_two_state_implication_all_transitions(s, old_hyps, new_conc)
+    res = check_two_state_implication_all_transitions(s, old_hyps, new_conc, minimize)
     if seed is not None:
         print(f'PID={os.getpid()} z3 returned {"unsat" if res is None else "sat"}')
     if res is None:
@@ -281,12 +282,13 @@ def check_two_state_implication_multiprocessing_helper(
 def check_two_state_implication_multiprocessing(
         s: Solver,
         old_hyps: Iterable[Expr],
-        new_conc: Expr
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
 ) -> Optional[Tuple[Model, Model]]:
     # this function uses multiprocessing to start multiple solvers
     # with different random seeds and return the first result obtained
     if utils.args.cpus is None or utils.args.cpus == 1:
-        return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc)
+        return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc, minimize)
     with multiprocessing.Pool(utils.args.cpus) as pool:
         results = []
         for i in itertools.count():
@@ -304,7 +306,8 @@ def check_two_state_implication(
         s: Solver,
         precondition: Union[Iterable[Expr], State],
         p: Expr,
-        msg: str = 'transition'
+        msg: str = 'transition',
+        minimize: Optional[bool] = None,
 ) -> Optional[Tuple[State,State]]:
     prog = syntax.the_program
     # inits = tuple(init.expr for init in prog.inits())
@@ -348,7 +351,9 @@ def check_two_state_implication(
             res = check_two_state_implication_multiprocessing(
                 s,
                 [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
-                p)
+                p,
+                minimize
+            )
             if res is None:
                 cache[k] = None
             else:
@@ -2625,7 +2630,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     solver,
                     a,
                     maps[i].to_clause(maps[i].all_n),
-                    f'backward-transition from states[{i}]'
+                    f'backward-transition from states[{i}]',
+                    minimize=False, # do not minimize backward-transition
                 )
                 print(f'houdini_frames: done checking for backward-transition from states[{i}]')
                 if res is not None:
