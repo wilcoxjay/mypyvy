@@ -2634,7 +2634,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     a + [maps[i].to_clause(maps[i].all_n)], # TODO: think about this
                     maps[i].to_clause(maps[i].all_n),
                     f'backward-transition from states[{i}]',
-                    minimize=False, # do not minimize backward-transition
+                    # minimize=False, # do not minimize backward-transition - this results in states with too many elements that result in too many instantiations
                 )
                 print(f'houdini_frames: done checking for backward-transition from states[{i}]')
                 if res is not None:
