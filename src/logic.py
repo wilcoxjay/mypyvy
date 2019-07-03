@@ -366,6 +366,8 @@ class Solver(object):
                 ds = m.decls()
                 rels_to_minimize = []
                 for r in self.scope.relations.values():
+                    if r.is_derived() or syntax.has_annotation(r, 'no_minimize'):
+                        continue
                     if not r.mutable:
                         z3r = r.to_z3(None)
                         if isinstance(z3r, z3.ExprRef):

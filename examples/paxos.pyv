@@ -4,7 +4,7 @@ sort quorum
 sort round
 
 immutable constant none: round
-immutable relation le(round, round)
+immutable relation le(round, round) @no_minimize
 
 # instantiate total_order(round, le)
 axiom le(X,X)
