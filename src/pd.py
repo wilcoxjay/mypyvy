@@ -3249,7 +3249,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                 print(f'houdini_frames: checking for backward-transition from states[{i}]')
                 res = check_two_state_implication(
                     solver,
-                    a,
+                    a + [maps[i].to_clause(maps[i].all_n)],
                     maps[i].to_clause(maps[i].all_n),
                     f'backward-transition from states[{i}]'
                 )
@@ -3441,7 +3441,8 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
 
         n_predicates = len(predicates)
         n_sharp_predicates = len(sharp_predicates)
-        predicates_to_bound = sorted(sharp_predicates - inductive_invariant)
+        #predicates_to_bound = sorted(sharp_predicates - inductive_invariant)
+        predicates_to_bound = sorted(j for j in sharp_predicates if predicates[j] in safety)
         print(f'Selected the following predicates for refinement: {predicates_to_bound}\n')
         # live_so_far: live_states
         for j in predicates_to_bound:
