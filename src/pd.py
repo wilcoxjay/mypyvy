@@ -295,7 +295,7 @@ def check_two_state_implication_multiprocessing(
             if i < utils.args.cpus:
                 results.append(pool.apply_async(
                     check_two_state_implication_multiprocessing_helper,
-                    (i, None, list(old_hyps), new_conc)
+                    (i, None, list(old_hyps), new_conc, minimize)
                 ))
             results[0].wait(1)
             ready = [r for r in results if r.ready()]
@@ -2628,7 +2628,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                 print(f'houdini_frames: checking for backward-transition from states[{i}]')
                 res = check_two_state_implication(
                     solver,
-                    a,
+                    a + [maps[i].to_clause(maps[i].all_n)], # TODO: think about this
                     maps[i].to_clause(maps[i].all_n),
                     f'backward-transition from states[{i}]',
                     minimize=False, # do not minimize backward-transition
