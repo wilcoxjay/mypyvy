@@ -2460,7 +2460,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     ctis: FrozenSet[int] = frozenset()  # states that are "roots" of forward reachability trees that came from top-level Houdini
     current_ctis: FrozenSet[int] = frozenset()  # states were used in the last Houdini run
-    bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
+    bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 4 steps (will be made more general later)
     state_bounds: Dict[int, int] = defaultdict(int)  # mapping from state index to its bound
 
     def add_state(s: State) -> int:
@@ -2957,10 +2957,10 @@ def cdcl_state_bounds(solver: Solver) -> str:
         added_so_far: List[Predicate] = []
         for i in states_to_bound:
             if i not in bmced:
-                print(f'Trying to reach states[{i}] in up to 5 steps')
+                print(f'Trying to reach states[{i}] in up to 4 steps')
                 p = maps[i].to_clause(maps[i].all_n)
                 changes = False
-                for k in range(1, 6):
+                for k in range(1, 5):
                     print(f'Checking if init satisfies WP_{k} of ~states[{i}]... ',end='')
                     res = check_k_state_implication(solver, inits, p, k)
                     if res is not None:
