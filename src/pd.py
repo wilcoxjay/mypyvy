@@ -127,8 +127,10 @@ def eval_clause_in_state(
         )
         def get_term(t: Expr) -> str:
             if isinstance(t, Id):
+                assert t.name in consts_and_vars, f'{t.name}\n' + '='*80 + f'\n{state}\n'
                 return consts_and_vars[t.name]
             elif isinstance(t, AppExpr):
+                assert t.callee in functions, f'{t.callee}\n' + '='*80 + f'\n{state}\n'
                 return functions[t.callee][tuple(get_term(a) for a in t.args)]
             else:
                 assert False, t
@@ -145,6 +147,7 @@ def eval_clause_in_state(
             return relations[lit.callee][tuple(get_term(a) for a in lit.args)]
         elif isinstance(lit, Id):
             # nullary relation
+            assert lit.name in relations, f'{lit.name}\n' + '='*80 + f'\n{state}\n'
             return relations[lit.name][()]
         else:
             assert False, lit
