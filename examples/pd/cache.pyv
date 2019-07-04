@@ -84,11 +84,9 @@ transition complete_proc_read_invalid_shared(c: core, a: address, v: value)
      !(C = c & A = a) ->
      (cache(C, A) = old(cache(C, A)))) &
   cache(c, a) = v &
+  old(bus_in_use) &  # added just to make it defined; it's an invariant that bus_in_use is true here
   !bus_in_use &
-  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) & !(C = c & A = a)) &
-   # trying to make old(bus_in_use) defined
-  (old(bus_in_use) -> !bus_in_use) &
-  (!old(bus_in_use) -> !bus_in_use)
+  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) & !(C = c & A = a))
 
 transition complete_proc_read_invalid_exclusive(c: core, a: address, v: value)
   modifies invalid, exclusive, cache, bus_in_use, proc_read
@@ -104,11 +102,9 @@ transition complete_proc_read_invalid_exclusive(c: core, a: address, v: value)
      !(C = c & A = a) ->
      (cache(C, A) = old(cache(C, A)))) &
   cache(c, a) = v &
+  old(bus_in_use) &  # added just to make it defined; it's an invariant that bus_in_use is true here
   !bus_in_use &
-  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) & !(C = c & A = a)) &
-  # trying to make old(bus_in_use) defined
-  (old(bus_in_use) -> !bus_in_use) &
-  (!old(bus_in_use) -> !bus_in_use)
+  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) & !(C = c & A = a))
 
 transition issue_proc_write_invalid(c: core, a: address, v: value)
   modifies bus_in_use, proc_write, bus_read_for_ownership
@@ -155,11 +151,9 @@ transition complete_proc_write_invalid(c: core, a: address, v: value)
      !(C = c & A = a) ->
      (cache(C, A) = old(cache(C, A)))) &
   cache(c, a) = v &
+  old(bus_in_use) &  # added just to make it defined; it's an invariant that bus_in_use is true here
   !bus_in_use &
-  (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) & !(C = c & A = a & V = v)) &
-  # trying to make old(bus_in_use) defined
-  (old(bus_in_use) -> !bus_in_use) &
-  (!old(bus_in_use) -> !bus_in_use)
+  (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) & !(C = c & A = a & V = v))
 
 transition proc_write_exclusive(c: core, a: address, v: value)
   modifies exclusive, modified, cache
@@ -199,10 +193,8 @@ transition complete_proc_write_shared(c: core, a: address, v: value)
      (cache(C, A) = old(cache(C, A)))) &
   cache(c, a) = v &
   (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) & !(C = c & A = a & V = v)) &
-  !bus_in_use &
-  # trying to make old(bus_in_use) defined
-  (old(bus_in_use) -> !bus_in_use) &
-  (!old(bus_in_use) -> !bus_in_use)
+  old(bus_in_use) &  # added just to make it defined; it's an invariant that bus_in_use is true here
+  !bus_in_use
 
 
 transition evict_modified(c: core, a: address)
