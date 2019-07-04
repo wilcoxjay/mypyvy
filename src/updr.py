@@ -41,13 +41,6 @@ class Frames(object):
         self.push_cache: List[Dict[Phase, Set[Expr]]] = []
         self.counter = 0
 
-        init_conjuncts = [init.expr for init in prog.inits()]
-        self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
-                        else [syntax.FalseExpr]
-                        for p in self.automaton.phases()})
-
-        self.new_frame()
-
     def __getitem__(self, i: int) -> Frame:
         return self.fs[i]
 
@@ -569,6 +562,13 @@ class Frames(object):
             self.print_frame(i, lvl=lvl)
 
     def search(self) -> Frame:
+        init_conjuncts = [init.expr for init in syntax.the_program.inits()]
+        self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
+                        else [syntax.FalseExpr]
+                        for p in self.automaton.phases()})
+
+        self.new_frame()
+
         while True:
             n = len(self) - 1
             with utils.LogTag(utils.logger, 'frame', lvl=logging.INFO, n=str(n)):
