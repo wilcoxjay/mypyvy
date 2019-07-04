@@ -419,6 +419,8 @@ class Solver(object):
         ))))
         return result
 
+    @utils.log_start_end_xml(utils.logger)
+    @utils.log_start_end_time(utils.logger)
     def _minimal_model(
             self,
             assumptions: Optional[Sequence[z3.ExprRef]],
@@ -429,13 +431,16 @@ class Solver(object):
             for x in itertools.chain(
                     cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
                     relations_to_minimize):
-                for n in itertools.count(1):
-                    with self:
+                with utils.LogTag(utils.logger, 'sort-or-rel', obj=str(x)):
+                    for n in itertools.count(1):
+                        with utils.LogTag(utils.logger, 'card', n=str(n)):
+                            with self:
+                                self.add(self._cardinality_constraint(x, n))
+                                res = self.check(assumptions)
+                                if res == z3.sat:
+                                    break
+                    with utils.LogTag(utils.logger, 'answer', obj=str(x), n=str(n)):
                         self.add(self._cardinality_constraint(x, n))
-                        res = self.check(assumptions)
-                        if res == z3.sat:
-                            break
-                self.add(self._cardinality_constraint(x, n))
 
             assert self.check(assumptions) == z3.sat
             return self.z3solver.model()

@@ -164,6 +164,8 @@ class Frames(object):
                     return sres
         return None
 
+    @utils.log_start_end_xml(utils.logger, logging.DEBUG)
+    @utils.log_start_end_time(utils.logger, logging.DEBUG)
     def get_inductive_frame(self) -> Optional[Frame]:
         for i in range(len(self) - 1):
             if self.is_frame_inductive(i):
@@ -473,36 +475,37 @@ class Frames(object):
                 assert trans is not None
                 precond = delta.precond
 
-                with solver:
-                    solver.add(t.translate_transition(trans, precond=precond))
-                    res = solver.check(diag.trackers)
+                with utils.LogTag(utils.logger, 'find-pred', transition=delta.transition):
+                    with solver:
+                        solver.add(t.translate_transition(trans, precond=precond))
+                        res = solver.check(diag.trackers)
 
-                    if res != z3.unsat:
-                        utils.logger.debug('found predecessor via %s' % trans.name)
-                        m = Model.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
-                        # if utils.logger.isEnabledFor(logging.DEBUG):
-                        #     utils.logger.debug(str(m))
-                        return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
-                    elif utils.args.use_z3_unsat_cores:
-                        assert core is not None
-                        uc = solver.unsat_core()
-                        # if utils.logger.isEnabledFor(logging.DEBUG):
-                        #     utils.logger.debug('uc')
-                        #     utils.logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
-                        #     utils.logger.debug('assertions')
-                        #     utils.logger.debug(str(solver.assertions()))
+                        if res != z3.unsat:
+                            utils.logger.debug('found predecessor via %s' % trans.name)
+                            m = Model.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
+                            # if utils.logger.isEnabledFor(logging.DEBUG):
+                            #     utils.logger.debug(str(m))
+                            return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
+                        elif utils.args.use_z3_unsat_cores:
+                            assert core is not None
+                            uc = solver.unsat_core()
+                            # if utils.logger.isEnabledFor(logging.DEBUG):
+                            #     utils.logger.debug('uc')
+                            #     utils.logger.debug(str(sorted(uc, key=lambda y: y.decl().name())))
+                            #     utils.logger.debug('assertions')
+                            #     utils.logger.debug(str(solver.assertions()))
 
-                        res = solver.check([diag.trackers[i] for i in core])
-                        if res == z3.unsat:
-                            utils.logger.debug('but existing core sufficient, skipping')
-                            continue
+                            res = solver.check([diag.trackers[i] for i in core])
+                            if res == z3.unsat:
+                                utils.logger.debug('but existing core sufficient, skipping')
+                                continue
 
-                        for x in sorted(uc, key=lambda y: y.decl().name()):
-                            assert isinstance(x, z3.ExprRef)
-                            core.add(int(x.decl().name()[1:]))
-                        if utils.logger.isEnabledFor(logging.DEBUG):
-                            utils.logger.debug('new core')
-                            utils.logger.debug(str(sorted(core)))
+                            for x in sorted(uc, key=lambda y: y.decl().name()):
+                                assert isinstance(x, z3.ExprRef)
+                                core.add(int(x.decl().name()[1:]))
+                            if utils.logger.isEnabledFor(logging.DEBUG):
+                                utils.logger.debug('new core')
+                                utils.logger.debug(str(sorted(core)))
 
             return (z3.unsat, None)
 
