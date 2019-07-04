@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 import z3
 
@@ -50,6 +51,8 @@ class Frames(object):
     def __len__(self) -> int:
         return len(self.fs)
 
+    @utils.log_start_end_xml(utils.logger, logging.DEBUG)
+    @utils.log_start_end_time(utils.logger, logging.DEBUG)
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]] = None) -> None:
         if contents is None:
             contents = {}
@@ -176,7 +179,8 @@ class Frames(object):
         for p in self.automaton.phases():
             if logic.check_implication(self.solver,
                                        self[i + 1].summary_of(p),
-                                       self[i].summary_of(p)) is not None:
+                                       self[i].summary_of(p),
+                                       minimize=False) is not None:
                 return False
         return True
 
@@ -191,7 +195,7 @@ class Frames(object):
                 utils.logger.debug('frame %s phase %s attempting to push %s' %
                                    (frame_no, p.name(), c))
 
-                res = self.clause_implied_by_transitions_from_frame(f, p, c)
+                res = self.clause_implied_by_transitions_from_frame(f, p, c, minimize=is_safety or utils.args.block_may_cexs)
                 if res is None:
                     utils.logger.debug('frame %s phase %s managed to push %s' %
                                        (frame_no, p.name(), c))
@@ -475,10 +479,13 @@ class Frames(object):
                 assert trans is not None
                 precond = delta.precond
 
-                with utils.LogTag(utils.logger, 'find-pred', transition=delta.transition):
+                with utils.LogTag(utils.logger, 'find-pred', transition=delta.transition, weight=str(phase_transition.avg_time_traversing())):
                     with solver:
                         solver.add(t.translate_transition(trans, precond=precond))
+                        before_check = datetime.now()
                         res = solver.check(diag.trackers)
+                        phase_transition.time_spent_traversing += (datetime.now() - before_check).total_seconds()
+                        phase_transition.count_traversed += 1
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
@@ -514,7 +521,8 @@ class Frames(object):
             pre_frame: Frame,
             current_phase: Phase,
             c: Expr,
-            solver: Optional[Solver] = None
+            solver: Optional[Solver] = None,
+            minimize: Optional[bool] = None
     ) -> Optional[Tuple[Phase, Tuple[z3.ModelRef, PhaseTransition]]]:
         if solver is None:
             solver = self.solver
@@ -524,7 +532,7 @@ class Frames(object):
                                (src.name(), str(list(transitions))))
 
             ans = logic.check_two_state_implication_along_transitions(
-                solver, pre_frame.summary_of(src), transitions, c
+                solver, pre_frame.summary_of(src), transitions, c, minimize=minimize
             )
             if ans is not None:
                 return (src, ans)
@@ -536,7 +544,7 @@ class Frames(object):
         for c in reversed(f.l):
             f_minus_c = [x for x in f.l if x in f.s and x is not c]
             if c not in phases.phase_safety(p) and \
-               logic.check_implication(self.solver, f_minus_c, [c]) is None:
+               logic.check_implication(self.solver, f_minus_c, [c], minimize=False) is None:
                 utils.logger.debug('removed %s' % c)
                 f.s.remove(c)
             else:
@@ -574,7 +582,7 @@ class Frames(object):
 
         while True:
             n = len(self) - 1
-            with utils.LogTag(utils.logger, 'frame', lvl=logging.INFO, n=str(n)):
+            with utils.LogTag(utils.logger, 'check-frame', lvl=logging.INFO, n=str(n)):
                 with utils.LogTag(utils.logger, 'current-frames', lvl=logging.INFO):
                     self.print_frames()
 
@@ -590,4 +598,4 @@ class Frames(object):
                     return f
 
                 utils.logger.info('frame is safe but not inductive. starting new frame')
-                self.new_frame()
+            self.new_frame()

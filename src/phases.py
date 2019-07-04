@@ -26,6 +26,8 @@ class PhaseTransition(object):
         self._src: Phase = src
         self._target: Phase = target
         self._transition_decl = transition_decl
+        self.time_spent_traversing: float = 0.0
+        self.count_traversed: int = 0
 
     def src(self) -> Phase:
         return self._src
@@ -35,6 +37,11 @@ class PhaseTransition(object):
 
     def prog_transition_name(self) -> str:
         return self._transition_decl.transition
+
+    def avg_time_traversing(self) -> float:
+        if self.count_traversed == 0:
+            return 0.0
+        return self.time_spent_traversing / self.count_traversed
 
     def precond(self) -> Optional[Expr]:
         return self._transition_decl.precond
@@ -89,7 +96,7 @@ class PhaseAutomaton(object):
         return [t.src() for t in self._transitions if t.target() == trg]
 
     def transitions_between(self, src: Phase, target: Phase) -> List[PhaseTransition]:
-        return list(filter(lambda t: (t.src() == src) & (t.target() == target), self._transitions))
+        return list(sorted(filter(lambda t: (t.src() == src) & (t.target() == target), self._transitions), key=lambda t: t.avg_time_traversing()))
 
     def transitions_to_grouped_by_src(self, target: Phase) -> Dict[Phase, Sequence[PhaseTransition]]:
         return {p: self.transitions_between(p, target) for p in self.predecessors(target)}

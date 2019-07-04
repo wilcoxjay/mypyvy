@@ -144,7 +144,8 @@ def check_transitions(s: Solver) -> None:
 def check_implication(
         s: Solver,
         hyps: Iterable[Expr],
-        concs: Iterable[Expr]
+        concs: Iterable[Expr],
+        minimize: Optional[bool] = None
 ) -> Optional[z3.ModelRef]:
     t = s.get_translator(KEY_ONE)
     with s:
@@ -158,7 +159,7 @@ def check_implication(
                 #     utils.logger.debug(str(s.assertions()))
 
                 if s.check() != z3.unsat:
-                    return s.model()
+                    return s.model(minimize=minimize)
 
     return None
 
@@ -252,7 +253,8 @@ def check_two_state_implication_along_transitions(
         s: Solver,
         old_hyps: Iterable[Expr],
         transitions: Sequence[PhaseTransition],
-        new_conc: Expr
+        new_conc: Expr,
+        minimize: Optional[bool] = None
 ) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
     prog = syntax.the_program
@@ -271,7 +273,7 @@ def check_two_state_implication_along_transitions(
             with s:
                 s.add(t.translate_transition(trans, precond=precond))
                 if s.check() != z3.unsat:
-                    return s.model(), phase_transition
+                    return s.model(minimize=minimize), phase_transition
 
     return None
 
@@ -605,10 +607,10 @@ class Diagram(object):
         return syntax.Exists(vs, e)
 
     # TODO: can be removed? replaced with Frames.valid_in_initial_frame (YF)
-    def valid_in_init(self, s: Solver) -> Optional[z3.ModelRef]:
+    def valid_in_init(self, s: Solver, minimize: Optional[bool] = None) -> bool:
         prog = syntax.the_program
         return check_implication(s, (init.expr for init in prog.inits()),
-                                 [syntax.Not(self.to_ast())])
+                                 [syntax.Not(self.to_ast())], minimize=minimize) is None
 
     def minimize_from_core(self, core: Optional[Iterable[int]]) -> None:
         if core is None:
@@ -694,16 +696,19 @@ class Diagram(object):
     def check_valid_in_phase_from_frame(
             self, s: Solver, f: Frame,
             transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
-            propagate_init: bool) -> Optional[z3.ModelRef]:
+            propagate_init: bool,
+            minimize: Optional[bool] = None
+    ) -> bool:
         for src, transitions in transitions_to_grouped_by_src.items():
             ans = check_two_state_implication_along_transitions(
-                s, f.summary_of(src), transitions, syntax.Not(self.to_ast()))
+                s, f.summary_of(src), transitions, syntax.Not(self.to_ast()),
+                minimize=minimize)
             if ans is not None:
-                return ans[0]
+                return False
 
         if propagate_init:
-            return self.valid_in_init(s)
-        return None
+            return self.valid_in_init(s, minimize=minimize)
+        return True
 
     @utils.log_start_end_xml(utils.logger)
     @utils.log_start_end_time(utils.logger)
@@ -733,8 +738,8 @@ class Diagram(object):
                     continue
                 with self.without(d):
                     res = self.check_valid_in_phase_from_frame(
-                        s, f, transitions_to_grouped_by_src, propagate_init)
-                if res is None:
+                        s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+                if res:
                     if utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
                     self.remove_clause(d)
@@ -750,8 +755,8 @@ class Diagram(object):
                             cs.add(j)
                     with self.without(d, cs):
                         res = self.check_valid_in_phase_from_frame(
-                            s, f, transitions_to_grouped_by_src, propagate_init)
-                    if res is None:
+                            s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+                    if res:
                         if utils.logger.isEnabledFor(logging.DEBUG):
                             utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
                         self.remove_clause(d, cs)
@@ -760,8 +765,8 @@ class Diagram(object):
             for d, j, c in self.conjuncts():
                 with self.without(d, j):
                     res = self.check_valid_in_phase_from_frame(
-                        s, f, transitions_to_grouped_by_src, propagate_init)
-                if res is None:
+                        s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+                if res:
                     if utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('eliminated clause %s' % c)
                     self.remove_clause(d, j)
