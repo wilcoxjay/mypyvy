@@ -1819,7 +1819,7 @@ def repeated_houdini(s: Solver) -> str:
 
     while True:
         reachable_states, a = forward_explore_clauses(reachable_states)
-        print(f'Current reachable states ({len(reachable_states)}):')
+        print(f'[{datetime.now()}] Current reachable states ({len(reachable_states)}):')
         for m in reachable_states:
             print(str(m) + '\n' + '-'*80)
         if not cheap_check_implication(a, safety):
@@ -1827,7 +1827,7 @@ def repeated_houdini(s: Solver) -> str:
             dump_caches()
             return 'UNSAFE'
         sharp_predicates = tuple(a)
-        print(f'Current sharp predicates ({len(sharp_predicates)}):')
+        print(f'[{datetime.now()}] Current sharp predicates ({len(sharp_predicates)}):')
         for p in sharp_predicates:
             print(f'  {p}')
         states = list(reachable_states)
@@ -1846,7 +1846,7 @@ def repeated_houdini(s: Solver) -> str:
                     break
             else:
                 break
-        print(f'Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else 'Current inductive invariant is true')
+        print(f'[{datetime.now()}] Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else '[{datetime.now()}] Current inductive invariant is true')
         for p in sorted(a, key=lambda x: len(str(x))):
             print(p)
         if len(a) > 0 and cheap_check_implication(a, safety):
@@ -2282,7 +2282,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         assert_invariants()
 
         # print status and possibly terminate
-        print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable, {len(ctis)} ctis, {len(covered)} covered):\n' + '-' * 80)
+        print(f'\n[{datetime.now()}] Current live states ({len(live_states)} total, {len(reachable)} reachable, {len(ctis)} ctis, {len(covered)} covered):\n' + '-' * 80)
         for i in sorted(live_states):
             notes: List[str] = []
             if i in reachable:
@@ -2297,7 +2297,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 print(f'\nFound safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
-        print(f'\nCurrent sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
+        print(f'\n[{datetime.now()}] Current sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
         for i in sorted(sharp_predicates):
             max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
             assert max_frame < len(frames) - 1 or i in inductive_invariant
@@ -2339,7 +2339,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     bounds[i] = n
                     break
 
-        print(f'\nCurrent bounds:')
+        print(f'\n[{datetime.now()}] Current bounds:')
         for i in sorted(sharp_predicates - inductive_invariant):
             print(f'  predicates[{i:3}]: bound is {bounds[i]}, uncovered: {sorted(still_uncovered[i])}, predicate is: {predicates[i]}')
         print()
@@ -2897,7 +2897,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
         assert_invariants()
 
         # print status and possibly terminate
-        print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable, {len(ctis)} ctis, {len(current_ctis)} current ctis):\n' + '-' * 8)
+        print(f'\n[{datetime.now()}] Current live states ({len(live_states)} total, {len(reachable)} reachable, {len(ctis)} ctis, {len(current_ctis)} current ctis):\n' + '-' * 8)
         for i in sorted(live_states):
             notes: List[str] = []
             if i in reachable:
@@ -2913,7 +2913,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                 print(f'\nFound safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
-        print(f'\nCurrent sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
+        print(f'\n[{datetime.now()}] Current sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
         for i in sorted(sharp_predicates):
             max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
             assert max_frame < len(frames) - 1 or i in inductive_invariant
@@ -2927,7 +2927,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
             print('Proved safety!')
             dump_caches()
             return 'SAFE'
-        print(f'\nCurrent bounds:')
+        print(f'\n[{datetime.now()}] Current bounds:')
         for i in sorted(live_states - reachable):
             if i in state_bounds or i in current_ctis:
                 note = ' (current cti)' if i in current_ctis else ''
@@ -3083,7 +3083,9 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         if s in states:
             # assert False
-            return states.index(s)
+            i = states.index(s)
+            assert i in live_states
+            return i
         i = len(states)
         states.append(s)
         live_states |= {i}
@@ -3406,7 +3408,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
         assert_invariants()
 
         # print status and possibly terminate
-        print(f'\nCurrent live states ({len(live_states)} total, {len(reachable)} reachable):\n' + '-' * 8)
+        print(f'\n[{datetime.now()}] Current live states ({len(live_states)} total, {len(reachable)} reachable):\n' + '-' * 8)
         for i in sorted(live_states):
             notes: List[str] = []
             if i in reachable:
@@ -3418,7 +3420,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                 print(f'\nFound safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
-        print(f'\nCurrent sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
+        print(f'\n[{datetime.now()}] Current sharp predicates ({len(sharp_predicates)} total, {len(inductive_invariant)} proven):')
         for i in sorted(sharp_predicates):
             max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
             assert max_frame < len(frames) - 1 or i in inductive_invariant
@@ -3428,7 +3430,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
             print('Proved safety!')
             dump_caches()
             return 'SAFE'
-        print(f'\nCurrent bounds:')
+        print(f'\n[{datetime.now()}] Current bounds:')
         for i in sorted(sharp_predicates - inductive_invariant):
             if i in predicate_bounds:
                 # TODO: actually the bound for every predicate here is at least 1
@@ -3455,7 +3457,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
             n = 0
             worklist: List[Tuple[int, ...]] = [()]
             while len(worklist) > 0:  # TODO: rethink the condition of this loop and its structure
-                print(f'\nWorking on the bound of predicates[{j}], current bound is {n}, worklist is {len(worklist)} long:')
+                print(f'\nWorking on the bound of predicates[{j}], states_to_exclude={sorted(states_to_exclude)}, current bound is {n}, worklist is {len(worklist)} long:')
                 for w in worklist:
                     print(f'  {w}')
                 next_worklist: List[Tuple[int, ...]] = []
@@ -3488,6 +3490,14 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                     if _inv is not None:
                         # found potential invariant that does not currently has a CTI
                         assert len(_inv) == len(ii)
+                        assert all(
+                            not all(eval_in_state(None, states[i], p) for p in _inv)
+                            for i in sorted(states_to_exclude)
+                        )
+                        assert all(
+                            all(eval_in_state(None, states[i], p) for p in _inv)
+                            for i in sorted(reachable)
+                        )
                         for p, i in zip(_inv, ii):
                             add_predicate(p, i)
                         worklist = []
@@ -3513,7 +3523,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                 for p in _inv:
                     print(f'  {p}')
 
-        print(f'\nCurrent bounds:')
+        print(f'\n[{datetime.now()}] Current bounds:')
         for i in sorted(sharp_predicates - inductive_invariant):
             if i in predicate_bounds:
                 # TODO: actually the bound for every predicate here is at least 1
@@ -3855,7 +3865,7 @@ class MonotoneFunction(object):
 
 #     k = 0
 #     while True:
-#         print(f'Current reachable states ({len(reachable)}):')
+#         print(f'[{datetime.now()}] Current reachable states ({len(reachable)}):')
 #         for i in reachable:
 #             print(str(states[i]) + '\n' + '-'*80)
 #             if check_implication(solver, [states[i].as_onestate_formula(0)], safety) is not None:
@@ -4399,7 +4409,7 @@ def cdcl_invariant(solver: Solver) -> str:
     sm = SeparabilityMap(states, predicates)
 
     while True:
-        print(f'\nCurrent states ({len(states)} total, {len(reachable)} reachable, {len(backward_reachable)} backward reachable):\n' + '-' * 80)
+        print(f'\n[{datetime.now()}] Current states ({len(states)} total, {len(reachable)} reachable, {len(backward_reachable)} backward reachable):\n' + '-' * 80)
         for i in range(len(states)):
             note = (' (reachable)' if i in reachable else
                     ' (backward reachable)' if i in backward_reachable else
@@ -4410,11 +4420,11 @@ def cdcl_invariant(solver: Solver) -> str:
                 print(f'\nFound safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
-        print(f'\nCurrent sharp predicates ({len(sharp_predicates)}):')
+        print(f'\n[{datetime.now()}] Current sharp predicates ({len(sharp_predicates)}):')
         for i in sorted(sharp_predicates):
             print(f'  predicates[{i:3}]: {predicates[i]}')
 
-        print(f'\nCurrent inseparabilities ({len(inseparabilities)}):')
+        print(f'\n[{datetime.now()}] Current inseparabilities ({len(inseparabilities)}):')
         for pos, neg, ps in inseparabilities:
             print(f'  {sorted(pos)}, {sorted(neg)}, {sorted(ps)}')
 
@@ -4561,7 +4571,7 @@ def cdcl_invariant(solver: Solver) -> str:
                 print(f'No disconnected CTIs found')
                 break
         # here, a is inductive, but it may no longer imply safety
-        print(f'\nCurrent inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else '\nCurrent inductive invariant is true')
+        print(f'\n[{datetime.now()}] Current inductive invariant ({len(a)} predicates) is:' if len(a) > 0 else '\n[{datetime.now()}] Current inductive invariant is true')
         for p in sorted(a, key=lambda x: len(str(x))):
             print(f'  {p}')
         if len(a) > 0 and cheap_check_implication(a, safety):
