@@ -1,0 +1,118 @@
+# Declare uninterpreted sort (type) for nodes.
+sort node
+
+# Declare (mutable) relations for messages to model the network.
+# Since there is only one server but many clients, the relations 
+# are always unary, recording on the client id, since the other 
+# party is always the server.
+mutable relation lock_msg(node)  # client -> server
+mutable relation grant_msg(node)  # server -> client
+mutable relation unlock_msg(node)  # client -> server
+
+# Declare local state at each client, modeled again as a  unary
+# relation on nodes. True if the client thinks they hold the lock.
+mutable relation holds_lock(node)
+
+# Declare what amounts to a boolean conceptually located at the 
+# server. True when the server owns the lock and is therefore
+# free to grant it to the next client.
+mutable relation server_holds_lock()
+
+# Initial conditions of the system.
+# (Note that mypyvy supports implicit universal quantification of 
+# capitalized variables at the outermost scope. So the first 
+# line actually stands for `forall N. !lock_msg(N)`. This is used
+# quite pervasively below.)
+init !lock_msg(N)
+init !grant_msg(N)
+init !unlock_msg(N)
+init !holds_lock(N)
+init server_holds_lock
+
+# The atomic actions of the system are declared as "transitions", 
+# which are written as two-state formulas possibly parameterized 
+# by some values (such as `n` in `send_lock` here).
+# Each transition also specifies an optional `modifies` clause, 
+# whose meaning is to add "doesn't change" conjuncts for all
+# elements of the state that are not modified.
+transition send_lock(n: node)
+  modifies lock_msg
+
+  # After the modifies clause comes the two-state formula. The 
+  # pre-state is referred to by old(...), while the post-state 
+  # is referred to directly.
+  # This line is a verbose and ugly way of saying "insert `n` 
+  # into the lock_msg relation". Someday we'll have nice syntax.
+  # (Remember that capital variables like `N` are implicitly 
+  # universally quantified.)
+  lock_msg(N) <-> old(lock_msg(N)) | N = n
+
+# In summary, the above transition means that at any time, any 
+# client can send a lock message to request the lock from the server.
+  
+# The next transition describes what happens when the server 
+# grants the lock to a client. The action is only enabled 
+# if there server holds the lock and there is a lock message
+# pending from client `n`. If the action is enabled, then it
+# acts by marking the server as no longer holding the lock, 
+# removing the lock message from the network, and sending a 
+# grant message to the client.
+transition recv_lock(n: node)
+  modifies lock_msg, server_holds_lock, grant_msg
+  old(server_holds_lock) &
+  old(lock_msg(n)) &
+  !server_holds_lock &
+  (lock_msg(N) <-> old(lock_msg(N)) & N != n) &  # verbose syntax for "remove `n` from lock_msg relation"
+  (grant_msg(N) <-> old(grant_msg(N)) | N = n)   #        ...         "insert `n` into grant_msg relation"
+
+
+# The rest of the actions are similar. Remember to be careful to 
+# specify the correct modifies clause or everything will be unsound :)
+
+transition recv_grant(n: node)
+  modifies grant_msg, holds_lock
+  old(grant_msg(n)) &
+  (grant_msg(N) <-> old(grant_msg(N)) & N != n) &
+  (holds_lock(N) <-> old(holds_lock(N)) | N = n)
+
+transition unlock(n: node)
+  modifies holds_lock, unlock_msg
+  old(holds_lock(n)) &
+  (holds_lock(N) <-> old(holds_lock(N)) & N != n) &
+  (unlock_msg(N) <-> old(unlock_msg(N)) | N = n)
+
+transition recv_unlock(n: node)
+  modifies unlock_msg, server_holds_lock
+  old(unlock_msg(n)) &
+  (unlock_msg(N) <-> old(unlock_msg(N)) & N != n) &
+  server_holds_lock
+
+# Here is the main safety property. `[mutex]` gives the property a name.
+# It says that at most one client thinks they hold the lock. 
+# Remember again that capital variables like `N1` and `N2` are 
+# implicitly univerally quantified at the outermost scope.
+safety [mutex] holds_lock(N1) & holds_lock(N2) -> N1 = N2
+
+# What follows is an inductive invariant to prove [mutex].
+# You can verify this system's inductiveness by running 
+#     python3 mypyvy.py verify test/lockserv.pyv
+#
+# You may also find it instructive to delete some of these 
+# invariants and see the generated counterexamples.
+# Warning: they're ugly!
+
+# During inference with updr, the named safety property is specified 
+# on the command line, and all other invariants are ignored by inference.
+# In case you're worried about cheating, try deleting or commenting out
+# these invariants and see that updr run time is unaffected.
+
+invariant grant_msg(N1) & grant_msg(N2) -> N1 = N2
+invariant unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+
+invariant !(holds_lock(N1) & grant_msg(N2))
+invariant !(holds_lock(N1) & unlock_msg(N2))
+invariant !(grant_msg(N1) & unlock_msg(N2))
+
+invariant !(grant_msg(N) & server_holds_lock)
+invariant !(holds_lock(N) & server_holds_lock)
+invariant !(unlock_msg(N) & server_holds_lock)
