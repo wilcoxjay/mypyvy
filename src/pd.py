@@ -4361,6 +4361,14 @@ def primal_dual_houdini(solver: Solver) -> str:
               f'{len(live_states) - n_live_states} new live states, '
               f'{len(internal_ctis) - n_internal_ctis} new internal ctis, '
               f'looping\n')
+        assert any([
+            n_predicates != len(predicates),
+            n_live_predicates != len(live_predicates),
+            n_inductive_invariant != len(inductive_invariant),
+            n_reachable != len(reachable),
+            n_live_states != len(live_states),
+            n_internal_ctis != len(internal_ctis),
+        ])
 
 # class DualEdgeFinder(object):
 #     '''Class used to store a map of subclauses of several clauses, and
