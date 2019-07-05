@@ -954,9 +954,9 @@ class SubclausesMapTurbo(object):
         print(f'Done subclauses-predicates (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
 
     def separate(self,
-                 pos: Collection[int],
-                 neg: Collection[int],
-                 ps: Collection[int],
+                 pos: Collection[int] = frozenset(),
+                 neg: Collection[int] = frozenset(),
+                 ps: Collection[int] = frozenset(),
                  soft_pos: Collection[int] = frozenset(),
                  soft_neg: Collection[int] = frozenset(),
                  soft_ps: Collection[int] = frozenset(),
@@ -1658,7 +1658,6 @@ def forward_explore(s: Solver,
             # print('YES')
             pass
 
-        m = None
         # check for 1 transition from an initial state or a state in states
         preconditions = chain(
             (s for s in states if len(s.keys) == 1), # discovered initial states
@@ -1688,7 +1687,7 @@ def forward_explore(s: Solver,
             else:
                 # print('YES')
                 pass
-        if m is not None:
+        if changes:
             continue
 
         if utils.args.unroll_to_depth is None:
@@ -2809,8 +2808,8 @@ def cdcl_state_bounds(solver: Solver) -> str:
         nonlocal sharp_predicates
         nonlocal state_bounds
         live_states = frozenset(
-            i for i, s in enumerate(states)
-            if all(eval_in_state(None, s, predicates[j])
+            i for i in sorted(live_states)
+            if all(eval_in_state(None, states[i], predicates[j])
                    for j in sorted(inductive_invariant)
             )
         )
@@ -3534,6 +3533,924 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
         print()
 
         print(f'\nLearned {len(predicates) - n_predicates} new predicates and revived {len(sharp_predicates) - n_sharp_predicates - len(predicates) + n_predicates} previous predicates, looping\n')
+
+
+def primal_dual_houdini(solver: Solver) -> str:
+    '''
+    Another attempt primal dual Houdini
+    '''
+    prog = syntax.the_program
+    global cache_path
+    cache_path = Path(utils.args.filename).with_suffix('.cache')
+    load_caches()
+
+    print(f'\nStarting primal_dual_houdini, PID={os.getpid()} [{datetime.now()}]\n')
+
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    assert cheap_check_implication(inits, safety), 'Initial states not safe'
+
+    states: List[State] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
+    maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram, not really used, but still used to get the negation of diagram of a state TODO: remove
+    # the following are indices into states:
+    reachable: FrozenSet[int] = frozenset()
+    live_states: FrozenSet[int] = frozenset() # not yet ruled out by invariant, and also currently active in the houdini level
+    internal_ctis: FrozenSet[int] = frozenset() # internal CTIs used by the "dual edge solver"
+    transitions: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
+    substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
+    # bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 2 steps (will be made more general later)
+
+    predicates: List[Predicate] = []
+    inductive_invariant: FrozenSet[int] = frozenset()  # indices into predicates for current inductive invariant
+    live_predicates: FrozenSet[int] = frozenset()  # currently active predicates, not violated by reachable states
+    dual_transitions: List[Tuple[FrozenSet[int], FrozenSet[int]]] = [] # indices into predicates, TODO: maybe should be frozenset
+    #TODO: maybe have "dual_substructure", i.e., implications
+
+    frames: List[List[Predicate]] = []
+    step_frames: List[List[Predicate]] = []
+
+    dual_frames: List[List[int]] = [] # ints are indicites into states
+    # TODO: daul_step_frames?
+
+    # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
+
+    def add_state(s: State, internal_cti: bool) -> int:
+        nonlocal live_states
+        nonlocal internal_ctis
+        assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
+        note = ' (internal cti)' if internal_cti else ''
+        if s not in states:
+            substructures = frozenset(
+                i for i, t in enumerate(states)
+                if is_substructure(t, s)
+            )
+            superstructures = frozenset(
+                i for i, t in enumerate(states)
+                if is_substructure(s, t)
+            )
+            isomorphic = substructures & superstructures
+            if len(isomorphic) > 0:
+                assert len(isomorphic) == 1, sorted(isomorphic)
+                i = list(isomorphic)[0]
+                print(f'add_state{note}: isomorphic to previous state: states[{i}]')
+            else:
+                i = len(states)
+                print(f'add_state{note}: adding new state: states[{i}]')
+                states.append(s)
+                for j in sorted(substructures):
+                    substructure.append((i, j))
+                for j in sorted(superstructures):
+                    substructure.append((j, i))
+                cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+                assert len(cs) == 1
+                c = cs[0]
+                maps.append(SubclausesMapTurbo(c, states, [], True))
+            if internal_cti:
+                internal_ctis |= {i}
+            else:
+                live_states |= {i}
+            return i
+        else:
+            i = states.index(s)
+            if internal_cti:
+                assert i in internal_ctis # maybe when we have restarts this will change
+            else:
+                if i not in live_states:
+                    print(f'add_state{note}: reviving previous state: states[{i}]')
+                    live_states |= {i}
+            return  i
+
+    def add_transition(i: int, j: int) -> None:
+        nonlocal transitions
+        nonlocal live_states
+        nonlocal reachable
+        assert 0 <= i < len(states)
+        assert 0 <= j < len(states)
+        if (i, j) not in transitions:
+            transitions.append((i, j))
+            # TODO: think about this, right now this may cause new states to be reachable and live
+            reachable = close_forward(reachable, True)
+            live_states |= reachable
+        else:
+            #assert False, (i, j) # TODO: think about this more. this usually happens when j was previously only an internal cti
+            pass
+
+    def add_predicate(p: Predicate, reason: Optional[int] = None) -> int:
+        nonlocal predicates
+        nonlocal live_predicates
+        # nonlocal reason_for_predicate
+        if p not in predicates:
+            j = len(predicates)
+            print(f'add_predicate: adding new predicate {j}: {p}')
+            predicates.append(p)
+        else:
+            j = predicates.index(p)
+            if j in live_predicates:
+                print(f'add_predicate: already have this predicate {j}: {p}')
+            else:
+                print(f'add_predicate: reviving previous predicate {j}: {p}')
+        live_predicates |= {j}
+        assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
+        if reason is not None:
+            assert False # maybe this will change later
+            # reason_for_predicate[j] |= {reason}
+        return j
+
+    for p in safety:
+        add_predicate(p)
+
+    def close_forward(s: FrozenSet[int], include_internal_ctis: bool = False) -> FrozenSet[int]:
+        '''
+        return closure under *abstract* post, also adds all known reachable states.
+        abstract post meanst we consider an abstract transition from s to t if t is a substructure of s.
+        '''
+        r = s | frozenset(reachable)
+        changes = True
+        while changes:
+            changes = False
+            # close under transitions and substructure
+            for i, j in chain(transitions, substructure):
+                if i in r and j not in r and (j in live_states or (include_internal_ctis and j in internal_ctis)):
+                    # TODO: if j is an internal_cti, maybe we want to make it live?
+                    r |= {j}
+                    changes = True
+        return r
+
+    def dual_close_forward(s: FrozenSet[int]) -> FrozenSet[int]:
+        '''
+        return closure under *abstract* post, also adds all known reachable states.
+        abstract post meanst we consider an abstract transition from s to t if t is a substructure of s.
+        '''
+        r = s | frozenset(inductive_invariant)
+        changes = True
+        while changes:
+            changes = False
+            # close under transitions and substructure
+            for ii, jj in dual_transitions: # TODO: maybe chain(dual_transitions, implications)
+                if ii <= r and not jj <= r:
+                    r |= jj
+                    changes = True
+        return r
+
+    def forward_explore_from_states(src: FrozenSet[int],
+                                   # k: int
+    ) -> None:
+        # forward explore (concretley) either from the given states,
+        # according to the current sharp predicates, using unrolling
+        # of k
+        # NOTE: this may find new reachable states
+        print(f'Starting forward_explore_from_states({sorted(src)})')
+        nonlocal reachable
+        r: FrozenSet[int] = reachable | src
+        r = close_forward(r)
+        a = [predicates[j] for j in sorted(live_predicates)]
+        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+            return alpha_from_predicates(solver, states, a)
+        n = -1
+        while len(r) > n:
+            n = len(r)
+            r = close_forward(r)
+            _states, _a, _initials, _transitions = forward_explore(
+                # TODO: this does not connect already discovered states
+                # TODO: use unrolling
+                solver,
+                alpha_a,
+                [states[i] for i in sorted(r)],
+            )
+            a = list(_a)
+            assert _states[:len(r)] == [states[i] for i in sorted(r)]
+            index_map: Dict[int, int] = dict()
+            for i in range(len(_states)):
+                try:
+                    index_map[i] = states.index(_states[i])
+                except ValueError:
+                    index_map[i] = add_state(_states[i], False)
+            assert [index_map[i] for i in range(len(r))] == sorted(r)
+            n_reachable = len(reachable)
+            reachable |= set(index_map[i] for i in _initials)
+            for i, j in _transitions:
+                i, j = index_map[i], index_map[j]
+                if (i, j) not in transitions:
+                    add_transition(i, j)
+                else:
+                    #assert False, (i, j) # TODO: this can happen if j was not a live state before
+                    pass
+            reachable = close_forward(reachable)
+            r = close_forward(r)
+            assert frozenset(index_map.values()) <= r
+        print(f'Finished forward_explore_from_states({sorted(src)})')
+
+    def houdini_frames() -> None:
+        '''Check if any subset of the sharp predicates is inductive, and
+        possibly add new ctis. This version is stratified, and
+        computes "frames" similar to IC3, but since multi-transition
+        CTIs are used they have a slightly different meaning. This
+
+        This version calls forward_explore_from_states on its own, and
+        may find new reachable states, both when doing
+        forward_explore_from_states of the reachable states, but also
+        since we may find a CTI and then discover that the prestate is
+        reachable all at once. Maybe this should be changed to be more
+        consistent by treating negations of diagrams as predicates and
+        not as a special case
+
+        '''
+        nonlocal reachable
+        nonlocal inductive_invariant
+        nonlocal frames
+        assert_invariants()
+
+        # first forward_explore from the reachable states
+        n_reachable = len(reachable)
+        n_live_predicates = len(live_predicates)
+        forward_explore_from_states(reachable)
+        new_reachable_states()
+        print(f'Forward explore of reachable states found {len(reachable) - n_reachable} new reachable states, eliminating {n_live_predicates - len(live_predicates)} predicates')
+        assert_invariants()
+
+        frames = [[predicates[i] for i in sorted(live_predicates)]]
+        r = reachable
+        while True:
+            assert r == close_forward(r)
+            a = frames[-1]
+            assert all(eval_in_state(None, states[i], p) for i, p in product(sorted(r), a))
+            for i in sorted(live_states):
+                if i not in r and all(eval_in_state(None, states[i], p) for p in a):
+                    r |= {i}
+                    r = close_forward(r)
+            n_reachable = len(reachable)
+            forward_explore_from_states(r) # TODO: not sure if we should do this here or not
+            assert n_reachable == len(reachable)
+            r = close_forward(r)
+            for i in sorted(live_states):
+                if i in r:
+                    continue
+                print(f'houdini_frames: checking for backward-transition from states[{i}]')
+                res = check_two_state_implication(
+                    solver,
+                    a + [maps[i].to_clause(maps[i].all_n)],
+                    maps[i].to_clause(maps[i].all_n),
+                    f'backward-transition from states[{i}]'
+                )
+                print(f'houdini_frames: done checking for backward-transition from states[{i}]')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate, False)
+                    i_post = add_state(poststate, False)
+                    add_transition(i_pre, i_post)
+                    assert i_post == i or (i_post, i) in substructure
+                    reachable = close_forward(reachable) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
+                    r |= {i_pre}
+                    r = close_forward(r)
+            n_reachable = len(reachable)
+            forward_explore_from_states(r) # this is probably a good place for this
+            assert n_reachable == len(reachable)
+            r = close_forward(r)
+            b = [p for p in a if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            for p in b[:]:
+                if p not in b or predicates.index(p) in inductive_invariant:
+                    continue
+                print(f'houdini_frames: checking for CTI to {p}')
+                res = check_two_state_implication(solver, a, p, 'CTI')
+                print(f'houdini_frames: done checking for CTI to {p}')
+                if res is not None:
+                    prestate, poststate = res
+                    i_pre = add_state(prestate, False)
+                    i_post = add_state(poststate, False)
+                    if (i_pre, i_post) not in transitions:
+                        add_transition(i_pre, i_post)
+                        reachable = close_forward(reachable) # we could have learned that i_pre is reachable here.... TODO: this is inconsistent with frames, and this should be fixed
+                    else:
+                        assert i_pre not in r
+                    r |= {i_pre}
+                    r = close_forward(r)
+                    n_reachable = len(reachable)
+                    forward_explore_from_states(r) # this is probably a good place for this
+                    assert n_reachable == len(reachable)
+                    r = close_forward(r)
+                    b = [p for p in b if all(eval_in_state(None, states[i], p) for i in sorted(r))]
+            if a == b:
+                break
+            else:
+                frames.append(b)
+        # here, frames[-1] is inductive (but it may not imply safety)
+        assert frames[-1] == a == b
+        inv = frozenset(predicates.index(p) for p in a)
+        assert inductive_invariant <= inv
+        inductive_invariant = inv
+
+    def compute_step_frames() -> None:
+        nonlocal step_frames
+        print(f'compute_step_frames: starting')
+        step_frames = [[predicates[i] for i in sorted(live_predicates)]]
+        while True:
+            a = step_frames[-1]
+            b = []
+            for p in a:
+                res = check_two_state_implication(solver, a, p, 'step-CTI')
+                if res is not None:
+                    prestate, poststate = res
+                    # TODO: should we add these states or not? they may not necessarily already be in states
+                else:
+                    b.append(p)
+            if a == b:
+                break
+            else:
+                step_frames.append(b)
+        # here, frames[-1] is inductive (but it may not imply safety)
+        assert step_frames[-1] == a == b
+        inv = frozenset(predicates.index(p) for p in a)
+        assert inductive_invariant == inv
+        print(f'compute_step_frames: done')
+
+    def dual_houdini_frames() -> None:
+        '''
+        TODO: doc
+        note: may find new reachable states, live states, inductive invariants
+        '''
+        nonlocal reachable
+        nonlocal inductive_invariant
+        nonlocal dual_frames
+        nonlocal live_states
+        assert_invariants()
+        print(f'dual_houdini_frames: starting')
+        # first forward_explore from the current inductive invariant
+        n_inductive_invariant = len(inductive_invariant)
+        n_reachable_states = len(reachable)
+        forward_explore_from_predicates(inductive_invariant)
+        new_inductive_invariants()
+        new_reachable_states()
+        print(f'dual_houdini_frames: forward explore of inductive invariant found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates and {len(reachable) - n_reachable_states} new reachable states')
+        assert_invariants()
+        # TODO: should we stop here in case we found anything and go back to primal houdini?
+
+        dual_frames = [sorted(live_states)]
+        # TODO: there is a consistency problem if new reachable states are discovered during the loop, since they will not be part of previous frames, this should be figured out, maybe by restarting everything if we find a new reachable state
+        r = inductive_invariant
+        while True:
+            assert r == dual_close_forward(r)
+            a = dual_frames[-1]
+            assert all(eval_in_state(None, states[i], predicates[j]) for i, j in product(a, sorted(r)))
+            print(f'dual_houdini_frames: starting iteration, r={sorted(r)}, a=reachable+{sorted(frozenset(a) - reachable)}')
+            r_0 = r
+            for j in sorted(live_predicates):
+                if j not in r and all(eval_in_state(None, states[i], predicates[j]) for i in a):
+                    print(f'dual_houdini_frames: adding {j} to r by abstract implication')
+                    r |= {j}
+                    r = dual_close_forward(r)
+            n_reachable = len(reachable)
+            n_inductive_invariant = len(inductive_invariant)
+            forward_explore_from_predicates(r) # TODO: not sure if we should do this here or not
+            assert n_reachable == len(reachable), '?'
+            assert n_inductive_invariant == len(inductive_invariant), '?'
+            r = dual_close_forward(r)
+            # TODO: uncomment this when find_dual_edge supports predicates
+            # # try to add edges to existing predicates (dual-backward-transitions)
+            # for j in sorted(live_predicates):
+            #     if j in r:
+            #         continue
+            #     print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     res = find_dual_edge(a, r_0, predicates[j], [predicates[j] for j in sorted(live_predicates - r)])
+            #     print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     if res is not None:
+            #         ps = frozenset(add_predicate(p) for p in res[0])
+            #         qs = frozenset(add_predicate(q) for q in res[1])
+            #         dual_transitions.append((ps, qs))
+            #         assert j in qs # TODO: or maybe predicates[j] can be implied by the qs ?
+            #         n_inductive_invariant = len(inductive_invariant)
+            #         inductive_invariant = dual_close_forward(inductive_invariant)
+            #         assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
+            #         r |= ps
+            #         r = dual_close_forward(r)
+            #         assert qs <= r
+            # n_inductive_invariant = len(inductive_invariant)
+            # forward_explore_from_predicates(r) # this is probably a good place for this
+            # assert n_reachable == len(reachable), '?'
+            # assert n_inductive_invariant == len(inductive_invariant), '?'
+            # r = dual_close_forward(r)
+            # try to exclude more states
+            b = [i for i in a if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
+            for i in b[:]:
+                # TODO: iterate over b in topological order according to primal graph, and if you cannot eliminate a state, you know you cannot eliminate anything reachable from it
+                if i not in b or i in reachable:
+                    continue
+                print(f'dual_houdini_frames: checking for dual-CTI to states[{i}]')
+                n_reachable = len(reachable)
+                res = find_dual_edge(a, r_0, states[i], [states[i] for i in b])
+                assert n_reachable == len(reachable), '?'
+                print(f'dual_houdini_frames: done checking for dual-CTI to states[{i}]')
+                if res is not None:
+                    ps = frozenset(add_predicate(p) for p in res[0])
+                    qs = frozenset(add_predicate(q) for q in res[1])
+                    dual_transitions.append((ps, qs))
+                    n_inductive_invariant = len(inductive_invariant)
+                    inductive_invariant = dual_close_forward(inductive_invariant)
+                    assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
+                    r |= ps
+                    r = dual_close_forward(r)
+                    assert qs <= r
+                    n_reachable = len(reachable)
+                    n_inductive_invariant = len(inductive_invariant)
+                    forward_explore_from_predicates(r)  # this is probably a good place for this
+                    assert n_reachable == len(reachable), '?'
+                    assert n_inductive_invariant == len(inductive_invariant), '?'
+                    r = dual_close_forward(r)
+                    b = [i for i in b if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
+                    assert i not in b
+            if a == b:
+                break
+            else:
+                dual_frames.append(b)
+        # here, dual_frames[-1] should be the reachable states
+        assert dual_frames[-1] == a == b, (dual_frames[-1], a, b)
+        # we need to update reachable to include everything reachable via transitions and substructures to internal CTIs, TODO: think more carefully about this
+        reachable = close_forward(reachable, True)
+        live_states |= reachable
+        # TODO: this assertion is actually not true when there is a
+        # cycle of unreachable states, we should think about it more
+        # assert frozenset(dual_frames[-1]) <= reachable, sorted(frozenset(dual_frames[-1]) - reachable)
+        print(f'dual_houdini_frames computed {len(dual_frames)} dual frames:')
+        for f in dual_frames:
+            print(f'  {sorted(f)}')
+        print()
+
+    def forward_explore_from_predicates(src: FrozenSet[int],
+                                        # k: int
+    ) -> None:
+        '''
+        dual forward explore from the given set of predicates
+
+        adds new predicates, may find new inductive invariant
+        adds new internal_ctis, but does not add any new states
+
+        for now, assuming k=1, i.e., to rule out a state we will only use one clause
+        '''
+        print(f'Starting forward_explore_from_predicates({sorted(src)})')
+        nonlocal inductive_invariant
+        n_inductive_invariant = len(inductive_invariant)
+        r: FrozenSet[int] = inductive_invariant | src
+        n_r = len(r)
+        r = dual_close_forward(r)
+        changes = True
+        while changes:
+            changes = False
+            r = dual_close_forward(r)
+            # try to add more known predicates
+            for j in sorted(live_predicates):
+                if j in r:
+                    continue
+                cti, ps = check_dual_edge(
+                    [predicates[k] for k in sorted(r)],
+                    [predicates[j]],
+                    minimize_cti=False,
+                    minimize_ps=True
+                )
+                if cti is None:
+                    assert ps is not None
+                    ps_i = frozenset(predicates.index(p) for p in ps)
+                    assert ps_i <= r
+                    dual_transitions.append((ps_i, frozenset([j])))
+                    r = dual_close_forward(r)
+                    assert j in r
+                    changes = True
+            if changes:
+                continue
+            # find roots, and try to eliminate them
+            # TODO: this is not really correct here, e.g., there can be cycles and then there is no root.
+            # we should do something more systematic (e.g., minimal disjunction relative to transitions and substructures)
+            assert reachable == close_forward(reachable)
+            a = frozenset(
+                i for i in sorted(live_states - reachable)
+                if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+            )
+            roots = a
+            for i, j in chain(transitions, substructure):
+                if i in a and j in roots:
+                    roots -= {j}
+            print(f'forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+            # try to find a new predicate that eliminates a root and is inductive relative to r
+            for i in sorted(roots - reachable):
+                if i not in roots:
+                    assert False # because we break after adding a single predicate to r
+                    # continue
+                print(f'forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
+                res = find_dual_edge([], r, states[i], [states[i] for i in sorted(roots)], n_ps=0, n_qs=1)
+                print(f'forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
+                if res is not None:
+                    ps_i = frozenset(add_predicate(p) for p in res[0])
+                    qs_i = frozenset(add_predicate(q) for q in res[1])
+                    assert ps_i <= r
+                    assert len(qs_i) == 1
+                    j = list(qs_i)[0]
+                    assert not eval_in_state(None, states[i], predicates[j])
+                    # TODO: minimize before adding to dual_transitions
+                    dual_transitions.append((ps_i, qs_i))
+                    r = dual_close_forward(r)
+                    assert j in r
+                    # no need for the following because we break here
+                    # roots = frozenset(
+                    #     i for i in sorted(roots)
+                    #     if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+                    # )
+                    # assert i not in roots
+                    changes = True
+                    break # to prioritize using existing predicates
+        # here there are no more dual edges that can be added
+        inductive_invariant = dual_close_forward(inductive_invariant)
+        print(f'Finished forward_explore_from_predicates({sorted(src)}), found {len(r) - n_r} new provable predicates, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
+
+    def find_dual_edge(
+            pos: Collection[int], # indices into states that ps must satisfy
+            r: Collection[int], # indices into predicates that can be used (assumed invariants)
+            goal: Union[State, Predicate], # state to exclude or predicate to prove
+            soft_goals: Union[Collection[State], Collection[Predicate]], # more states or predicates to exclude or prove greedily
+            n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r
+            n_qs: int = 1, # for now must be 1
+    ) -> Optional[Tuple[List[Predicate], List[Predicate]]]:
+        '''
+        May add new reachable states if it finds new initial states
+        '''
+        nonlocal reachable
+        assert n_qs == 1 # for now only one predicate in q
+        assert n_ps in (0, None) # for now we do not support finite bounds, either 0 or unbounded
+        if n_ps == 0:
+            assert len(pos) == 0
+              # for now we don't use n_ps=0 with predicates (although it could make sense, e.g., finding a stronger predicate)
+            assert isinstance(goal, State)
+            assert all(isinstance(g, State) for g in soft_goals)
+        # for now we don't support predicate goals at all
+        assert isinstance(goal, State)
+        assert all(isinstance(g, State) for g in soft_goals)
+        goal_i = states.index(goal)
+        soft_goals_i = sorted(states.index(g) for g in soft_goals)  # type: ignore # TODO something better
+
+        ps: List[Predicate] = []
+        mp = MultiSubclausesMapICE(
+            [maps[goal_i].to_clause(maps[goal_i].all_n)],
+            states,
+            [],
+            True,
+        )
+        def check_sep(s: Collection[int]) -> Optional[Predicate]:
+            s = frozenset(s) | reachable
+            res = mp.separate(
+                pos=sorted(reachable),
+                imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
+                soft_neg=soft_goals_i,
+            )
+            if res is None:
+                return None
+            else:
+                assert len(res) == mp.m == 1
+                return [mp.to_clause(k, res[k]) for k in range(mp.m)][0]
+        while True:
+            while True: # find a q or discover there is none and learn internal_ctis
+                ctis = frozenset(
+                    i for i in sorted((live_states | internal_ctis) - reachable)
+                    if all(chain(
+                            (eval_in_state(None, states[i], predicates[j]) for j in sorted(r)),
+                            (eval_in_state(None, states[i], p) for p in ps),
+                    ))
+                )
+                res = check_sep(ctis)
+                if res is None:
+                    break
+                q = res
+                # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
+                # first, check if init |= q, if not, we learn a new initial state
+                print(f'find_dual_edge: potential q is: {q}')
+                s = check_initial(solver, q)
+                if s is not None:
+                    print(f'  this predicate is not initial, learned a new initial state')
+                    i = add_state(s, False)
+                    reachable |= {i}
+                    reachable = close_forward(reachable) # just in case
+                    continue
+                # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
+                _cti, _ps = check_dual_edge(
+                    [predicates[k] for k in sorted(r)] + ps,
+                    [q],
+                    minimize_cti=True,
+                    minimize_ps=True
+                )
+                if _cti is None:
+                    assert _ps is not None
+                    print(f'find_dual_edge: found new dual edge:')
+                    for p in _ps:
+                        print(f'  {p}')
+                    print(f'  --> {q}')
+                    return _ps, [q]
+                else:
+                    prestate, poststate = _cti
+                    i_pre = add_state(prestate, True)
+                    i_post = add_state(poststate, True)
+                    assert (i_pre, i_post) not in transitions
+                    add_transition(i_pre, i_post)
+            # here, we have enough internal_ctis to rule out all possible q's
+            assert check_sep(ctis) is None
+            if n_ps == 0:
+                print(f'find_dual_edge: cannot find dual edge')
+                return None
+            assert n_ps is None
+            # minimize ctis outside of pos and learn a new predicate that separates them from pos
+            # TODO: use unsat cores
+            soft_neg = ctis - frozenset(pos)
+            for i in sorted(ctis - frozenset(pos)):
+               if i in ctis and check_sep(ctis - {i}) is None:
+                   ctis -= {i}
+            assert check_sep(ctis) is None
+            to_eliminate = ctis - frozenset(pos)
+            print(f'find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+            for i in sorted(to_eliminate):
+                seed = maps[i].separate(
+                    pos=pos,
+                    neg=[i],
+                    soft_neg=soft_neg, # TODO: or to_eliminate ?
+                )
+                if seed is not None:
+                    p = maps[i].to_clause(seed)
+                    ps.append(p)
+                    print(f'find_dual_edge: found new p predicate: {p}')
+                    break
+            else:
+                print(f'find_dual_edge: cannot find any new p predicate, so cannot find dual edge')
+                return None
+
+    def check_dual_edge(
+            ps: List[Predicate],
+            qs: List[Predicate],
+            minimize_cti: bool = False,
+            minimize_ps: bool = False
+    ) -> Tuple[Optional[Tuple[State, State]], Optional[List[Predicate]]]:
+        '''
+        this checks if ps /\ qs |= wp(ps -> qs)
+        note it does not check if init |= qs, but for now we assert it
+        '''
+        # TODO: this is a naive implementation, can be much improved, also has no caching
+        # TODO: this really needs to be cached, otherwise we end up adding copies of the same states to internal_ctis
+        print(f'check_dual_edge: starting to check the following edge:')
+        for p in ps:
+            print(f'  {p}')
+        print('-->')
+        for q in qs:
+            print(f'  {q}')
+        assert cheap_check_implication(inits, ps)
+        assert cheap_check_implication(inits, qs)
+        def check(ps_i: FrozenSet[int]) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
+            _ps = [ps[i] for i in sorted(ps_i)]
+            return check_two_state_implication_all_transitions(
+                solver,
+                chain(_ps, qs),
+                Implies(And(*_ps), And(*qs)),
+                minimize=minimize_cti
+            )
+        ps_i = frozenset(range(len(ps)))
+        res = check(ps_i)
+        if res is not None:
+            z3m, _ = res
+            prestate = Model.from_z3([KEY_OLD], z3m)
+            poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+            print(f'check_dual_edge: returning CTI')
+            return (prestate, poststate), None
+        # minimize ps_i
+        # TODO: use unsat cores
+        for i in sorted(ps_i):
+            if i in ps_i and check(ps_i - {i}) is None:
+                ps_i -= {i}
+        # assert check(ps_i) is None
+        ps = [ps[i] for i in ps_i]
+        print(f'check_dual_edge: returning valid edge:')
+        for p in ps:
+            print(f'  {p}')
+        print('-->')
+        for q in qs:
+            print(f'  {q}')
+        return None, ps
+
+    def new_reachable_states() -> None:
+        nonlocal live_predicates
+        nonlocal reachable
+        nonlocal internal_ctis
+        reachable = close_forward(reachable)
+        live_predicates = frozenset(
+            j for j in sorted(live_predicates)
+            if all(eval_in_state(None, states[k], predicates[j])
+                   for k in sorted(reachable)
+            )
+        )
+        internal_ctis -= reachable
+
+    def new_inductive_invariants() -> None:
+        nonlocal live_states
+        nonlocal internal_ctis
+        nonlocal live_predicates
+        nonlocal inductive_invariant
+        inductive_invariant = dual_close_forward(inductive_invariant)
+        live_states = frozenset(
+            i for i in sorted(live_states)
+            if all(eval_in_state(None, states[i], predicates[j])
+                   for j in sorted(inductive_invariant)
+            )
+        )
+        internal_ctis = frozenset(
+            i for i in sorted(internal_ctis)
+            if all(eval_in_state(None, states[i], predicates[j])
+                   for j in sorted(inductive_invariant)
+            )
+        )
+        # TODO: cleanup unneeded predicates, using more bookkeeping
+
+    def assert_invariants() -> None:
+        # for debugging
+        assert reachable == close_forward(reachable), (sorted(reachable), sorted(close_forward(reachable)))
+        assert inductive_invariant == dual_close_forward(inductive_invariant)
+        assert live_predicates <= frozenset(
+            j for j, p in enumerate(predicates)
+            if all(eval_in_state(None, states[k], p)
+                   for k in sorted(reachable)
+            )
+        )
+        assert (live_states | internal_ctis) <= frozenset(
+            i for i, s in enumerate(states)
+            if all(eval_in_state(None, s, predicates[j])
+                   for j in sorted(inductive_invariant)
+            )
+        )
+        assert len(internal_ctis & reachable) == 0
+
+    while True:
+        # TODO: add a little BMC
+        assert_invariants()
+
+        n_inductive_invariant = len(inductive_invariant)
+        n_reachable = len(reachable)
+        houdini_frames()
+        compute_step_frames()
+        if len(reachable) > n_reachable:
+            print(f'Primal Houdini found {len(reachable) - n_reachable} new reachable states')
+            new_reachable_states()
+        if len(inductive_invariant) > n_inductive_invariant:
+            print(f'Primal Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            new_inductive_invariants()
+
+        assert_invariants()
+
+        # print status and possibly terminate
+        # TODO: output information from dual_frames
+        print(f'\n[{datetime.now()}] Current states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
+        for i in sorted(live_states | internal_ctis):
+            notes: List[str] = []
+            if i in live_states:
+                notes.append('live')
+            if i in reachable:
+                notes.append('reachable')
+            if i in internal_ctis:
+                notes.append('internal_cti')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
+        for i in reachable:
+            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
+                print(f'\nFound safety violation by reachable state (states[{i}]).')
+                dump_caches()
+                return 'UNSAFE'
+        print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
+        for i, j, label in sorted(chain(
+                ((i, j, 'transition') for i, j in transitions),
+                ((i, j, 'substructure') for i, j in substructure),
+        )):
+            print(f'  {i:3} -> {j:3} ({label})')
+        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
+        for i in sorted(live_predicates):
+            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
+            assert max_frame < len(frames) - 1 or i in inductive_invariant
+            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
+            max_frame = max(j for j, f in enumerate(step_frames) if predicates[i] in f)
+            assert max_frame < len(step_frames) - 1 or i in inductive_invariant
+            if i not in inductive_invariant:
+                note += f' ({max_frame + 1})'
+            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
+            print('Proved safety!')
+            dump_caches()
+            return 'SAFE'
+        print()
+
+        # try to increase bounds for some states, without discovering
+        # new CTIs, and add new predicates
+
+        n_predicates = len(predicates)
+        n_live_predicates = len(live_predicates)
+        n_inductive_invariant = len(inductive_invariant)
+        n_reachable = len(reachable)
+        n_live_states = len(live_states)
+        n_internal_ctis = len(internal_ctis)
+        dual_houdini_frames()
+        assert reachable == close_forward(reachable)
+        assert inductive_invariant == dual_close_forward(inductive_invariant)
+        if len(reachable) > n_reachable:
+            print(f'Dual Houdini found {len(reachable) - n_reachable} new reachable states')
+            new_reachable_states()
+        if len(inductive_invariant) > n_inductive_invariant:
+            print(f'Dual Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            new_inductive_invariants()
+        assert_invariants()
+        print(f'\nLearned {len(predicates) - n_predicates} new predicates,'
+              f'revived {len(live_predicates) - n_live_predicates - len(predicates) + n_predicates} previous predicates,'
+              f'learned {len(inductive_invariant) - n_inductive_invariant} new inductive predicates, ',
+              f'{len(reachable) - n_reachable} new reachable states,'
+              f'{len(live_states) - n_live_states} new live states, '
+              f'{len(internal_ctis) - n_internal_ctis} new internal ctis, '
+              f'looping\n')
+
+# class DualEdgeFinder(object):
+#     '''Class used to store a map of subclauses of several clauses, and
+#     obtain a conjunction of subclauses that satisfy positive,
+#     negative, and implication constraints on some given states.
+#     '''
+#     def __init__(self,
+#                  states: List[State],  # assumed to only grow
+#                  predicates: List[Expr],  # assumed to only grow
+#                  imp: Collection[Tuple[int, int]] = (),
+#     ):
+#     def find_p_q(self,
+#                  reachable: Collection[int] = (), # indices to states
+#                  inductive_invariant: Collection[int] = (), # indices to states
+#                  pos: Collection[int] = (), # indices to state that must be satisfied by p (dual to a in houdini_frames)
+#                  neg: Collection[int] = (), # indices to states, try to make q violate as many of these such that one of the
+#                  imp: Collection[Tuple[int, int]] = (), # indices into states, transitions and substructures
+#     ) -> Tuple[List[Predicate], List[Predicate]]:
+#         '''
+#         find a conjunction of subclauses that respects given constraints, and optionally as many soft constraints as possible
+
+#         TODO: to we need an unsat core in case there is no subclause?
+
+#         NOTE: the result must contain a subclause of each top clause, i.e., true cannot be used instead of one of the top clauses
+#         '''
+#         self._new_states()
+#         self._new_predicates()
+#         assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
+#         assert all(0 <= i < len(self.predicates) for i in chain(ps, soft_ps))
+#         sep = list(chain(
+#             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(pos)),
+#             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(neg)),
+#             (z3.Implies(
+#                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
+#                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
+#             ) for i, j in sorted(imp)),
+#             (self.predicate_vs[i] for i in sorted(ps)),
+#         ))
+#         soft = list(chain(
+#             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos)),
+#             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(soft_neg)),
+#             (z3.Implies(
+#                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
+#                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
+#             ) for i, j in sorted(soft_imp)),
+#             (self.predicate_vs[i] for i in sorted(soft_ps)),
+#         ))
+#         self.solver.push()
+#         for c in sep:
+#             self.solver.add(c)
+#         if len(soft) > 0:
+#             assert self.optimize
+#             for c in soft:
+#                 self.solver.add_soft(c)
+#         print(f'Checking MultiSubclausesMapICE.solver... ', end='')
+#         res = self.solver.check()
+#         print(res)
+#         assert res in (z3.unsat, z3.sat)
+#         if res == z3.unsat:
+#             self.solver.pop()
+#             return None
+#         # minimize for strongest possible clause
+#         # TODO: just use z3's Optimize instead of minimizing manually
+#         model = self.solver.model()
+#         forced_to_false = [set(
+#             i for i, v in enumerate(self.lit_vs[k])
+#             if not z3.is_true(model[v])
+#         ) for k in range(self.m)]
+#         for k in range(self.m):
+#             for i in range(self.n[k]):
+#                 if i not in forced_to_false[k]:
+#                     ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
+#                     print(f'Checking MultiSubclausesMapICE.solver... ', end='')
+#                     res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
+#                     print(res)
+#                     assert res in (z3.unsat, z3.sat)
+#                     if res == z3.sat:
+#                         forced_to_false[k].add(i)
+#         ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]]
+#         assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat
+#         result = [frozenset(self.all_n[k] - forced_to_false[k]) for k in range(self.m)]
+#         self.solver.pop()
+#         return result
+
+#     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
+#         lits = [self.literals[k][i] for i in sorted(s)]
+#         free = set(chain(*(lit.free_ids() for lit in lits)))
+#         vs = [v for v in self.variables[k] if v.name in free]
+#         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
+
 
 NatInf = Optional[int] # None represents infinity
 # TODO: maybe these should be classes with their own methds
@@ -4834,6 +5751,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     # cdcl_invariant
     s = subparsers.add_parser('pd-cdcl-invariant', help='Run the "CDCL over invariants" algorithm')
     s.set_defaults(main=cdcl_invariant)
+    result.append(s)
+
+    # primal_dual_houdini
+    s = subparsers.add_parser('pd-primal-dual-houdini', help='Run the "Primal-Dual" algorithm')
+    s.set_defaults(main=primal_dual_houdini)
     result.append(s)
 
     for s in result:
