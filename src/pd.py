@@ -3703,7 +3703,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 ((s, t) for t in states),
                 ((t, s) for t in states),
             ))
-            if utils.args.cpus is None or utils.args.cpus == 1:
+            if utils.args.cpus is None or utils.args.cpus == 1 or len(work) <= 1:
                 results = [is_substructure(u, v) for u, v in work]
             else:
                 with multiprocessing.Pool(min(utils.args.cpus, len(work))) as pool:
