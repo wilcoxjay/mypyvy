@@ -184,8 +184,11 @@ def check_two_state_implication_all_transitions(
                 # if utils.logger.isEnabledFor(logging.DEBUG):
                 #     utils.logger.debug('assertions')
                 #     utils.logger.debug(str(s.assertions()))
-
-                if s.check() != z3.unsat:
+                print(f'check_two_state_implication_all_transitions: checking {trans.name}... ', end='')
+                res = s.check()
+                assert res in (z3.sat, z3.unsat), res
+                print(res)
+                if res != z3.unsat:
                     return s.model(minimize=minimize), trans
 
     return None
