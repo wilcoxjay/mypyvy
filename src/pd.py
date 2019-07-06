@@ -247,7 +247,7 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
 def is_substructure(s: State, t: State) -> bool:
     '''Returns true if s is a sub structure of t'''
     sorts_s = sorted(s.univs.keys(), key=str)
-    sorts_t = sorted(s.univs.keys(), key=str)
+    sorts_t = sorted(t.univs.keys(), key=str)
     cheap_check = sorts_s == sorts_t and all(
         len(s.univs[k]) <= len(t.univs[k])
         for k in sorts_s
