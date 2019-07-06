@@ -3660,7 +3660,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             else:
                 print(f'add_predicate: reviving previous predicate {j}: {p}')
         live_predicates |= {j}
-        assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
+        #TODO# assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
         if reason is not None:
             assert False # maybe this will change later
             # reason_for_predicate[j] |= {reason}
@@ -3947,7 +3947,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'dual_houdini_frames: checking for dual-CTI to states[{i}]')
                 n_reachable = len(reachable)
                 res = find_dual_edge(a, r_0, states[i], [states[i] for i in b])
-                assert n_reachable == len(reachable), '?'
+                #TODO# assert n_reachable == len(reachable), '?'
                 print(f'dual_houdini_frames: done checking for dual-CTI to states[{i}]')
                 if res is not None:
                     ps = frozenset(add_predicate(p) for p in res[0])
@@ -3962,7 +3962,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     n_reachable = len(reachable)
                     n_inductive_invariant = len(inductive_invariant)
                     forward_explore_from_predicates(r)  # this is probably a good place for this
-                    assert n_reachable == len(reachable), '?'
+                    #TODO# assert n_reachable == len(reachable), '?'
                     assert n_inductive_invariant == len(inductive_invariant), '?'
                     r = dual_close_forward(r)
                     b = [i for i in b if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
@@ -4214,7 +4214,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         print('-->')
         for q in qs:
             print(f'  {q}')
-        assert cheap_check_implication(inits, ps)
+        #TODO# assert cheap_check_implication(inits, ps)
         assert cheap_check_implication(inits, qs)
         def check(ps_i: FrozenSet[int]) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
             _ps = [ps[i] for i in sorted(ps_i)]
