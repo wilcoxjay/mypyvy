@@ -1539,6 +1539,7 @@ def forward_explore_marco(solver: Solver,
     N = len(clauses)
     maps = [SubclausesMap(top_clause) for top_clause in clauses]
 
+    ########################################################
     # TODO: here lies commented out the version that uses one big
     # solver, since it does not use caches appropriately. Maybe we
     # should bring this back at some point
@@ -1628,6 +1629,7 @@ def forward_explore_marco(solver: Solver,
     #         ))
 
     #     return True
+    ########################################################
 
     # a: List[Expr] = [] # set of clauses such that: init U states |= a /\ wp(a)
     def get_a() -> List[Expr]:
@@ -4341,7 +4343,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             [],
             True,
         )
-        def check_sep(s: Collection[int]) -> Optional[Predicate]:
+        def check_sep(s: Collection[int]) -> Optional[Tuple[Predicate, FrozenSet[int]]]:
             s = frozenset(s) | reachable
             res = mp.separate(
                 pos=sorted(reachable),
@@ -4352,20 +4354,100 @@ def primal_dual_houdini(solver: Solver) -> str:
                 return None
             else:
                 assert len(res) == mp.m == 1
-                return [mp.to_clause(k, res[k]) for k in range(mp.m)][0]
+                return [mp.to_clause(k, res[k]) for k in range(mp.m)][0], res[0]
+
+        # set up a cti_solver for fast and greedy discovery of ctis (alternative to check_dual_edge)
+        assert mp.m == 1 # when we support |Q| > 1, this will change
+        cti_solver = Solver() # TODO: maybe solver per transition
+        t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
+        lit_indicators_pre = tuple(z3.Bool(f'@lit_pre_{i}') for i in range(mp.n[0])) # note - the polarity here is negative, it means the literal is not in the clause, unlike for lit_indicators_post
+        lit_indicators_post = tuple(z3.Bool(f'@lit_post_{i}') for i in range(mp.n[0]))
+        # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
+        # some of this code is taken out of syntax.Z3Translator.translate_expr
+        # TODO: why can't top clause be quantifier free? it should be possible
+        top_clause = mp.to_clause(0, mp.all_n[0])
+        assert isinstance(top_clause, QuantifierExpr)
+        assert isinstance(top_clause.body, NaryExpr)
+        assert top_clause.body.op == 'OR'
+        assert tuple(mp.literals[0]) == tuple(top_clause.body.args)
+        # add the clause defined by lit_indicators_pre to the prestate
+        bs = t.bind(top_clause.binder)
+        with t.scope.in_scope(top_clause.binder, bs):
+            body = z3.Or(*(
+                z3.And(z3.Not(lit_indicators_pre[i]), t.translate_expr(lit, old=True)) # NB: polarity
+                for i, lit in enumerate(mp.literals[0])
+            ))
+        cti_solver.add(z3.ForAll(bs, body))
+        # add the negation of the clause defined by lit_indicators_post to the poststate
+        bs = t.bind(top_clause.binder)
+        with t.scope.in_scope(top_clause.binder, bs):
+            body = z3.Or(*(
+                z3.And(lit_indicators_post[i], t.translate_expr(lit, old=False))
+                for i, lit in enumerate(mp.literals[0])
+            ))
+        cti_solver.add(z3.Not(z3.ForAll(bs, body)))
+        transition_indicators: List[z3.ExprRef] = []
+        for i, trans in enumerate(prog.transitions()):
+            transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
+            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+        p_indicators: List[z3.ExprRef] = []
+        def add_p(p: Predicate) -> None:
+            assert len(p_indicators) == len(ps)
+            i = len(ps)
+            ps.append(p)
+            p_indicators.append(z3.Bool(f'@p_{i}'))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+        def check_q(q_seed: FrozenSet[int], ps_seed: FrozenSet[int]) -> Optional[Tuple[State, State]]:
+            all_n = mp.all_n[0]
+            for transition_indicator in transition_indicators:
+                print(f'check_q: testing {transition_indicator}')
+                indicators = tuple(chain(
+                    [transition_indicator],
+                    (lit_indicators_pre[i] for i in sorted(all_n - q_seed)),
+                    (lit_indicators_post[i] for i in sorted(q_seed)),
+                    (p_indicators[i] for i in sorted(ps_seed)),
+                ))
+                z3res = cti_solver.check(indicators)
+                assert z3res in (z3.sat, z3.unsat)
+                print(f'check_q: {z3res}')
+                if z3res == z3.unsat:
+                    continue
+                # maximize indicators, to make for a more informative cti
+                for extra in chain(
+                        # priorities: post, pre, ps
+                        (lit_indicators_post[i] for i in sorted(all_n - q_seed)),
+                        (lit_indicators_pre[i] for i in sorted(q_seed)),
+                        (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
+                ):
+                    z3res = cti_solver.check(indicators + (extra,))
+                    assert z3res in (z3.sat, z3.unsat)
+                    if z3res == z3.sat:
+                        print(f'check_q: adding extra: {extra}')
+                        indicators += (extra,)
+                assert cti_solver.check(indicators) == z3.sat
+                z3model = cti_solver.model(indicators)
+                prestate = Model.from_z3([KEY_OLD], z3model)
+                poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                print(f'check_q: found new cti violating dual edge')
+                _cache_transitions.append((prestate, poststate))
+                for state in (prestate, poststate):
+                    if all(eval_in_state(s, state, p) for p in inits):
+                        _cache_initial.append(state)
+                return prestate, poststate
+            return None
+        for j in sorted(r):
+            add_p(predicates[j])
         while True:
             while True: # find a q or discover there is none and learn internal_ctis
                 ctis = frozenset(
                     i for i in sorted((live_states | internal_ctis) - reachable)
-                    if all(chain(
-                            (eval_in_state(None, states[i], predicates[j]) for j in sorted(r)),
-                            (eval_in_state(None, states[i], p) for p in ps),
-                    ))
+                    if all(eval_in_state(None, states[i], p) for p in ps)
                 )
                 res = check_sep(ctis)
                 if res is None:
                     break
-                q = res
+                q, q_seed = res
                 # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
                 # first, check if init |= q, if not, we learn a new initial state
                 print(f'find_dual_edge: potential q is ({len(destruct_clause(q)[1])} literals): {q}')
@@ -4377,12 +4459,45 @@ def primal_dual_houdini(solver: Solver) -> str:
                     reachable = close_forward(reachable) # just in case
                     continue
                 # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
-                _cti, _ps = check_dual_edge(
-                    solver,
-                    tuple(chain((predicates[k] for k in sorted(r)), ps)),
-                    (q,),
-                    # msg='cti?', TODO
-                )
+                _cti: Optional[Tuple[State, State]]
+                _ps: Optional[Tuple[Predicate,...]]
+                if True:
+                    # version using cti_solver
+                    p_seed = frozenset(range(len(ps)))
+                    _cti = check_q(q_seed, p_seed)
+                    if _cti is None:
+                        for i in sorted(p_seed, reverse=True):
+                            if check_q(q_seed, p_seed - {i}) is None:
+                                p_seed -= {i}
+                        _ps = tuple(ps[i] for i in sorted(p_seed))
+                    else:
+                        _ps = None
+                    if False:
+                        # just check vs. check_dual_edge
+                        # TODO: run this on all examples sometime
+                        if _cti is None:
+                            assert _ps is not None
+                            assert check_dual_edge(
+                                solver,
+                                _ps,
+                                (q,),
+                                msg='validation-cti'
+                            ) == (_cti, _ps)
+                        else:
+                            assert check_dual_edge(
+                                solver,
+                                tuple(ps),
+                                (q,),
+                                msg='validation-cti'
+                            )[0] is not None
+                else:
+                    # version using check_dual_edge
+                    _cti, _ps = check_dual_edge(
+                        solver,
+                        tuple(ps),
+                        (q,),
+                        # msg='cti?', TODO
+                    )
                 if _cti is None:
                     assert _ps is not None
                     print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
@@ -4432,7 +4547,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         reachable |= {add_state(s, False)}
                         reachable = close_forward(reachable) # just in case
                 if seed is not None:
-                    ps.append(p)
+                    add_p(p)
                     print(f'find_dual_edge: found new p predicate: {p}')
                     break
             else:
