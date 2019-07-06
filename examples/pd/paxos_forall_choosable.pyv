@@ -15,7 +15,6 @@ axiom le(X,X)
 axiom le(X, Y) & le(Y, Z) -> le(X, Z)
 axiom le(X, Y) & le(Y, X) -> X = Y
 axiom le(X, Y) | le(Y, X)
-axiom le(none,X) # added only to make none defined in initial states
 
 immutable relation member(node, quorum)
 axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
@@ -38,7 +37,6 @@ init !left_round(N, R)
 init !proposal(R, V)
 init !vote(N, R, V)
 init !decision(R, V)
-init decision_quorum(R1, V1) = decision_quorum(R2, V2)  # added only to make it defined in initial states
 
 
 transition send_1a(r: round)

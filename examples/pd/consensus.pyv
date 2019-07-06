@@ -20,10 +20,6 @@ init !votes(N1, N2)
 init !leader(N1)
 init !decided(N, V)
 
-# just to make everything defined in initial states
-# TODO: find a better solution, as this also affects verification
-init member(N, voting_quorum)
-
 transition send_request_vote(src: node, dst: node)
 	modifies vote_request_msg
 	vote_request_msg(N1, N2) <-> (old(vote_request_msg(N1, N2)) | (N1=src & N2=dst))
