@@ -805,10 +805,10 @@ class Model(object):
         self.diagram_cache: Dict[int, Diagram] = {}
 
     @staticmethod
-    def from_z3(keys: List[str], z3m: z3.ModelRef) -> Model:
+    def from_z3(keys: List[str], z3m: z3.ModelRef, allow_undefined: bool = False) -> Model:
         m = Model(keys)
         m.z3model = z3m
-        m.read_out(z3m)
+        m.read_out(z3m, allow_undefined=allow_undefined)
         return m
 
     # for pickling
@@ -912,7 +912,7 @@ class Model(object):
 
         return '\n'.join(l)
 
-    def read_out(self, z3model: z3.ModelRef) -> None:
+    def read_out(self, z3model: z3.ModelRef, allow_undefined: bool = False) -> None:
         # utils.logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '')
@@ -1006,6 +1006,107 @@ class Model(object):
                         # TODO: not sure what's going on here with check_bmc and pd.check_k_state_implication
                         # assert False
                         pass
+
+        if allow_undefined:
+            return
+
+        def arbitrary_interp_r(r: RelationDecl) -> List[Tuple[List[str], bool]]:
+            doms = []
+            for s in r.arity:
+                assert isinstance(s, syntax.UninterpretedSort)
+                assert s.decl is not None
+                doms.append(self.univs[s.decl])
+
+            l = []
+            tup: Tuple[str, ...]
+            for tup in itertools.product(*doms):
+                l.append((list(tup), False))
+
+            return l
+
+        def ensure_defined_r(r: RelationDecl) -> None:
+            R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
+            if not r.mutable:
+                R = [self.immut_rel_interps]
+            else:
+                R = self.rel_interps
+            interp: Optional[List[Tuple[List[str], bool]]] = None
+
+            def get_interp() -> List[Tuple[List[str], bool]]:
+                nonlocal interp
+                if interp is None:
+                    interp = arbitrary_interp_r(r)
+                return interp
+
+            for m in R:
+                if r not in m:
+                    m[r] = get_interp()
+
+        def arbitrary_interp_c(c: ConstantDecl) -> str:
+            sort = c.sort
+            assert isinstance(sort, syntax.UninterpretedSort)
+            assert sort.decl is not None
+            return self.univs[sort.decl][0]
+
+        def ensure_defined_c(c: ConstantDecl) -> None:
+            R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
+            if not c.mutable:
+                C = [self.immut_const_interps]
+            else:
+                C = self.const_interps
+
+            interp: str = arbitrary_interp_c(c)
+
+            for m in C:
+                if c not in m:
+                    m[c] = interp
+
+        def arbitrary_interp_f(f: FunctionDecl) -> List[Tuple[List[str], str]]:
+            doms = []
+            for s in f.arity:
+                assert isinstance(s, syntax.UninterpretedSort)
+                assert s.decl is not None
+                doms.append(self.univs[s.decl])
+
+            sort = f.sort
+            assert isinstance(sort, syntax.UninterpretedSort)
+            assert sort.decl is not None
+            interp = self.univs[sort.decl][0]
+
+            l = []
+            tup: Tuple[str, ...]
+            for tup in itertools.product(*doms):
+                l.append((list(tup), interp))
+
+            return l
+
+        def ensure_defined_f(f: FunctionDecl) -> None:
+            F: List[Dict[FunctionDecl, List[Tuple[List[str], str]]]]
+            if not f.mutable:
+                F = [self.immut_func_interps]
+            else:
+                F = self.func_interps
+
+            interp: Optional[List[Tuple[List[str], str]]] = None
+
+            def get_interp() -> List[Tuple[List[str], str]]:
+                nonlocal interp
+                if interp is None:
+                    interp = arbitrary_interp_f(f)
+                return interp
+
+            for m in F:
+                if f not in m:
+                    m[f] = get_interp()
+
+        for decl in prog.relations_constants_and_functions():
+            if isinstance(decl, RelationDecl):
+                ensure_defined_r(decl)
+            elif isinstance(decl, ConstantDecl):
+                ensure_defined_c(decl)
+            else:
+                assert isinstance(decl, FunctionDecl)
+                ensure_defined_f(decl)
 
     def as_diagram(self, i: Optional[int] = None, subclause_complete: Optional[bool] = None) -> Diagram:
         assert len(self.keys) == 1 or i is not None, \
