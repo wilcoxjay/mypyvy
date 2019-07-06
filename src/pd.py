@@ -4097,7 +4097,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                     continue
                 print(f'dual_houdini_frames: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
                 for i in sorted(roots):
-                    assert i not in reachable
+                    #TODO# assert i not in reachable ??? see paxos_forall.pd-primal-dual-houdini.5e0ed39.seed-1234.log
+                    if i in reachable:
+                        continue
                     if not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r)):
                         # already eliminated i
                         assert changes
