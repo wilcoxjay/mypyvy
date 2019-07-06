@@ -3802,9 +3802,16 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal live_predicates
         # nonlocal reason_for_predicate
         if p not in predicates:
-            j = len(predicates)
-            print(f'add_predicate: adding new predicate {j}: {p}')
-            predicates.append(p)
+            for j, q in enumerate(predicates):
+                if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
+                    print(f'add_predicate: equivalent to existing predicate {j}: {p} <=> {q}')
+                    if j not in live_predicates:
+                        print(f'add_predicate: reviving predicate {j}')
+                    break
+            else:
+                j = len(predicates)
+                print(f'add_predicate: adding new predicate {j}: {p}')
+                predicates.append(p)
         else:
             j = predicates.index(p)
             if j in live_predicates:
