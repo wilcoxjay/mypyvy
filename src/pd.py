@@ -43,6 +43,7 @@ def dump_caches() -> None:
             '_cache_transitions',
             '_cache_initial',
             '_cache_map_clause_state_interaction',
+            '_cache_dual_edge',
         ]
         cache = {k: sys.modules['pd'].__dict__[k] for k in caches}
         print('dumping caches:', *(f'{k}:{len(cache[k])}' for k in sorted(cache)), end=' ... ')
@@ -244,6 +245,7 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
         return s
     return None
 
+
 def is_substructure(s: State, t: State) -> bool:
     '''Returns true if s is a sub structure of t'''
     sorts_s = sorted(s.univs.keys(), key=str)
@@ -252,11 +254,14 @@ def is_substructure(s: State, t: State) -> bool:
         len(s.univs[k1]) <= len(t.univs[k2])
         for k1, k2 in zip(sorts_s, sorts_t)
     )
+    if not cheap_check:
+        return False
     diag_s = s.as_diagram(0).to_ast()
     diag_t = t.as_diagram(0).to_ast()
-    real_check = cheap_check_implication([diag_t], [diag_s])
-    assert cheap_check or not real_check, f'\n{sorts_s}\n{sorts_t}\n{[len(s.univs[k]) for k in sorts_s]}\n{[len(t.univs[k]) for k in sorts_t]}\n\n{s}\n\n{t}' # TODO: just for debugging, once we trust it we can use cheak_check
-    return real_check
+    if diag_s == diag_t:
+        return True
+    return cheap_check_implication([diag_t], [diag_s])
+
 
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
 _cache_transitions: List[Tuple[State,State]] = []
@@ -421,6 +426,107 @@ def check_two_state_implication(
                 print('-'*80)
             print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
         cache['h'] += 1
+    return cache[k]
+
+
+_cache_dual_edge: Dict[Any,Any] = dict(h=0,r=0)
+# TODO: cache valid dual edges like we cache transitions
+def check_dual_edge(
+        s: Solver,
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        msg: str = 'cti',
+) -> Tuple[Optional[Tuple[State, State]], Optional[Tuple[Expr,...]]]:
+    '''
+    this checks if ps /\ qs |= wp(ps -> qs)
+    note it does not check if init |= qs, but for now we assert it
+    '''
+    prog = syntax.the_program
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    k = (ps, qs)
+    cache = _cache_dual_edge
+    print(f'check_dual_edge: starting to check the following edge:')
+    for p in ps:
+        print(f'  {p}')
+    print('  -->')
+    for q in qs:
+        print(f'  {q}')
+    #TODO# assert cheap_check_implication(inits, ps)
+    assert cheap_check_implication(inits, qs)
+    def check(ps_i: FrozenSet[int], minimize: bool) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
+        _ps = [ps[i] for i in sorted(ps_i)]
+        print(f'check_dual_edge: calling z3... ', end='')
+        res =  check_two_state_implication_all_transitions(
+            s,
+            chain(_ps, qs),
+            Implies(And(*_ps), And(*qs)),
+            minimize=minimize,
+        )
+        print(f'done')
+        return res
+    if k not in cache:
+        if utils.args.cache_only:
+            assert False
+        for prestate, poststate in _cache_transitions:
+            if (    all(eval_in_state(s, prestate,  p) for p in ps) and
+                    all(eval_in_state(s, prestate,  q) for q in qs) and
+                    all(eval_in_state(s, poststate, p) for p in ps) and
+                not all(eval_in_state(s, poststate, q) for q in qs)):
+                # TODO: we're not really minimizing the cti here... probably fine
+                cache[k] = ((prestate, poststate), None)
+                cache['r'] += 1
+                print(f'check_dual_edge: found previous {msg} violating dual edge')
+                # print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                break
+        else:
+            ps_i = frozenset(range(len(ps)))
+            res = check(ps_i, True)
+            if res is not None:
+                if utils.args.cache_only_discovered:
+                    assert False
+                z3m, _ = res
+                prestate = Model.from_z3([KEY_OLD], z3m)
+                # poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+                poststate = Model.from_z3([KEY_NEW], z3m) # TODO: can we do this? this seems better than dragging the prestate along
+                print(f'check_dual_edge: found new {msg} violating dual edge')
+                _cache_transitions.append((prestate, poststate))
+                for state in (prestate, poststate):
+                    if all(eval_in_state(s, state, p) for p in inits):
+                        _cache_initial.append(state)
+                    # TODO: actually, we should first try to get (from Z3) a transition where the prestate is initial
+                cache[k] = ((prestate, poststate), None)
+            else:
+                # minimize ps_i
+                # TODO: use unsat cores?
+                for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
+                    if i in ps_i and check(ps_i - {i}, False) is None:
+                        ps_i -= {i}
+                ps = tuple(ps[i] for i in ps_i)
+                print(f'check_dual_edge: found new valid dual edge:')
+                for p in ps:
+                    print(f'  {p}')
+                print('  -->')
+                for q in qs:
+                    print(f'  {q}')
+                cache[k] = (None, ps)
+
+        if len(cache) % 100 == 1:
+            # dump_caches()
+            print(f'_cache_dual_edge length is {len(cache)}, h/r is {cache["h"]}/{cache["r"]}')
+
+    else:
+        cti, ps = cache[k]
+        if cti is not None:
+            print(f'check_dual_edge: found cached {msg} violating dual edge')
+        else:
+            print(f'check_dual_edge: found cached valid dual edge:')
+            for p in ps:
+                print(f'  {p}')
+            print('  -->')
+            for q in qs:
+                print(f'  {q}')
+        cache['h'] += 1
+
     return cache[k]
 
 
@@ -2365,7 +2471,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                     assert j not in reachable and j in live_states
                     score[j] += 1
                     candidates.add(j)
-        print(f'\nCurrent scores:')
+        print(f'\n[{datetime.now()}] Current scores:')
         for i in sorted(candidates):
             assert i not in covered
             assert score[i] > 0
@@ -3586,9 +3692,9 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal live_states
         nonlocal internal_ctis
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
-        note = ' (internal cti)' if internal_cti else ''
+        note = ' (internal cti)' if internal_cti else ' (live state)'
         if s not in states:
-            print(f'add_state: checking for substructures... ', end='')
+            print(f'add_state{note}: checking for substructures... ', end='')
             substructures = frozenset(
                 i for i, t in enumerate(states)
                 if is_substructure(t, s)
@@ -3623,12 +3729,18 @@ def primal_dual_houdini(solver: Solver) -> str:
         else:
             i = states.index(s)
             if internal_cti:
-                assert i in internal_ctis # maybe when we have restarts this will change
+                if i not in internal_ctis:
+                    print(f'add_state{note}: adding states[{i}] to internal_ctis')
+                    internal_ctis |= {i}
+                else:
+                    print(f'add_state{note}: already have states[{i}] in internal_ctis')
             else:
                 if i not in live_states:
-                    print(f'add_state{note}: reviving previous state: states[{i}]')
+                    print(f'add_state{note}: adding states[{i}] to live_states')
                     live_states |= {i}
-            return  i
+                else:
+                    print(f'add_state{note}: already have states[{i}] in live_states')
+            return i
 
     def add_transition(i: int, j: int) -> None:
         nonlocal transitions
@@ -3729,12 +3841,12 @@ def primal_dual_houdini(solver: Solver) -> str:
             )
             a = list(_a)
             assert _states[:len(r)] == [states[i] for i in sorted(r)]
-            index_map: Dict[int, int] = dict()
-            for i in range(len(_states)):
-                try:
-                    index_map[i] = states.index(_states[i])
-                except ValueError:
-                    index_map[i] = add_state(_states[i], False)
+            index_map = {
+                i: add_state(s, False)
+                if s not in states or states.index(s) not in live_states else
+                states.index(s)
+                for i, s in enumerate(_states)
+            }
             assert [index_map[i] for i in range(len(r))] == sorted(r)
             n_reachable = len(reachable)
             reachable |= set(index_map[i] for i in _initials)
@@ -4014,10 +4126,10 @@ def primal_dual_houdini(solver: Solver) -> str:
                 if j in r:
                     continue
                 cti, ps = check_dual_edge(
-                    [predicates[k] for k in sorted(r)],
-                    [predicates[j]],
-                    minimize_cti=False,
-                    minimize_ps=True
+                    solver,
+                    tuple(predicates[k] for k in sorted(r)),
+                    (predicates[j],),
+                    # msg='cti?', TODO
                 )
                 if cti is None:
                     assert ps is not None
@@ -4080,7 +4192,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             soft_goals: Union[Collection[State], Collection[Predicate]], # more states or predicates to exclude or prove greedily
             n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r
             n_qs: int = 1, # for now must be 1
-    ) -> Optional[Tuple[List[Predicate], List[Predicate]]]:
+    ) -> Optional[Tuple[Tuple[Predicate,...], Tuple[Predicate,...]]]:
         '''
         May add new reachable states if it finds new initial states
         '''
@@ -4145,10 +4257,10 @@ def primal_dual_houdini(solver: Solver) -> str:
                     continue
                 # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
                 _cti, _ps = check_dual_edge(
-                    [predicates[k] for k in sorted(r)] + ps,
-                    [q],
-                    minimize_cti=True,
-                    minimize_ps=True
+                    solver,
+                    tuple(chain((predicates[k] for k in sorted(r)), ps)),
+                    (q,),
+                    # msg='cti?', TODO
                 )
                 if _cti is None:
                     assert _ps is not None
@@ -4157,7 +4269,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     for p in _ps:
                         print(f'  {p}')
                     print(f'  --> {q}')
-                    return _ps, [q]
+                    return _ps, (q,)
                 else:
                     prestate, poststate = _cti
                     i_pre = add_state(prestate, True)
@@ -4196,57 +4308,6 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'find_dual_edge: cannot find any new p predicate, so cannot find dual edge')
                 return None
 
-    def check_dual_edge(
-            ps: List[Predicate],
-            qs: List[Predicate],
-            minimize_cti: bool = False,
-            minimize_ps: bool = False
-    ) -> Tuple[Optional[Tuple[State, State]], Optional[List[Predicate]]]:
-        '''
-        this checks if ps /\ qs |= wp(ps -> qs)
-        note it does not check if init |= qs, but for now we assert it
-        '''
-        # TODO: this is a naive implementation, can be much improved, also has no caching
-        # TODO: this really needs to be cached, otherwise we end up adding copies of the same states to internal_ctis
-        print(f'check_dual_edge: starting to check the following edge:')
-        for p in ps:
-            print(f'  {p}')
-        print('-->')
-        for q in qs:
-            print(f'  {q}')
-        #TODO# assert cheap_check_implication(inits, ps)
-        assert cheap_check_implication(inits, qs)
-        def check(ps_i: FrozenSet[int]) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
-            _ps = [ps[i] for i in sorted(ps_i)]
-            return check_two_state_implication_all_transitions(
-                solver,
-                chain(_ps, qs),
-                Implies(And(*_ps), And(*qs)),
-                minimize=minimize_cti
-            )
-        ps_i = frozenset(range(len(ps)))
-        res = check(ps_i)
-        if res is not None:
-            z3m, _ = res
-            prestate = Model.from_z3([KEY_OLD], z3m)
-            poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
-            print(f'check_dual_edge: returning CTI')
-            return (prestate, poststate), None
-        # minimize ps_i
-        # TODO: use unsat cores
-        for i in sorted(ps_i):
-            if i in ps_i and check(ps_i - {i}) is None:
-                ps_i -= {i}
-        # assert check(ps_i) is None
-        ps = [ps[i] for i in ps_i]
-        print(f'check_dual_edge: returning valid edge:')
-        for p in ps:
-            print(f'  {p}')
-        print('-->')
-        for q in qs:
-            print(f'  {q}')
-        return None, ps
-
     def new_reachable_states() -> None:
         nonlocal live_predicates
         nonlocal reachable
@@ -4282,7 +4343,8 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     def assert_invariants() -> None:
         # for debugging
-        assert reachable == close_forward(reachable), (sorted(reachable), sorted(close_forward(reachable)))
+        assert reachable == close_forward(reachable), sorted(close_forward(reachable) - reachable)
+        assert reachable == close_forward(reachable, True), sorted(close_forward(reachable, True) - reachable) # TODO: not sure about this
         assert inductive_invariant == dual_close_forward(inductive_invariant)
         assert live_predicates <= frozenset(
             j for j, p in enumerate(predicates)
