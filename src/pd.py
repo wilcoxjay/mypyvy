@@ -248,14 +248,14 @@ def is_substructure(s: State, t: State) -> bool:
     '''Returns true if s is a sub structure of t'''
     sorts_s = sorted(s.univs.keys(), key=str)
     sorts_t = sorted(t.univs.keys(), key=str)
-    cheap_check = sorts_s == sorts_t and all(
-        len(s.univs[k]) <= len(t.univs[k])
-        for k in sorts_s
+    cheap_check = [str(x) for x in sorts_s] == [str(x) for x in sorts_t] and all(
+        len(s.univs[k1]) <= len(t.univs[k2])
+        for k1, k2 in zip(sorts_s, sorts_t)
     )
     diag_s = s.as_diagram(0).to_ast()
     diag_t = t.as_diagram(0).to_ast()
     real_check = cheap_check_implication([diag_t], [diag_s])
-    assert cheap_check or not real_check # TODO: just for debugging, once we trust it we can use cheak_check
+    assert cheap_check or not real_check, f'\n{sorts_s}\n{sorts_t}\n{[len(s.univs[k]) for k in sorts_s]}\n{[len(t.univs[k]) for k in sorts_t]}\n\n{s}\n\n{t}' # TODO: just for debugging, once we trust it we can use cheak_check
     return real_check
 
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
