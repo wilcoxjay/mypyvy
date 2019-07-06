@@ -246,9 +246,17 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
 
 def is_substructure(s: State, t: State) -> bool:
     '''Returns true if s is a sub structure of t'''
-    x = s.as_diagram(0).to_ast()
-    y = t.as_diagram(0).to_ast()
-    return cheap_check_implication([y], [x])
+    sorts_s = sorted(s.univs.keys(), key=str)
+    sorts_t = sorted(s.univs.keys(), key=str)
+    cheap_check = sorts_s == sorts_t and all(
+        len(s.univs[k]) <= len(t.univs[k])
+        for k in sorts_s
+    )
+    diag_s = s.as_diagram(0).to_ast()
+    diag_t = t.as_diagram(0).to_ast()
+    real_check = cheap_check_implication([diag_t], [diag_s])
+    assert cheap_check or not real_check # TODO: just for debugging, once we trust it we can use cheak_check
+    return real_check
 
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
 _cache_transitions: List[Tuple[State,State]] = []
@@ -3580,6 +3588,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         note = ' (internal cti)' if internal_cti else ''
         if s not in states:
+            print(f'add_state: checking for substructures... ', end='')
             substructures = frozenset(
                 i for i, t in enumerate(states)
                 if is_substructure(t, s)
@@ -3588,6 +3597,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 i for i, t in enumerate(states)
                 if is_substructure(s, t)
             )
+            print(f'done')
             isomorphic = substructures & superstructures
             if len(isomorphic) > 0:
                 assert len(isomorphic) == 1, sorted(isomorphic)
@@ -3972,6 +3982,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         print(f'dual_houdini_frames computed {len(dual_frames)} dual frames:')
         for f in dual_frames:
             print(f'  {sorted(f)}')
+        if frozenset(dual_frames[-1]) <= reachable:
+            print(f'  last frame contains only reachable states')
+        else:
+            print(f'  last frame contains some states not known to be reachable')
         print()
 
     def forward_explore_from_predicates(src: FrozenSet[int],
@@ -4083,6 +4097,9 @@ def primal_dual_houdini(solver: Solver) -> str:
         assert all(isinstance(g, State) for g in soft_goals)
         goal_i = states.index(goal)
         soft_goals_i = sorted(states.index(g) for g in soft_goals)  # type: ignore # TODO something better
+        print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}')
+        n_internal_ctis = len(internal_ctis)
+        n_reachable = len(reachable)
 
         ps: List[Predicate] = []
         mp = MultiSubclausesMapICE(
@@ -4135,6 +4152,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 )
                 if _cti is None:
                     assert _ps is not None
+                    print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                     print(f'find_dual_edge: found new dual edge:')
                     for p in _ps:
                         print(f'  {p}')
@@ -4149,6 +4167,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             # here, we have enough internal_ctis to rule out all possible q's
             assert check_sep(ctis) is None
             if n_ps == 0:
+                print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                 print(f'find_dual_edge: cannot find dual edge')
                 return None
             assert n_ps is None
@@ -4173,6 +4192,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     print(f'find_dual_edge: found new p predicate: {p}')
                     break
             else:
+                print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                 print(f'find_dual_edge: cannot find any new p predicate, so cannot find dual edge')
                 return None
 
