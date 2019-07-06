@@ -4051,34 +4051,72 @@ def primal_dual_houdini(solver: Solver) -> str:
             # assert n_inductive_invariant == len(inductive_invariant), '?'
             # r = dual_close_forward(r)
             # try to exclude more states
-            b = [i for i in a if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
-            for i in b[:]:
-                # TODO: iterate over b in topological order according to primal graph, and if you cannot eliminate a state, you know you cannot eliminate anything reachable from it
-                if i not in b or i in reachable:
+            pos = reachable
+            changes = True
+            while changes:
+                changes = False
+                pos |= close_forward(reachable)
+                roots = compute_roots(
+                    s=frozenset(
+                        i for i in a
+                        if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+                    ),
+                    pos=pos,
+                    ps=[predicates[j] for j in r_0],
+                    a=frozenset(a)
+                )
+                if len(roots) == 0:
                     continue
-                print(f'dual_houdini_frames: checking for dual-CTI to states[{i}]')
-                n_reachable = len(reachable)
-                res = find_dual_edge(a, r_0, states[i], [states[i] for i in b])
-                #TODO# assert n_reachable == len(reachable), '?'
-                print(f'dual_houdini_frames: done checking for dual-CTI to states[{i}]')
-                if res is not None:
-                    ps = frozenset(add_predicate(p) for p in res[0])
-                    qs = frozenset(add_predicate(q) for q in res[1])
-                    dual_transitions.append((ps, qs))
-                    n_inductive_invariant = len(inductive_invariant)
-                    inductive_invariant = dual_close_forward(inductive_invariant)
-                    assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
-                    r |= ps
-                    r = dual_close_forward(r)
-                    assert qs <= r
+                print(f'dual_houdini_frames: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+                for i in sorted(roots):
+                    assert i not in reachable
+                    if not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r)):
+                        # already eliminated i
+                        assert changes
+                        continue
+                    print(f'dual_houdini_frames: checking for dual-CTI to states[{i}]')
                     n_reachable = len(reachable)
-                    n_inductive_invariant = len(inductive_invariant)
-                    forward_explore_from_predicates(r)  # this is probably a good place for this
+                    res = find_dual_edge(
+                        a,
+                        r_0,
+                        states[i],
+                        [states[i] for i in a
+                         if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+                        ],
+                    )
                     #TODO# assert n_reachable == len(reachable), '?'
-                    assert n_inductive_invariant == len(inductive_invariant), '?'
-                    r = dual_close_forward(r)
-                    b = [i for i in b if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
-                    assert i not in b
+                    print(f'dual_houdini_frames: done checking for dual-CTI to states[{i}]')
+                    if res is not None:
+                        ps = frozenset(add_predicate(p) for p in res[0])
+                        qs = frozenset(add_predicate(q) for q in res[1])
+                        dual_transitions.append((ps, qs))
+                        n_inductive_invariant = len(inductive_invariant)
+                        inductive_invariant = dual_close_forward(inductive_invariant)
+                        assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
+                        r |= ps
+                        r = dual_close_forward(r)
+                        assert qs <= r
+                        n_reachable = len(reachable)
+                        n_inductive_invariant = len(inductive_invariant)
+                        forward_explore_from_predicates(r)  # this is probably a good place for this
+                        #TODO# assert n_reachable == len(reachable), '?'
+                        assert n_inductive_invariant == len(inductive_invariant), '?'
+                        r = dual_close_forward(r)
+                        assert not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+                        changes = True
+                        # TODO: should we reset pos here? if not then pos may not be a subset of s in compute_roots
+                    else:
+                        # learn that we cannot eliminate i directly, so we won't try to eliminate things forward reachable from i
+                        pos |= {i}
+            if False:
+                # just to find bugs in compute_roots
+                # TODO: run this sometime on all examples
+                for i in sorted(a):
+                    if i in reachable or not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r)):
+                        continue
+                    assert find_dual_edge(a, r_0, states[i], []) is None, i
+            b = [i for i in a if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
+            print(f'dual_houdini_frames: next frame is: {sorted(b)}')
             if a == b:
                 break
             else:
@@ -4099,6 +4137,58 @@ def primal_dual_houdini(solver: Solver) -> str:
         else:
             print(f'  last frame contains some states not known to be reachable')
         print()
+
+    def compute_roots(s: FrozenSet[int], pos: FrozenSet[int], ps: Collection[Predicate], a: Optional[FrozenSet[int]]) -> FrozenSet[int]:
+        '''Given a set of states s (as indices), compute a minimal subset of
+        it r such that any dual edge (ps', qs') that eliminates a
+        state from s must eliminate a state from r, under the
+        assumption that ps' are restricted to be the given ps, plust
+        predicates that are true for states in a (or no other
+        predicates if a is None), and q does not eliminate any state
+        from pos.
+        '''
+        # TODO: think about this again and run more thorough validation tests
+        print(f'compute_roots: starting with: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}')
+        # assert a is None or reachable <= a TODO: this can be violated if a new reachable state is discovered in dual_houdini_frames, think about this
+        assert reachable <= pos
+        # assert pos <= s TODO: think about this again, but for now I think it makes sense even of pos is not a subset of s
+        def v(i: int) -> z3.ExprRef:
+            return z3.Bool(f'state_{i}')
+        if a is not None:
+            dom = a
+            for i, j in substructure:
+                if i in dom and j not in dom:
+                    dom |= {j}
+            # no need for fixpoint since substructure is transitive
+        else:
+            dom = frozenset(range(len(states)))
+        dom = frozenset(i for i in dom if all(
+            eval_in_state(None, states[i], p) for p in ps
+        ))
+        z3s = z3.Solver()
+        for i in sorted(pos):
+            z3s.add(v(i))
+        for i, j in sorted(chain(transitions, substructure)):
+            if i in dom and j in dom:
+                z3s.add(z3.Implies(v(i), v(j)))
+        z3s.add(z3.Or(*(z3.Not(v(i)) for i in sorted(s))))
+        # print(f'compute_roots: z3s:\n{z3s}')
+        def f(r: FrozenSet[int]) -> bool:
+            res = z3s.check(*(v(i) for i in r))
+            assert res in (z3.unsat, z3.sat)
+            return res == z3.unsat
+        r = s
+        assert f(r)
+        for i in sorted(
+                r,
+                key=lambda i: (-sum(len(u) for u in states[i].univs.values()), -i)
+                # try to remove larger (by universe size) and newer states first
+        ):
+            if f(r - {i}):
+                r -= {i}
+        assert f(r)
+        print(f'compute_roots: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}, result is {sorted(r)}')
+        return r
 
     def forward_explore_from_predicates(src: FrozenSet[int],
                                         # k: int
@@ -4145,22 +4235,23 @@ def primal_dual_houdini(solver: Solver) -> str:
             # TODO: this is not really correct here, e.g., there can be cycles and then there is no root.
             # we should do something more systematic (e.g., minimal disjunction relative to transitions and substructures)
             assert reachable == close_forward(reachable)
-            a = frozenset(
+            to_eliminate = frozenset(
                 i for i in sorted(live_states - reachable)
                 if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
             )
-            roots = a
-            for i, j in chain(transitions, substructure):
-                if i in a and j in roots:
-                    roots -= {j}
-            print(f'forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+            roots = compute_roots(
+                s=to_eliminate,
+                pos=reachable,
+                ps=[predicates[j] for j in r],
+                a=None,
+            )
+            if len(roots) > 0:
+                print(f'forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
             # try to find a new predicate that eliminates a root and is inductive relative to r
-            for i in sorted(roots - reachable):
-                if i not in roots:
-                    assert False # because we break after adding a single predicate to r
-                    # continue
+            for i in sorted(roots):
+                assert i not in reachable, i
                 print(f'forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
-                res = find_dual_edge([], r, states[i], [states[i] for i in sorted(roots)], n_ps=0, n_qs=1)
+                res = find_dual_edge([], r, states[i], [states[i] for i in sorted(to_eliminate)], n_ps=0, n_qs=1)
                 print(f'forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
                 if res is not None:
                     ps_i = frozenset(add_predicate(p) for p in res[0])
@@ -4173,14 +4264,17 @@ def primal_dual_houdini(solver: Solver) -> str:
                     dual_transitions.append((ps_i, qs_i))
                     r = dual_close_forward(r)
                     assert j in r
-                    # no need for the following because we break here
-                    # roots = frozenset(
-                    #     i for i in sorted(roots)
-                    #     if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
-                    # )
-                    # assert i not in roots
                     changes = True
-                    break # to prioritize using existing predicates
+                    break # to prioritize using existing predicates (no stratification, unlike in dual_houdini_frames)
+            else:
+                if False:
+                    # just to find bugs in compute_roots
+                    # TODO: run this sometime on all examples
+                    for i in sorted(live_states):
+                        if i in reachable or not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r)):
+                            continue
+                        assert find_dual_edge([], r, states[i], [], n_ps=0, n_qs=1) is None, i
+
         # here there are no more dual edges that can be added
         inductive_invariant = dual_close_forward(inductive_invariant)
         print(f'Finished forward_explore_from_predicates({sorted(src)}), found {len(r) - n_r} new provable predicates, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
