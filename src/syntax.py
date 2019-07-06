@@ -404,7 +404,10 @@ def as_clauses(expr: Expr) -> List[Expr]:
     for clause in clauses:
         if len(clause) == 1:
             clause += [Bool(None, False)]
-        ans.append(Forall(vs, Or(*clause)))
+        e = Forall(vs, Or(*clause))
+        # TODO: should we resolve here? Also, can we not add false?
+        # e.resolve(the_program.scope, None)
+        ans.append(e)
     return ans
 
 @functools.total_ordering
