@@ -451,7 +451,7 @@ def check_dual_edge(
     print('  -->')
     for q in qs:
         print(f'  {q}')
-    #TODO# assert cheap_check_implication(inits, ps)
+    assert cheap_check_implication(inits, ps)
     assert cheap_check_implication(inits, qs)
     def check(ps_i: FrozenSet[int], minimize: bool) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
         _ps = [ps[i] for i in sorted(ps_i)]
@@ -4197,6 +4197,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         May add new reachable states if it finds new initial states
         '''
         nonlocal reachable
+        pos = frozenset(pos)
         assert n_qs == 1 # for now only one predicate in q
         assert n_ps in (0, None) # for now we do not support finite bounds, either 0 or unbounded
         if n_ps == 0:
@@ -4285,21 +4286,32 @@ def primal_dual_houdini(solver: Solver) -> str:
             assert n_ps is None
             # minimize ctis outside of pos and learn a new predicate that separates them from pos
             # TODO: use unsat cores
-            soft_neg = ctis - frozenset(pos)
-            for i in sorted(ctis - frozenset(pos)):
+            soft_neg = ctis - pos
+            for i in sorted(ctis - pos):
                if i in ctis and check_sep(ctis - {i}) is None:
                    ctis -= {i}
             assert check_sep(ctis) is None
-            to_eliminate = ctis - frozenset(pos)
+            to_eliminate = ctis - pos
             print(f'find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
             for i in sorted(to_eliminate):
-                seed = maps[i].separate(
-                    pos=pos,
-                    neg=[i],
-                    soft_neg=soft_neg, # TODO: or to_eliminate ?
-                )
-                if seed is not None:
+                while True:
+                    seed = maps[i].separate(
+                        pos=(pos | reachable),
+                        neg=[i],
+                        soft_neg=soft_neg, # TODO: or to_eliminate ?
+                    )
+                    if seed is None:
+                        break
                     p = maps[i].to_clause(seed)
+                    print(f'find_dual_edge: potential p is: {p}')
+                    s = check_initial(solver, p)
+                    if s is None:
+                        break
+                    else:
+                        print(f'  this predicate is not initial, learned a new initial state')
+                        reachable |= {add_state(s, False)}
+                        reachable = close_forward(reachable) # just in case
+                if seed is not None:
                     ps.append(p)
                     print(f'find_dual_edge: found new p predicate: {p}')
                     break
