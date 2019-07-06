@@ -1270,6 +1270,10 @@ class MultiSubclausesMapICE(object):
             assert self.optimize
             for c in soft:
                 self.solver.add_soft(c)
+        if self.optimize:
+            # optimize for smaller clauses
+            for v in chain(*self.lit_vs):
+                self.solver.add_soft(z3.Not(v))
         print(f'Checking MultiSubclausesMapICE.solver... ', end='')
         res = self.solver.check()
         print(res)
@@ -4342,7 +4346,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 q = res
                 # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
                 # first, check if init |= q, if not, we learn a new initial state
-                print(f'find_dual_edge: potential q is: {q}')
+                print(f'find_dual_edge: potential q is ({len(destruct_clause(q)[1])} literals): {q}')
                 s = check_initial(solver, q)
                 if s is not None:
                     print(f'  this predicate is not initial, learned a new initial state')
