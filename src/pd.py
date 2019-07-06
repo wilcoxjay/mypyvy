@@ -3699,14 +3699,36 @@ def primal_dual_houdini(solver: Solver) -> str:
         note = ' (internal cti)' if internal_cti else ' (live state)'
         if s not in states:
             print(f'add_state{note}: checking for substructures... ', end='')
+            work = list(chain(
+                ((s, t) for t in states),
+                ((t, s) for t in states),
+            ))
+            if utils.args.cpus is None or utils.args.cpus == 1:
+                results = [is_substructure(u, v) for u, v in work]
+            else:
+                with multiprocessing.Pool(min(utils.args.cpus, len(work))) as pool:
+                    results = pool.starmap_async(
+                        is_substructure,
+                        work,
+                    ).get(9999999)
+            is_substructure_results = dict(zip(work, results))
             substructures = frozenset(
                 i for i, t in enumerate(states)
-                if is_substructure(t, s)
+                if is_substructure_results[(t, s)]
             )
             superstructures = frozenset(
                 i for i, t in enumerate(states)
-                if is_substructure(s, t)
+                if is_substructure_results[(s, t)]
             )
+            if False:
+                assert substructures == frozenset(
+                    i for i, t in enumerate(states)
+                    if is_substructure(t, s)
+                )
+                assert superstructures == frozenset(
+                    i for i, t in enumerate(states)
+                    if is_substructure(s, t)
+                )
             print(f'done')
             isomorphic = substructures & superstructures
             if len(isomorphic) > 0:
