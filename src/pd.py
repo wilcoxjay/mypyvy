@@ -15,6 +15,7 @@ import sys
 import os
 import math
 import multiprocessing
+from contextlib import nullcontext
 
 from syntax import *
 from logic import *
@@ -4080,30 +4081,36 @@ def primal_dual_houdini(solver: Solver) -> str:
             #TODO# assert n_reachable == len(reachable), '?' see sharded-kv-retransmit.pd-primal-dual-houdini.dfc198b.seed-1234.log
             assert n_inductive_invariant == len(inductive_invariant), '?'
             r = dual_close_forward(r)
-            # TODO: uncomment this when find_dual_edge supports predicates
-            # # try to add edges to existing predicates (dual-backward-transitions)
-            # for j in sorted(live_predicates):
-            #     if j in r:
-            #         continue
-            #     print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
-            #     res = find_dual_edge(a, r_0, predicates[j], [predicates[j] for j in sorted(live_predicates - r)])
-            #     print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
-            #     if res is not None:
-            #         ps = frozenset(add_predicate(p) for p in res[0])
-            #         qs = frozenset(add_predicate(q) for q in res[1])
-            #         dual_transitions.append((ps, qs))
-            #         assert j in qs # TODO: or maybe predicates[j] can be implied by the qs ?
-            #         n_inductive_invariant = len(inductive_invariant)
-            #         inductive_invariant = dual_close_forward(inductive_invariant)
-            #         assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
-            #         r |= ps
-            #         r = dual_close_forward(r)
-            #         assert qs <= r
-            # n_inductive_invariant = len(inductive_invariant)
-            # forward_explore_from_predicates(r) # this is probably a good place for this
-            # assert n_reachable == len(reachable), '?'
-            # assert n_inductive_invariant == len(inductive_invariant), '?'
-            # r = dual_close_forward(r)
+            # try to add edges to existing predicates (dual-backward-transitions)
+            for j in sorted(live_predicates):
+                if j in r:
+                    continue
+                print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+                res = find_dual_edge(
+                    a,
+                    r_0,
+                    predicates[j],
+                    [states[i] for i in a
+                     if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+                    ], # TODO: change this when find_dual_edge supports greedy predicate goals
+                )
+                print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+                if res is not None:
+                    ps = frozenset(add_predicate(p) for p in res[0])
+                    qs = frozenset(add_predicate(q) for q in res[1])
+                    dual_transitions.append((ps, qs))
+                    assert cheap_check_implication(res[1], [predicates[j]])
+                    n_inductive_invariant = len(inductive_invariant)
+                    inductive_invariant = dual_close_forward(inductive_invariant)
+                    #TODO# assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
+                    r |= ps
+                    r = dual_close_forward(r)
+                    assert qs <= r
+            n_inductive_invariant = len(inductive_invariant)
+            forward_explore_from_predicates(r) # this is probably a good place for this
+            #TODO# assert n_reachable == len(reachable), '?'
+            assert n_inductive_invariant == len(inductive_invariant), '?'
+            r = dual_close_forward(r)
             # try to exclude more states
             pos = reachable
             changes = True
@@ -4305,7 +4312,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
             # try to find a new predicate that eliminates a root and is inductive relative to r
             for i in sorted(roots):
-                assert i not in reachable, i
+                #TODO# assert i not in reachable, i # TODO: see paxos_forall_choosable.pd-primal-dual-houdini.6d3c0fd.seed-5678.log
+                if i in reachable:
+                    continue
                 print(f'forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
                 res = find_dual_edge([], r, states[i], [states[i] for i in sorted(to_eliminate)], n_ps=0, n_qs=1)
                 print(f'forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
@@ -4339,8 +4348,8 @@ def primal_dual_houdini(solver: Solver) -> str:
             pos: Collection[int], # indices into states that ps must satisfy
             r: Collection[int], # indices into predicates that can be used (assumed invariants)
             goal: Union[State, Predicate], # state to exclude or predicate to prove
-            soft_goals: Union[Collection[State], Collection[Predicate]], # more states or predicates to exclude or prove greedily
-            n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r
+            soft_goals: Collection[State], # more states to exclude greedily, TODO: also support greedily proving predicates
+            n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r, for now no other bounds are supported
             n_qs: int = 1, # for now must be 1
     ) -> Optional[Tuple[Tuple[Predicate,...], Tuple[Predicate,...]]]:
         '''
@@ -4352,21 +4361,19 @@ def primal_dual_houdini(solver: Solver) -> str:
         assert n_ps in (0, None) # for now we do not support finite bounds, either 0 or unbounded
         if n_ps == 0:
             assert len(pos) == 0
-              # for now we don't use n_ps=0 with predicates (although it could make sense, e.g., finding a stronger predicate)
-            assert isinstance(goal, State)
-            assert all(isinstance(g, State) for g in soft_goals)
-        # for now we don't support predicate goals at all
-        assert isinstance(goal, State)
-        assert all(isinstance(g, State) for g in soft_goals)
-        goal_i = states.index(goal)
-        soft_goals_i = sorted(states.index(g) for g in soft_goals)  # type: ignore # TODO something better
-        print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}')
+        # for now we don't support predicate soft_goals at all
+        soft_goals_i = sorted(states.index(g) for g in soft_goals)
+        if isinstance(goal, State):
+            goal_i = states.index(goal)
+            goal = maps[goal_i].to_clause(maps[goal_i].all_n)
+            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}')
+        else:
+            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}')
         n_internal_ctis = len(internal_ctis)
         n_reachable = len(reachable)
-
         ps: List[Predicate] = []
         mp = MultiSubclausesMapICE(
-            [maps[goal_i].to_clause(maps[goal_i].all_n)],
+            [goal],
             states,
             [],
             True,
@@ -4392,28 +4399,28 @@ def primal_dual_houdini(solver: Solver) -> str:
         lit_indicators_post = tuple(z3.Bool(f'@lit_post_{i}') for i in range(mp.n[0]))
         # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
         # some of this code is taken out of syntax.Z3Translator.translate_expr
-        # TODO: why can't top clause be quantifier free? it should be possible
         top_clause = mp.to_clause(0, mp.all_n[0])
-        assert isinstance(top_clause, QuantifierExpr)
-        assert isinstance(top_clause.body, NaryExpr)
-        assert top_clause.body.op == 'OR'
-        assert tuple(mp.literals[0]) == tuple(top_clause.body.args)
+        bs = t.bind(top_clause.binder) if isinstance(top_clause, QuantifierExpr) else []
+        assert len(bs) == len(mp.variables[0])
         # add the clause defined by lit_indicators_pre to the prestate
-        bs = t.bind(top_clause.binder)
-        with t.scope.in_scope(top_clause.binder, bs):
+        with (t.scope.in_scope(top_clause.binder, bs)
+              if isinstance(top_clause, QuantifierExpr) else nullcontext()):
             body = z3.Or(*(
                 z3.And(z3.Not(lit_indicators_pre[i]), t.translate_expr(lit, old=True)) # NB: polarity
                 for i, lit in enumerate(mp.literals[0])
             ))
-        cti_solver.add(z3.ForAll(bs, body))
+        e = z3.ForAll(bs, body) if len(bs) > 0 else body
+        cti_solver.add(e)
         # add the negation of the clause defined by lit_indicators_post to the poststate
-        bs = t.bind(top_clause.binder)
-        with t.scope.in_scope(top_clause.binder, bs):
+        with (t.scope.in_scope(top_clause.binder, bs)
+              if isinstance(top_clause, QuantifierExpr) else nullcontext()):
             body = z3.Or(*(
                 z3.And(lit_indicators_post[i], t.translate_expr(lit, old=False))
                 for i, lit in enumerate(mp.literals[0])
             ))
-        cti_solver.add(z3.Not(z3.ForAll(bs, body)))
+        e = z3.ForAll(bs, body) if len(bs) > 0 else body
+        cti_solver.add(z3.Not(e))
+        # add transition indicators
         transition_indicators: List[z3.ExprRef] = []
         for i, trans in enumerate(prog.transitions()):
             transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
@@ -4426,7 +4433,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             p_indicators.append(z3.Bool(f'@p_{i}'))
             cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
             cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
-        def check_q(q_seed: FrozenSet[int], ps_seed: FrozenSet[int]) -> Optional[Tuple[State, State]]:
+        def check_q(q_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
             all_n = mp.all_n[0]
             for transition_indicator in transition_indicators:
                 print(f'check_q: testing {transition_indicator}')
@@ -4441,19 +4448,20 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'check_q: {z3res}')
                 if z3res == z3.unsat:
                     continue
-                # maximize indicators, to make for a more informative cti
-                for extra in chain(
-                        # priorities: post, pre, ps
-                        (lit_indicators_post[i] for i in sorted(all_n - q_seed)),
-                        (lit_indicators_pre[i] for i in sorted(q_seed)),
-                        (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
-                ):
-                    z3res = cti_solver.check(indicators + (extra,))
-                    assert z3res in (z3.sat, z3.unsat)
-                    if z3res == z3.sat:
-                        print(f'check_q: adding extra: {extra}')
-                        indicators += (extra,)
-                assert cti_solver.check(indicators) == z3.sat
+                if optimize:
+                    # maximize indicators, to make for a more informative cti
+                    for extra in chain(
+                            # priorities: post, pre, ps
+                            (lit_indicators_post[i] for i in sorted(all_n - q_seed)),
+                            (lit_indicators_pre[i] for i in sorted(q_seed)),
+                            (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
+                    ):
+                        z3res = cti_solver.check(indicators + (extra,))
+                        assert z3res in (z3.sat, z3.unsat)
+                        if z3res == z3.sat:
+                            print(f'check_q: adding extra: {extra}')
+                            indicators += (extra,)
+                    assert cti_solver.check(indicators) == z3.sat
                 z3model = cti_solver.model(indicators)
                 prestate = Model.from_z3([KEY_OLD], z3model)
                 poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
@@ -4494,9 +4502,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                     p_seed = frozenset(range(len(ps)))
                     _cti = check_q(q_seed, p_seed)
                     if _cti is None:
+                        print(f'find_dual_edge: dual edge is valid, minimizing ps')
                         for i in sorted(p_seed, reverse=True):
-                            if check_q(q_seed, p_seed - {i}) is None:
+                            if check_q(q_seed, p_seed - {i}, False) is None:
                                 p_seed -= {i}
+                        print(f'find_dual_edge: done minimizing ps')
                         _ps = tuple(ps[i] for i in sorted(p_seed))
                     else:
                         _ps = None
@@ -4620,7 +4630,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         # for debugging
         return #TODO#
         assert reachable == close_forward(reachable), sorted(close_forward(reachable) - reachable)
-        #TODO# assert reachable == close_forward(reachable, True), sorted(close_forward(reachable, True) - reachable) # TODO: not sure about this, see paxos_forall.pd-primal-dual-houdini.dfc198b.log
+        #TODO# assert reachable == close_forward(reachable, True), sorted(close_forward(reachable, True) - reachable) # TODO: not sure about this, see paxos_forall.pd-primal-dual-houdini.dfc198b.log, paxos_forall.pd-primal-dual-houdini.5e0ed39.log
         assert inductive_invariant == dual_close_forward(inductive_invariant)
         assert live_predicates <= frozenset(
             j for j, p in enumerate(predicates)
