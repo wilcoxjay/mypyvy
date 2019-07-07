@@ -4161,9 +4161,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                         assert qs <= r
                         n_reachable = len(reachable)
                         n_inductive_invariant = len(inductive_invariant)
-                        forward_explore_from_predicates(r)  # this is probably a good place for this
+                        forward_explore_from_predicates(r)  # this is probably a good place for this, note this may find a new inductive invariant, which is inconsistent with the frames, as in primal houdini_frames (I think)
                         #TODO# assert n_reachable == len(reachable), '?'
-                        assert n_inductive_invariant == len(inductive_invariant), '?'
+                        #TODO# assert n_inductive_invariant == len(inductive_invariant), '?'
                         r = dual_close_forward(r)
                         assert not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
                         changes = True
@@ -4264,7 +4264,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 
         for now, assuming k=1, i.e., to rule out a state we will only use one clause
         '''
-        print(f'Starting forward_explore_from_predicates({sorted(src)})')
+        print(f'forward_explore_from_predicates: starting with predicates{sorted(src)}')
         nonlocal inductive_invariant
         n_inductive_invariant = len(inductive_invariant)
         r: FrozenSet[int] = inductive_invariant | src
@@ -4275,23 +4275,49 @@ def primal_dual_houdini(solver: Solver) -> str:
             changes = False
             r = dual_close_forward(r)
             # try to add more known predicates
-            for j in sorted(live_predicates):
-                if j in r:
-                    continue
+            # this is actually a (primal) Houdini process -- interesting TODO: think about it
+            qs = live_predicates - r
+            while len(qs) > 0:
                 cti, ps = check_dual_edge(
                     solver,
-                    tuple(predicates[k] for k in sorted(r)),
-                    (predicates[j],),
+                    tuple(predicates[j] for j in sorted(r)),
+                    tuple(predicates[j] for j in sorted(qs)),
                     # msg='cti?', TODO
                 )
                 if cti is None:
                     assert ps is not None
                     ps_i = frozenset(predicates.index(p) for p in ps)
                     assert ps_i <= r
-                    dual_transitions.append((ps_i, frozenset([j])))
+                    dual_transitions.append((ps_i, qs))
+                    assert not qs <= r
                     r = dual_close_forward(r)
-                    assert j in r
+                    assert qs <= r
                     changes = True
+                    print(f'forward_explore_from_predicates: connecting to existing predicates: predicates{sorted(qs)}')
+                    break
+                else:
+                    prestate, poststate = cti
+                    n_qs = len(qs)
+                    qs = frozenset(j for j in qs if eval_in_state(None, poststate, predicates[j]))
+                    assert len(qs) < n_qs
+            # here lies commented out the code that did not do this internal Houdini, and was faithful to induction width of 1:
+            # for j in sorted(live_predicates):
+            #     if j in r:
+            #         continue
+            #     cti, ps = check_dual_edge(
+            #         solver,
+            #         tuple(predicates[k] for k in sorted(r)),
+            #         (predicates[j],),
+            #         # msg='cti?', TODO
+            #     )
+            #     if cti is None:
+            #         assert ps is not None
+            #         ps_i = frozenset(predicates.index(p) for p in ps)
+            #         assert ps_i <= r
+            #         dual_transitions.append((ps_i, frozenset([j])))
+            #         r = dual_close_forward(r)
+            #         assert j in r
+            #         changes = True
             if changes:
                 continue
             # find roots, and try to eliminate them
@@ -4325,10 +4351,10 @@ def primal_dual_houdini(solver: Solver) -> str:
                     assert len(qs_i) == 1
                     j = list(qs_i)[0]
                     assert not eval_in_state(None, states[i], predicates[j])
-                    # TODO: minimize before adding to dual_transitions
                     dual_transitions.append((ps_i, qs_i))
                     r = dual_close_forward(r)
-                    assert j in r
+                    assert qs_i <= r
+                    print(f'forward_explore_from_predicates: connecting to new predicates: predicates{sorted(qs_i)}')
                     changes = True
                     break # to prioritize using existing predicates (no stratification, unlike in dual_houdini_frames)
             else:
@@ -4339,10 +4365,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                         if i in reachable or not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r)):
                             continue
                         assert find_dual_edge([], r, states[i], [], n_ps=0, n_qs=1) is None, i
-
         # here there are no more dual edges that can be added
         inductive_invariant = dual_close_forward(inductive_invariant)
-        print(f'Finished forward_explore_from_predicates({sorted(src)}), found {len(r) - n_r} new provable predicates, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
+        print(f'forward_explore_from_predicates: finished exploring from predicates{sorted(src)}, found {len(r) - n_r} new provable predicates: predicates{sorted(r - src)}, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
 
     def find_dual_edge(
             pos: Collection[int], # indices into states that ps must satisfy
