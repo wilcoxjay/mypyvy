@@ -1013,12 +1013,17 @@ class Model(object):
         if allow_undefined:
             return
 
+        def get_univ(d: SortDecl) -> List[str]:
+            if d not in self.univs:
+                self.univs[d] = [d.name + '0']
+            return self.univs[d]
+
         def arbitrary_interp_r(r: RelationDecl) -> List[Tuple[List[str], bool]]:
             doms = []
             for s in r.arity:
                 assert isinstance(s, syntax.UninterpretedSort)
                 assert s.decl is not None
-                doms.append(self.univs[s.decl])
+                doms.append(get_univ(s.decl))
 
             l = []
             tup: Tuple[str, ...]
@@ -1049,7 +1054,7 @@ class Model(object):
             sort = c.sort
             assert isinstance(sort, syntax.UninterpretedSort)
             assert sort.decl is not None
-            return self.univs[sort.decl][0]
+            return get_univ(sort.decl)[0]
 
         def ensure_defined_c(c: ConstantDecl) -> None:
             R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
@@ -1069,12 +1074,12 @@ class Model(object):
             for s in f.arity:
                 assert isinstance(s, syntax.UninterpretedSort)
                 assert s.decl is not None
-                doms.append(self.univs[s.decl])
+                doms.append(get_univ(s.decl))
 
             sort = f.sort
             assert isinstance(sort, syntax.UninterpretedSort)
             assert sort.decl is not None
-            interp = self.univs[sort.decl][0]
+            interp = get_univ(sort.decl)[0]
 
             l = []
             tup: Tuple[str, ...]
