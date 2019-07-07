@@ -460,7 +460,7 @@ def check_dual_edge(
         res =  check_two_state_implication_all_transitions(
             s,
             chain(_ps, qs),
-            Implies(And(*_ps), And(*qs)),
+            Implies(And(*_ps), And(*qs)), # TODO: when we have 10-20 qs, z3 completely chokes (e.g. sharded-kv.pd-primal-dual-houdini.121761d.seed-0.log), we should reimplement check_dual_edge with many calls to a single solver instance
             minimize=minimize,
         )
         print(f'done')
@@ -4082,30 +4082,52 @@ def primal_dual_houdini(solver: Solver) -> str:
             assert n_inductive_invariant == len(inductive_invariant), '?'
             r = dual_close_forward(r)
             # try to add edges to existing predicates (dual-backward-transitions)
-            for j in sorted(live_predicates):
-                if j in r:
-                    continue
-                print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
-                res = find_dual_edge(
+            goals = live_predicates - r
+            if len(goals) > 0:
+                print(f'dual_houdini_frames: checking for dual-backward-transition from predicates{sorted(goals)}')
+                res = find_dual_backward_transition(
                     a,
                     r_0,
-                    predicates[j],
-                    [states[i] for i in a
-                     if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
-                    ], # TODO: change this when find_dual_edge supports greedy predicate goals
+                    goals,
                 )
-                print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+                print(f'dual_houdini_frames: done checking for dual-backward-transition predicates{sorted(goals)}')
                 if res is not None:
                     ps = frozenset(add_predicate(p) for p in res[0])
-                    qs = frozenset(add_predicate(q) for q in res[1])
+                    qs = frozenset(add_predicate(q) for q in res[1]) # should not add any new predicates actually
+                    assert qs <= goals
+                    assert len(qs) > 0
                     dual_transitions.append((ps, qs))
-                    assert cheap_check_implication(res[1], [predicates[j]])
                     n_inductive_invariant = len(inductive_invariant)
                     inductive_invariant = dual_close_forward(inductive_invariant)
                     #TODO# assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
                     r |= ps
                     r = dual_close_forward(r)
                     assert qs <= r
+            # here lies commented out the version without find_dual_backward_transition
+            # for j in sorted(live_predicates):
+            #     if j in r:
+            #         continue
+            #     print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     res = find_dual_edge(
+            #         a,
+            #         r_0,
+            #         predicates[j],
+            #         [states[i] for i in a
+            #          if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
+            #         ], # TODO: change this when find_dual_edge supports greedy predicate goals
+            #     )
+            #     print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     if res is not None:
+            #         ps = frozenset(add_predicate(p) for p in res[0])
+            #         qs = frozenset(add_predicate(q) for q in res[1])
+            #         dual_transitions.append((ps, qs))
+            #         assert cheap_check_implication(res[1], [predicates[j]])
+            #         n_inductive_invariant = len(inductive_invariant)
+            #         inductive_invariant = dual_close_forward(inductive_invariant)
+            #         #TODO# assert n_inductive_invariant == len(inductive_invariant) # TODO: maybe we actually learned a new inductive invariant. this will be inconsisted with the frames, as in primal houdini_frames
+            #         r |= ps
+            #         r = dual_close_forward(r)
+            #         assert qs <= r
             n_inductive_invariant = len(inductive_invariant)
             forward_explore_from_predicates(r) # this is probably a good place for this
             #TODO# assert n_reachable == len(reachable), '?'
@@ -4276,6 +4298,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             r = dual_close_forward(r)
             # try to add more known predicates
             # this is actually a (primal) Houdini process -- interesting TODO: think about it
+            # TODO: maybe stratify this Houdini process
             qs = live_predicates - r
             while len(qs) > 0:
                 cti, ps = check_dual_edge(
@@ -4320,9 +4343,8 @@ def primal_dual_houdini(solver: Solver) -> str:
             #         changes = True
             if changes:
                 continue
+            # now try to find a concrete edge to a new predicate
             # find roots, and try to eliminate them
-            # TODO: this is not really correct here, e.g., there can be cycles and then there is no root.
-            # we should do something more systematic (e.g., minimal disjunction relative to transitions and substructures)
             assert reachable == close_forward(reachable)
             to_eliminate = frozenset(
                 i for i in sorted(live_states - reachable)
@@ -4493,7 +4515,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'check_q: found new cti violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
-                    if all(eval_in_state(s, state, p) for p in inits):
+                    if all(eval_in_state(None, state, p) for p in inits):
                         _cache_initial.append(state)
                 return prestate, poststate
             return None
@@ -4616,6 +4638,205 @@ def primal_dual_houdini(solver: Solver) -> str:
             else:
                 print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                 print(f'find_dual_edge: cannot find any new p predicate, so cannot find dual edge')
+                return None
+
+    def find_dual_backward_transition(
+            pos: Collection[int], # indices into states that ps must satisfy
+            r: Collection[int], # indices into predicates that can be used (assumed invariants)
+            goals: Collection[int], # indices into predicates that we want to find an edge to a subset of
+    ) -> Optional[Tuple[Tuple[Predicate,...], Tuple[Predicate,...]]]:
+        '''
+        returns None or (ps, qs)
+        no restriction on number of ps, the qs will be a subset of goals
+        May add new reachable states if it finds new initial states
+        '''
+        nonlocal reachable
+        pos = frozenset(pos)
+        n_internal_ctis = len(internal_ctis)
+        n_reachable = len(reachable)
+        ps: List[Predicate] = [] # will be increasing
+        goals = sorted(goals)
+        qs = tuple(predicates[j] for j in goals)
+        print(f'find_dual_backward_transition: starting, pos=states{sorted(pos)}, r=predicates{sorted(r)}, goals=predicates{goals}')
+        n = len(qs)
+        all_n = frozenset(range(n))
+        assert n > 0
+        assert cheap_check_implication(inits, qs)
+        def find_fixpoint(s: Collection[int]) -> FrozenSet[int]:
+            # a mini separation procedure for conjunction of qs
+            imp = sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s)
+            x = frozenset(k for k in range(n) if all(eval_in_state(None, states[i], qs[k]) for i in sorted(reachable)))
+            changes = True
+            while changes:
+                changes = False
+                for i, j in imp:
+                    if (    all(eval_in_state(None, states[i], qs[k]) for k in x) and
+                        not all(eval_in_state(None, states[j], qs[k]) for k in x)):
+                        x = frozenset(k for k in x if eval_in_state(None, states[j], qs[k]))
+                        changes = True
+            return x
+        cti_solver = Solver() # TODO: maybe solver per transition
+        t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
+        q_indicators_pre = tuple(z3.Bool(f'@q_pre_{i}') for i in range(n)) # NB: polarity
+        q_indicators_post = tuple(z3.Bool(f'@q_post_{i}') for i in range(n)) # NB: polarity
+        # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
+        # add the cube defined by q_indicators_pre to the prestate
+        for indicator, q in zip(q_indicators_pre, qs):
+            cti_solver.add(z3.Implies(indicator, t.translate_expr(q, old=True))) # NB: polarity
+        # add the negation of the cube defined by q_indicators_post to the poststate
+        # TODO: maybe make multiple calls rather than using disjunction
+        cti_solver.add(z3.Or(*(
+            z3.And(z3.Not(indicator), z3.Not(t.translate_expr(q, old=False))) # NB: polarity
+            for indicator, q in zip(q_indicators_post, qs)
+        )))
+        # add transition indicators
+        transition_indicators: List[z3.ExprRef] = []
+        for i, trans in enumerate(prog.transitions()):
+            transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
+            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+        p_indicators: List[z3.ExprRef] = []
+        def add_p(p: Predicate) -> None:
+            assert len(p_indicators) == len(ps)
+            i = len(ps)
+            ps.append(p)
+            p_indicators.append(z3.Bool(f'@p_{i}'))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+        def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
+            for transition_indicator in transition_indicators:
+                print(f'check_qs: testing {transition_indicator}')
+                indicators = tuple(chain(
+                    [transition_indicator],
+                    (q_indicators_pre[i] for i in sorted(qs_seed)),
+                    (q_indicators_post[i] for i in sorted(all_n - qs_seed)),
+                    (p_indicators[i] for i in sorted(ps_seed)),
+                ))
+                z3res = cti_solver.check(indicators)
+                assert z3res in (z3.sat, z3.unsat)
+                print(f'check_qs: {z3res}')
+                if z3res == z3.unsat:
+                    continue
+                if optimize:
+                    # maximize indicators, to make for a more informative cti
+                    for extra in chain(
+                            # priorities: post, pre, ps
+                            (q_indicators_post[i] for i in sorted(qs_seed)),
+                            (q_indicators_pre[i] for i in sorted(all_n - qs_seed)),
+                            (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
+                    ):
+                        z3res = cti_solver.check(indicators + (extra,))
+                        assert z3res in (z3.sat, z3.unsat)
+                        if z3res == z3.sat:
+                            print(f'check_qs: adding extra: {extra}')
+                            indicators += (extra,)
+                    assert cti_solver.check(indicators) == z3.sat
+                z3model = cti_solver.model(indicators)
+                prestate = Model.from_z3([KEY_OLD], z3model)
+                poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                print(f'check_qs: found new cti violating dual edge')
+                _cache_transitions.append((prestate, poststate))
+                for state in (prestate, poststate):
+                    if all(eval_in_state(None, state, p) for p in inits):
+                        _cache_initial.append(state)
+                return prestate, poststate
+            return None
+        for j in sorted(r):
+            add_p(predicates[j])
+        while True:
+            while True: # find potential qs or discover there are none and learn internal_ctis
+                ctis = frozenset(
+                    i for i in sorted((live_states | internal_ctis) - reachable)
+                    if all(eval_in_state(None, states[i], p) for p in ps)
+                )
+                qs_seed = find_fixpoint(ctis)
+                if len(qs_seed) == 0:
+                    break
+                print(f'find_dual_backward_transition: potential {len(qs_seed)} qs are: predicates{sorted(goals[i] for i in qs_seed)}')
+                # now, check if r /\ ps /\ qs_seed |= wp(r /\ ps -> qs_seed)
+                _cti: Optional[Tuple[State, State]]
+                _ps: Optional[Tuple[Predicate,...]]
+                p_seed = frozenset(range(len(ps)))
+                _cti = check_qs(qs_seed, p_seed)
+                if _cti is None:
+                    print(f'find_dual_backward_transition: dual edge is valid, minimizing ps')
+                    for i in sorted(p_seed, reverse=True):
+                        if check_qs(qs_seed, p_seed - {i}, False) is None:
+                            p_seed -= {i}
+                    print(f'find_dual_backward_transition: done minimizing ps')
+                    _ps = tuple(ps[i] for i in sorted(p_seed))
+                else:
+                    _ps = None
+                if False:
+                    # just check cti_solver result vs. check_dual_edge
+                    # TODO: run this on all examples sometime
+                    if _cti is None:
+                        assert _ps is not None
+                        assert check_dual_edge(
+                            solver,
+                            _ps,
+                            tuple(qs[i] for i in sorted(qs_seed)),
+                            msg='validation-cti'
+                        ) == (_cti, _ps)
+                    else:
+                        assert check_dual_edge(
+                            solver,
+                            tuple(ps),
+                            tuple(qs[i] for i in sorted(qs_seed)),
+                            msg='validation-cti'
+                        )[0] is not None
+                if _cti is None:
+                    assert _ps is not None
+                    _qs = tuple(qs[i] for i in sorted(qs_seed))
+                    print(f'find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                    print(f'find_dual_backward_transition: found new dual edge:')
+                    for p in _ps:
+                        print(f'  {p}')
+                    print(f'  -->')
+                    for q in _qs:
+                        print(f'  {q}')
+                    return _ps, _qs
+                else:
+                    prestate, poststate = _cti
+                    i_pre = add_state(prestate, True)
+                    i_post = add_state(poststate, True)
+                    assert (i_pre, i_post) not in transitions
+                    add_transition(i_pre, i_post)
+            # here, we have enough internal_ctis to rule out all nonempty subsets of qs
+            assert len(find_fixpoint(ctis)) == 0
+            # minimize ctis outside of pos and learn a new predicate that separates them from pos
+            # TODO: use unsat cores
+            soft_neg = ctis - pos
+            for i in sorted(ctis - pos):
+               if i in ctis and len(find_fixpoint(ctis - {i})) == 0 is None:
+                   ctis -= {i}
+            assert len(find_fixpoint(ctis)) == 0
+            to_eliminate = ctis - pos
+            print(f'find_dual_backward_transition: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+            for i in sorted(to_eliminate):
+                while True:
+                    seed = maps[i].separate(
+                        pos=(pos | reachable),
+                        neg=[i],
+                        soft_neg=soft_neg, # TODO: or to_eliminate ?
+                    )
+                    if seed is None:
+                        break
+                    p = maps[i].to_clause(seed)
+                    print(f'find_dual_backward_transition: potential p is: {p}')
+                    s = check_initial(solver, p)
+                    if s is None:
+                        break
+                    else:
+                        print(f'  this predicate is not initial, learned a new initial state')
+                        reachable |= {add_state(s, False)}
+                        reachable = close_forward(reachable) # just in case
+                if seed is not None:
+                    add_p(p)
+                    print(f'find_dual_backward_transition: found new p predicate: {p}')
+                    break
+            else:
+                print(f'find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                print(f'find_dual_backward_transition: cannot find any new p predicate, so cannot find dual edge')
                 return None
 
     def new_reachable_states() -> None:
