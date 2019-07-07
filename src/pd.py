@@ -432,7 +432,108 @@ def check_two_state_implication(
 
 _cache_dual_edge: Dict[Any,Any] = dict(h=0,r=0)
 # TODO: cache valid dual edges like we cache transitions
+def check_dual_edge_old(
+        # TODO: this is very inefficient since it lets z3 handle the disjunction, keeping for reference, and should remove after thorough validation of the new version
+        s: Solver,
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        msg: str = 'cti',
+) -> Tuple[Optional[Tuple[State, State]], Optional[Tuple[Expr,...]]]:
+    '''
+    this checks if ps /\ qs |= wp(ps -> qs)
+    note it does not check if init |= qs, but for now we assert it
+    '''
+    prog = syntax.the_program
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    k = (ps, qs)
+    cache: Dict[Any,Any] = dict(h=0,r=0) # so that we don't interfere with the new version
+    print(f'check_dual_edge_old: starting to check the following edge:')
+    for p in ps:
+        print(f'  {p}')
+    print('  -->')
+    for q in qs:
+        print(f'  {q}')
+    assert cheap_check_implication(inits, ps)
+    assert cheap_check_implication(inits, qs)
+    def check(ps_i: FrozenSet[int], minimize: bool) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
+        _ps = [ps[i] for i in sorted(ps_i)]
+        print(f'check_dual_edge_old: calling z3... ', end='')
+        res =  check_two_state_implication_all_transitions(
+            s,
+            chain(_ps, qs),
+            Implies(And(*_ps), And(*qs)), # TODO: when we have 10-20 qs, z3 completely chokes (e.g. sharded-kv.pd-primal-dual-houdini.121761d.seed-0.log), we should reimplement check_dual_edge with many calls to a single solver instance
+            minimize=minimize,
+        )
+        print(f'done')
+        return res
+    if k not in cache:
+        if utils.args.cache_only:
+            assert False
+        for prestate, poststate in _cache_transitions:
+            if (    all(eval_in_state(s, prestate,  p) for p in ps) and
+                    all(eval_in_state(s, prestate,  q) for q in qs) and
+                    all(eval_in_state(s, poststate, p) for p in ps) and
+                not all(eval_in_state(s, poststate, q) for q in qs)):
+                # TODO: we're not really minimizing the cti here... probably fine
+                cache[k] = ((prestate, poststate), None)
+                cache['r'] += 1
+                print(f'check_dual_edge_old: found previous {msg} violating dual edge')
+                # print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
+                break
+        else:
+            ps_i = frozenset(range(len(ps)))
+            res = check(ps_i, True)
+            if res is not None:
+                if utils.args.cache_only_discovered:
+                    assert False
+                z3m, _ = res
+                prestate = Model.from_z3([KEY_OLD], z3m)
+                # poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+                poststate = Model.from_z3([KEY_NEW], z3m) # TODO: can we do this? this seems better than dragging the prestate along
+                print(f'check_dual_edge_old: found new {msg} violating dual edge')
+                _cache_transitions.append((prestate, poststate))
+                for state in (prestate, poststate):
+                    if all(eval_in_state(s, state, p) for p in inits):
+                        _cache_initial.append(state)
+                    # TODO: actually, we should first try to get (from Z3) a transition where the prestate is initial
+                cache[k] = ((prestate, poststate), None)
+            else:
+                # minimize ps_i
+                # TODO: use unsat cores?
+                for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
+                    if i in ps_i and check(ps_i - {i}, False) is None:
+                        ps_i -= {i}
+                ps = tuple(ps[i] for i in ps_i)
+                print(f'check_dual_edge_old: found new valid dual edge:')
+                for p in ps:
+                    print(f'  {p}')
+                print('  -->')
+                for q in qs:
+                    print(f'  {q}')
+                cache[k] = (None, ps)
+
+        if len(cache) % 100 == 1:
+            # dump_caches()
+            print(f'_cache_dual_edge length is {len(cache)}, h/r is {cache["h"]}/{cache["r"]}')
+
+    else:
+        cti, ps = cache[k]
+        if cti is not None:
+            print(f'check_dual_edge_old: found cached {msg} violating dual edge')
+        else:
+            print(f'check_dual_edge_old: found cached valid dual edge:')
+            for p in ps:
+                print(f'  {p}')
+            print('  -->')
+            for q in qs:
+                print(f'  {q}')
+        cache['h'] += 1
+
+    return cache[k]
+# Here is the less stupid version (reusing code from find_dual_backward_transition, much refactoring needed):
+# TODO: cache valid dual edges like we cache transitions
 def check_dual_edge(
+        # TODO: this is very inefficient since it lets z3 handle the disjunction, keeping for reference, and should remove after thorough validation of the new version
         s: Solver,
         ps: Tuple[Expr,...],
         qs: Tuple[Expr,...],
@@ -454,17 +555,6 @@ def check_dual_edge(
         print(f'  {q}')
     assert cheap_check_implication(inits, ps)
     assert cheap_check_implication(inits, qs)
-    def check(ps_i: FrozenSet[int], minimize: bool) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
-        _ps = [ps[i] for i in sorted(ps_i)]
-        print(f'check_dual_edge: calling z3... ', end='')
-        res =  check_two_state_implication_all_transitions(
-            s,
-            chain(_ps, qs),
-            Implies(And(*_ps), And(*qs)), # TODO: when we have 10-20 qs, z3 completely chokes (e.g. sharded-kv.pd-primal-dual-houdini.121761d.seed-0.log), we should reimplement check_dual_edge with many calls to a single solver instance
-            minimize=minimize,
-        )
-        print(f'done')
-        return res
     if k not in cache:
         if utils.args.cache_only:
             assert False
@@ -480,36 +570,76 @@ def check_dual_edge(
                 # print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 break
         else:
+            # now we really have to check, use a specilized solver
+            cti_solver = Solver() # TODO: maybe solver per transition
+            t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
+            for q in qs:
+                cti_solver.add(t.translate_expr(q, old=True))
+            # add transition indicators
+            transition_indicators: List[z3.ExprRef] = []
+            for i, trans in enumerate(prog.transitions()):
+                transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
+                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+            p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
+            for i, p in enumerate(ps):
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+            q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
+            for i, q in enumerate(qs):
+                cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
+            def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[State, State]]:
+                for q_indicator, transition_indicator in product(q_indicators, transition_indicators):
+                    print(f'check_dual_edge: testing {q_indicator}, {transition_indicator}')
+                    indicators = tuple(chain(
+                        [q_indicator, transition_indicator],
+                        (p_indicators[i] for i in sorted(ps_seed)),
+                    ))
+                    z3res = cti_solver.check(indicators)
+                    assert z3res in (z3.sat, z3.unsat)
+                    print(f'check_dual_edge: {z3res}')
+                    if z3res == z3.unsat:
+                        continue
+                    z3model = cti_solver.model(indicators, minimize)
+                    prestate = Model.from_z3([KEY_OLD], z3model)
+                    poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                    if minimize:
+                        # TODO: should we put it in the cache anyway? for now not
+                        _cache_transitions.append((prestate, poststate))
+                        for state in (prestate, poststate):
+                            if all(eval_in_state(None, state, p) for p in inits):
+                                _cache_initial.append(state)
+                        # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
+                    return prestate, poststate
+                return None
             ps_i = frozenset(range(len(ps)))
             res = check(ps_i, True)
             if res is not None:
                 if utils.args.cache_only_discovered:
                     assert False
-                z3m, _ = res
-                prestate = Model.from_z3([KEY_OLD], z3m)
-                # poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
-                poststate = Model.from_z3([KEY_NEW], z3m) # TODO: can we do this? this seems better than dragging the prestate along
+                prestate, poststate = res
                 print(f'check_dual_edge: found new {msg} violating dual edge')
-                _cache_transitions.append((prestate, poststate))
-                for state in (prestate, poststate):
-                    if all(eval_in_state(s, state, p) for p in inits):
-                        _cache_initial.append(state)
-                    # TODO: actually, we should first try to get (from Z3) a transition where the prestate is initial
                 cache[k] = ((prestate, poststate), None)
             else:
                 # minimize ps_i
-                # TODO: use unsat cores?
+                print(f'check_dual_edge: minimizing ps')
                 for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
                     if i in ps_i and check(ps_i - {i}, False) is None:
                         ps_i -= {i}
-                ps = tuple(ps[i] for i in ps_i)
+                _ps = tuple(ps[i] for i in ps_i)
+                print(f'check_dual_edge: done minimizing ps')
                 print(f'check_dual_edge: found new valid dual edge:')
-                for p in ps:
+                for p in _ps:
                     print(f'  {p}')
                 print('  -->')
                 for q in qs:
                     print(f'  {q}')
-                cache[k] = (None, ps)
+                cache[k] = (None, _ps)
+
+            if False:
+                # just validation vs the old implementation
+                old = check_dual_edge_old(s, ps, qs, msg='validation-cti')
+                assert (old[0] is None) == (cache[k][0] is None)
+                assert (old[1] is None) == (cache[k][1] is None)
 
         if len(cache) % 100 == 1:
             # dump_caches()
