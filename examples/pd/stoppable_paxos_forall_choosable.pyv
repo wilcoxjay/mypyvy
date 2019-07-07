@@ -37,6 +37,11 @@ mutable relation active(round) # round R has received a quorum of 1b and can now
 mutable relation vote(node, inst, round, value) # 2b
 mutable relation decision(node, inst, round, value) # got 2b from a quorum
 
+# the ghost functions
+mutable function decision_quorum(inst, round, value): quorum
+derived relation choosable(inst, round, value, quorum):
+    (choosable(I, R, V, Q) <-> ((forall N. (member(N, Q) -> (!left_round(N, R) | vote(N, I, R, V))))))
+
 
 init !one_a(R)
 init !one_b_msg(N,R1,M)
@@ -139,11 +144,13 @@ transition cast_vote(n:node, v:value, r:round, i:inst)
 
 
 transition decide(n:node, r:round, v:value, q:quorum, i:inst)
-  modifies decision
+  modifies decision, decision_quorum
     # get 2b from a quorum
     & r != none
     & (member(N, q) -> old(vote(N, i, r, v)))
     & (forall N, I, R, V. decision(N, I, R, V) <-> old(decision(N, I, R, V)) | N = n & I = i & R = r & V = v)
+    & (forall I, R, V. !(I = i & R = r & V = v) -> decision_quorum(I, R, V) = old(decision_quorum(I, R, V)))
+    & decision_quorum(i, r, v) = q
 
 
 # safety property 1
@@ -161,8 +168,8 @@ invariant proposal(I,R,V1) & proposal(I,R,V2) -> V1 = V2
 # only vote for proposed values
 invariant vote(N,I,R,V) -> proposal(I,R,V)
 
-# decisions come from quorums of votes:
-invariant forall I:inst, R:round, V:value. (exists N:node. decision(N,I,R,V)) -> exists Q:quorum. forall N:node. member(N, Q) -> vote(N,I,R,V)
+# decisions come from quorums of votes
+invariant forall I:inst, R:round, V:value, N:node, M:node, Q:quorum. Q = decision_quorum(I,R,V) & decision(N,I,R,V) & member(M,Q) -> vote(M,I,R,V)
 
 # properties of one_b_msg
 invariant one_b_msg(N,R2,M) & maxr(M,I) = none & !le(R2,R1) -> !vote(N,I,R1,V2)
@@ -178,9 +185,7 @@ invariant !active(none)
 
 # property of choosable and active: if R2>R1 is active and V is not proposed at I, then it's not choosable at R1
 invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & active(R2) & !proposal(I,R2,V) -> (
-        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I,R1,V)
-    )
+    !le(R2,R1) & active(R2) & !proposal(I,R2,V) -> !choosable(I,R1,V,Q)
 )
 
 # property of stop values for the same round
@@ -189,15 +194,11 @@ invariant proposal(I1,R,stop) & !inst_le(I2,I1) -> !proposal(I2,R,V)
 # properties of choosable and stop:
 # if anything is proposed, then stop cannot be choosable at lower instances and lower rounds
 invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & !inst_le(I2,I1) & proposal(I2,R2,V) -> (
-        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I1,R1,stop)
-    )
+    !le(R2,R1) & !inst_le(I2,I1) & proposal(I2,R2,V) -> !choosable(I1,R1,stop,Q)
 )
 # if stop is proposed, then nothing can be choosable at lower rounds and higher instances
 invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & !inst_le(I2,I1) & proposal(I1,R2,stop) -> (
-        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I2,R1,V)
-    )
+    !le(R2,R1) & !inst_le(I2,I1) & proposal(I1,R2,stop) -> !choosable(I2,R1,V,Q)
 )
 
 # properties of joined_round, left_round

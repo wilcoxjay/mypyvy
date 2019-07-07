@@ -37,6 +37,10 @@ mutable relation active(round) # round R has received a quorum of 1b and can now
 mutable relation vote(node, inst, round, value) # 2b
 mutable relation decision(node, inst, round, value) # got 2b from a quorum
 
+# the ghost functions
+mutable function decision_quorum(inst, round, value): quorum
+mutable function choosable_node(inst, round, value, quorum): node
+
 
 init !one_a(R)
 init !one_b_msg(N,R1,M)
@@ -55,7 +59,7 @@ transition send_1a(r:round)
     & (forall R. one_a(R) <-> old(one_a(R)) | R = r)
 
 transition join_round(n:node, r:round, m:votemap)
-  modifies one_b_msg, left_round, joined_round
+  modifies one_b_msg, left_round, joined_round, choosable_node
     # receive 1a and answer with 1b
     & r != none
     & old(one_a(r))
@@ -72,7 +76,8 @@ transition join_round(n:node, r:round, m:votemap)
     # update code:
     & (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
     & (forall N, R. joined_round(N, R) <-> old(joined_round(N, R)) | N = n & R = r)
-
+    & (forall I,R,V,Q.  (member(n,Q) & !le(r,R) & !old(vote(n,I,R,V))) -> choosable_node(I,R,V,Q) = n )
+    & (forall I,R,V,Q. !(member(n,Q) & !le(r,R) & !old(vote(n,I,R,V))) -> choosable_node(I,R,V,Q) = old(choosable_node(I,R,V,Q)) )
 
 
 transition receive_join_acks(r:round, q:quorum, m:votemap, im:inst)
@@ -129,6 +134,7 @@ transition propose(r:round, i:inst, v:value)
     & !old((!inst_le(I,i) & proposal(I,r,V) & v = stop))
     & (forall I, R, V. proposal(I, R, V) <-> old(proposal(I, R, V)) | I = i & R = r & V = v)
 
+
 transition cast_vote(n:node, v:value, r:round, i:inst)
   modifies vote
     # receive a 2a and send 2b
@@ -139,11 +145,13 @@ transition cast_vote(n:node, v:value, r:round, i:inst)
 
 
 transition decide(n:node, r:round, v:value, q:quorum, i:inst)
-  modifies decision
+  modifies decision, decision_quorum
     # get 2b from a quorum
     & r != none
     & (member(N, q) -> old(vote(N, i, r, v)))
     & (forall N, I, R, V. decision(N, I, R, V) <-> old(decision(N, I, R, V)) | N = n & I = i & R = r & V = v)
+    & (forall I, R, V. !(I = i & R = r & V = v) -> decision_quorum(I, R, V) = old(decision_quorum(I, R, V)))
+    & decision_quorum(i, r, v) = q
 
 
 # safety property 1
@@ -161,8 +169,8 @@ invariant proposal(I,R,V1) & proposal(I,R,V2) -> V1 = V2
 # only vote for proposed values
 invariant vote(N,I,R,V) -> proposal(I,R,V)
 
-# decisions come from quorums of votes:
-invariant forall I:inst, R:round, V:value. (exists N:node. decision(N,I,R,V)) -> exists Q:quorum. forall N:node. member(N, Q) -> vote(N,I,R,V)
+# decisions come from quorums of votes
+invariant forall I:inst, R:round, V:value, N:node, M:node, Q:quorum. Q = decision_quorum(I,R,V) & decision(N,I,R,V) & member(M,Q) -> vote(M,I,R,V)
 
 # properties of one_b_msg
 invariant one_b_msg(N,R2,M) & maxr(M,I) = none & !le(R2,R1) -> !vote(N,I,R1,V2)
@@ -176,10 +184,14 @@ invariant !decision(N,I,none,V)
 invariant !one_b_msg(N,none,M)
 invariant !active(none)
 
+# choosable_node is a witness
+invariant member(N1,Q) & left_round(N1,R) & !vote(N1,I,R,V) & N2 = choosable_node(I,R,V,Q) ->
+    member(N2,Q) & left_round(N2,R) & !vote(N2,I,R,V)
+
 # property of choosable and active: if R2>R1 is active and V is not proposed at I, then it's not choosable at R1
-invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & active(R2) & !proposal(I,R2,V) -> (
-        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I,R1,V)
+invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum, N:node. (
+    N = choosable_node(I,R1,V,Q) & !le(R2,R1) & active(R2) & !proposal(I,R2,V) -> (
+        member(N,Q) & left_round(N,R1) & !vote(N,I,R1,V)
     )
 )
 
@@ -188,15 +200,15 @@ invariant proposal(I1,R,stop) & !inst_le(I2,I1) -> !proposal(I2,R,V)
 
 # properties of choosable and stop:
 # if anything is proposed, then stop cannot be choosable at lower instances and lower rounds
-invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & !inst_le(I2,I1) & proposal(I2,R2,V) -> (
-        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I1,R1,stop)
+invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum, N:node. (
+    N = choosable_node(I1,R1,stop,Q) & !le(R2,R1) & !inst_le(I2,I1) & proposal(I2,R2,V) -> (
+        member(N,Q) & left_round(N,R1) & !vote(N,I1,R1,stop)
     )
 )
 # if stop is proposed, then nothing can be choosable at lower rounds and higher instances
-invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & !inst_le(I2,I1) & proposal(I1,R2,stop) -> (
-        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I2,R1,V)
+invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum, N:node. (
+    N = choosable_node(I2,R1,V,Q) & !le(R2,R1) & !inst_le(I2,I1) & proposal(I1,R2,stop) -> (
+        member(N,Q) & left_round(N,R1) & !vote(N,I2,R1,V)
     )
 )
 
