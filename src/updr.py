@@ -298,6 +298,7 @@ class Frames(object):
             if safety_goal:
                 utils.logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') +
                                                     str(diag) for t, diag in trace))
+                print('abstract counterexample')
                 raise Exception('abstract counterexample')
             else:
                 if utils.logger.isEnabledFor(logging.DEBUG):
