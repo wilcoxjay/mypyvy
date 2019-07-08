@@ -4494,7 +4494,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 if i in reachable:
                     continue
                 print(f'forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
-                res = find_dual_edge([], r, states[i], [states[i] for i in sorted(to_eliminate)], n_ps=0, n_qs=1)
+                res = find_dual_edge([], r, states[i], [states[i] for i in sorted(to_eliminate)], n_ps=0)
                 print(f'forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
                 if res is not None:
                     ps_i = frozenset(add_predicate(p) for p in res[0])
@@ -4514,7 +4514,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     for i in sorted(live_states):
                         if i in reachable or not all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r)):
                             continue
-                        assert find_dual_edge([], r, states[i], [], n_ps=0, n_qs=1) is None, i
+                        assert find_dual_edge([], r, states[i], [], n_ps=0) is None, i
         # here there are no more dual edges that can be added
         inductive_invariant = dual_close_forward(inductive_invariant)
         print(f'forward_explore_from_predicates: finished exploring from predicates{sorted(src)}, found {len(r) - n_r} new provable predicates: predicates{sorted(r - src)}, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
@@ -4525,12 +4525,14 @@ def primal_dual_houdini(solver: Solver) -> str:
             goal: Union[State, Predicate], # state to exclude or predicate to prove TODO: actually no need for predicates here, they are handled by find_dual_backward_transition
             soft_goals: Collection[State], # more states to exclude greedily, TODO: also support greedily proving predicates
             n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r, for now no other bounds are supported
-            n_qs: int = 1,
+#            n_qs: int = 1,
     ) -> Optional[Tuple[Tuple[Predicate,...], Tuple[Predicate,...]]]:
         '''
         May add new reachable states if it finds new initial states
         '''
         # n_qs = 3 # just for testing and messing around
+        n_qs = 1000
+        worklist_budget = 10
         nonlocal reachable
         pos = frozenset(pos)
         assert n_ps in (0, None) # for now we do not support finite bounds, either 0 or unbounded
@@ -4552,8 +4554,8 @@ def primal_dual_houdini(solver: Solver) -> str:
         ps: List[Predicate] = [predicates[j] for j in sorted(r)]
         worklist: List[Tuple[Expr,...]] = [(goal,)]
         seen_before: FrozenSet[FrozenSet[Expr]] = frozenset()
-        while len(worklist) > 0:
-            print(f'find_dual_edge: worklist is {len(worklist)} long:')
+        while len(worklist) > 0 and worklist_budget > 0:
+            print(f'find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
             for goals in worklist:
                 notes = ', '.join(f'states[{stateof[g]}]' if g in stateof else str(g) for g in goals)
                 print(f'    ({notes}, )')
@@ -4562,6 +4564,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if frozenset(goals) in seen_before:
                 print(f'find_dual_edge: already seen this one, skipping')
                 continue
+            worklist_budget -= 1
             seen_before |= {frozenset(goals)}
 
             mp = MultiSubclausesMapICE(
@@ -4829,9 +4832,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        assert len(worklist) == 0
         print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-        print(f'find_dual_edge: no more worklist items, so cannot find dual edge')
+        if len(worklist) == 0:
+            print(f'find_dual_edge: no more worklist items, so cannot find dual edge')
+        else:
+            print(f'find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
         return None
 
     def find_dual_backward_transition(
