@@ -390,19 +390,21 @@ class Solver(object):
                 k += 1
 
         unit = 60000
-        restarted = False
+        num_restarts = 0
+        max_restarts = 10000
         for t in luby():
+            assert num_restarts <= max_restarts, 'exhausted restart budget. exiting.'
             tmt = t * unit
             self.z3solver.set('timeout', tmt)
             t_start = time.time()
             ans = self.z3solver.check(*assumptions)
             if ans != z3.unknown:
                 assert ans in (z3.sat, z3.unsat)
-                if restarted:
+                if num_restarts > 0:
                     print(f'z3solver successful after {1000*(time.time() - t_start):.1f}ms: {ans}')
                 return ans
             print(f'z3solver returned {ans} after {1000*(time.time() - t_start):.1f}ms (timeout was {tmt}ms), trying again')
-            restarted = True
+            num_restarts += 1
             self.restart()
 
         assert False
