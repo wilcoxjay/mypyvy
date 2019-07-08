@@ -4500,9 +4500,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     ps_i = frozenset(add_predicate(p) for p in res[0])
                     qs_i = frozenset(add_predicate(q) for q in res[1])
                     assert ps_i <= r
-                    assert len(qs_i) == 1
-                    j = list(qs_i)[0]
-                    assert not eval_in_state(None, states[i], predicates[j])
+                    assert not all(eval_in_state(None, states[i], predicates[j]) for j in qs_i)
                     dual_transitions.append((ps_i, qs_i))
                     r = dual_close_forward(r)
                     assert qs_i <= r
@@ -4524,251 +4522,317 @@ def primal_dual_houdini(solver: Solver) -> str:
     def find_dual_edge(
             pos: Collection[int], # indices into states that ps must satisfy
             r: Collection[int], # indices into predicates that can be used (assumed invariants)
-            goal: Union[State, Predicate], # state to exclude or predicate to prove
+            goal: Union[State, Predicate], # state to exclude or predicate to prove TODO: actually no need for predicates here, they are handled by find_dual_backward_transition
             soft_goals: Collection[State], # more states to exclude greedily, TODO: also support greedily proving predicates
             n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r, for now no other bounds are supported
-            n_qs: int = 1, # for now must be 1
+            n_qs: int = 1,
     ) -> Optional[Tuple[Tuple[Predicate,...], Tuple[Predicate,...]]]:
         '''
         May add new reachable states if it finds new initial states
         '''
+        # n_qs = 3 # just for testing and messing around
         nonlocal reachable
         pos = frozenset(pos)
-        assert n_qs == 1 # for now only one predicate in q
         assert n_ps in (0, None) # for now we do not support finite bounds, either 0 or unbounded
+        assert n_qs >= 1
         if n_ps == 0:
             assert len(pos) == 0
         # for now we don't support predicate soft_goals at all
         soft_goals_i = sorted(states.index(g) for g in soft_goals)
+        stateof: Dict[Expr, int] = {}
         if isinstance(goal, State):
             goal_i = states.index(goal)
             goal = maps[goal_i].to_clause(maps[goal_i].all_n)
-            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}')
+            stateof[goal] = goal_i
+            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         else:
-            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}')
+            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         n_internal_ctis = len(internal_ctis)
         n_reachable = len(reachable)
-        ps: List[Predicate] = []
-        mp = MultiSubclausesMapICE(
-            [goal],
-            states,
-            [],
-            True,
-        )
-        def check_sep(s: Collection[int]) -> Optional[Tuple[Predicate, FrozenSet[int]]]:
-            s = frozenset(s) | reachable
-            res = mp.separate(
-                pos=sorted(reachable),
-                imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
-                soft_neg=soft_goals_i,
-            )
-            if res is None:
-                return None
-            else:
-                assert len(res) == mp.m == 1
-                return [mp.to_clause(k, res[k]) for k in range(mp.m)][0], res[0]
+        ps: List[Predicate] = [predicates[j] for j in sorted(r)]
+        worklist: List[Tuple[Expr,...]] = [(goal,)]
+        seen_before: FrozenSet[FrozenSet[Expr]] = frozenset()
+        while len(worklist) > 0:
+            print(f'find_dual_edge: worklist is {len(worklist)} long:')
+            for goals in worklist:
+                notes = ', '.join(f'states[{stateof[g]}]' if g in stateof else str(g) for g in goals)
+                print(f'    ({notes}, )')
+            print(f'find_dual_edge: trying the top one')
+            goals = worklist.pop(0)
+            if frozenset(goals) in seen_before:
+                print(f'find_dual_edge: already seen this one, skipping')
+                continue
+            seen_before |= {frozenset(goals)}
 
-        # set up a cti_solver for fast and greedy discovery of ctis (alternative to check_dual_edge)
-        assert mp.m == 1 # when we support |Q| > 1, this will change
-        cti_solver = Solver() # TODO: maybe solver per transition
-        t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
-        lit_indicators_pre = tuple(z3.Bool(f'@lit_pre_{i}') for i in range(mp.n[0])) # note - the polarity here is negative, it means the literal is not in the clause, unlike for lit_indicators_post
-        lit_indicators_post = tuple(z3.Bool(f'@lit_post_{i}') for i in range(mp.n[0]))
-        # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
-        # some of this code is taken out of syntax.Z3Translator.translate_expr
-        top_clause = mp.to_clause(0, mp.all_n[0])
-        bs = t.bind(top_clause.binder) if isinstance(top_clause, QuantifierExpr) else []
-        assert len(bs) == len(mp.variables[0])
-        # add the clause defined by lit_indicators_pre to the prestate
-        with (t.scope.in_scope(top_clause.binder, bs)
-              if isinstance(top_clause, QuantifierExpr) else nullcontext()):
-            body = z3.Or(*(
-                z3.And(z3.Not(lit_indicators_pre[i]), t.translate_expr(lit, old=True)) # NB: polarity
-                for i, lit in enumerate(mp.literals[0])
-            ))
-        e = z3.ForAll(bs, body) if len(bs) > 0 else body
-        cti_solver.add(e)
-        # add the negation of the clause defined by lit_indicators_post to the poststate
-        with (t.scope.in_scope(top_clause.binder, bs)
-              if isinstance(top_clause, QuantifierExpr) else nullcontext()):
-            body = z3.Or(*(
-                z3.And(lit_indicators_post[i], t.translate_expr(lit, old=False))
-                for i, lit in enumerate(mp.literals[0])
-            ))
-        e = z3.ForAll(bs, body) if len(bs) > 0 else body
-        cti_solver.add(z3.Not(e))
-        # add transition indicators
-        transition_indicators: List[z3.ExprRef] = []
-        for i, trans in enumerate(prog.transitions()):
-            transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
-        p_indicators: List[z3.ExprRef] = []
-        def add_p(p: Predicate) -> None:
-            assert len(p_indicators) == len(ps)
-            i = len(ps)
-            ps.append(p)
-            p_indicators.append(z3.Bool(f'@p_{i}'))
-            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
-            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
-        def check_q(q_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
-            all_n = mp.all_n[0]
-            for transition_indicator in transition_indicators:
-                print(f'check_q: testing {transition_indicator}')
-                indicators = tuple(chain(
-                    [transition_indicator],
-                    (lit_indicators_pre[i] for i in sorted(all_n - q_seed)),
-                    (lit_indicators_post[i] for i in sorted(q_seed)),
-                    (p_indicators[i] for i in sorted(ps_seed)),
-                ))
-                z3res = cti_solver.check(indicators)
-                assert z3res in (z3.sat, z3.unsat)
-                print(f'check_q: {z3res}')
-                if z3res == z3.unsat:
-                    continue
-                if optimize:
-                    # maximize indicators, to make for a more informative cti
-                    for extra in chain(
-                            # priorities: post, pre, ps
-                            (lit_indicators_post[i] for i in sorted(all_n - q_seed)),
-                            (lit_indicators_pre[i] for i in sorted(q_seed)),
-                            (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
-                    ):
-                        z3res = cti_solver.check(indicators + (extra,))
-                        assert z3res in (z3.sat, z3.unsat)
-                        if z3res == z3.sat:
-                            print(f'check_q: adding extra: {extra}')
-                            indicators += (extra,)
-                    assert cti_solver.check(indicators) == z3.sat
-                z3model = cti_solver.model(indicators)
-                prestate = Model.from_z3([KEY_OLD], z3model)
-                poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                print(f'check_q: found new cti violating dual edge')
-                _cache_transitions.append((prestate, poststate))
-                for state in (prestate, poststate):
-                    if all(eval_in_state(None, state, p) for p in inits):
-                        _cache_initial.append(state)
-                return prestate, poststate
-            return None
-        for j in sorted(r):
-            add_p(predicates[j])
-        while True:
-            while True: # find a q or discover there is none and learn internal_ctis
-                ctis = frozenset(
-                    i for i in sorted((live_states | internal_ctis) - reachable)
-                    if all(eval_in_state(None, states[i], p) for p in ps)
+            mp = MultiSubclausesMapICE(
+                [g for g in goals],
+                states,
+                [],
+                True,
+            )
+            def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
+                s = frozenset(s) | reachable
+                res = mp.separate(
+                    pos=sorted(reachable),
+                    imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
+                    soft_neg=soft_goals_i,
                 )
-                res = check_sep(ctis)
                 if res is None:
-                    break
-                q, q_seed = res
-                # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
-                # first, check if init |= q, if not, we learn a new initial state
-                print(f'find_dual_edge: potential q is ({len(destruct_clause(q)[1])} literals): {q}')
-                s = check_initial(solver, q)
-                if s is not None:
-                    print(f'  this predicate is not initial, learned a new initial state')
-                    i = add_state(s, False)
-                    reachable |= {i}
-                    reachable = close_forward(reachable) # just in case
-                    continue
-                # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
-                _cti: Optional[Tuple[State, State]]
-                _ps: Optional[Tuple[Predicate,...]]
-                if True:
-                    # version using cti_solver
-                    p_seed = frozenset(range(len(ps)))
-                    _cti = check_q(q_seed, p_seed)
-                    if _cti is None:
-                        print(f'find_dual_edge: dual edge is valid, minimizing ps')
-                        for i in sorted(p_seed, reverse=True):
-                            if check_q(q_seed, p_seed - {i}, False) is None:
-                                p_seed -= {i}
-                        print(f'find_dual_edge: done minimizing ps')
-                        _ps = tuple(ps[i] for i in sorted(p_seed))
+                    return None
+                else:
+                    assert len(res) == mp.m == len(goals)
+                    return [mp.to_clause(k, res[k]) for k in range(mp.m)], res
+            # set up a cti_solver for fast and greedy discovery of ctis (alternative to check_dual_edge)
+            # TODO: share this across different worklist items
+            cti_solver = Solver() # TODO: maybe solver per transition
+            t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
+            lit_indicators_pre =[[z3.Bool(f'@lit_pre_{k}_{i}') for i in range(mp.n[k])] for k in range(mp.m)]
+            lit_indicators_post =[[z3.Bool(f'@lit_post_{k}_{i}') for i in range(mp.n[k])] for k in range(mp.m)]
+            q_indicators_post = [z3.Bool(f'@q_post_{k}') for k in range(mp.m)]
+            #
+            # note - the polarity of lit_indicators_pre is negative,
+            # it means the literal is not in the clause, unlike for
+            # lit_indicators_post
+            #
+            # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
+            # some of this code is taken out of syntax.Z3Translator.translate_expr
+            #
+            for k in range(mp.m):
+                top_clause = mp.to_clause(k, mp.all_n[k])
+                assert top_clause == goals[k]
+                bs = t.bind(top_clause.binder) if isinstance(top_clause, QuantifierExpr) else []
+                assert len(bs) == len(mp.variables[k])
+                # add the clause defined by lit_indicators_pre to the prestate
+                with (t.scope.in_scope(top_clause.binder, bs)
+                      if isinstance(top_clause, QuantifierExpr) else nullcontext()):
+                    body = z3.Or(*(
+                        z3.And(z3.Not(lit_indicators_pre[k][i]), t.translate_expr(lit, old=True)) # NB: polarity
+                        for i, lit in enumerate(mp.literals[k])
+                    ))
+                e = z3.ForAll(bs, body) if len(bs) > 0 else body
+                cti_solver.add(e)
+                # add the negation of the clause defined by lit_indicators_post to the poststate, guarded by a q_indicator
+                with (t.scope.in_scope(top_clause.binder, bs)
+                      if isinstance(top_clause, QuantifierExpr) else nullcontext()):
+                    body = z3.Or(*(
+                        z3.And(lit_indicators_post[k][i], t.translate_expr(lit, old=False))
+                        for i, lit in enumerate(mp.literals[k])
+                    ))
+                e = z3.ForAll(bs, body) if len(bs) > 0 else body
+                cti_solver.add(z3.Implies(q_indicators_post[k], z3.Not(e)))
+            # add transition indicators
+            transition_indicators: List[z3.ExprRef] = []
+            for i, trans in enumerate(prog.transitions()):
+                transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
+                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+            p_indicators: List[z3.ExprRef] = []
+            def cti_solver_add_p(p: Predicate) -> None:
+                i = len(p_indicators)
+                assert ps[i] == p
+                p_indicators.append(z3.Bool(f'@p_{i}'))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+            for p in ps:
+                cti_solver_add_p(p)
+            def add_p(p: Predicate) -> None:
+                assert p not in ps
+                ps.append(p)
+                cti_solver_add_p(p)
+            def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
+                for q_indicator, transition_indicator in product(q_indicators_post, transition_indicators):
+                    print(f'check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
+                    indicators = tuple(chain(
+                        [q_indicator, transition_indicator],
+                        (lit_indicators_pre[k][i] for k in range(mp.m) for i in sorted(mp.all_n[k] - q_seed[k])),
+                        (lit_indicators_post[k][i] for k in range(mp.m) for i in sorted(q_seed[k])),
+                        (p_indicators[i] for i in sorted(ps_seed)),
+                    ))
+                    z3res = cti_solver.check(indicators)
+                    assert z3res in (z3.sat, z3.unsat)
+                    print(f'check_q (find_dual_edge): {z3res}')
+                    if z3res == z3.unsat:
+                        continue
+                    if optimize:
+                        # maximize indicators, to make for a more informative cti
+                        for extra in chain(
+                                # priorities: post, pre, ps
+                                (lit_indicators_post[k][i] for k in range(mp.m) for i in sorted(mp.all_n[k] - q_seed[k])),
+                                (lit_indicators_pre[k][i] for k in range(mp.m) for i in sorted(q_seed[k])),
+                                (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
+                        ):
+                            z3res = cti_solver.check(indicators + (extra,))
+                            assert z3res in (z3.sat, z3.unsat)
+                            if z3res == z3.sat:
+                                print(f'check_q (find_dual_edge): adding extra: {extra}')
+                                indicators += (extra,)
+                        assert cti_solver.check(indicators) == z3.sat
+                    z3model = cti_solver.model(indicators)
+                    prestate = Model.from_z3([KEY_OLD], z3model)
+                    poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                    print(f'check_q (find_dual_edge): found new cti violating dual edge')
+                    _cache_transitions.append((prestate, poststate))
+                    for state in (prestate, poststate):
+                        if all(eval_in_state(None, state, p) for p in inits):
+                            _cache_initial.append(state)
+                    return prestate, poststate
+                return None
+            while True:
+                while True: # find a Q or discover there is none and learn internal_ctis
+                    ctis = frozenset(
+                        i for i in sorted((live_states | internal_ctis) - reachable)
+                        if all(eval_in_state(None, states[i], p) for p in ps)
+                    )
+                    res = check_sep(ctis)
+                    if res is None:
+                        break
+                    q, q_seed = res
+                    assert len(q) == len(q_seed) == len(goals) == mp.m
+                    # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
+                    # first, check if init |= q, if not, we learn a new initial state
+                    if len(q) == 1:
+                        print(f'find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
                     else:
-                        _ps = None
-                    if False:
-                        # just check vs. check_dual_edge
-                        # TODO: run this on all examples sometime
+                        print(f'find_dual_edge: potential q is:')
+                        for k in range(mp.m):
+                            print(f'  ({len(destruct_clause(q[k])[1])} literals): {q[k]}')
+                    initial = True
+                    for qq in q:
+                        s = check_initial(solver, qq)
+                        if s is not None:
+                            initial = False
+                            print(f'  this predicate is not initial, learned a new initial state')
+                            i = add_state(s, False)
+                            reachable |= {i}
+                            reachable = close_forward(reachable) # just in case
+                            break
+                    if not initial:
+                        continue
+                    # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
+                    _cti: Optional[Tuple[State, State]]
+                    _ps: Optional[Tuple[Predicate,...]]
+                    if True:
+                        # version using cti_solver
+                        p_seed = frozenset(range(len(ps)))
+                        _cti = check_q(q_seed, p_seed)
                         if _cti is None:
-                            assert _ps is not None
-                            assert check_dual_edge(
-                                solver,
-                                _ps,
-                                (q,),
-                                msg='validation-cti'
-                            ) == (_cti, _ps)
+                            print(f'find_dual_edge: dual edge is valid, minimizing ps')
+                            for i in sorted(p_seed, reverse=True):
+                                if check_q(q_seed, p_seed - {i}, False) is None:
+                                    p_seed -= {i}
+                            print(f'find_dual_edge: done minimizing ps')
+                            _ps = tuple(ps[i] for i in sorted(p_seed))
                         else:
-                            assert check_dual_edge(
-                                solver,
-                                tuple(ps),
-                                (q,),
-                                msg='validation-cti'
-                            )[0] is not None
-                else:
-                    # version using check_dual_edge
-                    _cti, _ps = check_dual_edge(
-                        solver,
-                        tuple(ps),
-                        (q,),
-                        # msg='cti?', TODO
-                    )
-                if _cti is None:
-                    assert _ps is not None
-                    print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                    print(f'find_dual_edge: found new dual edge:')
-                    for p in _ps:
-                        print(f'  {p}')
-                    print(f'  --> {q}')
-                    return _ps, (q,)
-                else:
-                    prestate, poststate = _cti
-                    i_pre = add_state(prestate, True)
-                    i_post = add_state(poststate, True)
-                    assert (i_pre, i_post) not in transitions
-                    add_transition(i_pre, i_post)
-            # here, we have enough internal_ctis to rule out all possible q's
-            assert check_sep(ctis) is None
-            if n_ps == 0:
-                print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                print(f'find_dual_edge: cannot find dual edge')
-                return None
-            assert n_ps is None
-            # minimize ctis outside of pos and learn a new predicate that separates them from pos
-            # TODO: use unsat cores
-            soft_neg = ctis - pos
-            for i in sorted(ctis - pos):
-               if i in ctis and check_sep(ctis - {i}) is None:
-                   ctis -= {i}
-            assert check_sep(ctis) is None
-            to_eliminate = ctis - pos
-            print(f'find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
-            for i in sorted(to_eliminate):
-                while True:
-                    seed = maps[i].separate(
-                        pos=(pos | reachable),
-                        neg=[i],
-                        soft_neg=soft_neg, # TODO: or to_eliminate ?
-                    )
-                    if seed is None:
-                        break
-                    p = maps[i].to_clause(seed)
-                    print(f'find_dual_edge: potential p is: {p}')
-                    s = check_initial(solver, p)
-                    if s is None:
-                        break
+                            _ps = None
+                        if False:
+                            # just check vs. check_dual_edge
+                            # TODO: run this on all examples sometime
+                            if _cti is None:
+                                assert _ps is not None
+                                assert check_dual_edge(
+                                    solver,
+                                    _ps,
+                                    tuple(q),
+                                    msg='validation-cti'
+                                ) == (_cti, _ps)
+                            else:
+                                assert check_dual_edge(
+                                    solver,
+                                    tuple(ps),
+                                    tuple(q),
+                                    msg='validation-cti'
+                                )[0] is not None
                     else:
-                        print(f'  this predicate is not initial, learned a new initial state')
-                        reachable |= {add_state(s, False)}
-                        reachable = close_forward(reachable) # just in case
-                if seed is not None:
-                    add_p(p)
-                    print(f'find_dual_edge: found new p predicate: {p}')
+                        # version using check_dual_edge
+                        _cti, _ps = check_dual_edge(
+                            solver,
+                            tuple(ps),
+                            tuple(q),
+                            # msg='cti?', TODO
+                        )
+                    if _cti is None:
+                        assert _ps is not None
+                        _qs = tuple(q)
+                        print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
+                        for p in _ps:
+                            print(f'  {p}')
+                        print('  --> ')
+                        for qq in _qs:
+                            print(f'  {qq}')
+                        return _ps, _qs
+                    else:
+                        prestate, poststate = _cti
+                        i_pre = add_state(prestate, True)
+                        i_post = add_state(poststate, True)
+                        assert (i_pre, i_post) not in transitions
+                        add_transition(i_pre, i_post)
+                # here, we have enough internal_ctis to rule out all possible q's
+                assert check_sep(ctis) is None
+                added_new_p = False
+                if n_ps is None:
+                    # minimize ctis outside of pos and learn a new predicate that separates them from pos
+                    # TODO: use unsat cores
+                    soft_neg = ctis - pos
+                    for i in sorted(ctis - pos):
+                       if i in ctis and check_sep(ctis - {i}) is None:
+                           ctis -= {i}
+                    assert check_sep(ctis) is None
+                    to_eliminate = ctis - pos
+                    print(f'find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+                    for i in sorted(to_eliminate):
+                        while True:
+                            seed = maps[i].separate(
+                                pos=(pos | reachable),
+                                neg=[i],
+                                soft_neg=soft_neg, # TODO: or to_eliminate ?
+                            )
+                            if seed is None:
+                                break
+                            p = maps[i].to_clause(seed)
+                            print(f'find_dual_edge: potential p is: {p}')
+                            s = check_initial(solver, p)
+                            if s is None:
+                                break
+                            else:
+                                print(f'  this predicate is not initial, learned a new initial state')
+                                reachable |= {add_state(s, False)}
+                                reachable = close_forward(reachable) # just in case
+                        if seed is not None:
+                            add_p(p)
+                            added_new_p = True
+                            print(f'find_dual_edge: found new p predicate: {p}')
+                            break
+                if added_new_p:
+                    continue
+                print(f'find_dual_edge: cannot find any new p predicate')
+                # we have not added a new p
+                if len(goals) == n_qs:
+                    print(f'find_dual_edge: cannot find dual edge for this worklist item')
                     break
-            else:
-                print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                print(f'find_dual_edge: cannot find any new p predicate, so cannot find dual edge')
-                return None
+                # minimize ctis (including ones in pos) and add more worklist items
+                # TODO: use unsat cores
+                # TODO: do compute roots of some kind
+                for i in sorted(ctis):
+                   if i in ctis and check_sep(ctis - {i}) is None:
+                       ctis -= {i}
+                assert check_sep(ctis) is None
+                assert len(ctis & reachable) == 0, sorted(ctis & reachable)
+                if len(ctis) == 0:
+                    print(f'find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
+                else:
+                    ctis = frozenset(i for i in ctis if maps[i].to_clause(maps[i].all_n) not in goals)
+                    print(f'find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
+                    for i in sorted(ctis):
+                        g = maps[i].to_clause(maps[i].all_n)
+                        assert g not in goals
+                        stateof[g] = i
+                        new_goals = goals + (g,)
+                        worklist.append(new_goals)
+                break
+        assert len(worklist) == 0
+        print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'find_dual_edge: no more worklist items, so cannot find dual edge')
+        return None
 
     def find_dual_backward_transition(
             pos: Collection[int], # indices into states that ps must satisfy
@@ -4814,7 +4878,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         for indicator, q in zip(q_indicators_pre, qs):
             cti_solver.add(z3.Implies(indicator, t.translate_expr(q, old=True))) # NB: polarity
         # add the negation of the cube defined by q_indicators_post to the poststate
-        # TODO: maybe make multiple calls rather than using disjunction
+        # TODO: maybe make multiple calls rather than using disjunction, like in check_dual_edge
         cti_solver.add(z3.Or(*(
             z3.And(z3.Not(indicator), z3.Not(t.translate_expr(q, old=False))) # NB: polarity
             for indicator, q in zip(q_indicators_post, qs)
