@@ -3961,7 +3961,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if p != top_p and all(eval_in_state(None, states[i], p) for i in sorted(reachable)):
                 _add_predicate(p)
         return _add_predicate(top_p)
-    add_predicate = add_predicate_and_subclauses if True else _add_predicate
+    add_predicate = add_predicate_and_subclauses if False else _add_predicate
 
     for p in safety:
         add_predicate(p)
