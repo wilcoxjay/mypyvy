@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from datetime import datetime
+import time
 import itertools
 import io
 import logging
@@ -282,7 +283,7 @@ def check_two_state_implication_along_transitions(
 
 
 class Solver(object):
-    def __init__(self) -> None:
+    def __init__(self, include_program: bool = True) -> None:
         self.z3solver = z3.Solver()
         prog = syntax.the_program
         assert prog.scope is not None
@@ -294,16 +295,17 @@ class Solver(object):
         self.known_keys: Set[str] = set()
         self.mutable_axioms: List[Expr] = []
         self.stack: List[List[z3.ExprRef]] = [[]]
+        self.include_program = include_program
 
-        self.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations()
-                                     if r.derived_axiom is not None)
-
-        t = self.get_translator()
-        for a in syntax.the_program.axioms():
-            self.add(t.translate_expr(a.expr))
+        if include_program:
+            self.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations()
+                                         if r.derived_axiom is not None)
+            t = self.get_translator()
+            for a in prog.axioms():
+                self.add(t.translate_expr(a.expr))
 
     def restart(self) -> None:
-        print('restart!!')
+        print('z3solver restart!')
         self.z3solver = z3.Solver()
         for i, frame in enumerate(self.stack):
             if i > 0:
@@ -312,11 +314,13 @@ class Solver(object):
                 self.z3solver.add(e)
 
     def register_mutable_axioms(self, axioms: Iterable[Expr]) -> None:
+        assert self.include_program
         assert len(self.known_keys) == 0, \
             "mutable axioms must be registered before any keys are known to the solver!"
         self.mutable_axioms.extend(axioms)
 
     def _initialize_key(self, key: Optional[str]) -> None:
+        assert self.include_program
         if key is not None and key not in self.known_keys:
             self.known_keys.add(key)
 
@@ -330,6 +334,7 @@ class Solver(object):
 
     def get_translator(self, key: Optional[str] = None, key_old: Optional[str] = None) \
             -> syntax.Z3Translator:
+        assert self.include_program
         t = (key, key_old)
         if t not in self.translators:
             self._initialize_key(key)
@@ -384,14 +389,20 @@ class Solver(object):
                 l.append(2 ** k)
                 k += 1
 
-        unit = 1000
+        unit = 60000
+        restarted = False
         for t in luby():
             tmt = t * unit
             self.z3solver.set('timeout', tmt)
+            t_start = time.time()
             ans = self.z3solver.check(*assumptions)
             if ans != z3.unknown:
+                assert ans in (z3.sat, z3.unsat)
+                if restarted:
+                    print(f'z3solver successful after {1000*(time.time() - t_start):.1f}ms: {ans}')
                 return ans
-            print(f'timed out after {tmt}ms, trying again')
+            print(f'z3solver timed out after {tmt}ms, trying again')
+            restarted = True
             self.restart()
 
         assert False
