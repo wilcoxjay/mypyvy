@@ -401,7 +401,7 @@ class Solver(object):
                 if restarted:
                     print(f'z3solver successful after {1000*(time.time() - t_start):.1f}ms: {ans}')
                 return ans
-            print(f'z3solver timed out after {tmt}ms, trying again')
+            print(f'z3solver returned {ans} after {1000*(time.time() - t_start):.1f}ms (timeout was {tmt}ms), trying again')
             restarted = True
             self.restart()
 
