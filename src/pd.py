@@ -4882,12 +4882,9 @@ def primal_dual_houdini(solver: Solver) -> str:
         # add the cube defined by q_indicators_pre to the prestate
         for indicator, q in zip(q_indicators_pre, qs):
             cti_solver.add(z3.Implies(indicator, t.translate_expr(q, old=True))) # NB: polarity
-        # add the negation of the cube defined by q_indicators_post to the poststate
-        # TODO: maybe make multiple calls rather than using disjunction, like in check_dual_edge
-        cti_solver.add(z3.Or(*(
-            z3.And(z3.Not(indicator), z3.Not(t.translate_expr(q, old=False))) # NB: polarity
-            for indicator, q in zip(q_indicators_post, qs)
-        )))
+        # each q_indicator implies q has to be violated in the poststate
+        for indicator, q in zip(q_indicators_post, qs):
+            cti_solver.add(z3.Implies(indicator, z3.Not(t.translate_expr(q, old=False)))) # NB: polarity
         # add transition indicators
         transition_indicators: List[z3.ExprRef] = []
         for i, trans in enumerate(prog.transitions()):
@@ -4902,31 +4899,31 @@ def primal_dual_houdini(solver: Solver) -> str:
             cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
             cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
         def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
-            for transition_indicator in transition_indicators:
-                print(f'check_qs: testing {transition_indicator}')
+            for q_post_i, transition_indicator in product(sorted(qs_seed), transition_indicators):
+                q_indicator = q_indicators_post[q_post_i]
+                print(f'check_qs (find_dual_backward_transition): testing {q_indicator}, {transition_indicator}')                
                 indicators = tuple(chain(
-                    [transition_indicator],
+                    [q_indicator, transition_indicator],
                     (q_indicators_pre[i] for i in sorted(qs_seed)),
-                    (q_indicators_post[i] for i in sorted(all_n - qs_seed)),
                     (p_indicators[i] for i in sorted(ps_seed)),
                 ))
                 z3res = cti_solver.check(indicators)
                 assert z3res in (z3.sat, z3.unsat)
-                print(f'check_qs: {z3res}')
+                print(f'check_qs (find_dual_backward_transition): {z3res}')
                 if z3res == z3.unsat:
                     continue
                 if optimize:
                     # maximize indicators, to make for a more informative cti
                     for extra in chain(
                             # priorities: post, pre, ps
-                            (q_indicators_post[i] for i in sorted(qs_seed)),
+                            (q_indicators_post[i] for i in range(n) if i != q_post_i),
                             (q_indicators_pre[i] for i in sorted(all_n - qs_seed)),
                             (p_indicators[i] for i in range(len(p_indicators)) if i not in ps_seed),
                     ):
                         z3res = cti_solver.check(indicators + (extra,))
                         assert z3res in (z3.sat, z3.unsat)
                         if z3res == z3.sat:
-                            print(f'check_qs: adding extra: {extra}')
+                            print(f'check_qs (find_dual_backward_transition): adding extra: {extra}')
                             indicators += (extra,)
                     assert cti_solver.check(indicators) == z3.sat
                 z3model = cti_solver.model(indicators)
