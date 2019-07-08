@@ -293,13 +293,23 @@ class Solver(object):
         self.assumptions_necessary = False
         self.known_keys: Set[str] = set()
         self.mutable_axioms: List[Expr] = []
+        self.stack: List[List[z3.ExprRef]] = [[]]
 
         self.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations()
                                      if r.derived_axiom is not None)
 
         t = self.get_translator()
-        for a in prog.axioms():
+        for a in syntax.the_program.axioms():
             self.add(t.translate_expr(a.expr))
+
+    def restart(self) -> None:
+        print('restart!!')
+        self.z3solver = z3.Solver()
+        for i, frame in enumerate(self.stack):
+            if i > 0:
+                self.z3solver.push()
+            for e in frame:
+                self.z3solver.add(e)
 
     def register_mutable_axioms(self, axioms: Iterable[Expr]) -> None:
         assert len(self.known_keys) == 0, \
@@ -334,16 +344,25 @@ class Solver(object):
         yield None
         self.assumptions_necessary = old
 
-    def __enter__(self) -> None:
+    def push(self) -> None:
+        self.stack.append([])
         self.z3solver.push()
 
-    def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
+    def pop(self) -> None:
+        self.stack.pop()
         self.z3solver.pop()
+
+    def __enter__(self) -> None:
+        self.push()
+
+    def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
+        self.pop()
 
     def add(self, e: z3.ExprRef) -> None:
         # if logger.isEnabledFor(logging.DEBUG):
         #     logger.debug('adding %s' % e)
 
+        self.stack[-1].append(e)
         self.z3solver.add(e)
 
     def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.CheckSatResult:
@@ -352,7 +371,30 @@ class Solver(object):
             assert not self.assumptions_necessary
             assumptions = []
         self.nqueries += 1
-        return self.z3solver.check(*assumptions)
+
+        def luby() -> Iterable[int]:
+            l: List[int] = [1]
+            k = 1
+            i = 0
+            while True:
+                while i < len(l):
+                    yield l[i]
+                    i += 1
+                l.extend(l)
+                l.append(2 ** k)
+                k += 1
+
+        unit = 1000
+        for t in luby():
+            tmt = t * unit
+            self.z3solver.set('timeout', tmt)
+            ans = self.z3solver.check(*assumptions)
+            if ans != z3.unknown:
+                return ans
+            print(f'timed out after {tmt}ms, trying again')
+            self.restart()
+
+        assert False
 
     def model(
             self,
