@@ -3961,7 +3961,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if p != top_p and all(eval_in_state(None, states[i], p) for i in sorted(reachable)):
                 _add_predicate(p)
         return _add_predicate(top_p)
-    add_predicate = add_predicate_and_subclauses if False else _add_predicate
+    add_predicate = add_predicate_and_subclauses if utils.args.all_subclauses else _add_predicate
 
     for p in safety:
         add_predicate(p)
@@ -4209,7 +4209,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             n_inductive_invariant = len(inductive_invariant)
             forward_explore_from_predicates(r) # TODO: not sure if we should do this here or not
             #TODO# assert n_reachable == len(reachable), '?' see sharded-kv-retransmit.pd-primal-dual-houdini.dfc198b.seed-1234.log
-            assert n_inductive_invariant == len(inductive_invariant), '?'
+            #TODO# assert n_inductive_invariant == len(inductive_invariant), '?' sharded-kv-retransmit_unsafe.pd-primal-dual-houdini.daf032c.seed-1234.log paxos_forall_choosable.pd-primal-dual-houdini.daf032c.seed-0.log
             r = dual_close_forward(r)
             # try to add edges to existing predicates (dual-backward-transitions)
             goals = live_predicates - r
@@ -4531,8 +4531,8 @@ def primal_dual_houdini(solver: Solver) -> str:
         May add new reachable states if it finds new initial states
         '''
         # n_qs = 3 # just for testing and messing around
-        n_qs = 1000
-        worklist_budget = 10
+        n_qs = utils.args.induction_width
+        worklist_budget = 100
         nonlocal reachable
         pos = frozenset(pos)
         assert n_ps in (0, None) # for now we do not support finite bounds, either 0 or unbounded
@@ -5164,13 +5164,53 @@ def primal_dual_houdini(solver: Solver) -> str:
             print(f'Dual Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             new_inductive_invariants()
         assert_invariants()
-        print(f'\nLearned {len(predicates) - n_predicates} new predicates,'
+        print(f'\n[{datetime.now()}] After Dual Houdini: learned {len(predicates) - n_predicates} new predicates,'
               f'revived {len(live_predicates) - n_live_predicates - len(predicates) + n_predicates} previous predicates,'
               f'learned {len(inductive_invariant) - n_inductive_invariant} new inductive predicates, ',
               f'{len(reachable) - n_reachable} new reachable states,'
               f'{len(live_states) - n_live_states} new live states, '
               f'{len(internal_ctis) - n_internal_ctis} new internal ctis, '
               f'looping\n')
+
+        # print status and possibly terminate
+        print(f'\n[{datetime.now()}] After Dual Houdini states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
+        for i in sorted(live_states | internal_ctis):
+            notes = []
+            if i in live_states:
+                notes.append('live')
+            if i in reachable:
+                notes.append('reachable')
+            if i in internal_ctis:
+                notes.append('internal_cti')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
+        for i in reachable:
+            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
+                print(f'\nFound safety violation by reachable state (states[{i}]).')
+                dump_caches()
+                return 'UNSAFE'
+        print(f'\n[{datetime.now()}] After Dual Houdini transitions ({len(transitions)}) and substructures ({len(substructure)}):')
+        for i, j, label in sorted(chain(
+                ((i, j, 'transition') for i, j in transitions),
+                ((i, j, 'substructure') for i, j in substructure),
+        )):
+            print(f'  {i:3} -> {j:3} ({label})')
+        print(f'\n[{datetime.now()}] After Dual Houdini predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
+        for i in sorted(live_predicates):
+            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
+            assert max_frame < len(frames) - 1 or i in inductive_invariant
+            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
+            max_frame = max(j for j, f in enumerate(step_frames) if predicates[i] in f)
+            assert max_frame < len(step_frames) - 1 or i in inductive_invariant
+            if i not in inductive_invariant:
+                note += f' ({max_frame + 1})'
+            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
+            print('Proved safety!')
+            dump_caches()
+            return 'SAFE'
+        print()
+
         assert any([
             n_predicates != len(predicates),
             n_live_predicates != len(live_predicates),
