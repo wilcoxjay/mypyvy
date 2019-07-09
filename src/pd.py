@@ -6581,6 +6581,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--cpus', type=int, help='Number of CPUs to use in parallel')
         s.add_argument('--restarts', action='store_true', help='Use restarts outside of Z3 by setting Luby timeouts')
         s.add_argument('--induction-width', type=int, default=1, help='Upper bound on weight of dual edges to explore.')
-        s.add_argument('--all-subclauses',  action='', help='Add all subclauses of predicates.')
+        s.add_argument('--all-subclauses',  action='store_true', help='Add all subclauses of predicates.')
 
     return result
