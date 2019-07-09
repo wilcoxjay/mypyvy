@@ -4546,23 +4546,23 @@ def primal_dual_houdini(solver: Solver) -> str:
             goal_i = states.index(goal)
             goal = maps[goal_i].to_clause(maps[goal_i].all_n)
             stateof[goal] = goal_i
-            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
+            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         else:
-            print(f'find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
+            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         n_internal_ctis = len(internal_ctis)
         n_reachable = len(reachable)
         ps: List[Predicate] = [predicates[j] for j in sorted(r)]
         worklist: List[Tuple[Expr,...]] = [(goal,)]
         seen_before: FrozenSet[FrozenSet[Expr]] = frozenset()
         while len(worklist) > 0 and worklist_budget > 0:
-            print(f'find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
+            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
             for goals in worklist:
                 notes = ', '.join(f'states[{stateof[g]}]' if g in stateof else str(g) for g in goals)
                 print(f'    ({notes}, )')
-            print(f'find_dual_edge: trying the top one')
+            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: trying the top one')
             goals = worklist.pop(0)
             if frozenset(goals) in seen_before:
-                print(f'find_dual_edge: already seen this one, skipping')
+                print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: already seen this one, skipping')
                 continue
             worklist_budget -= 1
             seen_before |= {frozenset(goals)}
@@ -4643,7 +4643,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cti_solver_add_p(p)
             def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
                 for q_indicator, transition_indicator in product(q_indicators_post, transition_indicators):
-                    print(f'[{datetime.now()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
+                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
                         [q_indicator, transition_indicator],
                         (lit_indicators_pre[k][i] for k in range(mp.m) for i in sorted(mp.all_n[k] - q_seed[k])),
@@ -4652,7 +4652,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     ))
                     z3res = cti_solver.check(indicators)
                     assert z3res in (z3.sat, z3.unsat)
-                    print(f'[{datetime.now()}] check_q (find_dual_edge): {z3res}')
+                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): {z3res}')
                     if z3res == z3.unsat:
                         continue
                     if optimize:
@@ -4666,13 +4666,13 @@ def primal_dual_houdini(solver: Solver) -> str:
                             z3res = cti_solver.check(indicators + (extra,))
                             assert z3res in (z3.sat, z3.unsat)
                             if z3res == z3.sat:
-                                print(f'[{datetime.now()}] check_q (find_dual_edge): adding extra: {extra}')
+                                print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): adding extra: {extra}')
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
                     z3model = cti_solver.model(indicators)
                     prestate = Model.from_z3([KEY_OLD], z3model)
                     poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                    print(f'[{datetime.now()}] check_q (find_dual_edge): found new cti violating dual edge')
+                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
                         if all(eval_in_state(None, state, p) for p in inits):
@@ -4693,9 +4693,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                     # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
                     # first, check if init |= q, if not, we learn a new initial state
                     if len(q) == 1:
-                        print(f'find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
+                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
                     else:
-                        print(f'find_dual_edge: potential q is:')
+                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential q is:')
                         for k in range(mp.m):
                             print(f'  ({len(destruct_clause(q[k])[1])} literals): {q[k]}')
                     initial = True
@@ -4718,11 +4718,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                         p_seed = frozenset(range(len(ps)))
                         _cti = check_q(q_seed, p_seed,  utils.args.optimize_ctis)
                         if _cti is None:
-                            print(f'find_dual_edge: dual edge is valid, minimizing ps')
+                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: dual edge is valid, minimizing ps')
                             for i in sorted(p_seed, reverse=True):
                                 if check_q(q_seed, p_seed - {i}, False) is None:
                                     p_seed -= {i}
-                            print(f'find_dual_edge: done minimizing ps')
+                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: done minimizing ps')
                             _ps = tuple(ps[i] for i in sorted(p_seed))
                         else:
                             _ps = None
@@ -4755,8 +4755,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if _cti is None:
                         assert _ps is not None
                         _qs = tuple(q)
-                        print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                        print(f'find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
+                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                         for p in _ps:
                             print(f'  {p}')
                         print('  --> ')
@@ -4781,7 +4781,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                            ctis -= {i}
                     assert check_sep(ctis) is None
                     to_eliminate = ctis - pos
-                    print(f'find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
                     for i in sorted(to_eliminate):
                         while True:
                             seed = maps[i].separate(
@@ -4792,7 +4792,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                             if seed is None:
                                 break
                             p = maps[i].to_clause(seed)
-                            print(f'find_dual_edge: potential p is: {p}')
+                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential p is: {p}')
                             s = check_initial(solver, p)
                             if s is None:
                                 break
@@ -4803,14 +4803,14 @@ def primal_dual_houdini(solver: Solver) -> str:
                         if seed is not None:
                             add_p(p)
                             added_new_p = True
-                            print(f'find_dual_edge: found new p predicate: {p}')
+                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: found new p predicate: {p}')
                             break
                 if added_new_p:
                     continue
-                print(f'find_dual_edge: cannot find any new p predicate')
+                print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: cannot find any new p predicate')
                 # we have not added a new p
                 if len(goals) == n_qs:
-                    print(f'find_dual_edge: cannot find dual edge for this worklist item')
+                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: cannot find dual edge for this worklist item')
                     break
                 # minimize ctis (including ones in pos) and add more worklist items
                 # TODO: use unsat cores
@@ -4821,10 +4821,10 @@ def primal_dual_houdini(solver: Solver) -> str:
                 assert check_sep(ctis) is None
                 assert len(ctis & reachable) == 0, sorted(ctis & reachable)
                 if len(ctis) == 0:
-                    print(f'find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
+                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
                 else:
                     ctis = frozenset(i for i in ctis if maps[i].to_clause(maps[i].all_n) not in goals)
-                    print(f'find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
+                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
                     for i in sorted(ctis):
                         g = maps[i].to_clause(maps[i].all_n)
                         assert g not in goals
@@ -4832,11 +4832,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        print(f'find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
         if len(worklist) == 0:
-            print(f'find_dual_edge: no more worklist items, so cannot find dual edge')
+            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: no more worklist items, so cannot find dual edge')
         else:
-            print(f'find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
+            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
         return None
 
     def find_dual_backward_transition(
