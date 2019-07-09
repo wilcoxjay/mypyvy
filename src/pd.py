@@ -5197,14 +5197,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             print(f'  {i:3} -> {j:3} ({label})')
         print(f'\n[{datetime.now()}] After Dual Houdini predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
         for i in sorted(live_predicates):
-            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
-            assert max_frame < len(frames) - 1 or i in inductive_invariant
-            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
-            max_frame = max(j for j, f in enumerate(step_frames) if predicates[i] in f)
-            assert max_frame < len(step_frames) - 1 or i in inductive_invariant
-            if i not in inductive_invariant:
-                note += f' ({max_frame + 1})'
-            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+            print(f'  predicates[{i:3}]: {predicates[i]}')
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
             print('Proved safety!')
             dump_caches()
