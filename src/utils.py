@@ -101,6 +101,7 @@ class MypyvyArgs(object):
     induction_width: int
     all_subclauses: bool
     def main(self, solver: Any) -> None: ...
+    def __contains__(self, key: str) -> bool: ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
 

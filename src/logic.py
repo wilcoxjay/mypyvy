@@ -389,7 +389,10 @@ class Solver(object):
                 l.append(2 ** k)
                 k += 1
 
-        unit = 60000
+        if 'restarts' not in utils.args or not utils.args.restarts:
+            return self.z3solver.check(*assumptions)
+
+        unit = 600000
         num_restarts = 0
         max_restarts = 10000
         for t in luby():
