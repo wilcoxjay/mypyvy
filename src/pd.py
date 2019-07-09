@@ -1061,7 +1061,7 @@ def map_clause_state_interaction_instantiate(
             assert len(ds) == 1, v
             universes.append(state.univs[ds[0]])
     n = reduce(lambda x, y: x * y, [len(u) for u in universes], 1)
-    print(f'map_clause_state_interaction_instantiate: PID={os.getpid()}, iterating over {n} instantiations... ')
+    print(f'[{datetime.now()}] map_clause_state_interaction_instantiate: PID={os.getpid()}, iterating over {n} instantiations... ')
     for tup in product(*universes):
         mss = frozenset(
             i
@@ -1072,7 +1072,7 @@ def map_clause_state_interaction_instantiate(
             result = [
                 other for other in result if not other <= mss
             ] + [mss]
-    print(f'map_clause_state_interaction_instantiate: PID={os.getpid()}, iterated over {n} instantiations, found {len(result)} MSSs')
+    print(f'[{datetime.now()}] map_clause_state_interaction_instantiate: PID={os.getpid()}, iterated over {n} instantiations, found {len(result)} MSSs')
     return result
 
 
@@ -1110,7 +1110,7 @@ class SubclausesMapTurbo(object):
         if len(new) == 0:
             return
         self.state_vs.extend(z3.Bool(f's_{i}') for i in new)
-        print(f'Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(self.all_n)}')
+        print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(self.all_n)}')
         total_mus = 0
         total_mss = 0
         results = multiprocessing_map_clause_state_interaction([
@@ -1118,7 +1118,7 @@ class SubclausesMapTurbo(object):
             for i in new
         ])
         for i in new:
-            # print(f'Mapping out subclauses-state interaction with states[{i}]... ', end='')
+            # print(f'[{datetime.now()}] Mapping out subclauses-state interaction with states[{i}]... ', end='')
             # all_mus, all_mss = map_clause_state_interaction(self.variables, self.literals, self.states[i])
             all_mus, all_mss = results.pop(0)
             if len(all_mus) > 0:
@@ -1165,7 +1165,7 @@ class SubclausesMapTurbo(object):
         if len(new) == 0:
             return
         self.predicate_vs.extend(z3.Bool(f'p_{i}') for i in new)
-        print(f'Mapping out subclauses-predicate interaction with {len(new)} new predicates for {self.to_clause(self.all_n)}')
+        print(f'[{datetime.now()}] Mapping out subclauses-predicate interaction with {len(new)} new predicates for {self.to_clause(self.all_n)}')
         total_mus = 0
         total_mss = 0
         results = multiprocessing_map_clause_state_interaction([
@@ -1317,7 +1317,7 @@ class MultiSubclausesMapICE(object):
             return
         for k in range(self.m):
             self.state_vs[k].extend(z3.Bool(f's_{k}_{i}') for i in new)
-            print(f'Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(k, self.all_n[k])}')
+            print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(k, self.all_n[k])}')
             total_mus = 0
             total_mss = 0
             results = multiprocessing_map_clause_state_interaction([
@@ -1346,7 +1346,7 @@ class MultiSubclausesMapICE(object):
             return
         for k in range(self.m):
             self.predicate_vs[k].extend(z3.Bool(f'p_{k}_{i}') for i in new)
-            print(f'Mapping out subclauses-predicate interaction with {len(new)} new predicates for {self.to_clause(k, self.all_n[k])}')
+            print(f'[{datetime.now()}] Mapping out subclauses-predicate interaction with {len(new)} new predicates for {self.to_clause(k, self.all_n[k])}')
             total_mus = 0
             total_mss = 0
             results = multiprocessing_map_clause_state_interaction([
@@ -1417,7 +1417,7 @@ class MultiSubclausesMapICE(object):
             # optimize for smaller clauses
             for v in chain(*self.lit_vs):
                 self.solver.add_soft(z3.Not(v))
-        print(f'Checking MultiSubclausesMapICE.solver... ', end='')
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
         res = self.solver.check()
         print(res)
         assert res in (z3.unsat, z3.sat)
@@ -1435,7 +1435,7 @@ class MultiSubclausesMapICE(object):
             for i in range(self.n[k]):
                 if i not in forced_to_false[k]:
                     ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
-                    print(f'Checking MultiSubclausesMapICE.solver... ', end='')
+                    print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
                     res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
                     print(res)
                     assert res in (z3.unsat, z3.sat)
@@ -3843,7 +3843,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         note = ' (internal cti)' if internal_cti else ' (live state)'
         if s not in states:
-            print(f'add_state{note}: checking for substructures... ', end='')
+            print(f'[{datetime.now()}] add_state{note}: checking for substructures... ', end='')
             work = list(chain(
                 ((s, t) for t in states),
                 ((t, s) for t in states),
@@ -4643,7 +4643,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cti_solver_add_p(p)
             def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
                 for q_indicator, transition_indicator in product(q_indicators_post, transition_indicators):
-                    print(f'check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
+                    print(f'[{datetime.now()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
                         [q_indicator, transition_indicator],
                         (lit_indicators_pre[k][i] for k in range(mp.m) for i in sorted(mp.all_n[k] - q_seed[k])),
@@ -4652,7 +4652,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     ))
                     z3res = cti_solver.check(indicators)
                     assert z3res in (z3.sat, z3.unsat)
-                    print(f'check_q (find_dual_edge): {z3res}')
+                    print(f'[{datetime.now()}] check_q (find_dual_edge): {z3res}')
                     if z3res == z3.unsat:
                         continue
                     if optimize:
@@ -4666,13 +4666,13 @@ def primal_dual_houdini(solver: Solver) -> str:
                             z3res = cti_solver.check(indicators + (extra,))
                             assert z3res in (z3.sat, z3.unsat)
                             if z3res == z3.sat:
-                                print(f'check_q (find_dual_edge): adding extra: {extra}')
+                                print(f'[{datetime.now()}] check_q (find_dual_edge): adding extra: {extra}')
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
                     z3model = cti_solver.model(indicators)
                     prestate = Model.from_z3([KEY_OLD], z3model)
                     poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                    print(f'check_q (find_dual_edge): found new cti violating dual edge')
+                    print(f'[{datetime.now()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
                         if all(eval_in_state(None, state, p) for p in inits):
@@ -4901,7 +4901,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
             for q_post_i, transition_indicator in product(sorted(qs_seed), transition_indicators):
                 q_indicator = q_indicators_post[q_post_i]
-                print(f'check_qs (find_dual_backward_transition): testing {q_indicator}, {transition_indicator}')                
+                print(f'[{datetime.now()}] check_qs (find_dual_backward_transition): testing {q_indicator}, {transition_indicator}')                
                 indicators = tuple(chain(
                     [q_indicator, transition_indicator],
                     (q_indicators_pre[i] for i in sorted(qs_seed)),
@@ -4909,7 +4909,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 ))
                 z3res = cti_solver.check(indicators)
                 assert z3res in (z3.sat, z3.unsat)
-                print(f'check_qs (find_dual_backward_transition): {z3res}')
+                print(f'[{datetime.now()}] check_qs (find_dual_backward_transition): {z3res}')
                 if z3res == z3.unsat:
                     continue
                 if optimize:
@@ -4923,13 +4923,13 @@ def primal_dual_houdini(solver: Solver) -> str:
                         z3res = cti_solver.check(indicators + (extra,))
                         assert z3res in (z3.sat, z3.unsat)
                         if z3res == z3.sat:
-                            print(f'check_qs (find_dual_backward_transition): adding extra: {extra}')
+                            print(f'[{datetime.now()}] check_qs (find_dual_backward_transition): adding extra: {extra}')
                             indicators += (extra,)
                     assert cti_solver.check(indicators) == z3.sat
                 z3model = cti_solver.model(indicators)
                 prestate = Model.from_z3([KEY_OLD], z3model)
                 poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                print(f'check_qs: found new cti violating dual edge')
+                print(f'[{datetime.now()}] check_qs: found new cti violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
                     if all(eval_in_state(None, state, p) for p in inits):
