@@ -457,7 +457,7 @@ def parse_program(input: str, force_rebuild: bool = False, filename: Optional[st
     return p.parse(input=input, lexer=l, filename=filename)
 
 def main() -> None:
-    resource.setrlimit(resource.RLIMIT_AS, (45*10**9, 45*10**9))  # limit RAM usage to 45 GB # TODO: make this a command line argument # TODO: not sure if this is actually the right way to do this (also, what about child processes?)
+    resource.setrlimit(resource.RLIMIT_AS, (90*10**9, 90*10**9))  # limit RAM usage to 45 GB # TODO: make this a command line argument # TODO: not sure if this is actually the right way to do this (also, what about child processes?)
 
     utils.args = parse_args(sys.argv[1:])
 
