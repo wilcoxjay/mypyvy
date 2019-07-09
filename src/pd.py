@@ -3928,7 +3928,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             #assert False, (i, j) # TODO: think about this more. this usually happens when j was previously only an internal cti
             pass
 
-    def _add_predicate(p: Predicate, reason: Optional[int] = None) -> int:
+    def _add_predicate(p: Predicate) -> int:
         nonlocal predicates
         nonlocal live_predicates
         # nonlocal reason_for_predicate
@@ -3951,9 +3951,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'add_predicate: reviving previous predicate {j}: {p}')
         live_predicates |= {j}
         #TODO# assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
-        if reason is not None:
-            assert False # maybe this will change later
-            # reason_for_predicate[j] |= {reason}
+        # if reason is not None:
+        #     assert False # maybe this will change later
+        #     # reason_for_predicate[j] |= {reason}
         return j
 
     def add_predicate_and_subclauses(top_p: Predicate) -> int:
@@ -4716,7 +4716,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if True:
                         # version using cti_solver
                         p_seed = frozenset(range(len(ps)))
-                        _cti = check_q(q_seed, p_seed)
+                        _cti = check_q(q_seed, p_seed,  utils.args.optimize_ctis)
                         if _cti is None:
                             print(f'find_dual_edge: dual edge is valid, minimizing ps')
                             for i in sorted(p_seed, reverse=True):
@@ -4952,7 +4952,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 _cti: Optional[Tuple[State, State]]
                 _ps: Optional[Tuple[Predicate,...]]
                 p_seed = frozenset(range(len(ps)))
-                _cti = check_qs(qs_seed, p_seed)
+                _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
                 if _cti is None:
                     print(f'find_dual_backward_transition: dual edge is valid, minimizing ps')
                     for i in sorted(p_seed, reverse=True):
@@ -6622,5 +6622,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--restarts', action=utils.YesNoAction, default=False, help='Use restarts outside of Z3 by setting Luby timeouts')
         s.add_argument('--induction-width', type=int, default=1, help='Upper bound on weight of dual edges to explore.')
         s.add_argument('--all-subclauses',  action=utils.YesNoAction, default=False, help='Add all subclauses of predicates.')
+        s.add_argument('--optimize-ctis',  action=utils.YesNoAction, default=True, help='Optimize internal ctis')
 
     return result

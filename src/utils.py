@@ -100,6 +100,7 @@ class MypyvyArgs(object):
     restarts: bool
     induction_width: int
     all_subclauses: bool
+    optimize_ctis: bool
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
 
