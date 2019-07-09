@@ -390,7 +390,9 @@ class Solver(object):
                 k += 1
 
         if 'restarts' not in utils.args or not utils.args.restarts:
-            return self.z3solver.check(*assumptions)
+            res = self.z3solver.check(*assumptions)
+            assert res in (z3.sat, z3.unsat)
+            return res
 
         unit = 600000
         num_restarts = 0
