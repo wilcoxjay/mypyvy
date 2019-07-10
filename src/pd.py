@@ -4394,7 +4394,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             assert res in (z3.unsat, z3.sat)
             return res == z3.unsat
         r = s
-        #production# assert f(r)
+        assert f(r)
         for i in sorted(
                 r,
                 key=lambda i: (-sum(len(u) for u in states[i].univs.values()), -i)
@@ -4402,7 +4402,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         ):
             if f(r - {i}):
                 r -= {i}
-        #production# assert f(r)
+        assert f(r)
         print(f'compute_roots: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}, result is {sorted(r)}')
         return r
 
@@ -4439,7 +4439,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     # msg='cti?', TODO
                 )
                 if cti is None:
-                    #production# assert ps is not None
+                    assert ps is not None
                     ps_i = frozenset(predicates.index(p) for p in ps)
                     #production# assert ps_i <= r
                     dual_transitions.append((ps_i, qs))
@@ -4926,7 +4926,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                         if z3res == z3.sat:
                             print(f'[{datetime.now()}] check_qs (find_dual_backward_transition): adding extra: {extra}')
                             indicators += (extra,)
-                    #production# assert cti_solver.check(indicators) == z3.sat
+                    z3res = cti_solver.check(indicators) # note, this check is important, not just an assertion
+                    assert z3res == z3.sat
                 z3model = cti_solver.model(indicators)
                 prestate = Model.from_z3([KEY_OLD], z3model)
                 poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
