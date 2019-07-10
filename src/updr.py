@@ -41,6 +41,8 @@ class Frames(object):
         self.fs: List[Frame] = []
         self.push_cache: List[Dict[Phase, Set[Expr]]] = []
         self.counter = 0
+        self.predicates: List[Expr] = []
+        self.state_count = 0
 
     def __getitem__(self, i: int) -> Frame:
         return self.fs[i]
@@ -108,6 +110,7 @@ class Frames(object):
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
             mod = Model.from_z3([KEY_ONE], z3m)
+            self.record_state(mod)
             diag = mod.as_diagram()
             return (p, diag)
 
@@ -149,6 +152,7 @@ class Frames(object):
                                                (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
                             mod = Model.from_z3([KEY_OLD, KEY_NEW], z3m)
+                            self.record_state(mod)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
 
@@ -212,6 +216,7 @@ class Frames(object):
 
                 pre_phase, (m, t) = res
                 mod = Model.from_z3([KEY_OLD, KEY_NEW], m)
+                self.record_state(mod)
                 diag = mod.as_diagram(i=0)
 
                 if utils.logger.isEnabledFor(logging.DEBUG):
@@ -390,8 +395,24 @@ class Frames(object):
                 utils.logger.debug('augment_core_for_init: new core')
                 utils.logger.debug(str(sorted(core)))
 
+    def record_state(self, m: Model) -> None:
+        self.state_count += 1
+        utils.logger.info(f'learned state {self.state_count}')
+        utils.logger.info(str(m))
+
+    def record_predicate(self, e: Expr) -> None:
+        for x in self.predicates:
+            if x == e or (logic.check_implication(self.solver, [x], [e], minimize=False) is None and
+                          logic.check_implication(self.solver, [e], [x], minimize=False) is None):
+                break
+        else:
+            self.predicates.append(e)
+            utils.logger.info(f'learned new predicate, now have {len(self.predicates)} {e}')
+
     def add(self, p: Phase, e: Expr, depth: Optional[int] = None) -> None:
         self.counter += 1
+
+        self.record_predicate(e)
 
         if depth is None:
             depth = len(self)
@@ -493,6 +514,7 @@ class Frames(object):
                             m = Model.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
+                            self.record_state(m)
                             return (res, (phase_transition, (src_phase, m.as_diagram(i=0))))
                         elif utils.args.use_z3_unsat_cores:
                             assert core is not None
