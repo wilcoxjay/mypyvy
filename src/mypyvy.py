@@ -484,10 +484,11 @@ def main() -> None:
 
     with utils.LogTag(utils.logger, 'main', lvl=logging.INFO):
         if utils.args.print_cmdline:
-            utils.logger.info(' '.join([sys.executable] + sys.argv))
-            utils.logger.info('Running mypyvy with the following options:')
-            for k, v in sorted(vars(utils.args).items()):
-                utils.logger.info(f'    {k} = {v!r}')
+            with utils.LogTag(utils.logger, 'options', lvl=logging.INFO):
+                utils.logger.info(' '.join([sys.executable] + sys.argv))
+                utils.logger.info('Running mypyvy with the following options:')
+                for k, v in sorted(vars(utils.args).items()):
+                    utils.logger.info(f'    {k} = {v!r}')
 
         utils.logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)

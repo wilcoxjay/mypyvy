@@ -54,7 +54,6 @@ class Frames(object):
         return len(self.fs)
 
     @utils.log_start_end_xml(utils.logger, logging.DEBUG)
-    @utils.log_start_end_time(utils.logger, logging.DEBUG)
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]] = None) -> None:
         if contents is None:
             contents = {}
@@ -172,7 +171,6 @@ class Frames(object):
         return None
 
     @utils.log_start_end_xml(utils.logger, logging.DEBUG)
-    @utils.log_start_end_time(utils.logger, logging.DEBUG)
     def get_inductive_frame(self) -> Optional[Frame]:
         for i in range(len(self) - 1):
             if self.is_frame_inductive(i):
@@ -313,26 +311,27 @@ class Frames(object):
 
         # print fs
         while True:
-            if utils.logger.isEnabledFor(logging.DEBUG):
-                utils.logger.debug('blocking diagram in frame %s' % j)
-                utils.logger.debug(str(diag))
+            with utils.LogTag(utils.logger, 'block-attempt'):
+                if utils.logger.isEnabledFor(logging.DEBUG):
+                    utils.logger.debug('blocking diagram in frame %s' % j)
+                    utils.logger.debug(str(diag))
 
-                self.print_frame(j - 1, lvl=logging.DEBUG)
-            res, x = self.find_predecessor(self[j - 1], p, diag)
-            if res == z3.unsat:
-                utils.logger.debug('no predecessor: blocked!')
-                assert x is None or isinstance(x, MySet)
-                core: Optional[MySet[int]] = x
-                self.augment_core_for_init(p, diag, core)
-                break
-            assert isinstance(x, tuple), (res, x)
-            trans, (pre_phase, pre_diag) = x
+                    self.print_frame(j - 1, lvl=logging.DEBUG)
+                res, x = self.find_predecessor(self[j - 1], p, diag)
+                if res == z3.unsat:
+                    utils.logger.debug('no predecessor: blocked!')
+                    assert x is None or isinstance(x, MySet)
+                    core: Optional[MySet[int]] = x
+                    self.augment_core_for_init(p, diag, core)
+                    break
+                assert isinstance(x, tuple), (res, x)
+                trans, (pre_phase, pre_diag) = x
 
-            trace.append((trans, pre_diag))
-            ans = self.block(pre_diag, j - 1, pre_phase, trace, safety_goal)
-            if not isinstance(ans, Blocked):
-                return ans
-            trace.pop()
+                trace.append((trans, pre_diag))
+                ans = self.block(pre_diag, j - 1, pre_phase, trace, safety_goal)
+                if not isinstance(ans, Blocked):
+                    return ans
+                trace.pop()
 
         if utils.logger.isEnabledFor(logging.DEBUG) and core is not None:
             utils.logger.debug('core %s' % core)

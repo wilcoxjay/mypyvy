@@ -158,6 +158,9 @@ class MyLogger(object):
     def always_print(self, msg: str, end: str='\n') -> None:
         self.log(MyLogger.ALWAYS_PRINT, msg, end=end)
 
+    def time(self) -> float:
+        return (datetime.now() - self.start).total_seconds()
+
     def log_list(self, lvl: int, msgs: List[str], sep: str='\n', end: str='\n') -> None:
         if args.log_xml:
             n = len(msgs)
@@ -170,7 +173,7 @@ class MyLogger(object):
         if self.isEnabledFor(lvl):
             if args.log_xml:
                 msg = xml.sax.saxutils.escape(msg)
-                with LogTag(self, 'msg', lvl=lvl, time=str((datetime.now() - self.start).total_seconds())):
+                with LogTag(self, 'msg', lvl=lvl, time=str(self.time())):
                     self.rawlog(MyLogger.ALWAYS_PRINT, msg, end=end)
             else:
                 self.rawlog(lvl, msg, end=end)
@@ -214,11 +217,11 @@ def log_start_end_time(logger: MyLogger, lvl: int=logging.DEBUG) -> Callable[[F]
         return cast(F, wrapped)
     return dec
 
-def log_start_end_xml(logger: MyLogger, lvl: int=logging.DEBUG, tag: Optional[str]=None) -> Callable[[F], F]:
+def log_start_end_xml(logger: MyLogger, lvl: int=logging.DEBUG, tag: Optional[str]=None, **attrs: str) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
-            with LogTag(logger, tag if tag is not None else func.__name__, lvl=lvl):
+            with LogTag(logger, tag if tag is not None else func.__name__, lvl=lvl, time=str(logger.time()), **attrs):
                 ans = func(*args, **kwargs)
             return ans
         return cast(F, wrapped)
