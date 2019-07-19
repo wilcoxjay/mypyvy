@@ -1,10 +1,10 @@
 # mypyvy [![Build Status](https://travis-ci.org/wilcoxjay/mypyvy.svg?branch=master)](https://travis-ci.org/wilcoxjay/mypyvy)
 
-A language for symbolic transitions system, inspired by Ivy.
+A language for symbolic transition systems, inspired by Ivy.
 
 ## Dependencies
 
-You need python version 3.7. (Sorry.) I use 3.7.3, but 3.7.X should work for any X.
+You need python version 3.7. Any version of the form 3.7.X should work.
 
 ```
 python3.7
@@ -12,8 +12,9 @@ Python 3.7.3 (default, Mar 27 2019, 09:23:15)
 ...
 ```
 
-Make sure z3 is installed and on your `PYTHONPATH`. I use z3 version 4.8.5,
-but any version from the past few years should work.
+Make sure z3 is installed and on your `PYTHONPATH`. Basic functionality should
+work with any version from the past few years, but for best results, use a recent
+release, such as 4.8.5.
 
 ```
 z3 --version
@@ -35,7 +36,7 @@ You need all the python packages given in `requirements.txt`, which you can
 do by running the following:
 
 ```
-pip3 install -r requirements.txt
+python3.7 -m pip install -r requirements.txt
 ```
 
 You may wish to set up a virtual environment if you're into that.
