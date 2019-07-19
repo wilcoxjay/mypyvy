@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 import time
 import itertools
@@ -9,7 +10,7 @@ import logging
 import re
 import sys
 from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
-    cast
+    cast, TypeVar
 import z3
 
 import utils
@@ -843,6 +844,84 @@ class Diagram(object):
 
 _digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
 
+def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
+    custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
+
+    if custom_printer_annotation is not None:
+        assert len(custom_printer_annotation.args) >= 1
+        import importlib
+        printers = importlib.import_module('printers')
+        printer_name = custom_printer_annotation.args[0]
+        custom_printer = printers.__dict__.get(printer_name)
+        custom_printer_args = custom_printer_annotation.args[1:] \
+            if custom_printer is not None else []
+        if custom_printer is not None:
+            return custom_printer(state, s, elt, custom_printer_args)
+        else:
+            utils.print_warning(custom_printer_annotation.tok,
+                                'could not find printer named %s' % (printer_name,))
+    return None
+
+def print_element(state: State, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
+    if not isinstance(s, SortDecl):
+        assert isinstance(s, syntax.UninterpretedSort) and s.decl is not None
+        s = s.decl
+
+    return try_printed_by(state, s, elt) or elt
+
+def print_tuple(state: State, arity: List[syntax.Sort], tup: List[str]) -> str:
+    l = []
+    assert len(arity) == len(tup)
+    for s, x in zip(arity, tup):
+        l.append(print_element(state, s, x))
+    return ','.join(l)
+
+def univ_str(state: State) -> List[str]:
+    l = []
+    for s in sorted(state.univs.keys(), key=str):
+        l.append(str(s))
+
+        def key(x: str) -> Tuple[str, int]:
+            ans = print_element(state, s, x)
+            m = _digits_re.match(ans)
+            if m is not None:
+                return (m['prefix'], int(m['suffix']))
+            else:
+                return (ans, 0)
+        for x in sorted(state.univs[s], key=key):
+            l.append('  %s' % print_element(state, s, x))
+    return l
+
+def _state_str(
+        state: State,
+        Cs: Dict[ConstantDecl, str],
+        Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]],
+        Fs: Dict[FunctionDecl, List[Tuple[List[str], str]]]
+) -> str:
+    l = []
+    for C in Cs:
+        if syntax.has_annotation(C, 'no_print'):
+            continue
+        l.append('%s = %s' % (C.name, print_element(state, C.sort, Cs[C])))
+
+    for R in Rs:
+        if syntax.has_annotation(R, 'no_print'):
+            continue
+        for tup, b in sorted(Rs[R], key=lambda x: print_tuple(state, R.arity, x[0])):
+            if b:
+                l.append('%s%s(%s)' % ('' if b else '!', R.name,
+                                       print_tuple(state, R.arity, tup)))
+
+    for F in Fs:
+        if syntax.has_annotation(F, 'no_print'):
+            continue
+        for tup, res in sorted(Fs[F], key=lambda x: print_tuple(state, F.arity, x[0])):
+            l.append('%s(%s) = %s' % (F.name, print_tuple(state, F.arity, tup),
+                                      print_element(state, F.sort, res)))
+
+    return '\n'.join(l)
+
+
 class Model(object):
     def __init__(
             self,
@@ -850,6 +929,8 @@ class Model(object):
     ) -> None:
         self.z3model: Optional[z3.ModelRef] = None
         self.keys = keys
+
+        self.univs: Dict[SortDecl, List[str]] = OrderedDict()
 
         RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
         CT = Dict[ConstantDecl, str]
@@ -884,94 +965,19 @@ class Model(object):
     # def __setstate__(self, state:Any) -> None:
     #     self.__dict__.update(state)
 
-    def try_printed_by(self, s: SortDecl, elt: str) -> Optional[str]:
-        custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
-
-        if custom_printer_annotation is not None:
-            assert len(custom_printer_annotation.args) >= 1
-            import importlib
-            printers = importlib.import_module('printers')
-            printer_name = custom_printer_annotation.args[0]
-            custom_printer = printers.__dict__.get(printer_name)
-            custom_printer_args = custom_printer_annotation.args[1:] \
-                if custom_printer is not None else []
-            if custom_printer is not None:
-                return custom_printer(self, s, elt, custom_printer_args)
-            else:
-                utils.print_warning(custom_printer_annotation.tok,
-                                    'could not find printer named %s' % (printer_name,))
-        return None
-
-    def print_element(self, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
-        if not isinstance(s, SortDecl):
-            assert isinstance(s, syntax.UninterpretedSort) and s.decl is not None
-            s = s.decl
-
-        return self.try_printed_by(s, elt) or elt
-
-    def print_tuple(self, arity: List[syntax.Sort], tup: List[str]) -> str:
-        l = []
-        assert len(arity) == len(tup)
-        for s, x in zip(arity, tup):
-            l.append(self.print_element(s, x))
-        return ','.join(l)
-
-    def univ_str(self) -> List[str]:
-        l = []
-        for s in sorted(self.univs.keys(), key=str):
-            l.append(str(s))
-
-            def key(x: str) -> Tuple[str, int]:
-                ans = self.print_element(s, x)
-                m = _digits_re.match(ans)
-                if m is not None:
-                    return (m['prefix'], int(m['suffix']))
-                else:
-                    return (ans, 0)
-            for x in sorted(self.univs[s], key=key):
-                l.append('  %s' % self.print_element(s, x))
-        return l
-
     def __str__(self) -> str:
         l = []
-        l.extend(self.univ_str())
-        l.append(self._state_str(self.immut_const_interps, self.immut_rel_interps,
-                                 self.immut_func_interps))
+        dummy_state = State(self.univs, self.immut_rel_interps, self.immut_const_interps,
+                            self.immut_func_interps)
+        l.extend(univ_str(dummy_state))
+        l.append(_state_str(dummy_state, self.immut_const_interps, self.immut_rel_interps,
+                            self.immut_func_interps))
         for i, k in enumerate(self.keys):
             if i > 0 and self.transitions[i - 1] != '':
                 l.append('\ntransition %s' % (self.transitions[i - 1],))
             l.append('\nstate %s:' % (i,))
-            l.append(self._state_str(self.const_interps[i], self.rel_interps[i],
-                                     self.func_interps[i]))
-
-        return '\n'.join(l)
-
-    def _state_str(
-            self,
-            Cs: Dict[ConstantDecl, str],
-            Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]],
-            Fs: Dict[FunctionDecl, List[Tuple[List[str], str]]]
-    ) -> str:
-        l = []
-        for C in Cs:
-            if syntax.has_annotation(C, 'no_print'):
-                continue
-            l.append('%s = %s' % (C.name, self.print_element(C.sort, Cs[C])))
-
-        for R in Rs:
-            if syntax.has_annotation(R, 'no_print'):
-                continue
-            for tup, b in sorted(Rs[R], key=lambda x: self.print_tuple(R.arity, x[0])):
-                if b:
-                    l.append('%s%s(%s)' % ('' if b else '!', R.name,
-                                           self.print_tuple(R.arity, tup)))
-
-        for F in Fs:
-            if syntax.has_annotation(F, 'no_print'):
-                continue
-            for tup, res in sorted(Fs[F], key=lambda x: self.print_tuple(F.arity, x[0])):
-                l.append('%s(%s) = %s' % (F.name, self.print_tuple(F.arity, tup),
-                                          self.print_element(F.sort, res)))
+            l.append(_state_str(dummy_state, self.const_interps[i], self.rel_interps[i],
+                                self.func_interps[i]))
 
         return '\n'.join(l)
 
@@ -987,7 +993,6 @@ class Model(object):
 
         prog = syntax.the_program
 
-        self.univs: Dict[SortDecl, List[str]] = OrderedDict()
         for z3sort in sorted(z3model.sorts(), key=str):
             sort = prog.scope.get_sort(str(z3sort))
             assert sort is not None
@@ -1323,6 +1328,113 @@ class Model(object):
             e.resolve(prog.scope, None)
             self.onestate_formula_cache[i] = e
         return self.onestate_formula_cache[i]
+
+    def as_state(self, i: Optional[int] = None) -> State:
+        assert len(self.keys) == 1 or i is not None, \
+            'to generate a State from a multi-state model, ' + \
+            'you must specify which state you want'
+        assert i is None or (0 <= i and i < len(self.keys))
+
+        if i is None:
+            i = 0
+
+        return State(self.univs,
+                     dict(itertools.chain(self.immut_rel_interps.items(), self.rel_interps[i].items())),
+                     dict(itertools.chain(self.immut_const_interps.items(), self.const_interps[i].items())),
+                     dict(itertools.chain(self.immut_func_interps.items(), self.func_interps[i].items())))
+
+_K = TypeVar('_K')
+_V = TypeVar('_V')
+
+def _lookup_assoc(l: Sequence[Tuple[_K, _V]], k: _K) -> _V:
+    for k2, v2 in l:
+        if k == k2:
+            return v2
+    assert False
+
+@dataclass
+class State(object):
+    univs: Dict[SortDecl, List[str]]
+    rel_interp: Dict[RelationDecl, List[Tuple[List[str], bool]]]
+    const_interp: Dict[ConstantDecl, str]
+    func_interp: Dict[FunctionDecl, List[Tuple[List[str], str]]]
+
+    def __str__(self) -> str:
+        l = []
+        l.extend(univ_str(self))
+        l.append(_state_str(self, self.const_interp, self.rel_interp, self.func_interp))
+        return '\n'.join(l)
+
+    def eval(self, expr: Expr) -> Union[str, bool]:
+        scope: syntax.Scope[Union[str, bool]] = \
+            cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
+        if isinstance(expr, syntax.Bool):
+            return expr.val
+        elif isinstance(expr, syntax.UnaryExpr):
+            assert expr.op != 'OLD', "cannot eval 'old' in a single state"
+            assert expr.op == 'NOT'
+            return not self.eval(expr.arg)
+        elif isinstance(expr, syntax.BinaryExpr):
+            if expr.op == 'IMPLIES':
+                return not self.eval(expr.arg1) or self.eval(expr.arg2)
+            elif expr.op in ['IFF', 'EQUAL']:
+                return self.eval(expr.arg1) == self.eval(expr.arg2)
+            else:
+                assert expr.op == 'NOTEQ'
+                return self.eval(expr.arg1) != self.eval(expr.arg2)
+        elif isinstance(expr, syntax.NaryExpr):
+            assert expr.op in ['AND', 'OR']
+            p = all if expr.op == 'AND' else any
+            return p(self.eval(arg) for arg in expr.args)
+        elif isinstance(expr, syntax.AppExpr):
+            d = scope.get(expr.callee)
+            assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
+            table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
+            if isinstance(d, syntax.RelationDecl):
+                table = self.rel_interp[d]
+            else:
+                table = self.func_interp[d]
+            args = []
+            for arg in expr.args:
+                ans = self.eval(arg)
+                assert isinstance(ans, str)
+                args.append(ans)
+            return _lookup_assoc(table, args)
+        elif isinstance(expr, syntax.QuantifierExpr):
+            assert expr.quant in ['FORALL', 'EXISTS']
+            p = all if expr.quant == 'AND' else any
+            doms = []
+            for sv in expr.binder.vs:
+                assert isinstance(sv.sort, syntax.UninterpretedSort) and sv.sort.decl is not None
+                doms.append(self.univs[sv.sort.decl])
+
+            def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
+                with scope.in_scope(q.binder, list(tup)):
+                    ans = self.eval(q.body)
+                    assert isinstance(ans, bool)
+                    return ans
+            return p(one(expr, t) for t in itertools.product(*doms))
+        elif isinstance(expr, syntax.Id):
+            a = scope.get(expr.name)
+            # definitions are not supported
+            assert not isinstance(a, syntax.DefinitionDecl) and not isinstance(a, syntax.FunctionDecl) and a is not None
+            if isinstance(a, syntax.RelationDecl):
+                return _lookup_assoc(self.rel_interp[a], [])
+            elif isinstance(a, syntax.ConstantDecl):
+                return self.const_interp[a]
+            else:
+                assert isinstance(a, str) or isinstance(a, bool)
+                return a
+        elif isinstance(expr, syntax.IfThenElse):
+            branch = self.eval(expr.branch)
+            assert isinstance(branch, bool)
+            return self.eval(expr.then) if branch else self.eval(expr.els)
+        elif isinstance(expr, syntax.Let):
+            val = self.eval(expr.val)
+            with scope.in_scope(expr.binder, [val]):
+                return self.eval(expr.body)
+        else:
+            assert False, expr
 
 class Blocked(object):
     pass

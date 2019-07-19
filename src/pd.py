@@ -30,7 +30,7 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
     return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
 
 
-State = Model
+PDState = Model
 Predicate = Expr
 
 
@@ -108,7 +108,7 @@ def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
 
 def eval_clause_in_state(
         clause: Expr,
-        state: State,
+        state: PDState,
 ) -> bool:
     variables, literals = destruct_clause(clause)
     def ev(values: Sequence[str], lit: Expr) -> bool:
@@ -196,7 +196,7 @@ def cheap_check_implication(
 
 
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
-def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
+def eval_in_state(s: Optional[Solver], m: PDState, p: Expr) -> bool:
     if s is None:
         s = get_solver()
     cache = _cache_eval_in_state
@@ -220,7 +220,7 @@ def eval_in_state(s: Optional[Solver], m: State, p: Expr) -> bool:
         cache['h'] += 1
     return cache[k]
 
-_cache_initial: List[State] = []
+_cache_initial: List[PDState] = []
 # TODO: could also cache expressions already found to be initial
 def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
     prog = syntax.the_program
@@ -247,7 +247,7 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
     return None
 
 
-def is_substructure(s: State, t: State) -> bool:
+def is_substructure(s: PDState, t: PDState) -> bool:
     '''Returns true if s is a sub structure of t'''
     sorts_s = sorted(s.univs.keys(), key=str)
     sorts_t = sorted(t.univs.keys(), key=str)
@@ -265,8 +265,8 @@ def is_substructure(s: State, t: State) -> bool:
 
 
 _cache_two_state_implication : Dict[Any,Any] = dict(h=0,r=0)
-_cache_transitions: List[Tuple[State,State]] = []
-def isomorphic_states(solver: Solver, s: State, t: State) -> bool:
+_cache_transitions: List[Tuple[PDState,PDState]] = []
+def isomorphic_states(solver: Solver, s: PDState, t: PDState) -> bool:
     x = s.as_onestate_formula(0)
     y = t.as_onestate_formula(0)
     return x == y # or cheap_check_implication([], [Iff(x, y)])
@@ -324,23 +324,23 @@ def check_two_state_implication_multiprocessing(
     assert False
 def check_two_state_implication(
         s: Solver,
-        precondition: Union[Iterable[Expr], State],
+        precondition: Union[Iterable[Expr], PDState],
         p: Expr,
         msg: str = 'transition',
         minimize: Optional[bool] = None,
-) -> Optional[Tuple[State,State]]:
+) -> Optional[Tuple[PDState,PDState]]:
     prog = syntax.the_program
     # inits = tuple(init.expr for init in prog.inits())
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
-    if not isinstance(precondition, State):
+    if not isinstance(precondition, PDState):
         precondition = tuple(precondition)
     k = (precondition, p)
     cache = _cache_two_state_implication
     if k not in cache:
         if utils.args.cache_only:
             print(f'loudly describing this unexpected cache miss for predicate {p} on precondition:')
-            if isinstance(precondition, State):
+            if isinstance(precondition, PDState):
                 print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
             else:
                 print('-'*80)
@@ -359,7 +359,7 @@ def check_two_state_implication(
             # equivalent, or some other solution by making sure that
             # the prestate of transition from state s is considered
             # the same as state s
-            if ((isomorphic_states(s, prestate, precondition) if isinstance(precondition, State) else
+            if ((isomorphic_states(s, prestate, precondition) if isinstance(precondition, PDState) else
                  all(eval_in_state(s, prestate, q) for q in precondition)) and
                 not eval_in_state(s, poststate, p)):
                 cache[k] = (prestate, poststate)
@@ -370,7 +370,7 @@ def check_two_state_implication(
         else:
             res = check_two_state_implication_multiprocessing(
                 s,
-                [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
+                [precondition.as_onestate_formula(0)] if isinstance(precondition, PDState) else precondition,
                 p,
                 minimize
             )
@@ -379,7 +379,7 @@ def check_two_state_implication(
             else:
                 if utils.args.cache_only_discovered:
                     print(f'loudly describing this unexpected cache miss for predicate {p} on precondition:')
-                    if isinstance(precondition, State):
+                    if isinstance(precondition, PDState):
                         print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
                     else:
                         print('-'*80)
@@ -392,7 +392,7 @@ def check_two_state_implication(
                         print('-'*80 + '\n' + str(prestate) + '\n' + '-'*80)
                         print('poststate:')
                         print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
-                        if isinstance(precondition, State):
+                        if isinstance(precondition, PDState):
                             print(f'prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0): '
                                   f'{prestate.as_onestate_formula(0) == precondition.as_onestate_formula(0)}')
                         else:
@@ -418,7 +418,7 @@ def check_two_state_implication(
         if cache[k] is not None:
             prestate, poststate = cache[k]
             print(f'Found cached {msg} violating {p} from precondition:')
-            if isinstance(precondition, State):
+            if isinstance(precondition, PDState):
                 print('-'*80 + '\n' + str(precondition) + '\n' + '-'*80)
             else:
                 print('-'*80)
@@ -438,7 +438,7 @@ def check_dual_edge_old(
         ps: Tuple[Expr,...],
         qs: Tuple[Expr,...],
         msg: str = 'cti',
-) -> Tuple[Optional[Tuple[State, State]], Optional[Tuple[Expr,...]]]:
+) -> Tuple[Optional[Tuple[PDState, PDState]], Optional[Tuple[Expr,...]]]:
     '''
     this checks if ps /\ qs |= wp(ps -> qs)
     note it does not check if init |= qs, but for now we assert it
@@ -538,7 +538,7 @@ def check_dual_edge(
         ps: Tuple[Expr,...],
         qs: Tuple[Expr,...],
         msg: str = 'cti',
-) -> Tuple[Optional[Tuple[State, State]], Optional[Tuple[Expr,...]]]:
+) -> Tuple[Optional[Tuple[PDState, PDState]], Optional[Tuple[Expr,...]]]:
     '''
     this checks if ps /\ qs |= wp(ps -> qs)
     note it does not check if init |= qs, but for now we assert it
@@ -587,7 +587,7 @@ def check_dual_edge(
             q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
             for i, q in enumerate(qs):
                 cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
-            def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[State, State]]:
+            def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
                 for q_indicator, transition_indicator in product(q_indicators, transition_indicators):
                     print(f'check_dual_edge: testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
@@ -663,21 +663,21 @@ def check_dual_edge(
 
 def check_k_state_implication(
         s: Solver,
-        precondition: Union[Iterable[Expr], State],
+        precondition: Union[Iterable[Expr], PDState],
         p: Expr,
         k: int,
         msg: str = 'transition',
-) -> Optional[Tuple[State,...]]:
+) -> Optional[Tuple[PDState,...]]:
     # TODO: we should cache these
 
-    if not isinstance(precondition, State):
+    if not isinstance(precondition, PDState):
         precondition = tuple(precondition)
 
     om = check_bmc(
         s,
         p,
         k,
-        [precondition.as_onestate_formula(0)] if isinstance(precondition, State) else precondition,
+        [precondition.as_onestate_formula(0)] if isinstance(precondition, PDState) else precondition,
     )
     if om is None:
         return None
@@ -764,7 +764,7 @@ def marco(n: int, f: Callable[[Set[int]], bool]) -> Generator[Tuple[str,Set[int]
            msolver.block_up(MUS)
 
 
-def alpha_from_clause_marco(solver:Solver, states: Iterable[State] , top_clause:Expr) -> Sequence[Expr]:
+def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_clause:Expr) -> Sequence[Expr]:
     # TODO: why can't top_clause be quantifier free?
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
@@ -809,7 +809,7 @@ def subclauses(top_clause: Expr) -> Iterable[Expr]:
         yield Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
-def alpha_from_clause(solver:Solver, states: Iterable[State] , top_clause:Expr) -> Sequence[Expr]:
+def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr) -> Sequence[Expr]:
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
@@ -839,15 +839,15 @@ def alpha_from_clause(solver:Solver, states: Iterable[State] , top_clause:Expr) 
 alpha_from_clause = alpha_from_clause_marco
 
 
-def alpha_from_predicates(s:Solver, states: Iterable[State] , predicates: Iterable[Expr]) -> Sequence[Expr]:
+def alpha_from_predicates(s:Solver, states: Iterable[PDState] , predicates: Iterable[Expr]) -> Sequence[Expr]:
     return tuple(p for p in predicates if all(eval_in_state(s, m, p) for m in states))
 
 
 # cache and helpers for multiprocessing for map_clause_state_interaction
-_cache_map_clause_state_interaction: Dict[Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[State, Expr]] ,Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = dict()
+_cache_map_clause_state_interaction: Dict[Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[PDState, Expr]] ,Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = dict()
 # TODO: --cache-only checks for this cache (nothign right now)
-def _map_clause_state_interaction_helper(vls: Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[State, Expr]]) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]:
-    if isinstance(vls[2], State):
+def _map_clause_state_interaction_helper(vls: Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[PDState, Expr]]) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]:
+    if isinstance(vls[2], PDState):
         all_mss = map_clause_state_interaction_instantiate(vls[0], vls[1], vls[2])
         if False: # TODO: run at some point to verify
             _, all_mss2 = map_clause_state_interaction(*vls)
@@ -860,13 +860,13 @@ def _map_clause_state_interaction_helper(vls: Tuple[Tuple[SortedVar,...], Tuple[
 def multiprocessing_map_clause_state_interaction(work: List[Tuple[
         Tuple[SortedVar,...],
         Tuple[Expr,...],
-        Union[State, Expr],
+        Union[PDState, Expr],
 ]]) -> List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]]:
     real_work = [k for k in work if k not in _cache_map_clause_state_interaction]
     if False:
         # for debugging, compare results from cache to map_clause_state_interaction_instantiate
         for k in work:
-            if k in _cache_map_clause_state_interaction and isinstance(k[2], State):
+            if k in _cache_map_clause_state_interaction and isinstance(k[2], PDState):
                 all_mus, all_mss = _cache_map_clause_state_interaction[k]
                 all_mss2 = map_clause_state_interaction_instantiate(k[0], k[1], k[2])
                 assert len(all_mss) == len(set(all_mss))
@@ -890,7 +890,7 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
     return [_cache_map_clause_state_interaction[k] for k in work]
 def map_clause_state_interaction(variables: Tuple[SortedVar,...],
                                  literals: Tuple[Expr,...],
-                                 state_or_predicate: Union[State, Expr],
+                                 state_or_predicate: Union[PDState, Expr],
 ) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]:
     print(f' (PID={os.getpid()}) ', end='')
     cache = _cache_map_clause_state_interaction
@@ -966,7 +966,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
 
     # find all mus - minimal subclauses satisfied by the state (cannot do this for predicate like this)
     all_mus: List[FrozenSet[int]] = []
-    if isinstance(state_or_predicate, State) and False:  # not really needed if we have all the mss, TODO: should examine why so many mus and not so many mss, could be a bug
+    if isinstance(state_or_predicate, PDState) and False:  # not really needed if we have all the mss, TODO: should examine why so many mus and not so many mss, could be a bug
         while True:
             indicators = [clause_indicator]
             res = solver.check(indicators)
@@ -1002,7 +1002,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
 def map_clause_state_interaction_instantiate(
         variables: Tuple[SortedVar,...],
         literals: Tuple[Expr,...],
-        state: State,
+        state: PDState,
 ) -> List[FrozenSet[int]]:
     '''Return a list of maximal subclauses of the given clause (indices to
     literals) that are violated by the given state (equivalent to
@@ -1085,7 +1085,7 @@ class SubclausesMapTurbo(object):
     '''
     def __init__(self,
                  top_clause: Expr,
-                 states: List[State],  # assumed to only grow
+                 states: List[PDState],  # assumed to only grow
                  predicates: List[Expr],  # assumed to only grow
                  optimize: bool = False,
     ):
@@ -1287,7 +1287,7 @@ class MultiSubclausesMapICE(object):
     '''
     def __init__(self,
                  top_clauses: Sequence[Expr],
-                 states: List[State],  # assumed to only grow
+                 states: List[PDState],  # assumed to only grow
                  predicates: List[Expr],  # assumed to only grow
                  optimize: bool = False,
     ):
@@ -1457,18 +1457,18 @@ class MultiSubclausesMapICE(object):
 
 def forward_explore_marco_turbo(solver: Solver,
                                 clauses: Sequence[Expr],
-                                _states: Optional[Iterable[State]] = None
-) -> Tuple[List[State], Sequence[Expr]]:
+                                _states: Optional[Iterable[PDState]] = None
+) -> Tuple[List[PDState], Sequence[Expr]]:
 
     prog = syntax.the_program
     # inits = tuple(init.expr for init in prog.inits())
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
-    states: List[State] = [] if _states is None else list(_states)
+    states: List[PDState] = [] if _states is None else list(_states)
     predicates: List[Expr] = []  # growing list of predicates considered
     live: FrozenSet[int] = frozenset()  # indices into predicates for predicates p s.t. init U states |= p /\ wp(p)
 
-    def alpha_live(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_live(states: Collection[PDState]) -> Sequence[Expr]:
         return alpha_from_predicates(solver, states, [predicates[i] for i in sorted(live)])
 
     def valid(clause: Expr) -> bool:
@@ -1563,11 +1563,11 @@ def forward_explore_marco_turbo(solver: Solver,
 
 def forward_explore_marco(solver: Solver,
                           clauses: Sequence[Expr],
-                          _states: Optional[Iterable[State]] = None
-) -> Tuple[List[State], Sequence[Expr]]:
+                          _states: Optional[Iterable[PDState]] = None
+) -> Tuple[List[PDState], Sequence[Expr]]:
 
     prog = syntax.the_program
-    states: List[State] = [] if _states is None else list(_states)
+    states: List[PDState] = [] if _states is None else list(_states)
 
     # inits = tuple(init.expr for init in prog.inits())
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
@@ -1710,8 +1710,8 @@ def forward_explore_marco(solver: Solver,
     # init_indicator = z3.Bool('@init')
     # for init in prog.inits():
     #     wp_valid_solver.add(z3.Implies(init_indicator, t.translate_expr(init.expr, old=True)))
-    # precondition_indicators: Dict[Optional[State], z3.ExprRef] = {None: init_indicator}
-    # def precondition_indicator(precondition: Optional[State]) -> z3.ExprRef:
+    # precondition_indicators: Dict[Optional[PDState], z3.ExprRef] = {None: init_indicator}
+    # def precondition_indicator(precondition: Optional[PDState]) -> z3.ExprRef:
     #     if precondition not in precondition_indicators:
     #         assert precondition is not None
     #         x = z3.Bool(f'@state_{id(precondition)})')
@@ -1722,7 +1722,7 @@ def forward_explore_marco(solver: Solver,
     # for i, trans in enumerate(prog.transitions()):
     #     transition_indicators.append(z3.Bool(f'@transition_{i}'))
     #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
-    # wp_checked_valid: Set[Tuple[Optional[State], SubclausesMap, Tuple[int,...]]] = set()
+    # wp_checked_valid: Set[Tuple[Optional[PDState], SubclausesMap, Tuple[int,...]]] = set()
     # def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
     #     # return True iff wp(clause) is implied by init and valid in all states
     #     # when returning False, add a new transition to states
@@ -1870,9 +1870,9 @@ def forward_explore_marco(solver: Solver,
 
 
 def forward_explore(s: Solver,
-                    alpha: Callable[[Collection[State]], Sequence[Expr]],
-                    states: Optional[Iterable[State]] = None
-) -> Tuple[List[State], Sequence[Expr], List[int], List[Tuple[int, int]]]:
+                    alpha: Callable[[Collection[PDState]], Sequence[Expr]],
+                    states: Optional[Iterable[PDState]] = None
+) -> Tuple[List[PDState], Sequence[Expr], List[int], List[Tuple[int, int]]]:
     '''
     forward exploration from given states
     result is: more_states, a, initial, transitions
@@ -1882,7 +1882,7 @@ def forward_explore(s: Solver,
     transitions are indicies to more_states of transitions
     '''
     # TODO: make cleanup pass and reduce printing (added when adding BMC unrolling)
-    res: Optional[Tuple[State,...]] = None
+    res: Optional[Tuple[PDState,...]] = None
 
     if states is None:
         states = []
@@ -2008,7 +2008,7 @@ def forward_explore_inv(s: Solver) -> None:
     for p in sorted(invs, key=lambda x: len(str(x))):
         print(p)
     print('='*80)
-    def alpha_inv(states: Iterable[State]) -> Sequence[Expr]:
+    def alpha_inv(states: Iterable[PDState]) -> Sequence[Expr]:
         return sorted(
             dedup_equivalent_predicates(s, chain(*(alpha_from_clause(s, states, clause) for clause in invs))),
             key=lambda x: (len(str(x)),str(x))
@@ -2055,7 +2055,7 @@ def repeated_houdini(s: Solver) -> str:
     sharp = utils.args.sharp
     # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
-    reachable_states : List[State] = []
+    reachable_states : List[PDState] = []
 
     # TODO: get this from command line option, and from the right file
     # with open('reachable-states.cache', 'rb') as cache_file:
@@ -2066,17 +2066,17 @@ def repeated_houdini(s: Solver) -> str:
 
     clauses : List[Expr] = list(chain(*(as_clauses(x) for x in safety)))  # all top clauses in our abstraction
     sharp_predicates : Sequence[Expr] = ()  # the sharp predicates (minimal clauses true on the known reachable states)
-    def alpha_clauses(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_clauses(states: Collection[PDState]) -> Sequence[Expr]:
         return sorted(
             dedup_equivalent_predicates(s, chain(*(alpha_from_clause(s, states, clause) for clause in clauses))),
             key=lambda x: (len(str(x)),str(x))
         )
-    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_sharp(states: Collection[PDState]) -> Sequence[Expr]:
         return sorted(
             alpha_from_predicates(s, states, sharp_predicates),
             key=lambda x: (len(str(x)),str(x))
         )
-    def forward_explore_clauses(states: Iterable[State]) -> Tuple[List[State], Sequence[Expr]]:
+    def forward_explore_clauses(states: Iterable[PDState]) -> Tuple[List[PDState], Sequence[Expr]]:
         # TODO: maybe this should be controlled by command line argument
         # return forward_explore(s, alpha_clauses, states)[:2]
         # return forward_explore_marco(s, clauses, states)
@@ -2149,7 +2149,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
-    states: List[State] = []
+    states: List[PDState] = []
     maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
@@ -2161,7 +2161,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
     bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 5 steps (will be made more general later)
     score: Dict[int,float] = defaultdict(float)
 
-    def add_state(s: State) -> int:
+    def add_state(s: PDState) -> int:
         nonlocal live_states
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         if s in states:
@@ -2199,7 +2199,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
         # ctis_of_predicate.append([])
         sharp_predicates |= {i}
 
-    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_sharp(states: Collection[PDState]) -> Sequence[Expr]:
         return sorted(
             alpha_from_predicates(
                 solver,
@@ -2245,7 +2245,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
             ## (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
             (predicates[j] for j in sorted(sharp_predicates)),
         ))
-        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+        def alpha_a(states: Collection[PDState]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
         n = -1
         while len(r) > n:
@@ -2716,7 +2716,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
-    states: List[State] = []
+    states: List[PDState] = []
     maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
@@ -2728,7 +2728,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     bmced: FrozenSet[int] = frozenset() # we have already used BMC to check that this state is not reachable from init in 2 steps (will be made more general later)
     state_bounds: Dict[int, int] = defaultdict(int)  # mapping from state index to its bound
 
-    def add_state(s: State) -> int:
+    def add_state(s: PDState) -> int:
         nonlocal live_states
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         if s not in states:
@@ -2784,7 +2784,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
     for p in safety:
         add_predicate(p)
 
-    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_sharp(states: Collection[PDState]) -> Sequence[Expr]:
         return alpha_from_predicates(
             solver,
             states,
@@ -2828,7 +2828,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
             ## (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
             (predicates[j] for j in sorted(sharp_predicates)),
         ))
-        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+        def alpha_a(states: Collection[PDState]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
         n = -1
         while len(r) > n:
@@ -3335,7 +3335,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
-    states: List[State] = []
+    states: List[PDState] = []
     maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
@@ -3343,7 +3343,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
     transitions: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
     substructure: List[Tuple[int, int]] = [] # TODO: maybe should be frozenset
 
-    def add_state(s: State) -> int:
+    def add_state(s: PDState) -> int:
         nonlocal live_states
         assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         if s in states:
@@ -3396,7 +3396,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
     for p in safety:
         add_predicate(p)
 
-    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_sharp(states: Collection[PDState]) -> Sequence[Expr]:
         return alpha_from_predicates(
             solver,
             states,
@@ -3436,7 +3436,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
             ## (maps[k].to_clause(maps[k].all_n) for k in sorted(live_states - r)), # to try to connect to existing states or their superstructures
             (predicates[j] for j in sorted(sharp_predicates)),
         ))
-        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+        def alpha_a(states: Collection[PDState]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
         n = -1
         while len(r) > n:
@@ -3813,7 +3813,7 @@ def primal_dual_houdini(solver: Solver) -> str:
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
-    states: List[State] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
+    states: List[PDState] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
     maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram, not really used, but still used to get the negation of diagram of a state TODO: remove
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
@@ -3837,7 +3837,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
 
-    def add_state(s: State, internal_cti: bool) -> int:
+    def add_state(s: PDState, internal_cti: bool) -> int:
         nonlocal live_states
         nonlocal internal_ctis
         #production# assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
@@ -4011,7 +4011,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         r: FrozenSet[int] = reachable | src
         r = close_forward(r)
         a = [predicates[j] for j in sorted(live_predicates)]
-        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+        def alpha_a(states: Collection[PDState]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
         n = -1
         while len(r) > n:
@@ -4523,8 +4523,8 @@ def primal_dual_houdini(solver: Solver) -> str:
     def find_dual_edge(
             pos: Collection[int], # indices into states that ps must satisfy
             r: Collection[int], # indices into predicates that can be used (assumed invariants)
-            goal: Union[State, Predicate], # state to exclude or predicate to prove TODO: actually no need for predicates here, they are handled by find_dual_backward_transition
-            soft_goals: Collection[State], # more states to exclude greedily, TODO: also support greedily proving predicates
+            goal: Union[PDState, Predicate], # state to exclude or predicate to prove TODO: actually no need for predicates here, they are handled by find_dual_backward_transition
+            soft_goals: Collection[PDState], # more states to exclude greedily, TODO: also support greedily proving predicates
             n_ps: Optional[int] = None, # None means unbounded, 0 means no such predicates beyond what is in r, for now no other bounds are supported
 #            n_qs: int = 1,
     ) -> Optional[Tuple[Tuple[Predicate,...], Tuple[Predicate,...]]]:
@@ -4543,7 +4543,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         # for now we don't support predicate soft_goals at all
         soft_goals_i = sorted(states.index(g) for g in soft_goals)
         stateof: Dict[Expr, int] = {}
-        if isinstance(goal, State):
+        if isinstance(goal, PDState):
             goal_i = states.index(goal)
             goal = maps[goal_i].to_clause(maps[goal_i].all_n)
             stateof[goal] = goal_i
@@ -4642,7 +4642,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 assert p not in ps
                 ps.append(p)
                 cti_solver_add_p(p)
-            def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
+            def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[PDState, PDState]]:
                 for q_indicator, transition_indicator in product(q_indicators_post, transition_indicators):
                     print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
@@ -4712,7 +4712,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if not initial:
                         continue
                     # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
-                    _cti: Optional[Tuple[State, State]]
+                    _cti: Optional[Tuple[PDState, PDState]]
                     _ps: Optional[Tuple[Predicate,...]]
                     if True:
                         # version using cti_solver
@@ -4899,7 +4899,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             p_indicators.append(z3.Bool(f'@p_{i}'))
             cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
             cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
-        def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[State, State]]:
+        def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[PDState, PDState]]:
             for q_post_i, transition_indicator in product(sorted(qs_seed), transition_indicators):
                 q_indicator = q_indicators_post[q_post_i]
                 print(f'[{datetime.now()}] check_qs (find_dual_backward_transition): testing {q_indicator}, {transition_indicator}')
@@ -4951,7 +4951,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     break
                 print(f'find_dual_backward_transition: potential {len(qs_seed)} qs are: predicates{sorted(goals[i] for i in qs_seed)}')
                 # now, check if r /\ ps /\ qs_seed |= wp(r /\ ps -> qs_seed)
-                _cti: Optional[Tuple[State, State]]
+                _cti: Optional[Tuple[PDState, PDState]]
                 _ps: Optional[Tuple[Predicate,...]]
                 p_seed = frozenset(range(len(ps)))
                 _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
@@ -5224,7 +5224,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 #     negative, and implication constraints on some given states.
 #     '''
 #     def __init__(self,
-#                  states: List[State],  # assumed to only grow
+#                  states: List[PDState],  # assumed to only grow
 #                  predicates: List[Expr],  # assumed to only grow
 #                  imp: Collection[Tuple[int, int]] = (),
 #     ):
@@ -5542,7 +5542,7 @@ class MonotoneFunction(object):
 # implementation of "cdcl_invariant" that does not really work well,
 # but it can be run
 #
-# def separate(solver: Solver, A: Sequence[State], B: Sequence[State], k: int) -> Optional[Sequence[Predicate]]:
+# def separate(solver: Solver, A: Sequence[PDState], B: Sequence[PDState], k: int) -> Optional[Sequence[Predicate]]:
 #     '''
 #     Find a conjunction of at most k universally quantified clauses
 #     that are positive on all of the A states, and eliminate all of the
@@ -5589,7 +5589,7 @@ class MonotoneFunction(object):
 
 
 # def find_invariant(solver: Solver,
-#                    states: Sequence[State],
+#                    states: Sequence[PDState],
 #                    reachable: Sequence[int], # indices into states
 #                    bad: Sequence[int], # indices into states
 #                    transitions: Sequence[Tuple[int, int]], # indices into states
@@ -5634,7 +5634,7 @@ class MonotoneFunction(object):
 
 #     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
 
-#     states : List[State] = []
+#     states : List[PDState] = []
 #     reachable: List[int] = []
 #     bad: List[int] = []
 #     transitions: List[Tuple[int, int]] = []
@@ -5712,7 +5712,7 @@ def is_strict_subclause(c1: Expr, c2: Expr) -> bool:
     return set(lits1) < set(lits2)
 
 
-def minimize_clause(p: Expr, states: Sequence[State]) -> Expr:
+def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
     '''
     p is a clause, try to find a smaller clause satisfied by all states
     '''
@@ -5751,7 +5751,7 @@ def minimize_clause(p: Expr, states: Sequence[State]) -> Expr:
 #     '''
 #     def __init__(self,
 #                  top_clause: Expr,
-#                  states: List[State],  # assumed to only grow
+#                  states: List[PDState],  # assumed to only grow
 #                  predicates: List[Expr],  # assumed to only grow
 #     ):
 #         '''
@@ -5873,7 +5873,7 @@ class SeparabilityMap(object):
     0 means they can be separated, 1 means they cannot.
     '''
     def __init__(self,
-                 states: List[State],  # assumed to only grow
+                 states: List[PDState],  # assumed to only grow
                  predicates: List[Expr],  # assumed to only grow
     ):
         self.states = states
@@ -5970,16 +5970,16 @@ def cdcl_invariant(solver: Solver) -> str:
 
     # safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for use in eval_in_state
-    def safe(s: State) -> bool:
+    def safe(s: PDState) -> bool:
         return all(eval_in_state(solver, s, p) for p in safety)
 
-    states : List[State] = []
+    states : List[PDState] = []
     reachable: List[int] = []
     backward_reachable: List[int] = []
     transitions: List[Tuple[int, int]] = []
     # paths: List[Tuple[int, int]] = []
 
-    def add_state(s: State) -> int:
+    def add_state(s: PDState) -> int:
         if s in states:
             assert False
             # ? return states.index(s)
@@ -6085,7 +6085,7 @@ def cdcl_invariant(solver: Solver) -> str:
         ) for j in range(k)]
         return sharp_predicates_used, new_predicates
 
-    def alpha_sharp(states: Collection[State]) -> Sequence[Expr]:
+    def alpha_sharp(states: Collection[PDState]) -> Sequence[Expr]:
         return sorted(
             alpha_from_predicates(
                 solver,
@@ -6136,7 +6136,7 @@ def cdcl_invariant(solver: Solver) -> str:
 
         '''
         nonlocal reachable
-        def alpha_a(states: Collection[State]) -> Sequence[Expr]:
+        def alpha_a(states: Collection[PDState]) -> Sequence[Expr]:
             return alpha_from_predicates(solver, states, a)
         n = -1
         r = frozenset(reachable)
@@ -6383,36 +6383,36 @@ def cdcl_invariant(solver: Solver) -> str:
 #         self.sharp = utils.args.sharp
 #         self.safety = tuple(inv.expr for inv in self.prog.invs() if inv.is_safety)
 #
-#         self.states : List[State] = []
+#         self.states : List[PDState] = []
 #         self.predicates : List[Predicate] = list(chain(*(as_clauses(x) for x in self.safety)))
 #         # TODO: we are not taking sharp subclauses of safety, maybe to get
 #         # the same effect we can take the powerset (safety is usually not
 #         # so many literals)
 #
-#         self.reachable_states: Set[State] = set()  # subset of states
+#         self.reachable_states: Set[PDState] = set()  # subset of states
 #         self.invariant_predicates: Set[Predicate]  # subset of predicates
 #
 #         """
-#         self.transition_state: Dict[Tuple[State, State], bool] = dict()  # partial function, is there a transition or not, or maybe we don't know yet
-#         self.transition_predicate: Dict[Tuple[FrozenSet[Predicate],State,Predicate], bool] = dict()  # monotone, needs symbolic representation
-#         self.path: Dict[Tuple[State, State], bool] = dict()
+#         self.transition_state: Dict[Tuple[PDState, PDState], bool] = dict()  # partial function, is there a transition or not, or maybe we don't know yet
+#         self.transition_predicate: Dict[Tuple[FrozenSet[Predicate],PDState,Predicate], bool] = dict()  # monotone, needs symbolic representation
+#         self.path: Dict[Tuple[PDState, PDState], bool] = dict()
 #         self.hoare:  Dict[Tuple[FrozenSet[Predicate], FrozenSet[Predicate], Predicate], bool] = dict() # monotone partial function, TODO: should be stored differently
-#         self.induction: Dict[Tuple[FrozenSet[State], FrozenSet[Predicate], Predicate], bool] = dict() # anti-monotone in states, monotone in predicates, TODO: should be stored differently
-#         self.inseperable: Dict[Tuple[FrozenSet[State], FrozenSet[State]], Optional[int]] = dict() # monotone Nat_inf (None represents inf), TODO: should be stored differently
-#         assert not self.sharp #  TODO: inseprable does not support sharp, should be made Dict[Tuple[FrozenSet[State], FrozenSet[State], FrozenSet[State]], Optional[int]]
+#         self.induction: Dict[Tuple[FrozenSet[PDState], FrozenSet[Predicate], Predicate], bool] = dict() # anti-monotone in states, monotone in predicates, TODO: should be stored differently
+#         self.inseperable: Dict[Tuple[FrozenSet[PDState], FrozenSet[PDState]], Optional[int]] = dict() # monotone Nat_inf (None represents inf), TODO: should be stored differently
+#         assert not self.sharp #  TODO: inseprable does not support sharp, should be made Dict[Tuple[FrozenSet[PDState], FrozenSet[PDState], FrozenSet[PDState]], Optional[int]]
 #         # TODO: bounds
 #         """
 #
 #         # version with BMC in mind:
 #         NatInf = Optional(int) # None represents infinity, -k represents that the object whose size we are trying to bound actually exists with size k
-#         self.transition_state: Dict[Tuple[FrozenSet[Predicate], State, State], NatInf] = defaultdict(int) # lower bound (from BMC) on trace from state to state, all satisfying P
-#         self.transition_predicate: Dict[Tuple[FrozenSet[Predicate],State,Predicate], NatInf] = defaultdict(int)  # as above, but for predicate
+#         self.transition_state: Dict[Tuple[FrozenSet[Predicate], PDState, PDState], NatInf] = defaultdict(int) # lower bound (from BMC) on trace from state to state, all satisfying P
+#         self.transition_predicate: Dict[Tuple[FrozenSet[Predicate],PDState,Predicate], NatInf] = defaultdict(int)  # as above, but for predicate
 #
-#         self.path: Dict[Tuple[State, State], bool] = dict()
+#         self.path: Dict[Tuple[PDState, PDState], bool] = dict()
 #         self.hoare:  Dict[Tuple[FrozenSet[Predicate], FrozenSet[Predicate], Predicate], bool] = dict() # monotone partial function, TODO: should be stored differently
-#         self.induction: Dict[Tuple[FrozenSet[State], FrozenSet[Predicate], Predicate], bool] = dict() # anti-monotone in states, monotone in predicates, TODO: should be stored differently
-#         self.inseperable: Dict[Tuple[FrozenSet[State], FrozenSet[State]], Optional[int]] = dict() # monotone Nat_inf (None represents inf), TODO: should be stored differently
-#         assert not self.sharp #  TODO: inseprable does not support sharp, should be made Dict[Tuple[FrozenSet[State], FrozenSet[State], FrozenSet[State]], Optional[int]]
+#         self.induction: Dict[Tuple[FrozenSet[PDState], FrozenSet[Predicate], Predicate], bool] = dict() # anti-monotone in states, monotone in predicates, TODO: should be stored differently
+#         self.inseperable: Dict[Tuple[FrozenSet[PDState], FrozenSet[PDState]], Optional[int]] = dict() # monotone Nat_inf (None represents inf), TODO: should be stored differently
+#         assert not self.sharp #  TODO: inseprable does not support sharp, should be made Dict[Tuple[FrozenSet[PDState], FrozenSet[PDState], FrozenSet[PDState]], Optional[int]]
 #         # TODO: bounds
 #
 #         # Taking the monotone perspective even futrther:
@@ -6436,7 +6436,7 @@ def cdcl_invariant(solver: Solver) -> str:
 #         # W[A,B,k] = is there a conjunction of < k predicates that are satisfied by A and not satisfied by any state in B
 #         HH =  ((predicates,'+'), (states, '-'), (predicates,'+'), (predicates,'+'), (NatInf, '-'), (NatInf, '-'))
 #
-#     def check_transition_state_state(self, s: State, t: State) -> None:
+#     def check_transition_state_state(self, s: PDState, t: PDState) -> None:
 #         assert (s, t) not in self.transition
 #         res = check_two_state_implication_all_transitions(
 #             self.solver,
@@ -6466,7 +6466,7 @@ def cdcl_invariant(solver: Solver) -> str:
 #             assert isomorphic_states(self.solver, s, prestate)
 #             assert isomorphic_states(self.solver, t, poststate)
 #
-#     def check_transition_state_predicate(self, G: Sequence[Predicate], s: State, q: Predicate) -> None:
+#     def check_transition_state_predicate(self, G: Sequence[Predicate], s: PDState, q: Predicate) -> None:
 #         assert (s, q) not in self.transition
 #         res = check_two_state_implication(self.solver, s, Implies(And(*G), q))
 #         if res is None:
