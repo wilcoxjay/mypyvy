@@ -1,0 +1,56 @@
+sort node
+
+mutable relation lock_msg(node)
+mutable relation grant_msg(node)
+mutable relation unlock_msg(node)
+mutable relation holds_lock(node)
+mutable relation server_holds_lock()
+
+init !lock_msg(N)
+init !grant_msg(N)
+init !unlock_msg(N)
+init !holds_lock(N)
+init server_holds_lock
+
+transition send_lock(n: node)
+  modifies lock_msg
+  lock_msg(N) <-> old(lock_msg(N)) | N = n
+
+transition recv_lock(n: node)
+  modifies lock_msg, server_holds_lock, grant_msg
+  old(server_holds_lock) &
+  old(lock_msg(n)) &
+  !server_holds_lock &
+  (lock_msg(N) <-> old(lock_msg(N)) & N != n) &
+  (grant_msg(N) <-> old(grant_msg(N)) | N = n)
+
+transition recv_grant(n: node)
+  modifies grant_msg, holds_lock
+  old(grant_msg(n)) &
+  (grant_msg(N) <-> old(grant_msg(N)) & N != n) &
+  (holds_lock(N) <-> old(holds_lock(N)) | N = n)
+
+transition unlock(n: node)
+  modifies holds_lock, unlock_msg
+  old(holds_lock(n)) &
+  (holds_lock(N) <-> old(holds_lock(N)) & N != n) &
+  (unlock_msg(N) <-> old(unlock_msg(N)) | N = n)
+
+transition recv_unlock(n: node)
+  modifies unlock_msg, server_holds_lock
+  old(unlock_msg(n)) &
+  (unlock_msg(N) <-> old(unlock_msg(N)) & N != n) &
+  server_holds_lock
+
+safety [mutex] holds_lock(N1) & holds_lock(N2) -> N1 = N2
+
+invariant grant_msg(N1) & grant_msg(N2) -> N1 = N2
+invariant unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+
+invariant !(holds_lock(N1) & grant_msg(N2))
+invariant !(holds_lock(N1) & unlock_msg(N2))
+invariant !(grant_msg(N1) & unlock_msg(N2))
+
+invariant !(grant_msg(N) & server_holds_lock)
+invariant !(holds_lock(N) & server_holds_lock)
+invariant !(unlock_msg(N) & server_holds_lock)
