@@ -44,6 +44,7 @@ reserved = {
     'in': 'IN',
     'sat': 'SAT',
     'unsat': 'UNSAT',
+    'distinct': 'DISTINCT',
 }
 
 tokens = [
@@ -345,10 +346,14 @@ def p_expr_or(p: Any) -> None:
     else:
         p[0] = syntax.NaryExpr(p.slice[2], 'OR', [l, p[3]])
 
+def p_expr_distinct(p: Any) -> None:
+    'expr : DISTINCT LPAREN args1 RPAREN'
+    p[0] = syntax.NaryExpr(p.slice[1], 'DISTINCT', p[3])
+
 def p_expr_iff(p: Any) -> None:
     'expr : expr IFF expr'
     p[0] = syntax.BinaryExpr(p.slice[2], 'IFF', p[1], p[3])
-    
+
 def p_expr_implies(p: Any) -> None:
     'expr : expr IMPLIES expr'
     p[0] = syntax.BinaryExpr(p.slice[2], 'IMPLIES', p[1], p[3])

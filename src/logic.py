@@ -1383,9 +1383,13 @@ class State(object):
                 assert expr.op == 'NOTEQ'
                 return self.eval(expr.arg1) != self.eval(expr.arg2)
         elif isinstance(expr, syntax.NaryExpr):
-            assert expr.op in ['AND', 'OR']
-            p = all if expr.op == 'AND' else any
-            return p(self.eval(arg) for arg in expr.args)
+            assert expr.op in ['AND', 'OR', 'DISTINCT']
+            if expr.op in ['AND', 'OR']:
+                p = all if expr.op == 'AND' else any
+                return p(self.eval(arg) for arg in expr.args)
+            else:
+                assert expr.op == 'DISTINCT'
+                return len(set(self.eval(arg) for arg in expr.args)) == len(expr.args)
         elif isinstance(expr, syntax.AppExpr):
             d = scope.get(expr.callee)
             assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)

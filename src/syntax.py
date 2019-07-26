@@ -368,6 +368,8 @@ def as_clause_body(expr: Expr, negated: bool=False) -> List[List[Expr]]:
             assert expr.op == 'IMPLIES'
             return as_clause_body(Or(Not(expr.arg1), expr.arg2), negated=negated)
     elif isinstance(expr, NaryExpr):
+        assert expr.op != 'DISTINCT', 'CNF normalization does not support "distinct" expressions'
+
         if negated:
             other_op = 'AND' if expr.op == 'OR' else 'OR'
             return as_clause_body(NaryExpr(None, other_op, [Not(arg) for arg in expr.args]), negated=False)
@@ -661,11 +663,13 @@ class BinaryExpr(Expr):
 NOPS = {
     'AND',
     'OR',
+    'DISTINCT'
 }
 
 z3_NOPS: Any = {
-    'AND' : z3.And,
-    'OR' : z3.Or
+    'AND': z3.And,
+    'OR': z3.Or,
+    'DISTINCT': z3.Distinct,
 }
 
 class NaryExpr(Expr):
@@ -681,8 +685,14 @@ class NaryExpr(Expr):
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         check_constraint(self.tok, sort, BoolSort)
 
-        for arg in self.args:
-            arg.resolve(scope, BoolSort)
+        if self.op in ['AND', 'OR']:
+            for arg in self.args:
+                arg.resolve(scope, BoolSort)
+        else:
+            assert self.op == 'DISTINCT'
+            s: InferenceSort = None
+            for arg in self.args:
+                s = arg.resolve(scope, s)
 
         return BoolSort
 
@@ -697,6 +707,8 @@ class NaryExpr(Expr):
             return PREC_AND
         elif self.op == 'OR':
             return PREC_OR
+        elif self.op == 'DISTINCT':
+            return PREC_BOT
         else:
             assert False
 
@@ -706,21 +718,29 @@ class NaryExpr(Expr):
         p = self.prec()
 
         if self.op == 'AND':
-            s = '&'
+            sep = ' & '
         elif self.op == 'OR':
-            s = '|'
+            sep = ' | '
+        elif self.op == 'DISTINCT':
+            sep = ', '
         else:
             assert False
+
+        if self.op == 'DISTINCT':
+            buf.append('distinct(')
 
         self.args[0].pretty(buf, p, 'LEFT')
 
         for arg in self.args[1:-1]:
-            buf.append(' %s ' % s)
+            buf.append('%s' % sep)
             arg.pretty(buf, p, 'LEFT')
 
-        buf.append(' %s ' % s)
+        buf.append('%s' % sep)
 
         self.args[-1].pretty(buf, p, 'RIGHT')
+
+        if self.op == 'DISTINCT':
+            buf.append(')')
 
     def free_ids(self) -> List[str]:
         l = []
