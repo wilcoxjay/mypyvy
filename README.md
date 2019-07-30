@@ -2,6 +2,33 @@
 
 A language for symbolic transition systems, inspired by Ivy.
 
+## Using the VM
+
+Download from https://tinyurl.com/mypyvy-vm and import into Virtual Box.
+
+The username and password are both `mypyvy`.
+
+Emacs is installed with `mypyvy` support. Open emacs from the dock on the left
+and open (`Ctrl-x Ctrl-f`) the path `~/build/mypyvy/examples/lockserv_clean.pyv`.
+Flycheck automatically runs mypyvy in the background and highlights errors.
+Since the file is correct, there are no errors to report. To see an error,
+try commenting out one of the invariants at the bottom of the file. You will
+see some red squiggles under other invariants and transitions. To see the one-line
+error messages, press `Ctrl-c ! l`.
+
+To see the counterexamples themselves, go back to the `lockserv_clean.pyv` window
+and press `Ctrl-c Ctrl-c` and then press Enter. This will open a new buffer with
+the output of `mypyvy`, and if you commented out an invariant, you will see a
+counterexample.
+
+You can also run manually from the terminal. Open Terminal from the dock and
+`cd` to `~/build/mypyvy`, then you can run
+
+    python3.7 src/mypyvy.py verify examples/lockserv_clean.pyv
+
+And see the same results.
+
+
 ## Dependencies
 
 You need python version 3.7. Any version of the form 3.7.X should work.

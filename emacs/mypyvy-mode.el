@@ -46,7 +46,8 @@
   (set (make-local-variable 'font-lock-defaults) '(mypyvy-font-lock-keywords))
   (font-lock-fontify-buffer)
   (set (make-local-variable 'compile-command)
-       (string-join (list "mypyvy verify"
+       (string-join (list (or flycheck-mypyvy-executable "mypyvy")
+                          "verify"
                           (string-join flycheck-mypyvy-args " ")
                           buffer-file-name)
                     " "))
@@ -62,7 +63,7 @@
 (defun mypyvy-infer-invariant ()
   (interactive)
   (let ((b (generate-new-buffer "*mypyvy-output*")))
-    (call-process "mypyvy" nil b t "updr" "--use-z3-unsat-cores" "--block-may-cexs" (buffer-file-name))
+    (call-process (or flycheck-mypyvy-executable "mypyvy") nil b t "updr" "--use-z3-unsat-cores" "--block-may-cexs" (buffer-file-name))
     (with-current-buffer b
       (goto-char (point-min))
       (if (search-forward "frame is safe and inductive. done!" nil t)
@@ -78,7 +79,5 @@
         (cl-loop until (>= (point) (marker-position end-marker))
                  do (insert "invariant ") (forward-line))
         (set-marker end-marker nil)))))
-
-
 
 (provide 'mypyvy-mode)
