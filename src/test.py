@@ -5,10 +5,8 @@ import parser
 import syntax
 import mypyvy
 
-import collections
 import os
 from pathlib import Path
-import pickle
 import shlex
 import subprocess
 
@@ -77,6 +75,32 @@ class SyntaxTests(unittest.TestCase):
             with self.subTest(msg='expr hash/eq', e1=e1, e2=e2):
                 self.assertEqual(e1, e2)
                 self.assertEqual(hash(e1), hash(e2))
+
+    def test_relativize_quantifiers(self) -> None:
+        minipaxos = '''
+            sort node
+            sort quorum
+            immutable relation member(node, quorum)
+            mutable relation active_node(node)
+            mutable relation active_quorum(quorum)
+        '''
+        prog = mypyvy.parse_program(minipaxos)
+        prog.resolve()
+        node = prog.scope.get_sort('node')
+        assert node is not None
+        quorum = prog.scope.get_sort('quorum')
+        assert quorum is not None
+        active_node = prog.scope.get('active_node')
+        assert isinstance(active_node, syntax.RelationDecl)
+        active_quorum = prog.scope.get('active_quorum')
+        assert isinstance(active_quorum, syntax.RelationDecl)
+        guards = {node: active_node, quorum: active_quorum}
+
+        e = parser.parse_expr('forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)')
+        e.resolve(prog.scope, None)
+
+        print(syntax.relativize_quantifiers(guards, e))
+
 
 def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3.7'

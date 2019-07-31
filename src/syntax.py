@@ -412,6 +412,43 @@ def as_clauses(expr: Expr) -> List[Expr]:
         ans.append(e)
     return ans
 
+def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> Expr:
+    QUANT_GUARD_OP: Dict[str, Callable[[Expr, Expr], Expr]] = {
+        'FORALL': Implies,
+        'EXISTS': And,
+    }
+
+    def go(e: Expr) -> Expr:
+        if isinstance(e, Bool):
+            return e
+        elif isinstance(e, UnaryExpr):
+            return UnaryExpr(None, e.op, go(e.arg))
+        elif isinstance(e, BinaryExpr):
+            return BinaryExpr(None, e.op, go(e.arg1), go(e.arg2))
+        elif isinstance(e, NaryExpr):
+            return NaryExpr(None, e.op, [go(arg) for arg in e.args])
+        elif isinstance(e, AppExpr):
+            return AppExpr(None, e.callee, [go(arg) for arg in e.args])
+        elif isinstance(e, QuantifierExpr):
+            vs = e.binder.vs
+            body = go(e.body)
+            guard = []
+            for v in vs:
+                assert isinstance(v.sort, UninterpretedSort)
+                assert v.sort.decl is not None
+                guard.append(Apply(guards[v.sort.decl].name, [Id(None, v.name)]))
+            return QuantifierExpr(None, e.quant, vs, QUANT_GUARD_OP[e.quant](And(*guard), body))
+        elif isinstance(e, Id):
+            return e
+        elif isinstance(e, IfThenElse):
+            return IfThenElse(None, go(e.branch), go(e.then), go(e.els))
+        elif isinstance(e, Let):
+            return Let(None, e.binder.vs[0], go(e.val), go(e.body))
+        else:
+            assert False
+
+    return go(e)
+
 @functools.total_ordering
 class Expr(Denotable):
     def __init__(self) -> None:
