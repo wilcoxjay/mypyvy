@@ -5,7 +5,7 @@ import argparse
 from datetime import datetime
 import logging
 import sys
-from typing import List, Any, Optional, cast
+from typing import Any, cast, Dict, List, Optional
 import z3
 import resource
 
@@ -322,6 +322,117 @@ def trace(s: Solver) -> None:
             if (res == z3.sat) != trace.sat:
                 utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
+def relax(s: Solver) -> None:
+    prog = syntax.the_program
+
+    new_decls: List[syntax.Decl] = [d for d in prog.sorts()]
+
+    actives: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
+    for sort in prog.sorts():
+        name = prog.scope.fresh('active_' + sort.name)
+        r = syntax.RelationDecl(None, name, arity=[syntax.UninterpretedSort(None, sort.name)],
+                                mutable=True, derived=None, annotations=[])
+        actives[sort] = r
+        new_decls.append(r)
+
+    # active relations initial conditions: always true
+    for sort in prog.sorts():
+        name = prog.scope.fresh(sort.name[0].upper())
+        expr = syntax.Forall([syntax.SortedVar(None, name, None)],
+                             syntax.Apply(actives[sort].name, [syntax.Id(None, name)]))
+        new_decls.append(syntax.InitDecl(None, name=None, expr=expr))
+
+    for d in prog.decls:
+        if isinstance(d, syntax.SortDecl):
+            pass  # already included above
+        elif isinstance(d, syntax.RelationDecl):
+            if d.derived_axiom is not None:
+                expr = syntax.relativize_quantifiers(actives, d.derived_axiom)
+                new_decls.append(syntax.RelationDecl(None, d.name, d.arity, d.mutable, expr,
+                                                     d.annotations))
+            else:
+                new_decls.append(d)
+        elif isinstance(d, syntax.ConstantDecl):
+            new_decls.append(d)
+        elif isinstance(d, syntax.FunctionDecl):
+            new_decls.append(d)
+        elif isinstance(d, syntax.AxiomDecl):
+            new_decls.append(d)
+        elif isinstance(d, syntax.InitDecl):
+            new_decls.append(d)
+        elif isinstance(d, syntax.DefinitionDecl):
+            assert not isinstance(d.body, syntax.BlockStatement), \
+                "relax does not support transitions written in imperative syntax"
+            mods, expr = d.body
+            expr = syntax.relativize_quantifiers(actives, expr)
+            if d.public:
+                guard = syntax.relativization_guard_for_binder(actives, d.binder)
+                expr = syntax.And(guard, expr)
+            new_decls.append(syntax.DefinitionDecl(None, d.public, d.twostate, d.name,
+                                                   params=d.binder.vs, body=(mods, expr)))
+        elif isinstance(d, syntax.InvariantDecl):
+            expr = syntax.relativize_quantifiers(actives, d.expr)
+            new_decls.append(syntax.InvariantDecl(None, d.name, expr=expr,
+                                                  is_safety=d.is_safety, is_sketch=d.is_sketch))
+        else:
+            assert False, d
+
+    decrease_name = prog.scope.fresh('decrease_domain')
+    mods = []
+    conjs: List[Expr] = []
+
+    # a conjunct allowing each domain to decrease
+    for sort in prog.sorts():
+        name = prog.scope.fresh(sort.name[0].upper())
+        ap = syntax.Apply(actives[sort].name, [syntax.Id(None, name)])
+        expr = syntax.Forall([syntax.SortedVar(None, name, None)],
+                             syntax.Implies(ap, syntax.Old(ap)))
+        conjs.append(expr)
+        mods.append(syntax.ModifiesClause(None, actives[sort].name))
+
+    # constants are active
+    for const in prog.constants():
+        conjs.append(syntax.Apply(actives[syntax.get_decl_from_sort(const.sort)].name,
+                                  [syntax.Id(None, const.name)]))
+
+    # functions map active to active
+    for func in prog.functions():
+        names: List[str] = []
+        func_conjs = []
+        for arg_sort in func.arity:
+            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
+            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
+                                    also_avoid=names)
+            names.append(name)
+            func_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
+        ap_func = syntax.Apply(func.name, [syntax.Id(None, name) for name in names])
+        active_func = syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [ap_func])
+        conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
+                                   syntax.Implies(syntax.And(*func_conjs), active_func)))
+
+    # (relativized) axioms hold after relaxation
+    for axiom in prog.axioms():
+        if not syntax.is_universal(axiom.expr):
+            conjs.append(syntax.relativize_quantifiers(actives, axiom.expr))
+
+    # derived relations have the same interpretation on the active domain
+    for rel in prog.derived_relations():
+        names = []
+        rel_conjs = []
+        for arg_sort in rel.arity:
+            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
+            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
+                                    also_avoid=names)
+            names.append(name)
+            rel_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
+        ap_rel = syntax.Apply(rel.name, [syntax.Id(None, name) for name in names])
+        conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
+                                   syntax.Implies(syntax.And(*rel_conjs),
+                                                  syntax.Iff(ap_rel, syntax.Old(ap_rel)))))
+
+    new_decls.append(syntax.DefinitionDecl(None, public=True, twostate=True, name=decrease_name,
+                                           params=[], body=(mods, syntax.And(*conjs))))
+    print(Program(new_decls))
 
 def parse_args(args: List[str]) -> utils.MypyvyArgs:
     argparser = argparse.ArgumentParser()
@@ -356,6 +467,10 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     typecheck_subparser = subparsers.add_parser('typecheck', help='typecheck the file, report any errors, and exit')
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
+
+    relax_subparser = subparsers.add_parser('relax', help='produce a version of the file that is "relaxed", in a way that is indistinguishable for universal invariants')
+    relax_subparser.set_defaults(main=relax)
+    all_subparsers.append(relax_subparser)
 
     all_subparsers += pd.add_argparsers(subparsers)
 

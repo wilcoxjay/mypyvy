@@ -451,6 +451,38 @@ def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> 
 
     return go(e)
 
+# checks if e is a universal formula with one quantifier out front (or is quantifier free)
+# i.e. returns false if additional universal quantifiers are buried in the body
+def is_universal(e: Expr) -> bool:
+    if isinstance(e, QuantifierExpr):
+        return e.quant == 'FORALL' and is_quantifier_free(e.body)
+    else:
+        return is_quantifier_free(e)
+
+def is_quantifier_free(e: Expr) -> bool:
+    if isinstance(e, Bool):
+        return True
+    elif isinstance(e, UnaryExpr):
+        return is_quantifier_free(e.arg)
+    elif isinstance(e, BinaryExpr):
+        return is_quantifier_free(e.arg1) and is_quantifier_free(e.arg2)
+    elif isinstance(e, NaryExpr):
+        return all(is_quantifier_free(arg) for arg in e.args)
+    elif isinstance(e, AppExpr):
+        return all(is_quantifier_free(arg) for arg in e.args)
+    elif isinstance(e, QuantifierExpr):
+        return False
+    elif isinstance(e, Id):
+        return True
+    elif isinstance(e, IfThenElse):
+        return (is_quantifier_free(e.branch) and
+                is_quantifier_free(e.then) and
+                is_quantifier_free(e.els))
+    elif isinstance(e, Let):
+        return is_quantifier_free(e.val) and is_quantifier_free(e.body)
+    else:
+        assert False
+
 @functools.total_ordering
 class Expr(Denotable):
     def __init__(self) -> None:
@@ -2161,6 +2193,16 @@ class Program(object):
     def theorems(self) -> Iterator[TheoremDecl]:
         for d in self.decls:
             if isinstance(d, TheoremDecl):
+                yield d
+
+    def constants(self) -> Iterator[ConstantDecl]:
+        for d in self.decls:
+            if isinstance(d, ConstantDecl):
+                yield d
+
+    def functions(self) -> Iterator[FunctionDecl]:
+        for d in self.decls:
+            if isinstance(d, FunctionDecl):
                 yield d
 
     def relations_constants_and_functions(self) -> Iterator[StateDecl]:
