@@ -71,8 +71,7 @@ def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     set_sort = UninterpretedSort(None, s.name)
     assert member.arity[1] == set_sort
     item_sort = member.arity[0]
-    assert isinstance(item_sort, UninterpretedSort) and item_sort.decl is not None
-    item_sort_decl = item_sort.decl
+    item_sort_decl = syntax.get_decl_from_sort(item_sort)
 
     items: Set[str] = set()
     for tup, b in state.rel_interp[member]:
@@ -94,9 +93,7 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     assert not is_none.mutable and not value.mutable and \
         is_none.arity == [option_sort] and value.arity == [option_sort]
 
-    elt_sort_us = value.sort
-    assert isinstance(elt_sort_us, UninterpretedSort) and elt_sort_us.decl is not None
-    elt_sort = elt_sort_us.decl
+    elt_sort = syntax.get_decl_from_sort(value.sort)
 
     none: Optional[str] = None
     for tup, b in state.rel_interp[is_none]:
@@ -144,9 +141,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     index_le = get_relation(args[0])
     assert len(index_le.arity) == 2
     assert index_le.arity[0] == index_le.arity[1] and not index_le.mutable
-    index_sort_us = index_le.arity[0]
-    assert isinstance(index_sort_us, UninterpretedSort) and index_sort_us.decl is not None
-    index_sort = index_sort_us.decl
+    index_sort = syntax.get_decl_from_sort(index_le.arity[0])
     index_used = get_relation(args[1])
 
     def default_values() -> List[List[str]]: return [[] for x in range(n_values)]
@@ -172,9 +167,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         if is_relation(name):
             val_rel = get_relation(name)
             assert_valid_rel_or_func(val_rel)
-            assert isinstance(val_rel.arity[2], UninterpretedSort)
-            assert val_rel.arity[2].decl is not None
-            value_sorts.append(val_rel.arity[2].decl)
+            value_sorts.append(syntax.get_decl_from_sort(val_rel.arity[2]))
             for tup, b in state.rel_interp[val_rel]:
                 if not b:
                     continue
@@ -187,9 +180,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         else:
             val_func = get_function(name)
             assert_valid_rel_or_func(val_func)
-            assert isinstance(val_func.sort, UninterpretedSort)
-            assert val_func.sort.decl is not None
-            value_sorts.append(val_func.sort.decl)
+            value_sorts.append(syntax.get_decl_from_sort(val_func.sort))
             for tup, res in state.func_interp[val_func]:
                 log, index = tup
                 if log == elt:

@@ -1181,6 +1181,11 @@ class _BoolSort(Sort):
     def _denote(self) -> Tuple:
         return ()
 
+def get_decl_from_sort(s: InferenceSort) -> SortDecl:
+    assert isinstance(s, UninterpretedSort)
+    assert s.decl is not None
+    return s.decl
+
 BoolSort = _BoolSort()
 
 class AssumeStatement(object):
