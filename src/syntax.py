@@ -412,44 +412,47 @@ def as_clauses(expr: Expr) -> List[Expr]:
         ans.append(e)
     return ans
 
-def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder) -> Expr:
-    guard = []
+def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder, old: bool = False) -> Expr:
+    conjs = []
     for v in b.vs:
-        guard.append(Apply(guards[get_decl_from_sort(v.sort)].name, [Id(None, v.name)]))
-    return And(*guard)
+        guard = Apply(guards[get_decl_from_sort(v.sort)].name, [Id(None, v.name)])
+        if old:
+            guard = Old(guard)
+        conjs.append(guard)
+    return And(*conjs)
 
 
-def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> Expr:
+def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr, old: bool = False) -> Expr:
     QUANT_GUARD_OP: Dict[str, Callable[[Expr, Expr], Expr]] = {
         'FORALL': Implies,
         'EXISTS': And,
     }
 
-    def go(e: Expr) -> Expr:
+    def go(e: Expr, old: bool) -> Expr:
         if isinstance(e, Bool):
             return e
         elif isinstance(e, UnaryExpr):
-            return UnaryExpr(None, e.op, go(e.arg))
+            return UnaryExpr(None, e.op, go(e.arg, old=old and e.op != 'OLD'))
         elif isinstance(e, BinaryExpr):
-            return BinaryExpr(None, e.op, go(e.arg1), go(e.arg2))
+            return BinaryExpr(None, e.op, go(e.arg1, old), go(e.arg2, old))
         elif isinstance(e, NaryExpr):
-            return NaryExpr(None, e.op, [go(arg) for arg in e.args])
+            return NaryExpr(None, e.op, [go(arg, old) for arg in e.args])
         elif isinstance(e, AppExpr):
-            return AppExpr(None, e.callee, [go(arg) for arg in e.args])
+            return AppExpr(None, e.callee, [go(arg, old) for arg in e.args])
         elif isinstance(e, QuantifierExpr):
-            guard = relativization_guard_for_binder(guards, e.binder)
+            guard = relativization_guard_for_binder(guards, e.binder, old=old)
             return QuantifierExpr(None, e.quant, e.binder.vs,
-                                  QUANT_GUARD_OP[e.quant](guard, go(e.body)))
+                                  QUANT_GUARD_OP[e.quant](guard, go(e.body, old)))
         elif isinstance(e, Id):
             return e
         elif isinstance(e, IfThenElse):
-            return IfThenElse(None, go(e.branch), go(e.then), go(e.els))
+            return IfThenElse(None, go(e.branch, old), go(e.then, old), go(e.els, old))
         elif isinstance(e, Let):
-            return Let(None, e.binder.vs[0], go(e.val), go(e.body))
+            return Let(None, e.binder.vs[0], go(e.val, old), go(e.body, old))
         else:
             assert False
 
-    return go(e)
+    return go(e, old=old)
 
 # checks if e is a universal formula with one quantifier out front (or is quantifier free)
 # i.e. returns false if additional universal quantifiers are buried in the body
@@ -1403,10 +1406,12 @@ class RelationDecl(Decl):
         return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s, derived=%s)' % (repr(self.name), self.arity, self.mutable, self.derived_axiom)
 
     def __str__(self) -> str:
-        return '%s relation %s(%s)%s' % ('mutable' if self.mutable else 'immutable',
-                                       self.name,
-                                       ', '.join([str(s) for s in self.arity]),
-                                         '' if not self.derived_axiom else (': %s' % str(self.derived_axiom)))
+        return '%s relation %s(%s)%s' % ('derived' if self.derived_axiom is not None else
+                                         'mutable' if self.mutable else 'immutable',
+                                         self.name,
+                                         ', '.join([str(s) for s in self.arity]),
+                                         '' if not self.derived_axiom
+                                         else (': %s' % str(self.derived_axiom)))
 
     def to_z3(self, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
         if self.mutable:
@@ -1577,9 +1582,17 @@ class DefinitionDecl(Decl):
                             if mod.name == sym:
                                 break
                         else:
-                            utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
+                            decl = scope.get(sym)
+                            assert decl is not None
+                            if not (isinstance(decl, RelationDecl) and decl.is_derived()):
+                                utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
 
                 for mod in self.mods:
+                    decl = scope.get(mod.name)
+                    assert decl is not None
+                    if isinstance(decl, RelationDecl) and decl.is_derived():
+                        utils.print_error(mod.tok, 'derived relation %s may not be mentioned by the modifies clause, since derived relations are always modified' % (mod.name,))
+                        continue
                     for is_old, tok, sym in syms:
                         if mod.name == sym and not is_old:
                             break

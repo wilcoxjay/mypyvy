@@ -364,9 +364,9 @@ def relax(s: Solver) -> None:
             assert not isinstance(d.body, syntax.BlockStatement), \
                 "relax does not support transitions written in imperative syntax"
             mods, expr = d.body
-            expr = syntax.relativize_quantifiers(actives, expr)
+            expr = syntax.relativize_quantifiers(actives, expr, old=d.twostate)
             if d.public:
-                guard = syntax.relativization_guard_for_binder(actives, d.binder)
+                guard = syntax.relativization_guard_for_binder(actives, d.binder, old=True)
                 expr = syntax.And(guard, expr)
             new_decls.append(syntax.DefinitionDecl(None, d.public, d.twostate, d.name,
                                                    params=d.binder.vs, body=(mods, expr)))
@@ -405,7 +405,7 @@ def relax(s: Solver) -> None:
                                     also_avoid=names)
             names.append(name)
             func_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
-        ap_func = syntax.Apply(func.name, [syntax.Id(None, name) for name in names])
+        ap_func = syntax.Old(syntax.Apply(func.name, [syntax.Id(None, name) for name in names]))
         active_func = syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [ap_func])
         conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
                                    syntax.Implies(syntax.And(*func_conjs), active_func)))
