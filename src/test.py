@@ -99,7 +99,10 @@ class SyntaxTests(unittest.TestCase):
         e = parser.parse_expr('forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)')
         e.resolve(prog.scope, None)
 
-        print(syntax.relativize_quantifiers(guards, e))
+        expected = parser.parse_expr('forall Q1, Q2. active_quorum(Q1) & active_quorum(Q2) -> exists N. active_node(N) & (member(N, Q1) & member(N, Q2))')
+        expected.resolve(prog.scope, None)
+
+        self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
 
 def build_python_cmd() -> List[str]:

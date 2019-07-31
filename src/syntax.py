@@ -412,6 +412,13 @@ def as_clauses(expr: Expr) -> List[Expr]:
         ans.append(e)
     return ans
 
+def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder) -> Expr:
+    guard = []
+    for v in b.vs:
+        guard.append(Apply(guards[get_decl_from_sort(v.sort)].name, [Id(None, v.name)]))
+    return And(*guard)
+
+
 def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> Expr:
     QUANT_GUARD_OP: Dict[str, Callable[[Expr, Expr], Expr]] = {
         'FORALL': Implies,
@@ -430,14 +437,9 @@ def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> 
         elif isinstance(e, AppExpr):
             return AppExpr(None, e.callee, [go(arg) for arg in e.args])
         elif isinstance(e, QuantifierExpr):
-            vs = e.binder.vs
-            body = go(e.body)
-            guard = []
-            for v in vs:
-                assert isinstance(v.sort, UninterpretedSort)
-                assert v.sort.decl is not None
-                guard.append(Apply(guards[v.sort.decl].name, [Id(None, v.name)]))
-            return QuantifierExpr(None, e.quant, vs, QUANT_GUARD_OP[e.quant](And(*guard), body))
+            guard = relativization_guard_for_binder(guards, e.binder)
+            return QuantifierExpr(None, e.quant, e.binder.vs,
+                                  QUANT_GUARD_OP[e.quant](guard, go(e.body)))
         elif isinstance(e, Id):
             return e
         elif isinstance(e, IfThenElse):
