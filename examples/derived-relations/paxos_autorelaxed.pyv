@@ -103,8 +103,7 @@ transition decrease_domain()
   (forall R. active_round(R) -> old(active_round(R))) &
   active_round(none) &
   (forall R, V. active_round(R) & active_value(V) -> active_quorum(old(decision_quorum(R, V))))
-  # interestingly, the trace is unsat if this line is uncommented
-  # & (forall Q1:quorum, Q2:quorum. active_quorum(Q1) & active_quorum(Q2) -> (exists N:node. active_node(N) & (member(N, Q1) & member(N, Q2))))
+  & (forall Q1:quorum, Q2:quorum. active_quorum(Q1) & active_quorum(Q2) -> (exists N:node. active_node(N) & (member(N, Q1) & member(N, Q2))))
 
 immutable constant r1: round
 immutable constant r2: round
@@ -114,17 +113,15 @@ sat trace {
   send_1a
   join_round(*, r1)
   propose
-  cast_vote
-  decide
-
-  decrease_domain
- 
    send_1a
    join_round(*, r2)
    propose
-   cast_vote
-   decide
 
+  cast_vote
+   cast_vote
+  decrease_domain
+  decide
+   decide
 
   assert !(
     forall R1, R2, V1, V2.
