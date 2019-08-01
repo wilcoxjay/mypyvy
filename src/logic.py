@@ -426,7 +426,7 @@ class Solver(object):
             minimize = utils.args.minimize_models
         if minimize:
             if sorts_to_minimize is None:
-                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values()]
+                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values() if not syntax.has_annotation(s, 'no_minimize')]
             if relations_to_minimize is None:
                 m = self.z3solver.model()
                 ds = m.decls()
