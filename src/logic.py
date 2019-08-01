@@ -878,6 +878,9 @@ def print_tuple(state: State, arity: List[syntax.Sort], tup: List[str]) -> str:
 def univ_str(state: State) -> List[str]:
     l = []
     for s in sorted(state.univs.keys(), key=str):
+        if syntax.has_annotation(s, 'no_print'):
+            continue
+
         l.append(str(s))
 
         def key(x: str) -> Tuple[str, int]:

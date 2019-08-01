@@ -24,32 +24,32 @@ sort pageentry
 #                  m2,m3,m5,
 #                  r1,r2,r3,r5,r6,r7,r8,
 #                  b1}
-sort location
+sort location @no_minimize @printed_by(const_printer) @no_print
 
-immutable constant i1: location
-immutable constant i2: location
-immutable constant i3: location
-immutable constant i4: location
-immutable constant i5: location
-immutable constant i6: location
-immutable constant i7: location
-immutable constant i8: location
-immutable constant i9: location
-immutable constant i11: location
-immutable constant i12: location
-immutable constant i14: location
-immutable constant i15: location
-immutable constant m2: location
-immutable constant m3: location
-immutable constant m5: location
-immutable constant r1: location
-immutable constant r2: location
-immutable constant r3: location
-immutable constant r5: location
-immutable constant r6: location
-immutable constant r7: location
-immutable constant r8: location
-immutable constant b1: location
+immutable constant i1: location   @no_print
+immutable constant i2: location   @no_print
+immutable constant i3: location   @no_print
+immutable constant i4: location   @no_print
+immutable constant i5: location   @no_print
+immutable constant i6: location   @no_print
+immutable constant i7: location   @no_print
+immutable constant i8: location   @no_print
+immutable constant i9: location   @no_print
+immutable constant i11: location  @no_print
+immutable constant i12: location  @no_print
+immutable constant i14: location  @no_print
+immutable constant i15: location  @no_print
+immutable constant m2: location   @no_print
+immutable constant m3: location   @no_print
+immutable constant m5: location   @no_print
+immutable constant r1: location   @no_print
+immutable constant r2: location   @no_print
+immutable constant r3: location   @no_print
+immutable constant r5: location   @no_print
+immutable constant r6: location   @no_print
+immutable constant r7: location   @no_print
+immutable constant r8: location   @no_print
+immutable constant b1: location   @no_print
 
 
 axiom distinct(i1,i2,i3,i4,i5,i6,i7,i8,i9,i11,i12,i14,i15,m2,m3,m5,r1,r2,r3,r5,r6,r7,r8,b1)
@@ -158,7 +158,7 @@ transition initiator5(p:processor, cpu:processor)
   modifies actionlock, pc
     & old(pc(p)) = i5
     & old(currentcpu(p, cpu))
-    & if !actionlock(cpu)
+    & if !old(actionlock(cpu))
       then
         & (forall C. actionlock(C) <-> old(actionlock(C)) | C = cpu)
         & (forall P. P != p -> pc(P) = old(pc(P)))
@@ -225,140 +225,172 @@ transition initiator11(p:processor, e:pageentry)
     & (forall P. P != p -> pc(P) = old(pc(P)))
     & pc(p) = i12
 
-# # i12: if (userpmap = pmap)
-# # i13:    tlb := entry[pmap]
-# action initiator12(p:processor) = {
-#     assume pc(p)=i12;
-#     if (userpmap(p) = writepmap(p)) {
-#        tlb(p) := pentry(writepmap(p))
-#     };
-#     pc(p) := i14;
-# }
-#
-# # i14: unlock plock[pmap]
-# action initiator14(p:processor) = {
-#     assume pc(p)=i14;
-#     if (!plock(writepmap(p))) {
-#        error := true
-#     };
-#     plock(writepmap(p)) := false;
-#     pc(p) := i15;
-# }
-#
-# # i15: active := true
-# action initiator15(p:processor) = {
-#     assume pc(p)=i15;
-#     active(p) := true;
-#     pc(p) := m5;
-# }
-#
-# # r1: while actionneeded
-# action responder1(p:processor) = {
-#     assume pc(p)=r1;
-#     if (actionneeded(p)) {
-#         pc(p) := r2
-#     } else {
-#         pc(p) := m2
-#     };
-# }
-#
-# # r2:   active := false
-# action responder2(p:processor) = {
-#     assume pc(p)=r2;
-#     active(p) := false;
-#     pc(p) := r3;
-# }
-#
-# # this must be atomic (bug in original TLB algorithm, see paper)
-# # r3:   wait until plock[userpmap] = unlocked
-# # r4:   lock actionlock(p)
-# action responder3(p:processor) = {
-#     assume pc(p)=r3;
-#     if (!plock(userpmap(p))) {
-#         if actionlock(p) {
-#             error := true
-#         };
-#         actionlock(p) := true;
-#         pc(p) := r5;
-#     };
-# }
-#
-# # r5:   tlb := entry[userpmap]
-# action responder5(p:processor) = {
-#     assume pc(p)=r5;
-#     tlb(p) := pentry(userpmap(p));
-#     pc(p) := r6;
-# }
-#
-# # r6:   actionneeded := false
-# action responder6(p:processor) = {
-#     assume pc(p)=r6;
-#     actionneeded(p) := false;
-#     pc(p) := r7;
-# }
-#
-# # r7:   unlock actionlock
-# action responder7(p:processor) = {
-#     assume pc(p)=r7;
-#     if (!actionlock(p)) {
-#         error := true
-#     };
-#     actionlock(p) := false;
-#     pc(p) := r8;
-# }
-#
-# # r8:   active := false
-# action responder8(p:processor) = {
-#     assume pc(p)=r8;
-#     active(p) := true;
-#     pc(p) := r1;
-# }
-#
+# i12: if (userpmap = pmap)
+# i13:    tlb := entry[pmap]
+transition initiator12(p:processor)
+  modifies tlb, pc
+    & old(pc(p)) = i12
+    & (if old(userpmap(p)) = old(writepmap(p))
+       then
+         & (forall P. P != p -> tlb(P) = old(tlb(P)))
+         & tlb(p) = old(pentry(writepmap(p)))
+       else
+         (forall P. tlb(P) = old(tlb(P))))
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = i14
+
+# i14: unlock plock[pmap]
+transition initiator14(p:processor)
+  modifies error, plock, pc
+    & old(pc(p)) = i14
+    & (if !old(plock(writepmap(p)))
+       then 
+         error
+       else
+         (error <-> old(error)))
+    & (forall P. P != old(writepmap(p)) -> (plock(P) <-> old(plock(P))))
+    & !plock(old(writepmap(p)))
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = i15
+
+# i15: active := true
+transition initiator15(p:processor)
+  modifies active, pc
+    & old(pc(p)) = i15
+    & (forall P. P != p -> active(P) = old(active(P)))
+    & active(p)
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = m5
+
+# r1: while actionneeded
+transition responder1(p:processor)
+  modifies pc
+    & old(pc(p)) = r1
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = (if old(actionneeded(p)) then r2 else m2)
+
+# r2:   active := false
+transition responder2(p:processor)
+  modifies active, pc
+    & old(pc(p)) = r2
+    & (forall P. P != p -> active(P) = old(active(P)))
+    & active(p) = false
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = r3
+
+# this must be atomic (bug in original TLB algorithm, see paper)
+# r3:   wait until plock[userpmap] = unlocked
+# r4:   lock actionlock(p)
+transition responder3(p:processor)
+  modifies error, actionlock, pc
+    & old(pc(p))=r3
+    & if !old(plock(userpmap(p)))
+      then
+        & (error <-> old(error) | old(actionlock(p)))
+        & (forall P. P != p -> (actionlock(P) <-> old(actionlock(P))))
+        & actionlock(p)
+        & (forall P. P != p -> pc(P) = old(pc(P)))
+        & pc(p) = r5
+      else
+        & (error <-> old(error))
+        & (forall P. actionlock(P) <-> old(actionlock(P)))
+        & (forall P. pc(P) = old(pc(P)))
+
+# r5:   tlb := entry[userpmap]
+transition responder5(p:processor)
+  modifies tlb, pc
+    & old(pc(p)) = r5
+    & (forall P. P != p -> tlb(P) = old(tlb(P)))
+    & tlb(p) = old(pentry(userpmap(p)))
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = r6
+
+
+# r6:   actionneeded := false
+transition responder6(p:processor)
+  modifies actionneeded, pc
+    & old(pc(p)) = r6
+    & (forall P. P != p -> (actionneeded(P) <-> old(actionneeded(P))))
+    & !actionneeded(p) 
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = r7
+
+# r7:   unlock actionlock
+transition responder7(p:processor)
+  modifies error, actionlock, pc
+    & old(pc(p)) = r7
+    & (error <-> old(error) | !old(actionlock(p)))
+    & (forall P. P != p -> (actionlock(P) <-> old(actionlock(P))))
+    & !actionlock(p)
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = r8
+
+# r8:   active := false
+transition responder8(p:processor)
+  modifies active, pc
+    & old(pc(p)) = r8
+    & (forall P. P != p -> (active(P) <-> old(active(P))))
+    & active(p)
+    & (forall P. P != p -> pc(P) = old(pc(P)))
+    & pc(p) = r1
+
+
 # # m1: while true
 # # m2:    assert tlb = entry[userpmap]
-# action main2(p:processor) = {
-#     assume pc(p)=m2;
-#     if (tlb(p) != pentry(userpmap(p))) {
-#         error := true
-#     };
-#     pc(p) := m3;
-# }
-#
+transition main2(p:processor)
+  modifies error, pc
+    & old(pc(p)) = m2
+    & (error <-> old(error) | old(tlb(p) != pentry(userpmap(p))))
+    & (forall P. P != p -> pc(P) = old(pc(P))) 
+    & pc(p) = m3
+
 # # m3:    if (*)
 # # m4:        Initiator()
-# action main3a(p:processor) = {
-#     assume pc(p)=m3;
-#     pc(p) := i1;
-# }
-# action main3b(p:processor) = {
-#     assume pc(p)=m3;
-#     pc(p) := m5;
-# }
-#
+transition main3a(p:processor)
+  modifies pc
+    & old(pc(p)) = m3
+    & (forall P. P != p -> pc(P) = old(pc(P))) 
+    & pc(p) = i1
+
+transition main3b(p:processor)
+  modifies pc
+    & old(pc(p)) = m3
+    & (forall P. P != p -> pc(P) = old(pc(P))) 
+    & pc(p) = m5
+
 # # m5:    if (interrupt)
-# # m6:        interrupt := false; Responder()
-# action main5(p:processor) = {
-#     assume pc(p)=m5;
-#     if (interrupt(p)) {
-#         interrupt(p) := false;
-#         pc(p) := r1
-#     } else {
-#         pc(p) := m2
-#     };
-# }
-#
+# # m6:        interrupt := false Responder()
+transition main5(p:processor)
+  modifies interrupt, pc
+    & old(pc(p))=m5
+    & if old(interrupt(p))
+      then 
+        & (forall P. interrupt(P) <-> old(interrupt(P)) & P != p)
+        & (forall P. P != p -> pc(P) = old(pc(P))) 
+        & pc(p) = r1
+     else
+        & (forall P. interrupt(P) <-> old(interrupt(P)))
+        & (forall P. P != p -> pc(P) = old(pc(P))) 
+        & pc(p) = m2
+
 # # b1: pid := ++n  // create process
 # # b2: atomic userpmap := *
 # #            assume plock[userpmap] = unlocked
 # #            tlb := entry[userpmap]
 # # b3: Main()
-# action boot1(p:processor, m:pmap) = {
-#     assume pc(p) = b1;
-#     assume !plock(m);
-#     userpmap(p) := m;
-#     tlb(p) := pentry(m);
-#     pc(p) := m2;
-# }
+
+####### this action is not exported in the ivy model, nor is it used anywhere
+
+# transition boot1(p:processor, m:pmap)
+#   modifies userpmap, tlb, pc
+#     & old(pc(p)) = b1
+#     & !old(plock(m))
+#     & (forall P. P != p -> userpmap(P) = old(userpmap(P))) 
+#     & userpmap(p) = m
+#     & (forall P. P != p -> tlb(P) = old(tlb(P))) 
+#     & tlb(p) = old(pentry(m))
+#     & (forall P. P != p -> pc(P) = old(pc(P))) 
+#     & pc(p) = m2
 
 # show safety
 # all invariants are universal with at most two variables (provable at level 2)
@@ -422,3 +454,11 @@ invariant ((pc(P)=i9 & !todo(P,C)) | pc(P)=i11) & userpmap(C) = writepmap(P) -> 
 invariant tlb(P) != pentry(userpmap(P)) -> pc(P)!=m2
 
 safety !error
+
+# updr infers the following trivial invariant proving that no process ever boots
+# invariant forall P:processor. pc(P) = b1
+# invariant forall P:processor, C:processor. !currentcpu(P, C)
+# invariant forall P:pmap. !plock(P)
+# invariant forall P:processor. !actionlock(P) & !actionneeded(P) & !interrupt(P) & active(P)
+# invariant !error
+

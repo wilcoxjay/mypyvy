@@ -82,6 +82,14 @@ def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
 
     return '{%s}' % (','.join(sorted(logic.print_element(state, item_sort_decl, x) for x in items)),)
 
+def const_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
+    prog = syntax.the_program
+    for c in prog.constants():
+        if syntax.get_decl_from_sort(c.sort) == s and state.const_interp[c] == elt:
+            return c.name
+
+    return elt
+
 def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 2
     is_none_name, value_name = args
