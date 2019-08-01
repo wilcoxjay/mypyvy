@@ -1,0 +1,35 @@
+sort data
+
+immutable relation le(data, data)
+axiom le(X,X)
+axiom le(X,Y) & le(Y,X) -> X = Y
+axiom le(X,Y) & le(Y,Z) -> le(X,Z)
+axiom le(X,Y) | le(Y,X)
+
+immutable constant zero: data
+axiom le(zero, X)
+
+mutable constant primary: data
+mutable constant backup: data
+mutable relation msg(data)
+
+init primary = zero
+init backup = zero
+init !msg(X)
+
+transition send()
+  modifies msg
+  (forall X. msg(X) <-> old(msg(X)) | X = old(primary))
+
+transition recv(x: data)
+  modifies backup, msg
+  old(msg(x)) &
+  backup = x &
+  (forall X. msg(X) <-> old(msg(X)) & X != x)
+
+transition increment(next: data)
+  modifies primary
+  le(old(primary), next) &
+  primary = next
+
+safety le(backup, primary)
