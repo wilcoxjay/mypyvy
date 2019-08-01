@@ -51,7 +51,6 @@ transition recv(sender: node, n: node, next: node)
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
         (pending(N1, N2) <-> old(pending(N1, N2)))
 
-safety [one_leader] leader(L1) & leader(L2) -> L1 = L2
-invariant [leader_highest_id] leader(L) -> le(id(N), id(L))
+safety [leader_highest_id] leader(L) -> le(id(N), id(L))
 invariant [self_pending_highest_id] pending(L, L) -> le(id(N), id(L))
 invariant [no_bypass] pending(S, D) & btw(S, N, D) -> le(id(N), id(S))
