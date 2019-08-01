@@ -1,0 +1,344 @@
+# paxos_autorelaxed.pyv, with decision_quorum but not choosable
+# sat trace {
+#   send_1a
+#   join_round(*, r1)
+#   propose
+#    send_1a
+#    join_round(*, r2)
+#    propose
+
+#   cast_vote
+#    cast_vote
+#   decrease_domain
+#   decide
+#    decide
+
+#   assert !(
+#     forall R1, R2, V1, V2.
+#     active_round(R1) & active_round(R2) &
+#     active_value(V1) & active_value(V2)
+#     -> 
+#     decision(R1, V1) & decision(R2, V2)
+#     ->
+#     V1 = V2
+#   )
+# }
+
+finding traces:
+12 states
+
+sort node
+  node0
+  node1
+sort quorum
+  quorum0
+  quorum1
+sort round
+  round0
+  round1
+  round2
+sort value
+  value0
+  value1
+none = round2
+r1 = round0
+r2 = round1
+le(round0,round0)
+le(round0,round1)
+le(round0,round2)
+le(round1,round1)
+le(round1,round2)
+le(round2,round2)
+member(node0,quorum0)
+member(node0,quorum1)
+member(node1,quorum1)
+
+state 0:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition send_1a
+
+state 1:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+one_a(round0)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition join_round
+
+state 2:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+one_a(round0)
+one_b(node0,round0)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition propose
+
+state 3:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+one_a(round0)
+one_b(node0,round0)
+proposal(round0,value0)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition send_1a
+
+state 4:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+proposal(round0,value0)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition join_round
+
+state 5:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition propose
+
+state 6:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+proposal(round1,value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition cast_vote
+
+state 7:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+proposal(round1,value1)
+vote(node1,round1,value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition cast_vote
+
+state 8:
+active_node(node0)
+active_node(node1)
+active_quorum(quorum0)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+proposal(round1,value1)
+vote(node1,round0,value0)
+vote(node1,round1,value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition decrease_domain
+
+state 9:
+active_node(node1)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+proposal(round1,value1)
+vote(node1,round0,value0)
+vote(node1,round1,value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition decide
+
+state 10:
+active_node(node1)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+decision(round0,value0)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+proposal(round1,value1)
+vote(node1,round0,value0)
+vote(node1,round1,value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1
+
+transition decide
+
+state 11:
+active_node(node1)
+active_quorum(quorum1)
+active_round(round0)
+active_round(round1)
+active_round(round2)
+active_value(value0)
+active_value(value1)
+decision(round0,value0)
+decision(round1,value1)
+left_round(node0,round0)
+one_a(round0)
+one_a(round1)
+one_b(node0,round0)
+one_b(node0,round1)
+proposal(round0,value0)
+proposal(round1,value1)
+vote(node1,round0,value0)
+vote(node1,round1,value1)
+decision_quorum(round0,value0) = quorum1
+decision_quorum(round0,value1) = quorum1
+decision_quorum(round1,value0) = quorum1
+decision_quorum(round1,value1) = quorum1
+decision_quorum(round2,value0) = quorum1
+decision_quorum(round2,value1) = quorum1

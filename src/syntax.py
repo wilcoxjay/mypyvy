@@ -412,42 +412,79 @@ def as_clauses(expr: Expr) -> List[Expr]:
         ans.append(e)
     return ans
 
-def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> Expr:
+def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder, old: bool = False) -> Expr:
+    conjs = []
+    for v in b.vs:
+        guard = Apply(guards[get_decl_from_sort(v.sort)].name, [Id(None, v.name)])
+        if old:
+            guard = Old(guard)
+        conjs.append(guard)
+    return And(*conjs)
+
+
+def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr, old: bool = False) -> Expr:
     QUANT_GUARD_OP: Dict[str, Callable[[Expr, Expr], Expr]] = {
         'FORALL': Implies,
         'EXISTS': And,
     }
 
-    def go(e: Expr) -> Expr:
+    def go(e: Expr, old: bool) -> Expr:
         if isinstance(e, Bool):
             return e
         elif isinstance(e, UnaryExpr):
-            return UnaryExpr(None, e.op, go(e.arg))
+            return UnaryExpr(None, e.op, go(e.arg, old=old and e.op != 'OLD'))
         elif isinstance(e, BinaryExpr):
-            return BinaryExpr(None, e.op, go(e.arg1), go(e.arg2))
+            return BinaryExpr(None, e.op, go(e.arg1, old), go(e.arg2, old))
         elif isinstance(e, NaryExpr):
-            return NaryExpr(None, e.op, [go(arg) for arg in e.args])
+            return NaryExpr(None, e.op, [go(arg, old) for arg in e.args])
         elif isinstance(e, AppExpr):
-            return AppExpr(None, e.callee, [go(arg) for arg in e.args])
+            return AppExpr(None, e.callee, [go(arg, old) for arg in e.args])
         elif isinstance(e, QuantifierExpr):
-            vs = e.binder.vs
-            body = go(e.body)
-            guard = []
-            for v in vs:
-                assert isinstance(v.sort, UninterpretedSort)
-                assert v.sort.decl is not None
-                guard.append(Apply(guards[v.sort.decl].name, [Id(None, v.name)]))
-            return QuantifierExpr(None, e.quant, vs, QUANT_GUARD_OP[e.quant](And(*guard), body))
+            guard = relativization_guard_for_binder(guards, e.binder, old=old)
+            return QuantifierExpr(None, e.quant, e.binder.vs,
+                                  QUANT_GUARD_OP[e.quant](guard, go(e.body, old)))
         elif isinstance(e, Id):
             return e
         elif isinstance(e, IfThenElse):
-            return IfThenElse(None, go(e.branch), go(e.then), go(e.els))
+            return IfThenElse(None, go(e.branch, old), go(e.then, old), go(e.els, old))
         elif isinstance(e, Let):
-            return Let(None, e.binder.vs[0], go(e.val), go(e.body))
+            return Let(None, e.binder.vs[0], go(e.val, old), go(e.body, old))
         else:
             assert False
 
-    return go(e)
+    return go(e, old=old)
+
+# checks if e is a universal formula with one quantifier out front (or is quantifier free)
+# i.e. returns false if additional universal quantifiers are buried in the body
+def is_universal(e: Expr) -> bool:
+    if isinstance(e, QuantifierExpr):
+        return e.quant == 'FORALL' and is_quantifier_free(e.body)
+    else:
+        return is_quantifier_free(e)
+
+def is_quantifier_free(e: Expr) -> bool:
+    if isinstance(e, Bool):
+        return True
+    elif isinstance(e, UnaryExpr):
+        return is_quantifier_free(e.arg)
+    elif isinstance(e, BinaryExpr):
+        return is_quantifier_free(e.arg1) and is_quantifier_free(e.arg2)
+    elif isinstance(e, NaryExpr):
+        return all(is_quantifier_free(arg) for arg in e.args)
+    elif isinstance(e, AppExpr):
+        return all(is_quantifier_free(arg) for arg in e.args)
+    elif isinstance(e, QuantifierExpr):
+        return False
+    elif isinstance(e, Id):
+        return True
+    elif isinstance(e, IfThenElse):
+        return (is_quantifier_free(e.branch) and
+                is_quantifier_free(e.then) and
+                is_quantifier_free(e.els))
+    elif isinstance(e, Let):
+        return is_quantifier_free(e.val) and is_quantifier_free(e.body)
+    else:
+        assert False
 
 @functools.total_ordering
 class Expr(Denotable):
@@ -1181,6 +1218,11 @@ class _BoolSort(Sort):
     def _denote(self) -> Tuple:
         return ()
 
+def get_decl_from_sort(s: InferenceSort) -> SortDecl:
+    assert isinstance(s, UninterpretedSort)
+    assert s.decl is not None
+    return s.decl
+
 BoolSort = _BoolSort()
 
 class AssumeStatement(object):
@@ -1364,10 +1406,12 @@ class RelationDecl(Decl):
         return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s, derived=%s)' % (repr(self.name), self.arity, self.mutable, self.derived_axiom)
 
     def __str__(self) -> str:
-        return '%s relation %s(%s)%s' % ('mutable' if self.mutable else 'immutable',
-                                       self.name,
-                                       ', '.join([str(s) for s in self.arity]),
-                                         '' if not self.derived_axiom else (': %s' % str(self.derived_axiom)))
+        return '%s relation %s(%s)%s' % ('derived' if self.derived_axiom is not None else
+                                         'mutable' if self.mutable else 'immutable',
+                                         self.name,
+                                         ', '.join([str(s) for s in self.arity]),
+                                         '' if not self.derived_axiom
+                                         else (': %s' % str(self.derived_axiom)))
 
     def to_z3(self, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
         if self.mutable:
@@ -1538,9 +1582,17 @@ class DefinitionDecl(Decl):
                             if mod.name == sym:
                                 break
                         else:
-                            utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
+                            decl = scope.get(sym)
+                            assert decl is not None
+                            if not (isinstance(decl, RelationDecl) and decl.is_derived()):
+                                utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
 
                 for mod in self.mods:
+                    decl = scope.get(mod.name)
+                    assert decl is not None
+                    if isinstance(decl, RelationDecl) and decl.is_derived():
+                        utils.print_error(mod.tok, 'derived relation %s may not be mentioned by the modifies clause, since derived relations are always modified' % (mod.name,))
+                        continue
                     for is_old, tok, sym in syms:
                         if mod.name == sym and not is_old:
                             break
@@ -2154,6 +2206,16 @@ class Program(object):
     def theorems(self) -> Iterator[TheoremDecl]:
         for d in self.decls:
             if isinstance(d, TheoremDecl):
+                yield d
+
+    def constants(self) -> Iterator[ConstantDecl]:
+        for d in self.decls:
+            if isinstance(d, ConstantDecl):
+                yield d
+
+    def functions(self) -> Iterator[FunctionDecl]:
+        for d in self.decls:
+            if isinstance(d, FunctionDecl):
                 yield d
 
     def relations_constants_and_functions(self) -> Iterator[StateDecl]:

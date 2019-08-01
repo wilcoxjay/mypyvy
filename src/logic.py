@@ -864,8 +864,7 @@ def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
 
 def print_element(state: State, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
     if not isinstance(s, SortDecl):
-        assert isinstance(s, syntax.UninterpretedSort) and s.decl is not None
-        s = s.decl
+        s = syntax.get_decl_from_sort(s)
 
     return try_printed_by(state, s, elt) or elt
 
@@ -1084,11 +1083,7 @@ class Model(object):
             return self.univs[d]
 
         def arbitrary_interp_r(r: RelationDecl) -> List[Tuple[List[str], bool]]:
-            doms = []
-            for s in r.arity:
-                assert isinstance(s, syntax.UninterpretedSort)
-                assert s.decl is not None
-                doms.append(get_univ(s.decl))
+            doms = [get_univ(syntax.get_decl_from_sort(s)) for s in r.arity]
 
             l = []
             tup: Tuple[str, ...]
@@ -1117,9 +1112,7 @@ class Model(object):
 
         def arbitrary_interp_c(c: ConstantDecl) -> str:
             sort = c.sort
-            assert isinstance(sort, syntax.UninterpretedSort)
-            assert sort.decl is not None
-            return get_univ(sort.decl)[0]
+            return get_univ(syntax.get_decl_from_sort(sort))[0]
 
         def ensure_defined_c(c: ConstantDecl) -> None:
             R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
@@ -1135,16 +1128,9 @@ class Model(object):
                     m[c] = interp
 
         def arbitrary_interp_f(f: FunctionDecl) -> List[Tuple[List[str], str]]:
-            doms = []
-            for s in f.arity:
-                assert isinstance(s, syntax.UninterpretedSort)
-                assert s.decl is not None
-                doms.append(get_univ(s.decl))
+            doms = [get_univ(syntax.get_decl_from_sort(s)) for s in f.arity]
 
-            sort = f.sort
-            assert isinstance(sort, syntax.UninterpretedSort)
-            assert sort.decl is not None
-            interp = get_univ(sort.decl)[0]
+            interp = get_univ(syntax.get_decl_from_sort(f.sort))[0]
 
             l = []
             tup: Tuple[str, ...]
@@ -1407,10 +1393,7 @@ class State(object):
         elif isinstance(expr, syntax.QuantifierExpr):
             assert expr.quant in ['FORALL', 'EXISTS']
             p = all if expr.quant == 'AND' else any
-            doms = []
-            for sv in expr.binder.vs:
-                assert isinstance(sv.sort, syntax.UninterpretedSort) and sv.sort.decl is not None
-                doms.append(self.univs[sv.sort.decl])
+            doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
 
             def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
                 with scope.in_scope(q.binder, list(tup)):

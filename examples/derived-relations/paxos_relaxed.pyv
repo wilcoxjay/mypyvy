@@ -96,7 +96,7 @@ transition decide(r: round, v: value, q: quorum)
   & decision_quorum(r, v) = q
 
 transition decrease_domain()
-  modifies node_active, value_active, quorum_active, round_active, r
+  modifies node_active, value_active, quorum_active, round_active
   (forall N. node_active(N) -> old(node_active(N))) &
   (forall V. value_active(V) -> old(value_active(V))) &
   (forall Q. quorum_active(Q) -> old(quorum_active(Q))) &
