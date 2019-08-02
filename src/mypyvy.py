@@ -48,6 +48,7 @@ def do_updr(s: Solver) -> None:
     logic.check_init(s, safety_only=True)
 
     fs = updr.Frames(s)
+    fs.known_states = foo(s)
     try:
         fs.search()
     finally:
@@ -434,6 +435,49 @@ def relax(s: Solver) -> None:
                                            params=[], body=(mods, syntax.And(*conjs))))
     print(Program(new_decls))
 
+def foo(s: Solver) -> List[logic.State]:
+    prog = syntax.the_program
+
+    states: List[logic.State] = []
+    predicates = [init.expr for init in prog.inits()]
+    frames = [predicates[:]]
+
+    def add_state(state: logic.State) -> None:
+        if state not in states:
+            states.append(state)
+
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+    while len(frames) < 2 or not (set(frames[-2]) <= set(frames[-1])):
+        frames.append([])
+        with s:
+            for sd in prog.sorts():
+                s.add(z3.Not(s._sort_cardinality_constraint(sd.to_z3(), 1)))
+            for p in frames[-2]:
+                s.add(t.translate_expr(p, old=True))
+            for p in frames[-2]:
+                with s:
+                    s.add(z3.Not(t.translate_expr(p)))
+                    for ition in prog.transitions():
+                        with s:
+                            s.add(t.translate_transition(ition))
+                            res = s.check()
+                            assert res != z3.unknown
+                            if res == z3.sat:
+                                m = logic.Trace.from_z3([KEY_OLD, KEY_NEW], s.model())
+                                add_state(m.as_state(0))
+                                add_state(m.as_state(1))
+                                break
+                    else:
+                        frames[-1].append(p)
+
+    with utils.LogTag(utils.logger, 'known_states'):
+        for state in states:
+            with utils.LogTag(utils.logger, 'state'):
+                for line in str(state).splitlines():
+                    utils.logger.always_print(line)
+
+    return states
+
 def parse_args(args: List[str]) -> utils.MypyvyArgs:
     argparser = argparse.ArgumentParser()
 
@@ -471,6 +515,10 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     relax_subparser = subparsers.add_parser('relax', help='produce a version of the file that is "relaxed", in a way that is indistinguishable for universal invariants')
     relax_subparser.set_defaults(main=relax)
     all_subparsers.append(relax_subparser)
+
+    foo_subparser = subparsers.add_parser('foo', help='foo')
+    foo_subparser.set_defaults(main=foo)
+    all_subparsers.append(foo_subparser)
 
     all_subparsers += pd.add_argparsers(subparsers)
 

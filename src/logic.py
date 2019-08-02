@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections import OrderedDict, defaultdict
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 import time
@@ -795,7 +795,8 @@ class Diagram(object):
             self, s: Solver, f: Frame,
             transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
             propagate_init: bool,
-            minimize: Optional[bool] = None
+            minimize: Optional[bool] = None,
+            known_states: List[State] = []
     ) -> bool:
         for src, transitions in transitions_to_grouped_by_src.items():
             ans = check_two_state_implication_along_transitions(
@@ -813,7 +814,8 @@ class Diagram(object):
     def generalize(self, s: Solver, f: Frame,
                    transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
                    propagate_init: bool,
-                   depth: Optional[int] = None) -> None:
+                   depth: Optional[int] = None,
+                   known_states: List[State] = []) -> None:
         if utils.logger.isEnabledFor(logging.DEBUG):
             utils.logger.debug('generalizing diagram')
             utils.logger.debug(str(self))
@@ -831,44 +833,113 @@ class Diagram(object):
         self.smoke(s, depth)
 
         with utils.LogTag(utils.logger, 'eliminating-conjuncts', lvl=logging.DEBUG):
-            for d in itertools.chain(I, R, C, F):
-                if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
-                    continue
-                with self.without(d):
-                    res = self.check_valid_in_phase_from_frame(
-                        s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
-                if res:
-                    if utils.logger.isEnabledFor(logging.DEBUG):
-                        utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
-                    self.remove_clause(d)
-                    self.smoke(s, depth)
-                    continue
-                if isinstance(d, RelationDecl):
-                    l = self.rels[d]
-                    cs = set()
-                    S = self.tombstones[d]
-                    assert S is not None
-                    for j, x in enumerate(l):
-                        if j not in S and isinstance(x, syntax.UnaryExpr):
-                            cs.add(j)
-                    with self.without(d, cs):
-                        res = self.check_valid_in_phase_from_frame(
-                            s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
-                    if res:
-                        if utils.logger.isEnabledFor(logging.DEBUG):
-                            utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
-                        self.remove_clause(d, cs)
-                        self.smoke(s, depth)
+            # for d in itertools.chain(I, R, C, F):
+            #     if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
+            #         continue
+            #     with self.without(d):
+            #         res = self.check_valid_in_phase_from_frame(
+            #             s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+            #     if res:
+            #         if utils.logger.isEnabledFor(logging.DEBUG):
+            #             utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
+            #         self.remove_clause(d)
+            #         self.smoke(s, depth)
+            #         continue
+            #     if isinstance(d, RelationDecl):
+            #         l = self.rels[d]
+            #         cs = set()
+            #         S = self.tombstones[d]
+            #         assert S is not None
+            #         for j, x in enumerate(l):
+            #             if j not in S and isinstance(x, syntax.UnaryExpr):  # negated literal
+            #                 cs.add(j)
+            #         with self.without(d, cs):
+            #             res = self.check_valid_in_phase_from_frame(
+            #                 s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+            #         if res:
+            #             if utils.logger.isEnabledFor(logging.DEBUG):
+            #                 utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
+            #             self.remove_clause(d, cs)
+            #             self.smoke(s, depth)
 
-            for d, j, c in self.conjuncts():
-                with self.without(d, j):
-                    res = self.check_valid_in_phase_from_frame(
-                        s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
-                if res:
-                    if utils.logger.isEnabledFor(logging.DEBUG):
-                        utils.logger.debug('eliminated clause %s' % c)
+            cs = list(self.conjuncts())
+            log = set()
+            settings = [True for i in range(len(cs))]
+            nonminimal = [False for i in range(len(cs))]
+
+            def check() -> bool:
+                return self.check_valid_in_phase_from_frame(s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+
+            def minimize_and_log(i: int) -> None:
+                with utils.LogTag(utils.logger, 'minimize_and_log', i=str(i), time=str(utils.logger.time())):
+                    # assert check()
+                    if i >= len(settings):
+                        utils.logger.debug(f'phase 2 minimization done {sum(1 if b else 0 for b in settings)} with conjuncts')
+                        log.add(tuple(settings))
+                    else:
+                        if settings[i] and nonminimal[i]:
+                            d, j, c = cs[i]
+                            with self.without(d, j):
+                                if check():
+                                    utils.logger.debug(f'phase 2 minimization removed {i}')
+                                    settings[i] = False
+                                    minimize_and_log(i + 1)
+                                    settings[i] = True
+                                    return
+                        minimize_and_log(i + 1)
+
+            def go(i: int) -> None:
+                nonlocal settings
+                # assert check()
+                if i >= len(cs):
+                    minimize_and_log(0)
+                else:
+                    d, j, c = cs[i]
+                    nm = False
+                    with self.without(d, j):
+                        settings[i] = False
+                        if check():
+                            with utils.LogTag(utils.logger, 'go-no', i=str(i), time=str(utils.logger.time())):
+                                go(i + 1)
+                            nm = True
+                        settings[i] = True
+                    nonminimal[i] = nm
+                    with utils.LogTag(utils.logger, 'go-yes', i=str(i), time=str(utils.logger.time()), nm=str(nm)):
+                        go(i + 1)
+                    nonminimal[i] = False
+
+
+            # assert check()
+            go(0)
+
+            assert len(log) > 0
+            # assert check()
+            utils.logger.debug(f'got {len(log)} candidate minimal clauses {[len(bs) for bs in log]}')
+            for bs in log:
+                with utils.LogTag(utils.logger, 'candidate'):
+                    with ExitStack() as stack:
+                        for i, b in enumerate(bs):
+                            if not b:
+                                d, j, c = cs[i]
+                                stack.enter_context(self.without(d, j))
+                        utils.logger.debug(str(self))
+
+            smallest = min(log, key=lambda bs: sum(1 if b else 0 for b in bs))
+            for i, b in enumerate(smallest):
+                if not b:
+                    d, j, c = cs[i]
                     self.remove_clause(d, j)
-                    self.smoke(s, depth)
+                assert check()
+
+            # for d, j, c in self.conjuncts():
+            #     with self.without(d, j):
+            #         res = self.check_valid_in_phase_from_frame(
+            #             s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+            #     if res:
+            #         if utils.logger.isEnabledFor(logging.DEBUG):
+            #             utils.logger.debug('eliminated clause %s' % c)
+            #         self.remove_clause(d, j)
+            #         self.smoke(s, depth)
 
         self.prune_unused_vars()
 

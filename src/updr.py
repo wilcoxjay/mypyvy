@@ -1,3 +1,4 @@
+import collections
 from datetime import datetime
 import logging
 import z3
@@ -5,7 +6,7 @@ import z3
 import utils
 from utils import MySet
 import logic
-from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, CexFound
+from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, CexFound, State
 import phases
 import syntax
 from syntax import Expr, AutomatonDecl
@@ -43,6 +44,9 @@ class Frames(object):
         self.counter = 0
         self.predicates: List[Expr] = []
         self.state_count = 0
+
+        self.known_states: List[State] = []
+        self.backward_reachable: Dict[Phase, MySet[Expr]] = collections.defaultdict(MySet)
 
     def __getitem__(self, i: int) -> Frame:
         return self.fs[i]
@@ -96,6 +100,18 @@ class Frames(object):
 
     def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, Diagram]]:
         f = self.fs[-1]
+
+        def backward_reachable_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
+            for e in self.backward_reachable[p]:
+                res = logic.check_implication(self.solver, f.summary_of(p), [syntax.Not(e)])
+                if res is not None:
+                    t = Trace.from_z3([KEY_ONE], res)
+                    self.record_state(t)
+                    utils.logger.debug('used known backwards reachable state')
+                    utils.logger.debug(str(t))
+                    return (p, t.as_diagram())
+            return None
+
 
         def safety_property_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
             res = logic.check_implication(self.solver, f.summary_of(p),
@@ -162,7 +178,8 @@ class Frames(object):
                 utils.logger.debug('all edges covered from phase %s' % p.name())
                 return None
 
-        safety_checkers = [safety_property_checker, edge_covering_checker]
+        safety_checkers = [backward_reachable_checker, safety_property_checker,
+                           edge_covering_checker]
         for p in self.automaton.phases():
             for checker in safety_checkers:
                 sres = checker(p)
@@ -264,7 +281,7 @@ class Frames(object):
         frame_old_count = self.counter
 
         def process_conjunct(c: Expr) -> None:
-            if c in self.fs[i + 1].summary_of(p) or c in self.push_cache[i][p]:
+            if c in self.fs[i + 1].summary_of(p) or (False and c in self.push_cache[i][p]):
                 return
 
             with utils.LogTag(utils.logger, 'pushing-conjunct', lvl=logging.DEBUG,
@@ -280,6 +297,18 @@ class Frames(object):
             c = conjuncts.l[j]
             process_conjunct(c)
             j += 1
+
+    def _add_backward_state(self, p: Phase, e: Expr) -> None:
+        s = self.backward_reachable[p]
+        l = []
+        for c in s:
+            if logic.check_implication(self.solver, [c], [e]) is None:
+                s.s.remove(c)
+            else:
+                l.append(c)
+        s.l = l
+
+        s.add(e)
 
     # Block the diagram in the given frame.
     # If safety_goal is True, the only possible outcomes are returning Blocked() on success
@@ -326,6 +355,8 @@ class Frames(object):
                     break
                 assert isinstance(x, tuple), (res, x)
                 trans, (pre_phase, pre_diag) = x
+                if safety_goal:
+                    self._add_backward_state(pre_phase, pre_diag.to_ast())
 
                 trace.append((trans, pre_diag))
                 ans = self.block(pre_diag, j - 1, pre_phase, trace, safety_goal)
@@ -341,8 +372,9 @@ class Frames(object):
         diag.generalize(self.solver,
                         self[j - 1],
                         self.automaton.transitions_to_grouped_by_src(p),
-                        p == self.automaton.init_phase(),
-                        j)
+                        propagate_init=(p == self.automaton.init_phase()),
+                        depth=j,
+                        known_states=self.known_states)
 
         e = syntax.Not(diag.to_ast())
 
@@ -574,13 +606,35 @@ class Frames(object):
         l.reverse()
         f.l = l
 
+#     def _simplify_backward_states(self, states: MySet[Expr]) -> None:
+#         return
+#         lator = self.solver.get_translator(KEY_ONE)
+#         l = []
+#         for c in states:
+#             with self.solver:
+#                 self.solver.add(lator.translate_expr(c))
+#                 for state in states:
+#                     if state is not c:
+#                         self.solver.add(z3.Not(lator.translate_expr(state)))
+#                 if self.solver.check() == z3.unsat:
+#                     utils.logger.debug('removed %s' % c)
+#                     states.s.remove(c)
+#                 else:
+#                     l.append(c)
+#         states.l = l
+
     @utils.log_start_end_xml(utils.logger)
     def simplify(self) -> None:
         for i, f in enumerate(self.fs):
             for p in self.automaton.phases():
-                with utils.LogTag(utils.logger, 'simplify', frame=str(i)):
-                    utils.logger.debug('simplifying frame %d, pred %s' % (i, p.name()))
+                with utils.LogTag(utils.logger, 'simplify-frame', frame=str(i)):
+                    utils.logger.debug('simplifying frame %d, phase %s' % (i, p.name()))
                     self._simplify_summary(f.summary_of(p), p)
+
+        # for p in self.automaton.phases():
+        #     with utils.LogTag(utils.logger, 'simplify-backward-states'):
+        #         utils.logger.debug('simplifying, phase %s' % (p.name(),))
+        #         self._simplify_backward_states(self.backward_reachable[p])
 
     def print_frame(self, i: int, lvl: int = logging.INFO) -> None:
         f = self.fs[i]
