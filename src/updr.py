@@ -5,7 +5,7 @@ import z3
 import utils
 from utils import MySet
 import logic
-from logic import Solver, Diagram, Model, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, CexFound
+from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, CexFound
 import phases
 import syntax
 from syntax import Expr, AutomatonDecl
@@ -108,7 +108,7 @@ class Frames(object):
 
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Model.from_z3([KEY_ONE], z3m)
+            mod = Trace.from_z3([KEY_ONE], z3m)
             self.record_state(mod)
             diag = mod.as_diagram()
             return (p, diag)
@@ -150,7 +150,7 @@ class Frames(object):
                             utils.logger.debug('phase %s cex to edge covering of transition %s' %
                                                (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Model.from_z3([KEY_OLD, KEY_NEW], z3m)
+                            mod = Trace.from_z3([KEY_OLD, KEY_NEW], z3m)
                             self.record_state(mod)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
@@ -213,7 +213,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Model.from_z3([KEY_OLD, KEY_NEW], m)
+                mod = Trace.from_z3([KEY_OLD, KEY_NEW], m)
                 self.record_state(mod)
                 diag = mod.as_diagram(i=0)
 
@@ -394,7 +394,7 @@ class Frames(object):
                 utils.logger.debug('augment_core_for_init: new core')
                 utils.logger.debug(str(sorted(core)))
 
-    def record_state(self, m: Model) -> None:
+    def record_state(self, m: Trace) -> None:
         self.state_count += 1
         utils.logger.info(f'learned state {self.state_count}')
         utils.logger.info(str(m))
@@ -510,7 +510,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
-                            m = Model.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
+                            m = Trace.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
                             self.record_state(m)

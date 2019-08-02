@@ -30,7 +30,7 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
     return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
 
 
-PDState = Model
+PDState = Trace
 Predicate = Expr
 
 
@@ -112,7 +112,7 @@ def eval_clause_in_state(
 ) -> bool:
     variables, literals = destruct_clause(clause)
     def ev(values: Sequence[str], lit: Expr) -> bool:
-        # TODO: rewrite this with James, this is a hacky partial implementation of first-order logic semantics for class Model (written on a plane from Phoenix to SF)
+        # TODO: rewrite this with James, this is a hacky partial implementation of first-order logic semantics for class Trace (written on a plane from Phoenix to SF)
         assert len(variables) == len(values)
         consts_and_vars: Dict[str, str] = dict(chain(
             ((var.name, val) for var, val in zip(variables, values)),
@@ -222,7 +222,7 @@ def eval_in_state(s: Optional[Solver], m: PDState, p: Expr) -> bool:
 
 _cache_initial: List[PDState] = []
 # TODO: could also cache expressions already found to be initial
-def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
+def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
     prog = syntax.the_program
     # inits = tuple(init.expr for init in prog.inits())
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
@@ -239,7 +239,7 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Model]:
                 print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
                 print(eval_in_state, solver, s, p)
             assert False
-        s = Model.from_z3([KEY_ONE], z3m)
+        s = Trace.from_z3([KEY_ONE], z3m)
         _cache_initial.append(s)
         print(f'Found new initial state violating {p}:')
         print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
@@ -280,7 +280,7 @@ def check_two_state_implication_multiprocessing_helper(
         old_hyps: Iterable[Expr],
         new_conc: Expr,
         minimize: Optional[bool] = None,
-) -> Optional[Tuple[Model, Model]]:
+) -> Optional[Tuple[Trace, Trace]]:
     if s is None:
         s = Solver()
     if seed is not None:
@@ -296,15 +296,15 @@ def check_two_state_implication_multiprocessing_helper(
         return None
     else:
         z3m, _ = res
-        prestate = Model.from_z3([KEY_OLD], z3m)
-        poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+        prestate = Trace.from_z3([KEY_OLD], z3m)
+        poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
         return (prestate, poststate)
 def check_two_state_implication_multiprocessing(
         s: Solver,
         old_hyps: Iterable[Expr],
         new_conc: Expr,
         minimize: Optional[bool] = None,
-) -> Optional[Tuple[Model, Model]]:
+) -> Optional[Tuple[Trace, Trace]]:
     # this function uses multiprocessing to start multiple solvers
     # with different random seeds and return the first result obtained
     if utils.args.cpus is None or utils.args.cpus == 1:
@@ -487,9 +487,9 @@ def check_dual_edge_old(
                 if utils.args.cache_only_discovered:
                     assert False
                 z3m, _ = res
-                prestate = Model.from_z3([KEY_OLD], z3m)
-                # poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
-                poststate = Model.from_z3([KEY_NEW], z3m) # TODO: can we do this? this seems better than dragging the prestate along
+                prestate = Trace.from_z3([KEY_OLD], z3m)
+                # poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
+                poststate = Trace.from_z3([KEY_NEW], z3m) # TODO: can we do this? this seems better than dragging the prestate along
                 print(f'check_dual_edge_old: found new {msg} violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
@@ -600,8 +600,8 @@ def check_dual_edge(
                     if z3res == z3.unsat:
                         continue
                     z3model = cti_solver.model(indicators, minimize)
-                    prestate = Model.from_z3([KEY_OLD], z3model)
-                    poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                    prestate = Trace.from_z3([KEY_OLD], z3model)
+                    poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
                     if minimize:
                         # TODO: should we put it in the cache anyway? for now not
                         _cache_transitions.append((prestate, poststate))
@@ -682,11 +682,14 @@ def check_k_state_implication(
     if om is None:
         return None
     else:
+        # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
+        # this file to use logic.State for its states, this will be easy to re-enable.
+        assert False
         z3m = om.z3model
         assert z3m is not None
         keys = list(om.keys)
         states = tuple(
-            Model.from_z3(keys[i:], z3m)
+            Trace.from_z3(keys[i:], z3m)
             for i in reversed(range(len(keys)))
         )
         print(f'Found new {k}-{msg} violating {p}:')
@@ -1010,7 +1013,7 @@ def map_clause_state_interaction_instantiate(
     iteration over all quantifier instantiations.
     '''
     def ev(values: Sequence[str], lit: Expr) -> bool:
-        # TODO: rewrite this with James, this is a hacky partial implementation of first-order logic semantics for class Model (written on a plane from Phoenix to SF)
+        # TODO: rewrite this with James, this is a hacky partial implementation of first-order logic semantics for class Trace (written on a plane from Phoenix to SF)
         assert len(variables) == len(values)
         consts_and_vars: Dict[str, str] = dict(chain(
             ((var.name, val) for var, val in zip(variables, values)),
@@ -1749,8 +1752,8 @@ def forward_explore_marco(solver: Solver,
     #             else:
     #                 z3model = wp_valid_solver.model(indicators)
     #                 # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
-    #                 prestate = Model.from_z3([KEY_OLD], z3model)
-    #                 poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3model)
+    #                 prestate = Trace.from_z3([KEY_OLD], z3model)
+    #                 poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3model)
     #                 _cache_transitions.append((prestate, poststate))
     #                 print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
     #                 print('Found new transition:')
@@ -4671,8 +4674,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
                     z3model = cti_solver.model(indicators)
-                    prestate = Model.from_z3([KEY_OLD], z3model)
-                    poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                    prestate = Trace.from_z3([KEY_OLD], z3model)
+                    poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
                     print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
@@ -4929,8 +4932,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                     z3res = cti_solver.check(indicators) # note, this check is important, not just an assertion
                     assert z3res == z3.sat
                 z3model = cti_solver.model(indicators)
-                prestate = Model.from_z3([KEY_OLD], z3model)
-                poststate = Model.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                prestate = Trace.from_z3([KEY_OLD], z3model)
+                poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
                 print(f'[{datetime.now()}] check_qs: found new cti violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
@@ -6461,8 +6464,8 @@ def cdcl_invariant(solver: Solver) -> str:
 #             print('-'*80 + '\n' + str(t) + '\n' + '-'*80)
 #             # for debugging:
 #             z3m, _ = res
-#             prestate = Model.from_z3([KEY_OLD], z3m)
-#             poststate = Model.from_z3([KEY_NEW, KEY_OLD], z3m)
+#             prestate = Trace.from_z3([KEY_OLD], z3m)
+#             poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
 #             assert isomorphic_states(self.solver, s, prestate)
 #             assert isomorphic_states(self.solver, t, poststate)
 #
@@ -6482,7 +6485,7 @@ def enumerate_reachable_states(s: Solver) -> None:
     # TODO: this function is hacky for paxos, clean up
     # TODO: this does not use caches at all
     prog = syntax.the_program
-    states: List[Model] = []
+    states: List[Trace] = []
     with s:
         for sort in prog.sorts():
             b = 2
@@ -6496,7 +6499,7 @@ def enumerate_reachable_states(s: Solver) -> None:
 
         unknown = False
 
-        def block_state(t: Z3Translator, m: Model) -> None:
+        def block_state(t: Z3Translator, m: Trace) -> None:
             # TODO: with the diagram, smaller states block larger
             # ones, but with onestate it's slower (paxos can't get
             # beyond initial states with 2 of everything). we should
@@ -6519,7 +6522,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                     unknown = True
                     break
                 else:
-                    m = Model.from_z3([KEY_ONE], s.model(minimize=False))
+                    m = Trace.from_z3([KEY_ONE], s.model(minimize=False))
                     states.append(m)
                     block_state(t, m)
         print(f'done finding initial states! found {len(states)} states')
@@ -6547,7 +6550,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                             unknown = True
                             break
 
-                        m = Model.from_z3([KEY_NEW, KEY_OLD], s.model(minimize=False))
+                        m = Trace.from_z3([KEY_NEW, KEY_OLD], s.model(minimize=False))
                         new_states.append(m)
                         block_state(t, m)
                 for state in new_states:

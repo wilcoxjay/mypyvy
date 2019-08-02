@@ -52,7 +52,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Model.from_z3(keys, s.model())
+            m = Trace.from_z3(keys, s.model())
 
             utils.logger.always_print('')
             if utils.args.print_counterexample:
@@ -217,7 +217,7 @@ def assert_any_transition(s: Solver, uid: str,
 
     s.add(z3.Or(*tids))
 
-def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Model]:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
     keys = ['state%02d' % i for i in range(depth + 1)]
     prog = syntax.the_program
 
@@ -247,7 +247,7 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
         res = s.check()
         if res == z3.sat:
-            m = Model.from_z3(list(reversed(keys)), s.model())
+            m = Trace.from_z3(list(reversed(keys)), s.model())
             return m
         elif res == z3.unknown:
             print('unknown!')
@@ -958,12 +958,11 @@ def _state_str(
     return '\n'.join(l)
 
 
-class Model(object):
+class Trace(object):
     def __init__(
             self,
             keys: List[str],
     ) -> None:
-        self.z3model: Optional[z3.ModelRef] = None
         self.keys = keys
 
         self.univs: Dict[SortDecl, List[str]] = OrderedDict()
@@ -985,9 +984,8 @@ class Model(object):
         self.diagram_cache: Dict[int, Diagram] = {}
 
     @staticmethod
-    def from_z3(keys: List[str], z3m: z3.ModelRef, allow_undefined: bool = False) -> Model:
-        m = Model(keys)
-        m.z3model = z3m
+    def from_z3(keys: List[str], z3m: z3.ModelRef, allow_undefined: bool = False) -> Trace:
+        m = Trace(keys)
         m.read_out(z3m, allow_undefined=allow_undefined)
         return m
 
