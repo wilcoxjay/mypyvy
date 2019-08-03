@@ -50,12 +50,14 @@ def do_updr(s: Solver) -> None:
     fs = updr.Frames(s)
     try:
         fs.search()
+    except updr.AbstractCounterexample:
+        pass
     finally:
         utils.logger.info(f'updr learned {fs.state_count} states (possibly with duplicates)')
 
         utils.logger.info(f'updr learned {len(fs.predicates)} predicates (no duplicates)')
-        for x in fs.predicates:
-            utils.logger.info(str(x))
+        # for x in fs.predicates:
+        #     utils.logger.info(str(x))
 
 def debug_tokens(filename: str) -> None:
     l = parser.get_lexer()

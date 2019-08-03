@@ -13,6 +13,9 @@ from typing import List, Optional, Set, Tuple, Union, Dict, Sequence
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
+class AbstractCounterexample(Exception):
+    pass
+
 class Frames(object):
     @utils.log_start_end_xml(utils.logger, logging.DEBUG, 'Frames.__init__')
     def __init__(self, solver: Solver) -> None:
@@ -301,8 +304,8 @@ class Frames(object):
             if safety_goal:
                 utils.logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') +
                                                     str(diag) for t, diag in trace))
-                print('abstract counterexample')
-                raise Exception('abstract counterexample')
+                print('abstract counterexample: the system has no universal inductive invariant proving safety')
+                raise AbstractCounterexample()
             else:
                 if utils.logger.isEnabledFor(logging.DEBUG):
                     utils.logger.debug('failed to block diagram')
