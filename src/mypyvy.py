@@ -321,7 +321,7 @@ def trace(s: Solver) -> None:
                     i += 1
 
             res = logic.check_unsat([], s, keys)
-            if (res == z3.sat) != trace.sat:
+            if (res is not None) != trace.sat:
                 utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
 def relax(s: Solver) -> None:
@@ -439,7 +439,7 @@ def relax(s: Solver) -> None:
 def parse_args(args: List[str]) -> utils.MypyvyArgs:
     argparser = argparse.ArgumentParser()
 
-    subparsers = argparser.add_subparsers(title='subcommands')
+    subparsers = argparser.add_subparsers(title='subcommands', dest='subcommand')
     all_subparsers = []
 
     verify_subparser = subparsers.add_parser('verify', help='verify that the invariants are inductive')

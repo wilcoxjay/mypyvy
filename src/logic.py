@@ -43,7 +43,7 @@ def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
         keys: List[str]
-) -> z3.CheckSatResult:
+) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
     #     logger.debug('assertions')
@@ -61,10 +61,12 @@ def check_unsat(
             assert res == z3.unknown
             utils.logger.always_print('unknown!')
             utils.logger.always_print('reason unknown: ' + s.reason_unknown())
+            assert False, 'unexpected unknown from z3!'
         for tok, msg in errmsgs:
             utils.print_error(tok, msg)
-    else:
 
+        return m
+    else:
         if not utils.args.query_time:
             time_msg = ''
         else:
@@ -72,11 +74,11 @@ def check_unsat(
         utils.logger.always_print('ok.%s' % (time_msg,))
 
         sys.stdout.flush()
+        return None
 
-    return res
 
 @utils.log_start_end_xml(utils.logger, logging.INFO)
-def check_init(s: Solver, safety_only: bool = False) -> None:
+def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
     utils.logger.always_print('checking init:')
 
     prog = syntax.the_program
@@ -99,11 +101,13 @@ def check_init(s: Solver, safety_only: bool = False) -> None:
                 utils.logger.always_print('  implies invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
-                            s, [KEY_ONE])
+                res = check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
+                                  s, [KEY_ONE])
+                if res is not None:
+                    return inv, res
+    return None
 
-
-def check_transitions(s: Solver) -> None:
+def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
     t = s.get_translator(KEY_NEW, KEY_OLD)
     prog = syntax.the_program
 
@@ -137,11 +141,14 @@ def check_transitions(s: Solver) -> None:
                         utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
                         sys.stdout.flush()
 
-                        check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s'
-                                      % (msg, trans.name)),
-                                     (trans.tok, 'this transition may not preserve invariant%s'
-                                      % (msg,))],
-                                    s, [KEY_OLD, KEY_NEW])
+                        res = check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s'
+                                            % (msg, trans.name)),
+                                           (trans.tok, 'this transition may not preserve invariant%s'
+                                            % (msg,))],
+                                          s, [KEY_OLD, KEY_NEW])
+                        if res is not None:
+                            return inv, res, trans
+    return None
 
 def check_implication(
         s: Solver,
