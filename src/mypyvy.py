@@ -5,7 +5,7 @@ import argparse
 from datetime import datetime
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional
+from typing import Any, cast, Dict, List, Optional, TypeVar
 import z3
 import resource
 
@@ -18,6 +18,8 @@ import updr
 import utils
 
 import pd
+
+T = TypeVar('T')
 
 def get_safety() -> List[Expr]:
     prog = syntax.the_program
@@ -276,7 +278,7 @@ def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.Trans
     else:
         return body
 
-def dict_val_from_rel_name(name, m):
+def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl,T]) -> T:
     for r,v in m.items():
         if r.name != name:
             continue
@@ -285,6 +287,7 @@ def dict_val_from_rel_name(name, m):
 
 def trace(s: Solver) -> None:
     ####################################################################################
+    # SANDBOX for playing with relaxed traces
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
     first_relax_idx = trns.transitions.index('decrease_domain')
@@ -294,6 +297,8 @@ def trace(s: Solver) -> None:
     post_relax_state = trns.as_state(first_relax_idx + 1)
     assert pre_relax_state.univs == post_relax_state.univs
 
+
+    # relaxed elements
     relaxed_elements = []
     for sort, univ in pre_relax_state.univs.items():
         active_rel_name = 'active_' + sort.name         # TODO: de-duplicate
@@ -306,7 +311,26 @@ def trace(s: Solver) -> None:
         for relaxed_elem in utils.OrderedSet(pre_active_elements) - set(post_active_elements):
             relaxed_elements.append((sort, relaxed_elem))
 
-    print(relaxed_elements)
+
+    # blocking facts, currently of arity 1
+    diff_facts_order_1 = []
+    # TODO: also functions + constants
+    for rel, intp in pre_relax_state.rel_interp.items():
+        for fact in intp:
+            (elements, fact_true) = fact
+            # TODO: ensure no clash with variable names
+            vars = [syntax.SortedVar(None, "v%i" % i, rel.arity[i]) for (i, _) in enumerate(elements)]
+            fact_free_vars = syntax.Apply(rel.name, [syntax.Id(None, v.name) for v in vars])
+            if not fact_true:
+                fact_free_vars = syntax.Not(fact_free_vars)
+            focused_fact = syntax.Exists(vars, fact_free_vars)
+            focused_fact.resolve(syntax.the_program.scope, syntax.BoolSort)
+
+            res = post_relax_state.eval(focused_fact)
+            if not res:
+                diff_facts_order_1.append(fact)
+
+    print(diff_facts_order_1)
     assert False
 
     ####################################################################################

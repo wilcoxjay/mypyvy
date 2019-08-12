@@ -52,7 +52,7 @@ class OrderedSet(Generic[T], Iterable[T]):
         self.l = [x for x in self.l if x in self.s]
         return self
 
-    def __sub__(self, other: Set[T]):
+    def __sub__(self, other: Set[T]) -> OrderedSet[T]:
         res = OrderedSet(self.__iter__())
         res.__isub__(other)
         return res
