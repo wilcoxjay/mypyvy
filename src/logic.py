@@ -1423,7 +1423,10 @@ class State(object):
             assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
             table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
             if isinstance(d, syntax.RelationDecl):
-                table = self.rel_interp[d]
+                # TODO: replace the following line due to pickling non-uniqueness of RelationDecl
+                # table = self.rel_interp[d]
+                interp_from_name = dict((r.name, interp) for (r, interp) in self.rel_interp.items())
+                table = interp_from_name[d.name]
             else:
                 table = self.func_interp[d]
             args = []
@@ -1435,7 +1438,11 @@ class State(object):
         elif isinstance(expr, syntax.QuantifierExpr):
             assert expr.quant in ['FORALL', 'EXISTS']
             p = all if expr.quant == 'AND' else any
-            doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
+            # TODO: replaced the following line due to pickling non-uniqueness of SortDecl
+            # doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
+            univs_from_str = dict((s.name, univ) for (s, univ) in self.univs.items())
+            assert all(isinstance(sv.sort, syntax.UninterpretedSort) for sv in expr.binder.vs)
+            doms = [univs_from_str[cast(syntax.UninterpretedSort, sv.sort).name] for sv in expr.binder.vs]
 
             def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
                 with scope.in_scope(q.binder, list(tup)):
@@ -1451,6 +1458,10 @@ class State(object):
                 return _lookup_assoc(self.rel_interp[a], [])
             elif isinstance(a, syntax.ConstantDecl):
                 return self.const_interp[a]
+            elif isinstance(a, tuple):
+                # bound variable introduced to scope
+                (bound_elem,) = a
+                return bound_elem
             else:
                 assert isinstance(a, str) or isinstance(a, bool)
                 return a
