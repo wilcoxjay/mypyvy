@@ -276,7 +276,41 @@ def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.Trans
     else:
         return body
 
+def dict_val_from_rel_name(name, m):
+    for r,v in m.items():
+        if r.name != name:
+            continue
+        return v
+    raise KeyError
+
 def trace(s: Solver) -> None:
+    ####################################################################################
+    import pickle
+    trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
+    first_relax_idx = trns.transitions.index('decrease_domain')
+    assert first_relax_idx != -1, trns.transitions
+    assert first_relax_idx + 1 < len(trns.keys)
+    pre_relax_state = trns.as_state(first_relax_idx)
+    post_relax_state = trns.as_state(first_relax_idx + 1)
+    assert pre_relax_state.univs == post_relax_state.univs
+
+    relaxed_elements = []
+    for sort, univ in pre_relax_state.univs.items():
+        active_rel_name = 'active_' + sort.name         # TODO: de-duplicate
+        pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interp)
+        post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interp)
+        pre_active_elements = [tup[0] for (tup, b) in pre_active_interp if b]
+        post_active_elements = [tup[0] for (tup, b) in post_active_interp if b]
+        assert set(post_active_elements).issubset(set(pre_active_elements))
+
+        for relaxed_elem in utils.OrderedSet(pre_active_elements) - set(post_active_elements):
+            relaxed_elements.append((sort, relaxed_elem))
+
+    print(relaxed_elements)
+    assert False
+
+    ####################################################################################
+
     prog = syntax.the_program
     if len(list(prog.traces())) > 0:
         utils.logger.always_print('finding traces:')
