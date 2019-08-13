@@ -314,7 +314,7 @@ def trace(s: Solver) -> None:
 
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
     relevant_facts = []
-    # TODO: also functions + constants
+    # TODO: also functions + constants + inequalities
     for rel, intp in pre_relax_state.rel_interp.items():
         for fact in intp:
             (elms, _) = fact
@@ -322,7 +322,7 @@ def trace(s: Solver) -> None:
                 relevant_facts.append((rel, fact))
 
     # blocking facts, currently of arity 1
-    NUM_FACTS_IN_DERIVED_REL = 1
+    NUM_FACTS_IN_DERIVED_REL = 2
     diff_conjunctions = []
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
         elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
@@ -349,13 +349,14 @@ def trace(s: Solver) -> None:
         assert pre_relax_state.eval(focused_fact)
         res = post_relax_state.eval(focused_fact)
         if not res:
-            diff_conjunctions.append(fact_lst)
+            diff_conjunctions.append(focused_fact)
 
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
-        print("relation:")
-        for conj in diffing_conjunction:
-            print("\t %s" % str(conj))
+        # print("relation:")
+        # for conj in diffing_conjunction:
+        #     print("\t %s" % str(conj))
+        print(diffing_conjunction)
     assert False
 
     ####################################################################################
