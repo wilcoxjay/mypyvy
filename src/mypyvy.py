@@ -316,9 +316,8 @@ def trace(s: Solver) -> None:
     for rel, intp in pre_relax_state.rel_interp.items():
         for fact in intp:
             (vars, polarity) = fact
-            if not set(vars) & set(ename for (_, ename) in relaxed_elements):
+            if set(vars) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append((rel, fact))
-
 
     # blocking facts, currently of arity 1
     diff_facts_order_1 = []
