@@ -321,7 +321,7 @@ def trace(s: Solver) -> None:
             if set(elms) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append((rel, fact))
 
-    # blocking facts, currently of arity 1
+    # facts blocking this specific relaxation step
     NUM_FACTS_IN_DERIVED_REL = 2
     diff_conjunctions = []
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
