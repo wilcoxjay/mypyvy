@@ -1489,6 +1489,7 @@ class State(object):
         l.append(_state_str(self, self.const_interp, self.rel_interp, self.func_interp))
         return '\n'.join(l)
 
+    # TODO: eliminate duplication with trace.eval_double_vocab
     def eval(self, expr: Expr) -> Union[str, bool]:
         scope: syntax.Scope[Union[str, bool]] = \
             cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)

@@ -351,25 +351,14 @@ def trace(s: Solver) -> None:
                                                  syntax.And(*conjuncts))
         print(derived_relation_formula)
         derived_relation_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
-        pre_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
-                                                  derived_relation_formula)
-        pre_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
-        # assert pre_relax_state.eval()
-        assert pre_relax_state.eval(pre_formula)
-        continue
+        diffing_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
+                                        syntax.And(syntax.Old(derived_relation_formula),
+                                                   syntax.Not(derived_relation_formula)))
+        with syntax.the_program.scope.two_state(twostate=True): # TODO: what is this doing? probably misusing
+            diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
 
-        focused_fact = syntax.Exists(list(vars_from_elm.values()), syntax.And(*conjuncts))
-        focused_fact.resolve(syntax.the_program.scope, syntax.BoolSort)
-
-        print(focused_fact)
-        assert pre_relax_state.eval(focused_fact)
-        res = trns.eval_double_vocab(syntax.Old(focused_fact), first_relax_idx)
-        assert res
-
-        assert pre_relax_state.eval(focused_fact)
-        res = post_relax_state.eval(focused_fact)
-        if not res:
-            diff_conjunctions.append(focused_fact)
+        if trns.eval_double_vocab(diffing_formula, first_relax_idx):
+            diff_conjunctions.append(derived_relation_formula)
 
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
@@ -377,6 +366,7 @@ def trace(s: Solver) -> None:
         # for conj in diffing_conjunction:
         #     print("\t %s" % str(conj))
         print(diffing_conjunction)
+
     assert False
 
     ####################################################################################
