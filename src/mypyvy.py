@@ -322,7 +322,7 @@ def trace(s: Solver) -> None:
                 relevant_facts.append((rel, fact))
 
     # facts blocking this specific relaxation step
-    NUM_FACTS_IN_DERIVED_REL = 1
+    NUM_FACTS_IN_DERIVED_REL = 3
     diff_conjunctions = []
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
         elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
@@ -344,13 +344,11 @@ def trace(s: Solver) -> None:
             active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
             conjuncts.append(active_element_conj)
 
-        print(vars_from_elm)
         derived_relation_formula = syntax.Exists([vars_from_elm[elm]
                                                   for (_, elm) in relaxed_elements
                                                   if elm in elements],
                                                  syntax.And(*conjuncts))
-        print(derived_relation_formula)
-        derived_relation_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+
         diffing_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
                                         syntax.And(syntax.Old(derived_relation_formula),
                                                    syntax.Not(derived_relation_formula)))
