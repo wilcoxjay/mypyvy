@@ -1476,9 +1476,17 @@ class State(object):
         else:
             assert False, expr
 
+    def element_sort(self, element_name: str) -> SortDecl:
+        matching_sorts = [sort for (sort, univ) in self.univs.items()
+                          if element_name in univ]
+        assert matching_sorts, "%s unknown element name" % element_name
+        assert len(matching_sorts) == 1, "ambiguous element name %s" % element_name
+        return matching_sorts[0]
+
 class Blocked(object):
     pass
 class CexFound(object):
     pass
 class GaveUp(object):
     pass
+5
