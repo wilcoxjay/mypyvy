@@ -16,6 +16,7 @@ import syntax
 from syntax import Expr, Program, InvariantDecl, AutomatonDecl
 import updr
 import utils
+import itertools
 
 import pd
 
@@ -313,30 +314,41 @@ def trace(s: Solver) -> None:
 
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
     relevant_facts = []
+    # TODO: also functions + constants
     for rel, intp in pre_relax_state.rel_interp.items():
         for fact in intp:
-            (vars, polarity) = fact
-            if set(vars) & set(ename for (_, ename) in relaxed_elements):
+            (elms, _) = fact
+            if set(elms) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append((rel, fact))
 
     # blocking facts, currently of arity 1
-    diff_facts_order_1 = []
-    # TODO: also functions + constants
-    for rel, fact in relevant_facts:
-        (elements, fact_true) = fact
+    NUM_FACTS_IN_DERIVED_REL = 2
+    diff_conjunctions = []
+    for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
+        elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
         # TODO: ensure no clash with variable names
-        vars = [syntax.SortedVar(None, "v%i" % i, rel.arity[i]) for (i, _) in enumerate(elements)]
-        fact_free_vars = syntax.Apply(rel.name, [syntax.Id(None, v.name) for v in vars])
-        if not fact_true:
-            fact_free_vars = syntax.Not(fact_free_vars)
-        focused_fact = syntax.Exists(vars, fact_free_vars)
+        vars_from_elm = dict((elm, syntax.SortedVar(None, "v%i" % i, None)) for (i, elm) in enumerate(elements))
+
+        conjuncts = []
+        for rel, fact in fact_lst:
+            (fact_els, fact_true) = fact
+            fact_free_vars = syntax.Apply(rel.name, [syntax.Id(None, vars_from_elm[e].name) for e in fact_els])
+            if not fact_true:
+                fact_free_vars = syntax.Not(fact_free_vars)
+            conjuncts.append(fact_free_vars)
+
+        focused_fact = syntax.Exists(vars_from_elm.values(), syntax.And(*conjuncts))
         focused_fact.resolve(syntax.the_program.scope, syntax.BoolSort)
 
         res = post_relax_state.eval(focused_fact)
         if not res:
-            diff_facts_order_1.append(fact)
+            diff_conjunctions.append(fact_lst)
 
-    print(diff_facts_order_1)
+    print("num candidate relations:", len(diff_conjunctions))
+    for diffing_conjunction in diff_conjunctions:
+        print("relation:")
+        for fact in diffing_conjunction:
+            print("\t", fact)
     assert False
 
     ####################################################################################
