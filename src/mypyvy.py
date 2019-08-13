@@ -329,6 +329,7 @@ def trace(s: Solver) -> None:
         # TODO: ensure no clash with variable names
         vars_from_elm = dict((elm, syntax.SortedVar(None, "%s" % elm, None))
                                 for (i, elm) in enumerate(elements))
+        parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
 
         conjuncts = []
         for rel, fact in fact_lst:
@@ -343,12 +344,26 @@ def trace(s: Solver) -> None:
             active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
             conjuncts.append(active_element_conj)
 
+        print(vars_from_elm)
+        derived_relation_formula = syntax.Exists([vars_from_elm[elm]
+                                                  for (_, elm) in relaxed_elements
+                                                  if elm in elements],
+                                                 syntax.And(*conjuncts))
+        print(derived_relation_formula)
+        derived_relation_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+        pre_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
+                                                  derived_relation_formula)
+        pre_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+        # assert pre_relax_state.eval()
+        assert pre_relax_state.eval(pre_formula)
+        continue
+
         focused_fact = syntax.Exists(list(vars_from_elm.values()), syntax.And(*conjuncts))
         focused_fact.resolve(syntax.the_program.scope, syntax.BoolSort)
 
         print(focused_fact)
         assert pre_relax_state.eval(focused_fact)
-        res = trns.eval_double_vocab(focused_fact, first_relax_idx-1)
+        res = trns.eval_double_vocab(syntax.Old(focused_fact), first_relax_idx)
         assert res
 
         assert pre_relax_state.eval(focused_fact)

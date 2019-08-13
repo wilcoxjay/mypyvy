@@ -1375,11 +1375,11 @@ class Trace(object):
         def eval(expr: Expr, old: bool) -> Union[str, bool]:
             def current_index() -> int:
                 return start_location + (1 if not old else 0)
-            def current_rels():
+            def current_rels() -> Dict[RelationDecl, List[Tuple[List[str], bool]]]:
                 return dict(itertools.chain(self.immut_rel_interps.items(), self.rel_interps[current_index()].items()))
-            def current_consts():
+            def current_consts() -> Dict[ConstantDecl, str]:
                 return dict(itertools.chain(self.immut_const_interps.items(), self.const_interps[current_index()].items()))
-            def current_funcs():
+            def current_funcs() -> Dict[FunctionDecl, List[Tuple[List[str], str]]]:
                 return dict(itertools.chain(self.immut_func_interps.items(), self.func_interps[current_index()].items()))
             scope: syntax.Scope[Union[str, bool]] = \
                 cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
@@ -1455,13 +1455,13 @@ class Trace(object):
                     assert isinstance(a, str) or isinstance(a, bool)
                     return a
             elif isinstance(expr, syntax.IfThenElse):
-                branch = self.eval(expr.branch, old)
+                branch = eval(expr.branch, old)
                 assert isinstance(branch, bool)
-                return self.eval(expr.then, old) if branch else self.eval(expr.els, old)
+                return eval(expr.then, old) if branch else eval(expr.els, old)
             elif isinstance(expr, syntax.Let):
-                val = self.eval(expr.val, old)
+                val = eval(expr.val, old)
                 with scope.in_scope(expr.binder, [val]):
-                    return self.eval(expr.bod, old)
+                    return eval(expr.bod, old)
             else:
                 assert False, expr
 
