@@ -1371,6 +1371,102 @@ class Trace(object):
                      dict(itertools.chain(self.immut_const_interps.items(), self.const_interps[i].items())),
                      dict(itertools.chain(self.immut_func_interps.items(), self.func_interps[i].items())))
 
+    def eval_double_vocab(self, full_expr: Expr, start_location: int) -> Union[str, bool]:
+        def eval(expr: Expr, old: bool) -> Union[str, bool]:
+            def current_index() -> int:
+                return start_location + (1 if not old else 0)
+            def current_rels():
+                return dict(itertools.chain(self.immut_rel_interps.items(), self.rel_interps[current_index()].items()))
+            def current_consts():
+                return dict(itertools.chain(self.immut_const_interps.items(), self.const_interps[current_index()].items()))
+            def current_funcs():
+                return dict(itertools.chain(self.immut_func_interps.items(), self.func_interps[current_index()].items()))
+            scope: syntax.Scope[Union[str, bool]] = \
+                cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
+            if isinstance(expr, syntax.Bool):
+                return expr.val
+            elif isinstance(expr, syntax.UnaryExpr):
+                if expr.op == 'OLD':
+                    return eval(expr.arg, old=True)
+                elif expr.op == 'NOT':
+                    return not eval(expr.arg, old)
+                assert False, "eval unknown operation %s" % expr.op
+            elif isinstance(expr, syntax.BinaryExpr):
+                if expr.op == 'IMPLIES':
+                    return not eval(expr.arg1, old) or eval(expr.arg2, old)
+                elif expr.op in ['IFF', 'EQUAL']:
+                    return eval(expr.arg1, old) == eval(expr.arg2, old)
+                else:
+                    assert expr.op == 'NOTEQ'
+                    return eval(expr.arg1, old) != eval(expr.arg2, old)
+            elif isinstance(expr, syntax.NaryExpr):
+                assert expr.op in ['AND', 'OR', 'DISTINCT']
+                if expr.op in ['AND', 'OR']:
+                    p = all if expr.op == 'AND' else any
+                    return p(eval(arg, old) for arg in expr.args)
+                else:
+                    assert expr.op == 'DISTINCT'
+                    return len(set(eval(arg, old) for arg in expr.args)) == len(expr.args)
+            elif isinstance(expr, syntax.AppExpr):
+                d = scope.get(expr.callee)
+                assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
+                table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
+                if isinstance(d, syntax.RelationDecl):
+                    # TODO: replace the following line due to pickling non-uniqueness of RelationDecl
+                    # table = self.rel_interp[d]
+                    interp_from_name = dict((r.name, interp) for (r, interp) in current_rels().items())
+                    table = interp_from_name[d.name]
+                else:
+                    table = current_funcs()[d]
+                args = []
+                for arg in expr.args:
+                    ans = eval(arg, old)
+                    assert isinstance(ans, str)
+                    args.append(ans)
+                return _lookup_assoc(table, args)
+            elif isinstance(expr, syntax.QuantifierExpr):
+                assert expr.quant in ['FORALL', 'EXISTS']
+                p = all if expr.quant == 'AND' else any
+                # TODO: replaced the following line due to pickling non-uniqueness of SortDecl
+                # doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
+                univs_from_str = dict((s.name, univ) for (s, univ) in self.univs.items())
+                assert all(isinstance(sv.sort, syntax.UninterpretedSort) for sv in expr.binder.vs)
+                doms = [univs_from_str[cast(syntax.UninterpretedSort, sv.sort).name] for sv in expr.binder.vs]
+
+                def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
+                    with scope.in_scope(q.binder, list(tup)):
+                        ans = eval(q.body, old)
+                        assert isinstance(ans, bool)
+                        return ans
+                return p(one(expr, t) for t in itertools.product(*doms))
+            elif isinstance(expr, syntax.Id):
+                a = scope.get(expr.name)
+                # definitions are not supported
+                assert not isinstance(a, syntax.DefinitionDecl) and not isinstance(a, syntax.FunctionDecl) and a is not None
+                if isinstance(a, syntax.RelationDecl):
+                    return _lookup_assoc(current_rels()[a], [])
+                elif isinstance(a, syntax.ConstantDecl):
+                    return current_consts()[a]
+                elif isinstance(a, tuple):
+                    # bound variable introduced to scope
+                    (bound_elem,) = a
+                    return bound_elem
+                else:
+                    assert isinstance(a, str) or isinstance(a, bool)
+                    return a
+            elif isinstance(expr, syntax.IfThenElse):
+                branch = self.eval(expr.branch, old)
+                assert isinstance(branch, bool)
+                return self.eval(expr.then, old) if branch else self.eval(expr.els, old)
+            elif isinstance(expr, syntax.Let):
+                val = self.eval(expr.val, old)
+                with scope.in_scope(expr.binder, [val]):
+                    return self.eval(expr.bod, old)
+            else:
+                assert False, expr
+
+        return eval(full_expr, old=False)
+
 _K = TypeVar('_K')
 _V = TypeVar('_V')
 

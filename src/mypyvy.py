@@ -322,12 +322,12 @@ def trace(s: Solver) -> None:
                 relevant_facts.append((rel, fact))
 
     # facts blocking this specific relaxation step
-    NUM_FACTS_IN_DERIVED_REL = 2
+    NUM_FACTS_IN_DERIVED_REL = 1
     diff_conjunctions = []
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
         elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
         # TODO: ensure no clash with variable names
-        vars_from_elm = dict((elm, syntax.SortedVar(None, "v%i" % i, None))
+        vars_from_elm = dict((elm, syntax.SortedVar(None, "%s" % elm, None))
                                 for (i, elm) in enumerate(elements))
 
         conjuncts = []
@@ -345,6 +345,11 @@ def trace(s: Solver) -> None:
 
         focused_fact = syntax.Exists(list(vars_from_elm.values()), syntax.And(*conjuncts))
         focused_fact.resolve(syntax.the_program.scope, syntax.BoolSort)
+
+        print(focused_fact)
+        assert pre_relax_state.eval(focused_fact)
+        res = trns.eval_double_vocab(focused_fact, first_relax_idx-1)
+        assert res
 
         assert pre_relax_state.eval(focused_fact)
         res = post_relax_state.eval(focused_fact)
