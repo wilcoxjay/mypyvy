@@ -322,12 +322,13 @@ def trace(s: Solver) -> None:
                 relevant_facts.append((rel, fact))
 
     # blocking facts, currently of arity 1
-    NUM_FACTS_IN_DERIVED_REL = 2
+    NUM_FACTS_IN_DERIVED_REL = 1
     diff_conjunctions = []
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
         elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
         # TODO: ensure no clash with variable names
-        vars_from_elm = dict((elm, syntax.SortedVar(None, "v%i" % i, None)) for (i, elm) in enumerate(elements))
+        vars_from_elm = dict((elm, syntax.SortedVar(None, "v%i" % i, None))
+                                for (i, elm) in enumerate(elements))
 
         conjuncts = []
         for rel, fact in fact_lst:
@@ -337,9 +338,15 @@ def trace(s: Solver) -> None:
                 fact_free_vars = syntax.Not(fact_free_vars)
             conjuncts.append(fact_free_vars)
 
-        focused_fact = syntax.Exists(vars_from_elm.values(), syntax.And(*conjuncts))
+        for elm, var in vars_from_elm.items():
+            sort = pre_relax_state.element_sort(elm)
+            active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
+            conjuncts.append(active_element_conj)
+
+        focused_fact = syntax.Exists(list(vars_from_elm.values()), syntax.And(*conjuncts))
         focused_fact.resolve(syntax.the_program.scope, syntax.BoolSort)
 
+        assert pre_relax_state.eval(focused_fact)
         res = post_relax_state.eval(focused_fact)
         if not res:
             diff_conjunctions.append(fact_lst)
@@ -347,8 +354,8 @@ def trace(s: Solver) -> None:
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
         print("relation:")
-        for fact in diffing_conjunction:
-            print("\t", fact)
+        for conj in diffing_conjunction:
+            print("\t %s" % str(conj))
     assert False
 
     ####################################################################################
