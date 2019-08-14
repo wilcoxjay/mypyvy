@@ -322,7 +322,8 @@ def trace(s: Solver) -> None:
                 relevant_facts.append((rel, fact))
 
     # facts blocking this specific relaxation step
-    NUM_FACTS_IN_DERIVED_REL = 1
+    NUM_FACTS_IN_DERIVED_REL = 3
+    DERIVED_RELATION_ARITY_MAX = 3
     diff_conjunctions = []
     candidates_cache = set()
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
@@ -330,6 +331,8 @@ def trace(s: Solver) -> None:
         vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("v%d" % i), None))
                                 for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
+        if len(parameter_elements) > DERIVED_RELATION_ARITY_MAX:
+            continue
 
         conjuncts = []
         for rel, fact in fact_lst:
