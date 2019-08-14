@@ -294,15 +294,30 @@ class RelationFact(object):
 
     def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
         fact_free_vars = syntax.Apply(self._rel.name, [syntax.Id(None, els_trans(e)) for e in self._els])
-        if not self.is_positive():
+        if not self._is_positive():
             fact_free_vars = syntax.Not(fact_free_vars)
         return fact_free_vars
 
-    def all_elms(self) -> List[str]:
+    def involved_elms(self) -> List[str]:
         return self._els
 
-    def is_positive(self) -> bool:
+    def _is_positive(self) -> bool:
         return self._polarity
+
+class FunctionFact(object):
+    def __init__(self, func: syntax.FunctionDecl, param_els: List[str], res_elm: bool):
+        self._func = func
+        self._params_els = param_els
+        self._res_elm = res_elm
+
+    def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
+        e = syntax.AppExpr(None, self._func.name, [syntax.Id(None, els_trans(e)) for e in self._params_els])
+        e = syntax.Eq(e, syntax.Id(None, els_trans(self._res_elm)))
+        return e
+
+    def involved_elms(self) -> List[str]:
+        return self._params_els + [self._res_elm]
+
 
 def trace(s: Solver) -> None:
     ####################################################################################
@@ -332,20 +347,29 @@ def trace(s: Solver) -> None:
 
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
     relevant_facts = []
+
     # TODO: also functions + constants + inequalities
     for rel, intp in pre_relax_state.rel_interp.items():
         for fact in intp:
             (elms, polarity) = fact
-            if set(elms) & set(ename for (_, ename) in relaxed_elements):
-                relevant_facts.append(RelationFact(rel, elms, polarity))
+            relation_fact = RelationFact(rel, elms, polarity)
+            if set(relation_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
+                relevant_facts.append(relation_fact)
+
+    for func, intp in pre_relax_state.func_interp.items():
+        for fact in intp:
+            (els_params, els_res) = fact
+            function_fact = FunctionFact(func, els_params, els_res)
+            if set(function_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
+                relation_fact.append(function_fact)
 
     # facts blocking this specific relaxation step
-    NUM_FACTS_IN_DERIVED_REL = 1
-    DERIVED_RELATION_ARITY_MAX = 2
+    NUM_FACTS_IN_DERIVED_REL = 3
+    DERIVED_RELATION_ARITY_MAX = 3
     diff_conjunctions = []
     candidates_cache: Set[str] = set()
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
-        elements = utils.OrderedSet(itertools.chain.from_iterable(fact.all_elms() for fact in fact_lst))
+        elements = utils.OrderedSet(itertools.chain.from_iterable(fact.involved_elms() for fact in fact_lst))
         vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("v%d" % i), None))
                                 for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
