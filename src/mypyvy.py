@@ -326,7 +326,7 @@ def trace(s: Solver) -> None:
     diff_conjunctions = []
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
         elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
-        vars_from_elm = dict((elm, syntax.SortedVar(None, "%s" % elm, None))
+        vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("%s" % elm), None))
                                 for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
 
