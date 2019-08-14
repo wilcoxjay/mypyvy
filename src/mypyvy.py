@@ -289,83 +289,82 @@ def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl,T]) -> T:
 def trace(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
-    # import pickle
-    # trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
-    # first_relax_idx = trns.transitions.index('decrease_domain')
-    # assert first_relax_idx != -1, trns.transitions
-    # assert first_relax_idx + 1 < len(trns.keys)
-    # pre_relax_state = trns.as_state(first_relax_idx)
-    # post_relax_state = trns.as_state(first_relax_idx + 1)
-    # assert pre_relax_state.univs == post_relax_state.univs
-    #
-    #
-    # # relaxed elements
-    # relaxed_elements = []
-    # for sort, univ in pre_relax_state.univs.items():
-    #     active_rel_name = 'active_' + sort.name         # TODO: de-duplicate
-    #     pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interp)
-    #     post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interp)
-    #     pre_active_elements = [tup[0] for (tup, b) in pre_active_interp if b]
-    #     post_active_elements = [tup[0] for (tup, b) in post_active_interp if b]
-    #     assert set(post_active_elements).issubset(set(pre_active_elements))
-    #
-    #     for relaxed_elem in utils.OrderedSet(pre_active_elements) - set(post_active_elements):
-    #         relaxed_elements.append((sort, relaxed_elem))
-    #
-    # # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
-    # relevant_facts = []
-    # # TODO: also functions + constants + inequalities
-    # for rel, intp in pre_relax_state.rel_interp.items():
-    #     for fact in intp:
-    #         (elms, _) = fact
-    #         if set(elms) & set(ename for (_, ename) in relaxed_elements):
-    #             relevant_facts.append((rel, fact))
-    #
-    # # facts blocking this specific relaxation step
-    # NUM_FACTS_IN_DERIVED_REL = 3
-    # diff_conjunctions = []
-    # for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
-    #     elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
-    #     # TODO: ensure no clash with variable names
-    #     vars_from_elm = dict((elm, syntax.SortedVar(None, "%s" % elm, None))
-    #                             for (i, elm) in enumerate(elements))
-    #     parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
-    #
-    #     conjuncts = []
-    #     for rel, fact in fact_lst:
-    #         (fact_els, fact_true) = fact
-    #         fact_free_vars = syntax.Apply(rel.name, [syntax.Id(None, vars_from_elm[e].name) for e in fact_els])
-    #         if not fact_true:
-    #             fact_free_vars = syntax.Not(fact_free_vars)
-    #         conjuncts.append(fact_free_vars)
-    #
-    #     for elm, var in vars_from_elm.items():
-    #         sort = pre_relax_state.element_sort(elm)
-    #         active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
-    #         conjuncts.append(active_element_conj)
-    #
-    #     derived_relation_formula = syntax.Exists([vars_from_elm[elm]
-    #                                               for (_, elm) in relaxed_elements
-    #                                               if elm in elements],
-    #                                              syntax.And(*conjuncts))
-    #
-    #     diffing_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
-    #                                     syntax.And(syntax.Old(derived_relation_formula),
-    #                                                syntax.Not(derived_relation_formula)))
-    #     with syntax.the_program.scope.two_state(twostate=True): # TODO: what is this doing? probably misusing
-    #         diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
-    #
-    #     if trns.eval_double_vocab(diffing_formula, first_relax_idx):
-    #         diff_conjunctions.append(derived_relation_formula)
-    #
-    # print("num candidate relations:", len(diff_conjunctions))
-    # for diffing_conjunction in diff_conjunctions:
-    #     # print("relation:")
-    #     # for conj in diffing_conjunction:
-    #     #     print("\t %s" % str(conj))
-    #     print(diffing_conjunction)
-    #
-    # assert False
+    import pickle
+    trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
+    first_relax_idx = trns.transitions.index('decrease_domain')
+    assert first_relax_idx != -1, trns.transitions
+    assert first_relax_idx + 1 < len(trns.keys)
+    pre_relax_state = trns.as_state(first_relax_idx)
+    post_relax_state = trns.as_state(first_relax_idx + 1)
+    assert pre_relax_state.univs == post_relax_state.univs
+
+
+    # relaxed elements
+    relaxed_elements = []
+    for sort, univ in pre_relax_state.univs.items():
+        active_rel_name = 'active_' + sort.name         # TODO: de-duplicate
+        pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interp)
+        post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interp)
+        pre_active_elements = [tup[0] for (tup, b) in pre_active_interp if b]
+        post_active_elements = [tup[0] for (tup, b) in post_active_interp if b]
+        assert set(post_active_elements).issubset(set(pre_active_elements))
+
+        for relaxed_elem in utils.OrderedSet(pre_active_elements) - set(post_active_elements):
+            relaxed_elements.append((sort, relaxed_elem))
+
+    # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
+    relevant_facts = []
+    # TODO: also functions + constants + inequalities
+    for rel, intp in pre_relax_state.rel_interp.items():
+        for fact in intp:
+            (elms, _) = fact
+            if set(elms) & set(ename for (_, ename) in relaxed_elements):
+                relevant_facts.append((rel, fact))
+
+    # facts blocking this specific relaxation step
+    NUM_FACTS_IN_DERIVED_REL = 3
+    diff_conjunctions = []
+    for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
+        elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
+        vars_from_elm = dict((elm, syntax.SortedVar(None, "%s" % elm, None))
+                                for (i, elm) in enumerate(elements))
+        parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
+
+        conjuncts = []
+        for rel, fact in fact_lst:
+            (fact_els, fact_true) = fact
+            fact_free_vars = syntax.Apply(rel.name, [syntax.Id(None, vars_from_elm[e].name) for e in fact_els])
+            if not fact_true:
+                fact_free_vars = syntax.Not(fact_free_vars)
+            conjuncts.append(fact_free_vars)
+
+        for elm, var in vars_from_elm.items():
+            sort = pre_relax_state.element_sort(elm)
+            active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
+            conjuncts.append(active_element_conj)
+
+        derived_relation_formula = syntax.Exists([vars_from_elm[elm]
+                                                  for (_, elm) in relaxed_elements
+                                                  if elm in elements],
+                                                 syntax.And(*conjuncts))
+
+        diffing_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
+                                        syntax.And(syntax.Old(derived_relation_formula),
+                                                   syntax.Not(derived_relation_formula)))
+        with syntax.the_program.scope.two_state(twostate=True): # TODO: what is this doing? probably misusing
+            diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+
+        if trns.eval_double_vocab(diffing_formula, first_relax_idx):
+            diff_conjunctions.append(derived_relation_formula)
+
+    print("num candidate relations:", len(diff_conjunctions))
+    for diffing_conjunction in diff_conjunctions:
+        # print("relation:")
+        # for conj in diffing_conjunction:
+        #     print("\t %s" % str(conj))
+        print(diffing_conjunction)
+
+    assert False
 
     ####################################################################################
 
