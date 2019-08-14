@@ -5,7 +5,7 @@ import argparse
 from datetime import datetime
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, TypeVar
+from typing import Any, cast, Dict, List, Optional, TypeVar, Callable, Set
 import z3
 import resource
 
@@ -286,6 +286,24 @@ def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl,T]) -> T:
         return v
     raise KeyError
 
+class RelationFact(object):
+    def __init__(self, rel: syntax.RelationDecl, els: List[str], polarity: bool):
+        self._rel = rel
+        self._els = els
+        self._polarity = polarity
+
+    def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
+        fact_free_vars = syntax.Apply(self._rel.name, [syntax.Id(None, els_trans(e)) for e in self._els])
+        if not self.is_positive():
+            fact_free_vars = syntax.Not(fact_free_vars)
+        return fact_free_vars
+
+    def all_elms(self) -> List[str]:
+        return self._els
+
+    def is_positive(self) -> bool:
+        return self._polarity
+
 def trace(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
@@ -317,30 +335,24 @@ def trace(s: Solver) -> None:
     # TODO: also functions + constants + inequalities
     for rel, intp in pre_relax_state.rel_interp.items():
         for fact in intp:
-            (elms, _) = fact
+            (elms, polarity) = fact
             if set(elms) & set(ename for (_, ename) in relaxed_elements):
-                relevant_facts.append((rel, fact))
+                relevant_facts.append(RelationFact(rel, elms, polarity))
 
     # facts blocking this specific relaxation step
-    NUM_FACTS_IN_DERIVED_REL = 3
-    DERIVED_RELATION_ARITY_MAX = 3
+    NUM_FACTS_IN_DERIVED_REL = 1
+    DERIVED_RELATION_ARITY_MAX = 2
     diff_conjunctions = []
-    candidates_cache = set()
+    candidates_cache: Set[str] = set()
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
-        elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
+        elements = utils.OrderedSet(itertools.chain.from_iterable(fact.all_elms() for fact in fact_lst))
         vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("v%d" % i), None))
                                 for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
         if len(parameter_elements) > DERIVED_RELATION_ARITY_MAX:
             continue
 
-        conjuncts = []
-        for rel, fact in fact_lst:
-            (fact_els, fact_true) = fact
-            fact_free_vars = syntax.Apply(rel.name, [syntax.Id(None, vars_from_elm[e].name) for e in fact_els])
-            if not fact_true:
-                fact_free_vars = syntax.Not(fact_free_vars)
-            conjuncts.append(fact_free_vars)
+        conjuncts = [fact.as_expr(lambda elm: vars_from_elm[elm].name) for fact in fact_lst]
 
         for elm, var in vars_from_elm.items():
             sort = pre_relax_state.element_sort(elm)
