@@ -322,11 +322,12 @@ def trace(s: Solver) -> None:
                 relevant_facts.append((rel, fact))
 
     # facts blocking this specific relaxation step
-    NUM_FACTS_IN_DERIVED_REL = 3
+    NUM_FACTS_IN_DERIVED_REL = 1
     diff_conjunctions = []
+    candidates_cache = set()
     for fact_lst in itertools.combinations(relevant_facts, NUM_FACTS_IN_DERIVED_REL):
         elements = utils.OrderedSet(itertools.chain.from_iterable(elms for (_, (elms, _)) in fact_lst))
-        vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("%s" % elm), None))
+        vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("v%d" % i), None))
                                 for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
 
@@ -353,6 +354,10 @@ def trace(s: Solver) -> None:
                                                    syntax.Not(derived_relation_formula)))
         with syntax.the_program.scope.two_state(twostate=True): # TODO: what is this doing? probably misusing
             diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+
+        if str(diffing_formula) in candidates_cache:
+            continue
+        candidates_cache.add(str(diffing_formula))
 
         if trns.eval_double_vocab(diffing_formula, first_relax_idx):
             diff_conjunctions.append(derived_relation_formula)
