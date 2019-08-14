@@ -5,7 +5,7 @@ import argparse
 from datetime import datetime
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, TypeVar, Callable, Set
+from typing import Any, cast, Dict, List, Optional, TypeVar, Callable, Set, Union
 import z3
 import resource
 
@@ -305,15 +305,14 @@ class RelationFact(object):
         return self._polarity
 
 class FunctionFact(object):
-    def __init__(self, func: syntax.FunctionDecl, param_els: List[str], res_elm: bool):
+    def __init__(self, func: syntax.FunctionDecl, param_els: List[str], res_elm: str):
         self._func = func
         self._params_els = param_els
         self._res_elm = res_elm
 
     def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
         e = syntax.AppExpr(None, self._func.name, [syntax.Id(None, els_trans(e)) for e in self._params_els])
-        e = syntax.Eq(e, syntax.Id(None, els_trans(self._res_elm)))
-        return e
+        return syntax.Eq(e, syntax.Id(None, els_trans(self._res_elm)))
 
     def involved_elms(self) -> List[str]:
         return self._params_els + [self._res_elm]
@@ -346,22 +345,22 @@ def trace(s: Solver) -> None:
             relaxed_elements.append((sort, relaxed_elem))
 
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
-    relevant_facts = []
+    relevant_facts: List[Union[RelationFact,FunctionFact]] = []
 
     # TODO: also functions + constants + inequalities
-    for rel, intp in pre_relax_state.rel_interp.items():
-        for fact in intp:
-            (elms, polarity) = fact
+    for rel, rintp in pre_relax_state.rel_interp.items():
+        for rfact in rintp:
+            (elms, polarity) = rfact
             relation_fact = RelationFact(rel, elms, polarity)
             if set(relation_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append(relation_fact)
 
-    for func, intp in pre_relax_state.func_interp.items():
-        for fact in intp:
-            (els_params, els_res) = fact
+    for func, fintp in pre_relax_state.func_interp.items():
+        for ffact in fintp:
+            (els_params, els_res) = ffact
             function_fact = FunctionFact(func, els_params, els_res)
             if set(function_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
-                relation_fact.append(function_fact)
+                relevant_facts.append(function_fact)
 
     # facts blocking this specific relaxation step
     NUM_FACTS_IN_DERIVED_REL = 3
