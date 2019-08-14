@@ -317,6 +317,18 @@ class FunctionFact(object):
     def involved_elms(self) -> List[str]:
         return self._params_els + [self._res_elm]
 
+class InequalityFact(object):
+    def __init__(self, lhs: str, rhs: str):
+        self._lhs = lhs
+        self._rhs = rhs
+
+    def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
+        return syntax.Neq(syntax.Id(None, els_trans(self._lhs)),
+                          syntax.Id(None, els_trans(self._rhs)))
+
+    def involved_elms(self) -> List[str]:
+        return [self._lhs, self._rhs]
+
 
 def trace(s: Solver) -> None:
     ####################################################################################
@@ -345,7 +357,7 @@ def trace(s: Solver) -> None:
             relaxed_elements.append((sort, relaxed_elem))
 
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
-    relevant_facts: List[Union[RelationFact,FunctionFact]] = []
+    relevant_facts: List[Union[RelationFact,FunctionFact,InequalityFact]] = []
 
     # TODO: also functions + constants + inequalities
     for rel, rintp in pre_relax_state.rel_interp.items():
@@ -361,6 +373,12 @@ def trace(s: Solver) -> None:
             function_fact = FunctionFact(func, els_params, els_res)
             if set(function_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append(function_fact)
+
+    for sort, elm in relaxed_elements: # other inequalities presumably handled by UPDR
+        for other_elm in pre_relax_state.univs[sort]:
+            if other_elm == elm:
+                continue
+            relevant_facts.append(InequalityFact(elm, other_elm))
 
     # facts blocking this specific relaxation step
     NUM_FACTS_IN_DERIVED_REL = 3
