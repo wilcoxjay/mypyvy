@@ -83,6 +83,12 @@ def first_relax_step_idx(trns: Trace) -> int:
     assert first_relax_idx + 1 < len(trns.keys)
     return first_relax_idx
 
+def active_rel(sort: syntax.SortDecl) -> syntax.RelationDecl:
+    return syntax.the_program.scope.get('active_%s' % sort.name)
+
+def active_rel_by_sort(prog: syntax.Program) -> Dict[syntax.SortDecl, syntax.RelationDecl]:
+    return dict((sort, active_rel(sort)) for sort in prog.sorts())
+
 def active_var(name: str, sort: syntax.SortDecl) -> syntax.Expr:
     return syntax.Apply('active_%s' % sort.name, [syntax.Id(None, name)])
 
@@ -180,3 +186,67 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
                                            derived_relation_formula))
 
     return diff_conjunctions
+
+def relaxation_action_def(prog: syntax.Program) -> syntax.DefinitionDecl:
+    decrease_name = prog.scope.fresh('decrease_domain')
+    mods = []
+    conjs: List[Expr] = []
+    actives: Dict[syntax.SortDecl, syntax.RelationDecl] = active_rel_by_sort(prog)
+
+    # a conjunct allowing each domain to decrease
+    for sort in prog.sorts():
+        name = prog.scope.fresh(sort.name[0].upper())
+        ap = syntax.Apply(actives[sort].name, [syntax.Id(None, name)])
+        expr = syntax.Forall([syntax.SortedVar(None, name, None)],
+                             syntax.Implies(ap, syntax.Old(ap)))
+        conjs.append(expr)
+        mods.append(syntax.ModifiesClause(None, actives[sort].name))
+
+    # constants are active
+    for const in prog.constants():
+        conjs.append(syntax.Apply(actives[syntax.get_decl_from_sort(const.sort)].name,
+                                  [syntax.Id(None, const.name)]))
+
+    # functions map active to active
+    for func in prog.functions():
+        names: List[str] = []
+        func_conjs = []
+        for arg_sort in func.arity:
+            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
+            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
+                                    also_avoid=names)
+            names.append(name)
+            func_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
+        ap_func = syntax.Old(syntax.Apply(func.name, [syntax.Id(None, name) for name in names]))
+        active_func = syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [ap_func])
+        conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
+                                   syntax.Implies(syntax.And(*func_conjs), active_func)))
+
+    # (relativized) axioms hold after relaxation
+    for axiom in prog.axioms():
+        if not syntax.is_universal(axiom.expr):
+            conjs.append(syntax.relativize_quantifiers(actives, axiom.expr))
+
+    # derived relations have the same interpretation on the active domain
+    for rel in prog.derived_relations():
+        names = []
+        rel_conjs = []
+        for arg_sort in rel.arity:
+            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
+            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
+                                    also_avoid=names)
+            names.append(name)
+            rel_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
+        ap_rel = syntax.Apply(rel.name, [syntax.Id(None, name) for name in names])
+        conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
+                                   syntax.Implies(syntax.And(*rel_conjs),
+                                                  syntax.Iff(ap_rel, syntax.Old(ap_rel)))))
+
+    return syntax.DefinitionDecl(None, public=True, twostate=True, name=decrease_name,
+                                           params=[], body=(mods, syntax.And(*conjs)))
+
+def replace_relaxation_action(prog: syntax.Program, new_relax_action: syntax.DefinitionDecl) -> syntax.Program:
+    old_relaxation_action = prog.scope.get('decrease_domain')
+    decls = [decl for decl in prog.decls if decl != old_relaxation_action]
+    decls.append(new_relax_action)
+    return syntax.Program(decls)

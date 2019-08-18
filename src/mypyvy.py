@@ -16,6 +16,7 @@ import syntax
 from syntax import Expr, Program, InvariantDecl, AutomatonDecl
 import updr
 import utils
+import relaxed_traces
 
 import pd
 
@@ -289,7 +290,6 @@ def trace(s: Solver) -> None:
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
     trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
 
-    import relaxed_traces
     diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
 
     print("num candidate relations:", len(diff_conjunctions))
@@ -314,8 +314,14 @@ def trace(s: Solver) -> None:
 
     # TODO: this irreversibly adds the relation to the context, wrap
     derrel.resolve(syntax.the_program.scope)
+    syntax.the_program.decls.append(derrel) # TODO: hack! because RelationDecl.resolve only adds to prog.scope
 
     print("Trying derived relation:", derrel)
+
+    # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
+    new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program)
+    new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
+    print(new_prog)
 
     assert False
 
@@ -367,6 +373,7 @@ def trace(s: Solver) -> None:
             res = logic.check_unsat([], s, keys)
             if (res is not None) != trace.sat:
                 utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
+
 
 def relax(s: Solver) -> None:
     prog = syntax.the_program
@@ -423,61 +430,7 @@ def relax(s: Solver) -> None:
         else:
             assert False, d
 
-    decrease_name = prog.scope.fresh('decrease_domain')
-    mods = []
-    conjs: List[Expr] = []
-
-    # a conjunct allowing each domain to decrease
-    for sort in prog.sorts():
-        name = prog.scope.fresh(sort.name[0].upper())
-        ap = syntax.Apply(actives[sort].name, [syntax.Id(None, name)])
-        expr = syntax.Forall([syntax.SortedVar(None, name, None)],
-                             syntax.Implies(ap, syntax.Old(ap)))
-        conjs.append(expr)
-        mods.append(syntax.ModifiesClause(None, actives[sort].name))
-
-    # constants are active
-    for const in prog.constants():
-        conjs.append(syntax.Apply(actives[syntax.get_decl_from_sort(const.sort)].name,
-                                  [syntax.Id(None, const.name)]))
-
-    # functions map active to active
-    for func in prog.functions():
-        names: List[str] = []
-        func_conjs = []
-        for arg_sort in func.arity:
-            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
-            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
-                                    also_avoid=names)
-            names.append(name)
-            func_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
-        ap_func = syntax.Old(syntax.Apply(func.name, [syntax.Id(None, name) for name in names]))
-        active_func = syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [ap_func])
-        conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
-                                   syntax.Implies(syntax.And(*func_conjs), active_func)))
-
-    # (relativized) axioms hold after relaxation
-    for axiom in prog.axioms():
-        if not syntax.is_universal(axiom.expr):
-            conjs.append(syntax.relativize_quantifiers(actives, axiom.expr))
-
-    # derived relations have the same interpretation on the active domain
-    for rel in prog.derived_relations():
-        names = []
-        rel_conjs = []
-        for arg_sort in rel.arity:
-            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
-            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
-                                    also_avoid=names)
-            names.append(name)
-            rel_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
-        ap_rel = syntax.Apply(rel.name, [syntax.Id(None, name) for name in names])
-        conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
-                                   syntax.Implies(syntax.And(*rel_conjs),
-                                                  syntax.Iff(ap_rel, syntax.Old(ap_rel)))))
-
-    new_decls.append(syntax.DefinitionDecl(None, public=True, twostate=True, name=decrease_name,
-                                           params=[], body=(mods, syntax.And(*conjs))))
+    new_decls.append(relaxed_traces.relaxation_action_def(prog, actives))
     print(Program(new_decls))
 
 def parse_args(args: List[str]) -> utils.MypyvyArgs:
