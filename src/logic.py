@@ -43,7 +43,7 @@ def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
         keys: List[str],
-        minimize: Optional[bool] = None
+        minimize: Optional[bool] = None,
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
@@ -53,7 +53,7 @@ def check_unsat(
     res = s.check()
     if res != z3.unsat:
         if res == z3.sat:
-            m = Trace.from_z3(keys, s.model())
+            m = Trace.from_z3(keys, s.model(minimize=minimize))
 
             utils.logger.always_print('')
             if utils.args.print_counterexample:
