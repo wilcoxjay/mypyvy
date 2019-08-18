@@ -278,24 +278,46 @@ def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.Trans
     else:
         return body
 
+def safe_cast_sort(s: syntax.InferenceSort) -> syntax.Sort:
+    assert isinstance(s, syntax.Sort)
+    return cast(syntax.Sort, s)
+
 def trace(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
-    # import pickle
-    # trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
-    # trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
-    #
-    # import relaxed_traces
-    # diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [trns2], 2, 3)
-    #
-    # print("num candidate relations:", len(diff_conjunctions))
-    # for diffing_conjunction in diff_conjunctions:
-    #     # print("relation:")
-    #     # for conj in diffing_conjunction:
-    #     #     print("\t %s" % str(conj))
-    #     print(diffing_conjunction)
-    #
-    # assert False
+    import pickle
+    trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
+    trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
+
+    import relaxed_traces
+    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
+
+    print("num candidate relations:", len(diff_conjunctions))
+    for diffing_conjunction in diff_conjunctions:
+        # print("relation:")
+        # for conj in diffing_conjunction:
+        #     print("\t %s" % str(conj))
+        print(diffing_conjunction)
+
+    print()
+
+    derrel_name = syntax.the_program.scope.fresh("nder")
+    (free_vars, def_expr) = diff_conjunctions[0]
+    def_axiom = syntax.Forall(free_vars,
+                              syntax.Iff(syntax.Apply(derrel_name,
+                                                      [syntax.Id(None, v.name) for v in free_vars]), # TODO: extract pattern
+                                         def_expr))
+
+    derrel = syntax.RelationDecl(tok=None, name=derrel_name,
+                                 arity=[safe_cast_sort(var.sort) for var in free_vars],
+                                 mutable=True, derived=def_axiom, annotations=[])
+
+    # TODO: this irreversibly adds the relation to the context, wrap
+    derrel.resolve(syntax.the_program.scope)
+
+    print("Trying derived relation:", derrel)
+
+    assert False
 
     ####################################################################################
 

@@ -5,7 +5,7 @@ from syntax import Expr
 from utils import Set
 
 import itertools
-from typing import List, Callable, Union, Dict, TypeVar
+from typing import List, Callable, Union, Dict, TypeVar, Tuple
 
 T = TypeVar('T')
 
@@ -88,7 +88,7 @@ def active_var(name: str, sort: syntax.SortDecl) -> syntax.Expr:
 
 
 def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
-                                       max_conj_size: int, max_free_vars: int) -> List[Expr]:
+                                       max_conj_size: int, max_free_vars: int) -> List[Tuple[List[syntax.SortedVar],Expr]]:
     first_relax_idx = first_relax_step_idx(trns)
     pre_relax_state = trns.as_state(first_relax_idx)
     post_relax_state = trns.as_state(first_relax_idx + 1)
@@ -176,6 +176,7 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
 
         if trns.eval_double_vocab(diffing_formula, first_relax_idx):
             if all(trs.eval_double_vocab(diffing_formula, first_relax_step_idx(trs)) for trs in more_traces):
-                diff_conjunctions.append(derived_relation_formula)
+                diff_conjunctions.append(([vars_from_elm[elm] for elm in parameter_elements],
+                                           derived_relation_formula))
 
     return diff_conjunctions
