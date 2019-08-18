@@ -131,7 +131,7 @@ def derived_rels_candidates_from_trace(trns: Trace, max_conj_size: int, max_free
         vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("v%d" % i), None))
                                 for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
-        if len(parameter_elements) > max_conj_size:
+        if len(parameter_elements) > max_free_vars:
             continue
 
         conjuncts = [fact.as_expr(lambda elm: vars_from_elm[elm].name) for fact in fact_lst]
