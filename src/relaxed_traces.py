@@ -5,7 +5,7 @@ from syntax import Expr
 from utils import Set
 
 import itertools
-from typing import List, Callable, Union, Dict, Generic, TypeVar
+from typing import List, Callable, Union, Dict, TypeVar
 
 T = TypeVar('T')
 
@@ -77,10 +77,18 @@ def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl,T]) -> T:
         return v
     raise KeyError
 
-def derived_rels_candidates_from_trace(trns: Trace, max_conj_size: int, max_free_vars: int) -> List[Expr]:
+def first_relax_step_idx(trns: Trace) -> int:
     first_relax_idx = trns.transitions.index('decrease_domain')
     assert first_relax_idx != -1, trns.transitions
     assert first_relax_idx + 1 < len(trns.keys)
+    return first_relax_idx
+
+def active_var(name: str, sort: syntax.SortDecl) -> syntax.Expr:
+    return syntax.Apply('active_%s' % sort.name, [syntax.Id(None, name)])
+
+
+def derived_rels_candidates_from_trace(trns: Trace, max_conj_size: int, max_free_vars: int) -> List[Expr]:
+    first_relax_idx = first_relax_step_idx(trns)
     pre_relax_state = trns.as_state(first_relax_idx)
     post_relax_state = trns.as_state(first_relax_idx + 1)
     assert pre_relax_state.univs == post_relax_state.univs
@@ -102,7 +110,6 @@ def derived_rels_candidates_from_trace(trns: Trace, max_conj_size: int, max_free
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
     relevant_facts: List[Union[RelationFact,FunctionFact,InequalityFact]] = []
 
-    # TODO: also functions + constants + inequalities
     for rel, rintp in pre_relax_state.rel_interp.items():
         for rfact in rintp:
             (elms, polarity) = rfact
@@ -128,27 +135,37 @@ def derived_rels_candidates_from_trace(trns: Trace, max_conj_size: int, max_free
     candidates_cache: Set[str] = set()
     for fact_lst in itertools.combinations(relevant_facts, max_conj_size):
         elements = utils.OrderedSet(itertools.chain.from_iterable(fact.involved_elms() for fact in fact_lst))
+        relaxed_elements_relevant = [elm for (_, elm) in relaxed_elements if elm in elements]
         vars_from_elm = dict((elm, syntax.SortedVar(None, syntax.the_program.scope.fresh("v%d" % i), None))
                                 for (i, elm) in enumerate(elements))
-        parameter_elements = elements - set(elm for (_, elm) in relaxed_elements)
+        parameter_elements = elements - set(relaxed_elements_relevant)
         if len(parameter_elements) > max_free_vars:
             continue
 
         conjuncts = [fact.as_expr(lambda elm: vars_from_elm[elm].name) for fact in fact_lst]
 
-        for elm, var in vars_from_elm.items():
+        # for elm, var in vars_from_elm.items():
+        # TODO: make the two loops similar
+        for elm in relaxed_elements_relevant:
+            var = vars_from_elm[elm]
             sort = pre_relax_state.element_sort(elm)
             active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
             conjuncts.append(active_element_conj)
 
+        free_vars_active_clause = syntax.And(*(active_var(vars_from_elm[elm].name, pre_relax_state.element_sort(elm))
+                                             for elm in parameter_elements))
+
         derived_relation_formula = syntax.Exists([vars_from_elm[elm]
                                                   for (_, elm) in relaxed_elements
-                                                  if elm in elements],
+                                                  if elm in vars_from_elm],
                                                  syntax.And(*conjuncts))
 
         diffing_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
-                                        syntax.And(syntax.Old(derived_relation_formula),
-                                                   syntax.Not(derived_relation_formula)))
+                                        syntax.And(syntax.Old(syntax.And(free_vars_active_clause,
+                                                                         derived_relation_formula)),
+                                                   syntax.And(free_vars_active_clause,
+                                                              syntax.Not(derived_relation_formula))))
+
         with syntax.the_program.scope.two_state(twostate=True): # TODO: what is this doing? probably misusing
             diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
 
