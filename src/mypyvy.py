@@ -281,21 +281,21 @@ def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.Trans
 def trace(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
-    import pickle
-    trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
-    trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
-    
-    import relaxed_traces
-    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [trns2], 2, 3)
-
-    print("num candidate relations:", len(diff_conjunctions))
-    for diffing_conjunction in diff_conjunctions:
-        # print("relation:")
-        # for conj in diffing_conjunction:
-        #     print("\t %s" % str(conj))
-        print(diffing_conjunction)
-
-    assert False
+    # import pickle
+    # trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
+    # trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
+    #
+    # import relaxed_traces
+    # diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [trns2], 2, 3)
+    #
+    # print("num candidate relations:", len(diff_conjunctions))
+    # for diffing_conjunction in diff_conjunctions:
+    #     # print("relation:")
+    #     # for conj in diffing_conjunction:
+    #     #     print("\t %s" % str(conj))
+    #     print(diffing_conjunction)
+    #
+    # assert False
 
     ####################################################################################
 
