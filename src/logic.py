@@ -1417,7 +1417,10 @@ class Trace(object):
                     interp_from_name = dict((r.name, interp) for (r, interp) in current_rels().items())
                     table = interp_from_name[d.name]
                 else:
-                    table = current_funcs()[d]
+                    # TODO: replace the following line due to pickling non-uniqueness of FunctionDecl
+                    # table = current_funcs()[d]
+                    interp_from_name = dict((r.name, interp) for (r, interp) in current_funcs().items())
+                    table = interp_from_name[d.name]
                 args = []
                 for arg in expr.args:
                     ans = eval(arg, old)
