@@ -42,7 +42,8 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
 def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
-        keys: List[str]
+        keys: List[str],
+        minimize: Optional[bool] = None
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
@@ -1419,8 +1420,8 @@ class Trace(object):
                 else:
                     # TODO: replace the following line due to pickling non-uniqueness of FunctionDecl
                     # table = current_funcs()[d]
-                    interp_from_name = dict((r.name, interp) for (r, interp) in current_funcs().items())
-                    table = interp_from_name[d.name]
+                    interp_from_name_f = dict((f.name, interp) for (f, interp) in current_funcs().items())
+                    table = interp_from_name_f[d.name]
                 args = []
                 for arg in expr.args:
                     ans = eval(arg, old)
