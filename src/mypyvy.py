@@ -283,11 +283,10 @@ def trace(s: Solver) -> None:
     # SANDBOX for playing with relaxed traces
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
-    print(trns.transitions)
-    assert False
-
+    trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
+    
     import relaxed_traces
-    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, 3, 3)
+    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [trns2], 2, 3)
 
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
