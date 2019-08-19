@@ -187,8 +187,8 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
 
     return diff_conjunctions
 
-def relaxation_action_def(prog: syntax.Program) -> syntax.DefinitionDecl:
-    decrease_name = prog.scope.fresh('decrease_domain')
+def relaxation_action_def(prog: syntax.Program, fresh: bool=True) -> syntax.DefinitionDecl:
+    decrease_name = (prog.scope.fresh('decrease_domain') if fresh else 'decrease_domain')
     mods = []
     conjs: List[Expr] = []
     actives: Dict[syntax.SortDecl, syntax.RelationDecl] = active_rel_by_sort(prog)
