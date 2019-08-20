@@ -39,30 +39,39 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
     utils.logger.always_print(out.getvalue())
     assert False
 
+def check_solver(s: Solver, keys: List[str], minimize: bool=False
+                    ) -> Optional[Trace]:
+    res = s.check()
+    m = None
+
+    if res != z3.unsat:
+        if res != z3.sat:
+            assert res == z3.unknown
+            utils.logger.always_print('unknown!')
+            utils.logger.always_print('reason unknown: ' + s.reason_unknown())
+            assert False, 'unexpected unknown from z3!'
+
+        assert res == z3.sat
+        m = Trace.from_z3(keys, s.model(minimize=minimize))
+
+    return m
+
 def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
-        keys: List[str],
-        minimize: Optional[bool] = None,
+        keys: List[str]
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
     #     logger.debug('assertions')
     #     logger.debug(str(s.assertions()))
 
-    res = s.check()
-    if res != z3.unsat:
-        if res == z3.sat:
-            m = Trace.from_z3(keys, s.model(minimize=minimize))
+    m = check_solver(s, keys)
+    if m is not None:
+        utils.logger.always_print('')
+        if utils.args.print_counterexample:
+            utils.logger.always_print(str(m))
 
-            utils.logger.always_print('')
-            if utils.args.print_counterexample:
-                utils.logger.always_print(str(m))
-        else:
-            assert res == z3.unknown
-            utils.logger.always_print('unknown!')
-            utils.logger.always_print('reason unknown: ' + s.reason_unknown())
-            assert False, 'unexpected unknown from z3!'
         for tok, msg in errmsgs:
             utils.print_error(tok, msg)
 

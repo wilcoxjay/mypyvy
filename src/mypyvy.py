@@ -283,7 +283,10 @@ def safe_cast_sort(s: syntax.InferenceSort) -> syntax.Sort:
     assert isinstance(s, syntax.Sort)
     return cast(syntax.Sort, s)
 
-def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl, s: Solver, log: bool=False) -> Optional[logic.Trace]:
+def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
+              s: Solver, sat_checker: Callable[[Solver, List[str]], Optional[logic.Trace]],
+              log: bool=False
+) -> Optional[logic.Trace]:
     n_states = len(list(trace.transitions())) + 1
     if log:
         print('%s states' % (n_states,))
@@ -323,7 +326,7 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl, s: Solver, log: boo
 
                 i += 1
 
-        return logic.check_unsat([], s, keys)
+        return sat_checker(s, keys)
 
 def trace(s: Solver) -> None:
     ####################################################################################
@@ -367,6 +370,10 @@ def trace(s: Solver) -> None:
     # print(new_prog)
     #
     # syntax.the_program = new_prog
+    #
+    # trace_decl = next(syntax.the_program.traces())
+    # res = bmc_trace(new_prog, trace_decl, s)
+    # print(res)
 
     # assert False
 
@@ -377,7 +384,7 @@ def trace(s: Solver) -> None:
         utils.logger.always_print('finding traces:')
 
     for trace in prog.traces():
-        res = bmc_trace(prog, trace, s)
+        res = bmc_trace(prog, trace, s, lambda s, keys: logic.check_unsat([], s, keys), log=True)
         if (res is not None) != trace.sat:
             utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
