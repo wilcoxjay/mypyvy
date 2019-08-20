@@ -5,7 +5,7 @@ from syntax import Expr
 from utils import Set
 
 import itertools
-from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional
+from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast
 
 T = TypeVar('T')
 
@@ -95,6 +95,26 @@ def active_var(name: str, sort: syntax.SortDecl) -> syntax.Expr:
     return syntax.Apply('active_%s' % sort.name, [syntax.Id(None, name)])
 
 
+def is_rel_blocking_relax(trns: Trace, idx: int,
+                          derived_rel: Tuple[List[Tuple[syntax.SortedVar, syntax.SortDecl]], Expr]) -> bool:
+    # TODO: probably can obtain the sort from the sortedvar when not using scapy
+    free_vars, derived_relation_formula = derived_rel
+    free_vars_active_clause = syntax.And(*(active_var(v.name, sort) for (v, sort) in free_vars))
+
+    diffing_formula = syntax.Exists([v for (v, _) in free_vars],
+                                    syntax.And(syntax.Old(syntax.And(free_vars_active_clause,
+                                                                     derived_relation_formula)),
+                                               syntax.And(free_vars_active_clause,
+                                                          syntax.Not(derived_relation_formula))))
+
+    with syntax.the_program.scope.two_state(twostate=True):  # TODO: what is this doing? probably misusing
+        diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+
+    res = trns.eval_double_vocab(diffing_formula, idx)
+    assert isinstance(res, bool)
+    return cast(bool, res)
+
+
 def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
                                        max_conj_size: int, max_free_vars: int) -> List[Tuple[List[syntax.SortedVar],Expr]]:
     first_relax_idx = first_relax_step_idx(trns)
@@ -161,29 +181,20 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(None, var.name)])
             conjuncts.append(active_element_conj)
 
-        free_vars_active_clause = syntax.And(*(active_var(vars_from_elm[elm].name, pre_relax_state.element_sort(elm))
-                                             for elm in parameter_elements))
-
         derived_relation_formula = syntax.Exists([vars_from_elm[elm]
                                                   for (_, elm) in relaxed_elements
                                                   if elm in vars_from_elm],
                                                  syntax.And(*conjuncts))
 
-        diffing_formula = syntax.Exists([vars_from_elm[elm] for elm in parameter_elements],
-                                        syntax.And(syntax.Old(syntax.And(free_vars_active_clause,
-                                                                         derived_relation_formula)),
-                                                   syntax.And(free_vars_active_clause,
-                                                              syntax.Not(derived_relation_formula))))
-
-        with syntax.the_program.scope.two_state(twostate=True): # TODO: what is this doing? probably misusing
-            diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
-
-        if str(diffing_formula) in candidates_cache:
+        if str(derived_relation_formula) in candidates_cache:
             continue
-        candidates_cache.add(str(diffing_formula))
+        candidates_cache.add(str(derived_relation_formula))
 
-        if trns.eval_double_vocab(diffing_formula, first_relax_idx):
-            if all(trs.eval_double_vocab(diffing_formula, first_relax_step_idx(trs)) for trs in more_traces):
+        # if trns.eval_double_vocab(diffing_formula, first_relax_idx):
+        if is_rel_blocking_relax(trns, first_relax_idx,
+                                 ([(vars_from_elm[elm], pre_relax_state.element_sort(elm)) for elm in parameter_elements],
+                                  derived_relation_formula)):
+            # if all(trs.eval_double_vocab(diffing_formula, first_relax_step_idx(trs)) for trs in more_traces):
                 diff_conjunctions.append(([vars_from_elm[elm] for elm in parameter_elements],
                                            derived_relation_formula))
 
