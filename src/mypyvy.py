@@ -375,8 +375,10 @@ def trace(s: Solver) -> None:
     assert trns2 is not None
     trns2 = cast(logic.Trace, trns2)
     print(trns2)
+    assert not relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
+                                                    ([(v, str(safe_cast_sort(v.sort))) for v in free_vars], def_expr))
 
-    diff_conjunctions = list(filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(cast(logic.Trace, trns2), relaxed_traces.relaxation_idx(trns2),
+    diff_conjunctions = list(filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.relaxation_idx(trns2),
                                                                                       ([(v, str(safe_cast_sort(v.sort))) for v in free_vars], def_expr)),
                                diff_conjunctions))
     print("num candidate relations:", len(diff_conjunctions))
