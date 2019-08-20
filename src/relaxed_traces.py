@@ -5,7 +5,7 @@ from syntax import Expr
 from utils import Set
 
 import itertools
-from typing import List, Callable, Union, Dict, TypeVar, Tuple
+from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional
 
 T = TypeVar('T')
 
@@ -84,7 +84,9 @@ def first_relax_step_idx(trns: Trace) -> int:
     return first_relax_idx
 
 def active_rel(sort: syntax.SortDecl) -> syntax.RelationDecl:
-    return syntax.the_program.scope.get('active_%s' % sort.name)
+    res = syntax.the_program.scope.get_relation('active_%s' % sort.name)
+    assert res is not None
+    return res
 
 def active_rel_by_sort(prog: syntax.Program) -> Dict[syntax.SortDecl, syntax.RelationDecl]:
     return dict((sort, active_rel(sort)) for sort in prog.sorts())
@@ -187,11 +189,15 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
 
     return diff_conjunctions
 
-def relaxation_action_def(prog: syntax.Program, fresh: bool=True) -> syntax.DefinitionDecl:
+def relaxation_action_def(prog: syntax.Program,
+                          actives: Optional[Dict[syntax.SortDecl, syntax.RelationDecl]]=None,
+                          fresh: bool=True)  \
+                            -> syntax.DefinitionDecl:
     decrease_name = (prog.scope.fresh('decrease_domain') if fresh else 'decrease_domain')
     mods = []
     conjs: List[Expr] = []
-    actives: Dict[syntax.SortDecl, syntax.RelationDecl] = active_rel_by_sort(prog)
+    if actives is None:
+        actives = active_rel_by_sort(prog)
 
     # a conjunct allowing each domain to decrease
     for sort in prog.sorts():

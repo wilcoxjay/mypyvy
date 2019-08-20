@@ -2084,6 +2084,9 @@ class Scope(Generic[B]):
         self._check_duplicate_name(decl.tok, decl.name)
         self.relations[decl.name] = decl
 
+    def get_relation(self, relname: str) -> Optional[RelationDecl]:
+        return self.relations.get(relname)
+
     def add_function(self, decl: FunctionDecl) -> None:
         assert len(self.stack) == 0
 

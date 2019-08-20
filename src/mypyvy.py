@@ -437,7 +437,7 @@ def relax(s: Solver) -> None:
         else:
             assert False, d
 
-    new_decls.append(relaxed_traces.relaxation_action_def(prog, actives))
+    new_decls.append(relaxed_traces.relaxation_action_def(prog, actives=actives, fresh=True))
     print(Program(new_decls))
 
 def parse_args(args: List[str]) -> utils.MypyvyArgs:
