@@ -114,10 +114,6 @@ def is_rel_blocking_relax(trns: Trace, idx: int,
     assert isinstance(res, bool)
     return cast(bool, res)
 
-def relaxation_idx(trns: Trace) -> int:
-    first_relax_idx = first_relax_step_idx(trns)
-    return first_relax_idx
-
 def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
                                        max_conj_size: int, max_free_vars: int) -> List[Tuple[List[syntax.SortedVar],Expr]]:
     first_relax_idx = first_relax_step_idx(trns)
