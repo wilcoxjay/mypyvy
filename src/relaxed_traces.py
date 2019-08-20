@@ -91,15 +91,15 @@ def active_rel(sort: syntax.SortDecl) -> syntax.RelationDecl:
 def active_rel_by_sort(prog: syntax.Program) -> Dict[syntax.SortDecl, syntax.RelationDecl]:
     return dict((sort, active_rel(sort)) for sort in prog.sorts())
 
-def active_var(name: str, sort: syntax.SortDecl) -> syntax.Expr:
-    return syntax.Apply('active_%s' % sort.name, [syntax.Id(None, name)])
+def active_var(name: str, sort_name: str) -> syntax.Expr:
+    return syntax.Apply('active_%s' % sort_name, [syntax.Id(None, name)])
 
 
 def is_rel_blocking_relax(trns: Trace, idx: int,
-                          derived_rel: Tuple[List[Tuple[syntax.SortedVar, syntax.SortDecl]], Expr]) -> bool:
+                          derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]) -> bool:
     # TODO: probably can obtain the sort from the sortedvar when not using scapy
     free_vars, derived_relation_formula = derived_rel
-    free_vars_active_clause = syntax.And(*(active_var(v.name, sort) for (v, sort) in free_vars))
+    free_vars_active_clause = syntax.And(*(active_var(v.name, sort_name) for (v, sort_name) in free_vars))
 
     diffing_formula = syntax.Exists([v for (v, _) in free_vars],
                                     syntax.And(syntax.Old(syntax.And(free_vars_active_clause,
@@ -114,6 +114,9 @@ def is_rel_blocking_relax(trns: Trace, idx: int,
     assert isinstance(res, bool)
     return cast(bool, res)
 
+def relaxation_idx(trns: Trace) -> int:
+    first_relax_idx = first_relax_step_idx(trns)
+    return first_relax_idx
 
 def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
                                        max_conj_size: int, max_free_vars: int) -> List[Tuple[List[syntax.SortedVar],Expr]]:
@@ -192,7 +195,7 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
 
         # if trns.eval_double_vocab(diffing_formula, first_relax_idx):
         if is_rel_blocking_relax(trns, first_relax_idx,
-                                 ([(vars_from_elm[elm], pre_relax_state.element_sort(elm)) for elm in parameter_elements],
+                                 ([(vars_from_elm[elm], pre_relax_state.element_sort(elm).name) for elm in parameter_elements],
                                   derived_relation_formula)):
             # if all(trs.eval_double_vocab(diffing_formula, first_relax_step_idx(trs)) for trs in more_traces):
                 diff_conjunctions.append(([vars_from_elm[elm] for elm in parameter_elements],

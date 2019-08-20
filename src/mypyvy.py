@@ -331,51 +331,64 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
 def trace(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
-    # import pickle
-    # trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
-    # trns2: logic.Trace = pickle.load(open("paxos_trace_2.p", "rb"))
-    #
-    # diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
-    #
-    # print("num candidate relations:", len(diff_conjunctions))
-    # for diffing_conjunction in diff_conjunctions:
-    #     # print("relation:")
-    #     # for conj in diffing_conjunction:
-    #     #     print("\t %s" % str(conj))
-    #     print(diffing_conjunction)
-    #
-    # print()
-    #
-    # derrel_name = syntax.the_program.scope.fresh("nder")
-    # (free_vars, def_expr) = diff_conjunctions[0]
-    # def_axiom = syntax.Forall(free_vars,
-    #                           syntax.Iff(syntax.Apply(derrel_name,
-    #                                                   [syntax.Id(None, v.name) for v in free_vars]), # TODO: extract pattern
-    #                                      def_expr))
-    #
-    # derrel = syntax.RelationDecl(tok=None, name=derrel_name,
-    #                              arity=[safe_cast_sort(var.sort) for var in free_vars],
-    #                              mutable=True, derived=def_axiom, annotations=[])
-    #
-    # # TODO: this irreversibly adds the relation to the context, wrap
-    # derrel.resolve(syntax.the_program.scope)
-    # syntax.the_program.decls.append(derrel) # TODO: hack! because RelationDecl.resolve only adds to prog.scope
-    #
-    # print("Trying derived relation:", derrel)
-    #
-    # # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
-    # new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program, fresh=False)
-    # new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
-    # new_prog.resolve()
-    # print(new_prog)
-    #
-    # syntax.the_program = new_prog
-    #
-    # trace_decl = next(syntax.the_program.traces())
-    # res = bmc_trace(new_prog, trace_decl, s)
-    # print(res)
+    import pickle
+    trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 
-    # assert False
+    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
+
+    print("num candidate relations:", len(diff_conjunctions))
+    for diffing_conjunction in diff_conjunctions:
+        # print("relation:")
+        # for conj in diffing_conjunction:
+        #     print("\t %s" % str(conj))
+        print(diffing_conjunction)
+
+    print()
+
+    derrel_name = syntax.the_program.scope.fresh("nder")
+    (free_vars, def_expr) = diff_conjunctions[0]
+    def_axiom = syntax.Forall(free_vars,
+                              syntax.Iff(syntax.Apply(derrel_name,
+                                                      [syntax.Id(None, v.name) for v in free_vars]), # TODO: extract pattern
+                                         def_expr))
+
+    derrel = syntax.RelationDecl(tok=None, name=derrel_name,
+                                 arity=[safe_cast_sort(var.sort) for var in free_vars],
+                                 mutable=True, derived=def_axiom, annotations=[])
+
+    # TODO: this irreversibly adds the relation to the context, wrap
+    derrel.resolve(syntax.the_program.scope)
+    syntax.the_program.decls.append(derrel) # TODO: hack! because RelationDecl.resolve only adds to prog.scope
+
+    print("Trying derived relation:", derrel)
+
+    # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
+    new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program, fresh=False)
+    new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
+    new_prog.resolve()
+    print(new_prog)
+
+    syntax.the_program = new_prog
+
+    trace_decl = next(syntax.the_program.traces())
+    trns2 = bmc_trace(new_prog, trace_decl, s, logic.check_solver)
+    assert trns2 is not None
+    trns2 = cast(logic.Trace, trns2)
+    print(trns2)
+
+    diff_conjunctions = list(filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(cast(logic.Trace, trns2), relaxed_traces.relaxation_idx(trns2),
+                                                                                      ([(v, str(safe_cast_sort(v.sort))) for v in free_vars], def_expr)),
+                               diff_conjunctions))
+    print("num candidate relations:", len(diff_conjunctions))
+    for diffing_conjunction in diff_conjunctions:
+        # print("relation:")
+        # for conj in diffing_conjunction:
+        #     print("\t %s" % str(conj))
+        print(diffing_conjunction)
+
+    print()
+
+    assert False
 
     ####################################################################################
 
