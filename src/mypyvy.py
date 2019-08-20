@@ -283,6 +283,48 @@ def safe_cast_sort(s: syntax.InferenceSort) -> syntax.Sort:
     assert isinstance(s, syntax.Sort)
     return cast(syntax.Sort, s)
 
+def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl, s: Solver, log: bool=False) -> Optional[logic.Trace]:
+    n_states = len(list(trace.transitions())) + 1
+    if log:
+        print('%s states' % (n_states,))
+
+    keys = ['state%2d' % i for i in range(n_states)]
+
+    for k in keys:
+        s.get_translator(k)  # initialize all the keys before pushing a solver stack frame
+
+    with s:
+        lator = s.get_translator(keys[0])
+        if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
+            for init in prog.inits():
+                s.add(lator.translate_expr(init.expr))
+
+        i = 0
+        for c in trace.components:
+            if isinstance(c, syntax.AssertDecl):
+                if c.expr is None:
+                    if i != 0:
+                        utils.print_error_and_exit(c.tok, 'assert init is only allowed in the first state')
+                    for init in prog.inits():
+                        s.add(s.get_translator(keys[i]).translate_expr(init.expr))
+                else:
+                    s.add(s.get_translator(keys[i]).translate_expr(c.expr))
+            else:
+                te: syntax.TransitionExpr = c.transition
+                if isinstance(te, syntax.AnyTransition):
+                    logic.assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=True)
+                else:
+                    l = []
+                    for call in te.calls:
+                        tid = z3.Bool(logic.get_transition_indicator(str(i), call.target))
+                        l.append(tid)
+                        s.add(tid == translate_transition_call(s, keys[i + 1], keys[i], call))
+                    s.add(z3.Or(*l))
+
+                i += 1
+
+        return logic.check_unsat([], s, keys)
+
 def trace(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
@@ -335,47 +377,9 @@ def trace(s: Solver) -> None:
         utils.logger.always_print('finding traces:')
 
     for trace in prog.traces():
-        n_states = len(list(trace.transitions())) + 1
-        print('%s states' % (n_states,))
-
-        keys = ['state%2d' % i for i in range(n_states)]
-
-        for k in keys:
-            s.get_translator(k)  # initialize all the keys before pushing a solver stack frame
-
-        with s:
-            lator = s.get_translator(keys[0])
-            if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
-                for init in prog.inits():
-                    s.add(lator.translate_expr(init.expr))
-
-            i = 0
-            for c in trace.components:
-                if isinstance(c, syntax.AssertDecl):
-                    if c.expr is None:
-                        if i != 0:
-                            utils.print_error_and_exit(c.tok, 'assert init is only allowed in the first state')
-                        for init in prog.inits():
-                            s.add(s.get_translator(keys[i]).translate_expr(init.expr))
-                    else:
-                        s.add(s.get_translator(keys[i]).translate_expr(c.expr))
-                else:
-                    te: syntax.TransitionExpr = c.transition
-                    if isinstance(te, syntax.AnyTransition):
-                        logic.assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=True)
-                    else:
-                        l = []
-                        for call in te.calls:
-                            tid = z3.Bool(logic.get_transition_indicator(str(i), call.target))
-                            l.append(tid)
-                            s.add(tid == translate_transition_call(s, keys[i + 1], keys[i], call))
-                        s.add(z3.Or(*l))
-
-                    i += 1
-
-            res = logic.check_unsat([], s, keys)
-            if (res is not None) != trace.sat:
-                utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
+        res = bmc_trace(prog, trace, s)
+        if (res is not None) != trace.sat:
+            utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
 
 
 def relax(s: Solver) -> None:
