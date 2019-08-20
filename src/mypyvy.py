@@ -328,7 +328,7 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
 
         return sat_checker(s, keys)
 
-def trace(s: Solver) -> None:
+def sandbox(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
     import pickle
@@ -349,7 +349,8 @@ def trace(s: Solver) -> None:
     (free_vars, def_expr) = diff_conjunctions[0]
     def_axiom = syntax.Forall(free_vars,
                               syntax.Iff(syntax.Apply(derrel_name,
-                                                      [syntax.Id(None, v.name) for v in free_vars]), # TODO: extract pattern
+                                                      [syntax.Id(None, v.name) for v in free_vars]),
+                                         # TODO: extract pattern
                                          def_expr))
 
     derrel = syntax.RelationDecl(tok=None, name=derrel_name,
@@ -358,8 +359,9 @@ def trace(s: Solver) -> None:
 
     # TODO: this irreversibly adds the relation to the context, wrap
     derrel.resolve(syntax.the_program.scope)
-    syntax.the_program.decls.append(derrel) # TODO: hack! because RelationDecl.resolve only adds to prog.scope
-    s.mutable_axioms.extend([derrel.derived_axiom]) # TODO: hack! currently we register these axioms only on solver init
+    syntax.the_program.decls.append(derrel)  # TODO: hack! because RelationDecl.resolve only adds to prog.scope
+    s.mutable_axioms.extend(
+        [derrel.derived_axiom])  # TODO: hack! currently we register these axioms only on solver init
 
     print("Trying derived relation:", derrel)
 
@@ -372,18 +374,20 @@ def trace(s: Solver) -> None:
     syntax.the_program = new_prog
 
     trace_decl = next(syntax.the_program.traces())
-    trns2 = bmc_trace(new_prog, trace_decl, s, lambda s,ks: logic.check_solver(s, ks, minimize=True))
+    trns2 = bmc_trace(new_prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True))
     assert trns2 is not None
     trns2 = cast(logic.Trace, trns2)
     print(trns2)
     print()
-    print(trns2.as_state(relaxed_traces.first_relax_step_idx(trns2)+1).rel_interp[derrel])
+    print(trns2.as_state(relaxed_traces.first_relax_step_idx(trns2) + 1).rel_interp[derrel])
     assert not relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
                                                     ([(v, str(safe_cast_sort(v.sort))) for v in free_vars], def_expr))
 
-    diff_conjunctions = list(filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.relaxation_idx(trns2),
-                                                                                      ([(v, str(safe_cast_sort(v.sort))) for v in free_vars], def_expr)),
-                               diff_conjunctions))
+    diff_conjunctions = list(
+        filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.relaxation_idx(trns2),
+                                                                      ([(v, str(safe_cast_sort(v.sort))) for v in
+                                                                        free_vars], def_expr)),
+               diff_conjunctions))
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
         # print("relation:")
@@ -396,6 +400,9 @@ def trace(s: Solver) -> None:
     assert False
 
     ####################################################################################
+
+def trace(s: Solver) -> None:
+    # sandbox(s)
 
     prog = syntax.the_program
     if len(list(prog.traces())) > 0:
