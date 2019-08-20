@@ -39,7 +39,7 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
     utils.logger.always_print(out.getvalue())
     assert False
 
-def check_solver(s: Solver, keys: List[str], minimize: bool=False
+def check_solver(s: Solver, keys: List[str], minimize: Optional[bool] = None,
                     ) -> Optional[Trace]:
     res = s.check()
     m = None
