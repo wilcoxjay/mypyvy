@@ -331,6 +331,9 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
 def sandbox(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
+
+    qa_graph = syntax.quantifier_alternation_graph(syntax.the_program, [axiom.expr for axiom in syntax.the_program.axioms()])
+
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 

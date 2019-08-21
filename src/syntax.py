@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import z3_utils
+
 from contextlib import contextmanager
 import dataclasses
 from dataclasses import dataclass
@@ -216,7 +218,7 @@ class Z3Translator(object):
             with self.scope.in_scope(expr.binder, [val]):
                 return self.translate_expr(expr.body, old)
         else:
-            assert False
+            assert False, expr
 
 
     def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
@@ -2290,5 +2292,57 @@ class Program(object):
 
     def __str__(self) -> str:
         return '\n'.join(str(d) for d in self.decls)
+
+
+import networkx
+from networkx import DiGraph
+
+# def pnf_quantifiers(expr_in_nnf: Expr):
+#     if isinstance(expr_in_nnf, QuantifierExpr):
+#         contrib = [(expr_in_nnf.quant, v) for v in expr_in_nnf.vs]
+#     else:
+#         contrib = []
+#
+#
+#
+#     return contrib + [pnf_quantifiers(expr.)]
+#
+# def qa_edges_expr(expr: Expr) -> Iterator[Tuple[SortDecl, SortDecl]]:
+#     expr = close_free_vars(None, expr)
+#     qs = pnf_quantifiers(nnf(expr))
+#     assert len(qs) <= 2, "Quantifier structure analysis not supported"
+#     if len(qs) <= 1:
+#         return []
+#
+#     assert all(q[0] == 'FORALL' for q in qs[0])
+#     assert all(q[0] == 'EXISTS' for q in qs[1])
+#
+#     for forall_q in qs[0]:
+#         for exists_q in qs[1]:
+#             yield (forall_q[1], exists_q[1])
+
+# sort = prog.scope.get_sort(str(z3sort))
+
+def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> Sort:
+    return prog.scope.get_sort(str(z3sort))
+
+def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[SortDecl, SortDecl]]:
+    lator = Z3Translator(prog.scope)
+    z3expr = lator.translate_expr(expr)
+    for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
+        print("dep!", ssortz3, tsortz3)
+        yield (sort_from_z3sort(prog, ssortz3),
+               sort_from_z3sort(prog, tsortz3))
+
+
+def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
+    qa_graph = DiGraph()
+
+    for expr in exprs:
+        print("adding edges", list(qa_edges_expr(prog, expr)))
+        qa_graph.add_edges_from(qa_edges_expr(prog, expr))
+
+    return qa_graph
+
 
 the_program: Program = cast(Program, None)
