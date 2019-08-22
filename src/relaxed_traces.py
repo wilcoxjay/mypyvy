@@ -5,6 +5,7 @@ from syntax import Expr
 from utils import Set
 
 import itertools
+import networkx
 from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast
 
 T = TypeVar('T')
@@ -94,6 +95,16 @@ def active_rel_by_sort(prog: syntax.Program) -> Dict[syntax.SortDecl, syntax.Rel
 def active_var(name: str, sort_name: str) -> syntax.Expr:
     return syntax.Apply('active_%s' % sort_name, [syntax.Id(None, name)])
 
+def closing_qa_cycle(prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl],
+                                           existentially_quantified_sorts: List[syntax.SortDecl]) -> bool:
+    qa_graph = prog.decls_quantifier_alternation_graph([])
+    assert networkx.is_directed_acyclic_graph(qa_graph)
+
+    for asort in free_vars_sorts:
+        for esort in existentially_quantified_sorts:
+            qa_graph.add_edge(asort, esort)
+
+    return networkx.is_directed_acyclic_graph(qa_graph)
 
 def is_rel_blocking_relax(trns: Trace, idx: int,
                           derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]) -> bool:
@@ -189,6 +200,11 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             continue
         candidates_cache.add(str(derived_relation_formula))
 
+        if closing_qa_cycle(syntax.the_program, [pre_relax_state.element_sort(elm) for elm in parameter_elements],
+                                                [pre_relax_state.element_sort(elm) for elm in relaxed_elements_relevant]):
+            # adding the derived relation would close a quantifier alternation cycle, discard the candidate
+            continue
+
         # if trns.eval_double_vocab(diffing_formula, first_relax_idx):
         if is_rel_blocking_relax(trns, first_relax_idx,
                                  ([(vars_from_elm[elm], pre_relax_state.element_sort(elm).name) for elm in parameter_elements],
@@ -260,6 +276,7 @@ def relaxation_action_def(prog: syntax.Program,
 
     return syntax.DefinitionDecl(None, public=True, twostate=True, name=decrease_name,
                                            params=[], body=(mods, syntax.And(*conjs)))
+
 
 def replace_relaxation_action(prog: syntax.Program, new_relax_action: syntax.DefinitionDecl) -> syntax.Program:
     old_relaxation_action = prog.scope.get('decrease_domain')

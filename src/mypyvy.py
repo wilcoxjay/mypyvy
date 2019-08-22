@@ -279,10 +279,6 @@ def translate_transition_call(s: Solver, key: str, key_old: str, c: syntax.Trans
     else:
         return body
 
-def safe_cast_sort(s: syntax.InferenceSort) -> syntax.Sort:
-    assert isinstance(s, syntax.Sort)
-    return cast(syntax.Sort, s)
-
 def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
               s: Solver, sat_checker: Callable[[Solver, List[str]], Optional[logic.Trace]],
               log: bool=False
@@ -332,8 +328,6 @@ def sandbox(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
 
-    qa_graph = syntax.quantifier_alternation_graph(syntax.the_program, [axiom.expr for axiom in syntax.the_program.axioms()])
-
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 
@@ -357,7 +351,7 @@ def sandbox(s: Solver) -> None:
                                          def_expr))
 
     derrel = syntax.RelationDecl(tok=None, name=derrel_name,
-                                 arity=[safe_cast_sort(var.sort) for var in free_vars],
+                                 arity=[syntax.safe_cast_sort(var.sort) for var in free_vars],
                                  mutable=True, derived=def_axiom, annotations=[])
 
     # TODO: this irreversibly adds the relation to the context, wrap
@@ -383,11 +377,11 @@ def sandbox(s: Solver) -> None:
     print()
     print(trns2.as_state(relaxed_traces.first_relax_step_idx(trns2) + 1).rel_interp[derrel])
     assert not relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
-                                                    ([(v, str(safe_cast_sort(v.sort))) for v in free_vars], def_expr))
+                                                    ([(v, str(syntax.safe_cast_sort(v.sort))) for v in free_vars], def_expr))
 
     diff_conjunctions = list(
         filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
-                                                                      ([(v, str(safe_cast_sort(v.sort))) for v in
+                                                                      ([(v, str(syntax.safe_cast_sort(v.sort))) for v in
                                                                         free_vars], def_expr)),
                diff_conjunctions))
     print("num candidate relations:", len(diff_conjunctions))

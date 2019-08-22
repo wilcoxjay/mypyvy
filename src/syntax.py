@@ -13,6 +13,7 @@ from typing import List, Union, Tuple, Optional, Dict, Iterator, \
 from typing_extensions import Protocol
 import utils
 import z3
+from networkx import DiGraph
 
 Token = ply.lex.LexToken
 
@@ -968,6 +969,10 @@ class SortedVar(Denotable):
             return self.name
         else:
             return '%s:%s' % (self.name, self.sort)
+
+def safe_cast_sort(s: InferenceSort) -> Sort:
+    assert isinstance(s, Sort)
+    return cast(Sort, s)
 
 
 class Binder(Denotable):
@@ -2245,6 +2250,11 @@ class Program(object):
                isinstance(d, TheoremDecl):
                 yield d
 
+    def decls_quantifier_alternation_graph(self, additional: List[Expr]) -> DiGraph:
+        return quantifier_alternation_graph(self, [axiom.expr for axiom in self.axioms()] +
+                                                  [rel.derived_axiom for rel in self.derived_relations()] +
+                                                  additional)
+
     def automata(self) -> Iterator[AutomatonDecl]:
         for d in self.decls:
             if isinstance(d, AutomatonDecl):
@@ -2294,35 +2304,6 @@ class Program(object):
         return '\n'.join(str(d) for d in self.decls)
 
 
-import networkx
-from networkx import DiGraph
-
-# def pnf_quantifiers(expr_in_nnf: Expr):
-#     if isinstance(expr_in_nnf, QuantifierExpr):
-#         contrib = [(expr_in_nnf.quant, v) for v in expr_in_nnf.vs]
-#     else:
-#         contrib = []
-#
-#
-#
-#     return contrib + [pnf_quantifiers(expr.)]
-#
-# def qa_edges_expr(expr: Expr) -> Iterator[Tuple[SortDecl, SortDecl]]:
-#     expr = close_free_vars(None, expr)
-#     qs = pnf_quantifiers(nnf(expr))
-#     assert len(qs) <= 2, "Quantifier structure analysis not supported"
-#     if len(qs) <= 1:
-#         return []
-#
-#     assert all(q[0] == 'FORALL' for q in qs[0])
-#     assert all(q[0] == 'EXISTS' for q in qs[1])
-#
-#     for forall_q in qs[0]:
-#         for exists_q in qs[1]:
-#             yield (forall_q[1], exists_q[1])
-
-# sort = prog.scope.get_sort(str(z3sort))
-
 def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> Sort:
     return prog.scope.get_sort(str(z3sort))
 
@@ -2330,7 +2311,6 @@ def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[SortDecl, SortDec
     lator = Z3Translator(prog.scope)
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
-        print("dep!", ssortz3, tsortz3)
         yield (sort_from_z3sort(prog, ssortz3),
                sort_from_z3sort(prog, tsortz3))
 
@@ -2339,7 +2319,6 @@ def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
     qa_graph = DiGraph()
 
     for expr in exprs:
-        print("adding edges", list(qa_edges_expr(prog, expr)))
         qa_graph.add_edges_from(qa_edges_expr(prog, expr))
 
     return qa_graph
