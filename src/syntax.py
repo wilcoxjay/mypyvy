@@ -2079,6 +2079,11 @@ class Scope(Generic[B]):
     def get_sort(self, sort: str) -> Optional[SortDecl]:
         return self.sorts.get(sort)
 
+    def get_sort_checked(self, sort: str) -> SortDecl:
+        res = self.get_sort(sort)
+        assert res is not None
+        return res
+
     def add_constant(self, decl: ConstantDecl) -> None:
         assert len(self.stack) == 0
 
@@ -2252,13 +2257,13 @@ class Program(object):
 
     def decls_quantifier_alternation_graph(self, additional: List[Expr]) -> DiGraph:
         res = quantifier_alternation_graph(self, [axiom.expr for axiom in self.axioms()] +
-                                                 [rel.derived_axiom for rel in self.derived_relations()] +
+                                                 [cast(Expr, rel.derived_axiom) for rel in self.derived_relations()] +
                                                  additional)
         for f in self.functions():
             for asort in f.arity:
                 esort = f.sort
-                res.add_edge(self.scope.get_sort(str(asort)).name,
-                                    self.scope.get_sort(str(esort)).name)
+                res.add_edge(self.scope.get_sort_checked(str(asort)).name,
+                             self.scope.get_sort_checked(str(esort)).name)
 
         return res
 
@@ -2311,11 +2316,11 @@ class Program(object):
         return '\n'.join(str(d) for d in self.decls)
 
 
-def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> Sort:
-    return prog.scope.get_sort(str(z3sort))
+def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> SortDecl:
+    return prog.scope.get_sort_checked(str(z3sort))
 
-def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[SortDecl, SortDecl]]:
-    lator = Z3Translator(prog.scope)
+def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[str, str]]:
+    lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope))
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
         yield (sort_from_z3sort(prog, ssortz3).name,
