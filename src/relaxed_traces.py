@@ -102,9 +102,9 @@ def closing_qa_cycle(prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl
 
     for asort in free_vars_sorts:
         for esort in existentially_quantified_sorts:
-            qa_graph.add_edge(asort, esort)
+            qa_graph.add_edge(asort.name, esort.name)
 
-    return networkx.is_directed_acyclic_graph(qa_graph)
+    return not networkx.is_directed_acyclic_graph(qa_graph)
 
 def is_rel_blocking_relax(trns: Trace, idx: int,
                           derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]) -> bool:
@@ -200,10 +200,18 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             continue
         candidates_cache.add(str(derived_relation_formula))
 
+        print()
         if closing_qa_cycle(syntax.the_program, [pre_relax_state.element_sort(elm) for elm in parameter_elements],
                                                 [pre_relax_state.element_sort(elm) for elm in relaxed_elements_relevant]):
+            # TODO: remove
+            print("closing cycle:", derived_relation_formula,
+                  [pre_relax_state.element_sort(elm) for elm in parameter_elements],
+                  [pre_relax_state.element_sort(elm) for elm in relaxed_elements_relevant])
             # adding the derived relation would close a quantifier alternation cycle, discard the candidate
             continue
+        else:
+            # TODO: remove
+            print("not closing cycle:", derived_relation_formula, [pre_relax_state.element_sort(elm) for elm in parameter_elements], [pre_relax_state.element_sort(elm) for elm in relaxed_elements_relevant])
 
         # if trns.eval_double_vocab(diffing_formula, first_relax_idx):
         if is_rel_blocking_relax(trns, first_relax_idx,

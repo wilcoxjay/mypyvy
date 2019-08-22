@@ -2311,8 +2311,8 @@ def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[SortDecl, SortDec
     lator = Z3Translator(prog.scope)
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
-        yield (sort_from_z3sort(prog, ssortz3),
-               sort_from_z3sort(prog, tsortz3))
+        yield (sort_from_z3sort(prog, ssortz3).name,
+               sort_from_z3sort(prog, tsortz3).name) # TODO: consider overriding equals instead of using the names
 
 
 def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
