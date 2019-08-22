@@ -331,16 +331,15 @@ def sandbox(s: Solver) -> None:
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 
-    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
+    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 3, 3)
 
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
         # print("relation:")
         # for conj in diffing_conjunction:
         #     print("\t %s" % str(conj))
-        print(diffing_conjunction)
+        print(diffing_conjunction[1])
 
-    print()
 
     derrel_name = syntax.the_program.scope.fresh("nder")
     (free_vars, def_expr) = diff_conjunctions[0]

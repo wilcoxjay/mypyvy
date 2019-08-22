@@ -2251,9 +2251,16 @@ class Program(object):
                 yield d
 
     def decls_quantifier_alternation_graph(self, additional: List[Expr]) -> DiGraph:
-        return quantifier_alternation_graph(self, [axiom.expr for axiom in self.axioms()] +
-                                                  [rel.derived_axiom for rel in self.derived_relations()] +
-                                                  additional)
+        res = quantifier_alternation_graph(self, [axiom.expr for axiom in self.axioms()] +
+                                                 [rel.derived_axiom for rel in self.derived_relations()] +
+                                                 additional)
+        for f in self.functions():
+            for asort in f.arity:
+                esort = f.sort
+                res.add_edge(self.scope.get_sort(str(asort)).name,
+                                    self.scope.get_sort(str(esort)).name)
+
+        return res
 
     def automata(self) -> Iterator[AutomatonDecl]:
         for d in self.decls:
