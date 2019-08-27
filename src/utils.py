@@ -106,6 +106,7 @@ class MypyvyArgs(object):
     induction_width: int
     all_subclauses: bool
     optimize_ctis: bool
+    json: bool
     subcommand: str
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
@@ -127,7 +128,8 @@ error_count = 0
 def print_error(tok: Optional[Token], msg: str) -> None:
     global error_count
     error_count += 1
-    print('error%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
+    if 'json' not in args or not args.json:
+        print('error%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
     if args.exit_on_error:
         sys.exit(1)
 

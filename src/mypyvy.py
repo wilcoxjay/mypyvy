@@ -3,9 +3,10 @@
 from __future__ import annotations
 import argparse
 from datetime import datetime
+import json
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, TypeVar, Callable, Set, Union
+from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Set, Union
 import z3
 import resource
 
@@ -176,6 +177,87 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
                                                (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
                                               s, [KEY_OLD, KEY_NEW])
 
+JSON = Dict[str, Any]
+def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace], Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> JSON:
+    RT = Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]
+    CT = Dict[syntax.ConstantDecl, str]
+    FT = Dict[syntax.FunctionDecl, List[Tuple[List[str], str]]]
+
+    inv = res[0]
+    trace = res[1]
+    if len(res) == 3:
+        ition = res[2]  # type: ignore
+    else:
+        ition = None
+
+    obj: JSON = {}
+    obj['type'] = 'init' if ition is None else 'cti'
+
+    if ition is not None:
+        obj['transition'] = ition.name
+
+    inv_json: JSON = {}
+    if inv.name is not None:
+        inv_json['name'] = inv.name
+    if inv.tok is not None:
+        inv_json['line_number'] = inv.tok.lineno
+    inv_json['formula'] = str(inv.expr)
+    obj['invariant'] = inv_json
+
+    univs: List[JSON] = []
+    for s, l in trace.univs.items():
+        u: JSON = {}
+        u['sort'] = s.name
+        u['elements'] = l
+        univs.append(u)
+    obj['universes'] = univs
+
+    def state_json(r: RT, c: CT, f: FT) -> JSON:
+        obj: JSON = {}
+
+        rels = []
+        for rd, r_interp in r.items():
+            r_obj: JSON = {}
+            r_obj['name'] = rd.name
+            tuples = []
+            for t, b in r_interp:
+                if b:
+                    tuples.append(t)
+            r_obj['interpretation'] = tuples
+            rels.append(r_obj)
+        obj['relations'] = rels
+
+        consts = []
+        for cd, c_interp in c.items():
+            c_obj: JSON = {}
+            c_obj['name'] = cd.name
+            c_obj['interpretation'] = c_interp
+            consts.append(c_obj)
+        obj['constants'] = consts
+
+        funcs = []
+        for fd, f_interp in f.items():
+            f_obj: JSON = {}
+            f_obj['name'] = fd.name
+            f_obj['interpretation'] = f_interp
+            funcs.append(f_obj)
+        obj['functions'] = funcs
+
+        return obj
+
+    obj['immutable'] = state_json(trace.immut_rel_interps,
+                                  trace.immut_const_interps,
+                                  trace.immut_func_interps)
+
+    muts = []
+    for i in range(len(trace.keys)):
+        muts.append(state_json(trace.rel_interps[i],
+                               trace.const_interps[i],
+                               trace.func_interps[i]))
+    obj['mutable'] = muts
+
+    return obj
+
 @utils.log_start_end_time(utils.logger, logging.INFO)
 def verify(s: Solver) -> None:
     old_count = utils.error_count
@@ -188,8 +270,21 @@ def verify(s: Solver) -> None:
         check_automaton_full(s, a)
 
     if utils.args.automaton != 'only':
-        logic.check_init(s)
-        logic.check_transitions(s)
+        init_res = logic.check_init(s)
+        tr_res = logic.check_transitions(s)
+        res = init_res or tr_res
+        if res is not None and utils.args.json:
+            json_cex: Optional[JSON] = json_counterexample(res)
+        else:
+            json_cex = None
+
+        obj: JSON = {}
+        obj['version'] = 1
+        obj['subcommand'] = utils.args.subcommand
+        obj['is_inductive'] = json_cex is None
+        if json_cex is not None:
+            obj['counterexample'] = json_cex
+        json.dump(obj, sys.stdout, indent=4)
 
     if utils.error_count == old_count:
         utils.logger.always_print('all ok!')
@@ -582,6 +677,9 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                                   help="when verifying inductiveness, check only these transitions")
     verify_subparser.add_argument('--check-invariant', default=None, nargs='+',
                                   help="when verifying inductiveness, check only these invariants")
+    verify_subparser.add_argument('--json', action='store_true',
+                                  help="output machine-parseable verification results in JSON format")
+
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
@@ -622,6 +720,9 @@ def main() -> None:
         fmt = '%(asctime)s %(filename)s:%(lineno)d: %(message)s'
     else:
         fmt = '%(filename)s:%(lineno)d: %(message)s'
+
+    if 'json' in utils.args and utils.args.json:
+        utils.args.log = 'critical'
 
     utils.logger.setLevel(getattr(logging, utils.args.log.upper(), None))
     handler = logging.StreamHandler(stream=sys.stdout)
