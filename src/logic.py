@@ -39,8 +39,7 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
     utils.logger.always_print(out.getvalue())
     assert False
 
-def check_solver(s: Solver, keys: List[str], minimize: Optional[bool] = None,
-                    ) -> Optional[Trace]:
+def check_solver(s: Solver, keys: List[str], minimize: Optional[bool] = None) -> Optional[Trace]:
     res = s.check()
     m = None
 
@@ -1474,7 +1473,7 @@ class Trace(object):
             elif isinstance(expr, syntax.Let):
                 val = eval(expr.val, old)
                 with scope.in_scope(expr.binder, [val]):
-                    return eval(expr.bod, old)
+                    return eval(expr.body, old)
             else:
                 assert False, expr
 
@@ -1599,4 +1598,4 @@ class CexFound(object):
     pass
 class GaveUp(object):
     pass
-5
+

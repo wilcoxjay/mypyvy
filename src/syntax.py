@@ -13,7 +13,7 @@ from typing import List, Union, Tuple, Optional, Dict, Iterator, \
 from typing_extensions import Protocol
 import utils
 import z3
-from networkx import DiGraph
+from networkx import DiGraph  # type: ignore
 
 Token = ply.lex.LexToken
 

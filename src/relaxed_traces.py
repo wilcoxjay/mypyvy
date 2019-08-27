@@ -5,7 +5,7 @@ from syntax import Expr
 from utils import Set
 
 import itertools
-import networkx
+import networkx  # type: ignore
 from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast
 
 T = TypeVar('T')
