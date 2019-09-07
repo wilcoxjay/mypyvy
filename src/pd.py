@@ -20,6 +20,8 @@ from contextlib import nullcontext
 from syntax import *
 from logic import *
 
+import folseparators.separate
+
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
 
 A = TypeVar('A')
@@ -1456,6 +1458,91 @@ class MultiSubclausesMapICE(object):
         vs = [v for v in self.variables[k] if v.name in free]
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
+
+class FOLSeparator(object):
+    '''Class used to call into the folseparators code'''
+    def __init__(self, optimize: bool):
+        self.states: List[PDState] = []
+        # TODO: currently, we get the signature from "the program"
+        prog = syntax.the_program
+        self.sig = folseparators.logic.Signature()
+        def sort_to_name(s: Sort) -> str:
+            # TODO: ask James about this
+            assert isinstance(s, UninterpretedSort)
+            assert s.decl is not None
+            assert s.name == s.decl.name
+            return s.name
+        for d in prog.decls:
+            if isinstance(d, SortDecl):
+                self.sig.sorts.add(d.name)
+            elif isinstance(d, ConstantDecl):
+                self.sig.constants[d.name] = sort_to_name(d.sort)
+            elif isinstance(d, RelationDecl):
+                self.sig.relations[d.name] = tuple(sort_to_name(s) for s in d.arity)
+            elif isinstance(d, FunctionDecl):
+                self.sig.functions[d.name] = (tuple(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
+
+
+    def add_state(self, s: State) -> int:
+        assert s not in self.states # ?
+        i = len(self.states)
+        self.states.append(s)
+        # TODO
+        return i
+
+    def separate(self,
+                 pos: Collection[int] = (),
+                 neg: Collection[int] = (),
+                 imp: Collection[Tuple[int, int]] = (),
+                 soft_pos: Collection[int] = (),
+                 soft_neg: Collection[int] = (),
+                 soft_imp: Collection[Tuple[int, int]] = (),
+    ) -> Optional[Predicate]:
+        return None
+
+    def state_to_model(state: State) -> FOLModel:
+        m = FOLModel(self.sig)
+        for sort in sorted(state.univs.keys(),key=str):
+            for e in state.univs[sort]:
+                m.add_elem(e, sort.name)
+        for cd, e in state.const_interp.items():
+            res = m.add_constant(cd.name, e)
+            assert res
+        for rd in state.rel_interp:
+            for es, v in state.rel_interp[rd]:
+                if v:
+                    m.add_relation(rd.name, es)
+        for fd in state.func_interp:
+            for es, e in state.func_interp[fd]:
+                m.add_function(fd.name, es, e)
+        return m
+
+    def formula_to_predicate(f: folseparators.logic.Formula) -> Predicate:
+
+        def term_to_expr(t: folseparators.logic.Term) -> Expr:
+            if isinstance(t, folseparators.logic.Var):
+                return Id(None, t.var)
+            elif isinstance(t, folseparators.logic.Func):
+                return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
+            else:
+                assert False
+
+        if isinstance(f, folseparators.logic.And):
+            return And(*(formula_to_predicate(a) for a in f.c))
+        elif isinstance(f, folseparators.logic.Or):
+            return Or(*(formula_to_predicate(a) for a in f.c))
+        elif isinstance(f, folseparators.logic.Not):
+            return Not(formula_to_predicate(f.f))
+        elif isinstance(f, folseparators.logic.Equal):
+            return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
+        elif isinstance(f, folseparators.logic.Relation):
+            return AppExpr(None, t.rel, [term_to_expr(a) for a in t.args])
+        elif isinstance(f, folseparators.logic.Exists):
+            return Exists([SortedVar(None, f.var, find_sort(f.sort))], formula_to_predicate(f.f)) # TODO: find_sort?
+        elif isinstance(f, folseparators.logic.Forall):
+            return Forall([SortedVar(None, f.var, find_sort(f.sort))], formula_to_predicate(f.f)) # TODO: find_sort?
+        # TODO: should we resolve, and where?
+        # TODO: collapse multiple forall or exists
 
 
 def forward_explore_marco_turbo(solver: Solver,
