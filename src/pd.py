@@ -20,7 +20,10 @@ from contextlib import nullcontext
 from syntax import *
 from logic import *
 
-import folseparators.separate
+try:
+    import folseparators.separate
+except ModuleNotFoundError:
+    pass
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
 
@@ -1461,16 +1464,13 @@ class MultiSubclausesMapICE(object):
 
 class FOLSeparator(object):
     '''Class used to call into the folseparators code'''
-    def __init__(self, optimize: bool):
+    def __init__(self) -> None:
         self.states: List[PDState] = []
-        # TODO: currently, we get the signature from "the program"
         prog = syntax.the_program
-        self.sig = folseparators.logic.Signature()
+        # TODO: if mypyvy get's a signature class, update this
+        self.sig = folseparators.logic.Signature() # typing: ignore
         def sort_to_name(s: Sort) -> str:
-            # TODO: ask James about this
             assert isinstance(s, UninterpretedSort)
-            assert s.decl is not None
-            assert s.name == s.decl.name
             return s.name
         for d in prog.decls:
             if isinstance(d, SortDecl):
@@ -1483,7 +1483,7 @@ class FOLSeparator(object):
                 self.sig.functions[d.name] = (tuple(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
 
 
-    def add_state(self, s: State) -> int:
+    def add_state(self, s: PDState) -> int:
         assert s not in self.states # ?
         i = len(self.states)
         self.states.append(s)
@@ -1500,8 +1500,9 @@ class FOLSeparator(object):
     ) -> Optional[Predicate]:
         return None
 
-    def state_to_model(state: State) -> FOLModel:
-        m = FOLModel(self.sig)
+    def state_to_model(self, state: State) -> folseparators.logic.Model:
+        # TODO: change to trace + index
+        m = folseparators.logic.Model(self.sig)
         for sort in sorted(state.univs.keys(),key=str):
             for e in state.univs[sort]:
                 m.add_elem(e, sort.name)
@@ -1517,32 +1518,42 @@ class FOLSeparator(object):
                 m.add_function(fd.name, es, e)
         return m
 
-    def formula_to_predicate(f: folseparators.logic.Formula) -> Predicate:
+    def formula_to_predicate(self, f: folseparators.logic.Formula) -> Predicate:
 
-        def term_to_expr(t: folseparators.logic.Term) -> Expr:
-            if isinstance(t, folseparators.logic.Var):
-                return Id(None, t.var)
-            elif isinstance(t, folseparators.logic.Func):
-                return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
+        def helper(f: folseparators.logic.Formula) -> Predicate:
+            def term_to_expr(t: folseparators.logic.Term) -> Expr:
+                if isinstance(t, folseparators.logic.Var):
+                    return Id(None, t.var)
+                elif isinstance(t, folseparators.logic.Func):
+                    return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
+                else:
+                    assert False
+
+            if isinstance(f, folseparators.logic.And):
+                return And(*(helper(a) for a in f.c))
+            elif isinstance(f, folseparators.logic.Or):
+                return Or(*(helper(a) for a in f.c))
+            elif isinstance(f, folseparators.logic.Not):
+                return Not(helper(f.f))
+            elif isinstance(f, folseparators.logic.Equal):
+                return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
+            elif isinstance(f, folseparators.logic.Relation):
+                if len(f.args) == 0:
+                    return Id(None, f.rel)
+                else:
+                    return AppExpr(None, f.rel, [term_to_expr(a) for a in f.args])
+            elif isinstance(f, folseparators.logic.Exists):
+                return Exists([SortedVar(None, f.var, UninterpretedSort(None, f.sort))], helper(f.f))
+            elif isinstance(f, folseparators.logic.Forall):
+                return Forall([SortedVar(None, f.var, UninterpretedSort(None, f.sort))], helper(f.f))
+            # TODO: collapse multiple forall or exists
             else:
                 assert False
 
-        if isinstance(f, folseparators.logic.And):
-            return And(*(formula_to_predicate(a) for a in f.c))
-        elif isinstance(f, folseparators.logic.Or):
-            return Or(*(formula_to_predicate(a) for a in f.c))
-        elif isinstance(f, folseparators.logic.Not):
-            return Not(formula_to_predicate(f.f))
-        elif isinstance(f, folseparators.logic.Equal):
-            return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
-        elif isinstance(f, folseparators.logic.Relation):
-            return AppExpr(None, t.rel, [term_to_expr(a) for a in t.args])
-        elif isinstance(f, folseparators.logic.Exists):
-            return Exists([SortedVar(None, f.var, find_sort(f.sort))], formula_to_predicate(f.f)) # TODO: find_sort?
-        elif isinstance(f, folseparators.logic.Forall):
-            return Forall([SortedVar(None, f.var, find_sort(f.sort))], formula_to_predicate(f.f)) # TODO: find_sort?
-        # TODO: should we resolve, and where?
-        # TODO: collapse multiple forall or exists
+        e = helper(f)
+        e.resolve(syntax.the_program.scope, BoolSort)
+        return e
+
 
 
 def forward_explore_marco_turbo(solver: Solver,
