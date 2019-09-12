@@ -202,12 +202,11 @@ def cheap_check_implication(
 
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
 def eval_in_state(s: Optional[Solver], m: PDState, p: Expr) -> bool:
-    if s is None:
-        s = get_solver()
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
-        cache[k] = eval_clause_in_state(p, m)
+        # cache[k] = eval_clause_in_state(p, m) # TODO: eliminate eval_clause_in_state from pd.py
+        cache[k] = m.as_state(0).eval(p)
         # if m.z3model is not None:
         #     try:
         #         cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
@@ -247,6 +246,19 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
         s = Trace.from_z3([KEY_ONE], z3m)
         _cache_initial.append(s)
         print(f'Found new initial state violating {p}:')
+        print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+        return s
+    return None
+
+
+def check_safe(solver: Solver, p: Expr) -> Optional[Trace]:
+    '''Used only in fol_ice, not cached'''
+    prog = syntax.the_program
+    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    z3m = check_implication(solver, [p], safety)
+    if z3m is not None:
+        s = Trace.from_z3([KEY_ONE], z3m)
+        print(f'Found bad state satisfying {p}:')
         print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
         return s
     return None
@@ -1464,9 +1476,12 @@ class MultiSubclausesMapICE(object):
 
 class FOLSeparator(object):
     '''Class used to call into the folseparators code'''
-    def __init__(self) -> None:
-        self.states: List[PDState] = []
+    def __init__(self,
+                 states: List[PDState],  # assumed to only grow
+    ) -> None:
         prog = syntax.the_program
+        self.states = states
+        self.ids: Dict[int, int] = {}
         # TODO: if mypyvy get's a signature class, update this
         self.sig = folseparators.logic.Signature() # typing: ignore
         def sort_to_name(s: Sort) -> str:
@@ -1481,14 +1496,15 @@ class FOLSeparator(object):
                 self.sig.relations[d.name] = tuple(sort_to_name(s) for s in d.arity)
             elif isinstance(d, FunctionDecl):
                 self.sig.functions[d.name] = (tuple(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
+        self.separator = folseparators.separate.SeparatorReductionV3(self.sig) # typing: ignore
 
-
-    def add_state(self, s: PDState) -> int:
-        assert s not in self.states # ?
-        i = len(self.states)
-        self.states.append(s)
-        # TODO
-        return i
+    def _state_id(self, i: int) -> int:
+        assert 0 <= i < len(self.states)
+        if i not in self.ids:
+            # add a new state
+            m = self.state_to_model(self.states[i])
+            self.ids[i] = self.separator.add_model(m)
+        return self.ids[i]
 
     def separate(self,
                  pos: Collection[int] = (),
@@ -1498,23 +1514,50 @@ class FOLSeparator(object):
                  soft_neg: Collection[int] = (),
                  soft_imp: Collection[Tuple[int, int]] = (),
     ) -> Optional[Predicate]:
-        return None
+        mtimer = folseparators.timer.UnlimitedTimer()
+        timer = folseparators.timer.UnlimitedTimer()
+        with timer:
+            f = self.separator.separate(
+                pos=[self._state_id(i) for i in pos],
+                neg=[self._state_id(i) for i in neg],
+                imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
+                soft_pos=[self._state_id(i) for i in soft_pos],
+                soft_neg=[self._state_id(i) for i in soft_neg],
+                soft_imp=[(self._state_id(i), self._state_id(j)) for i, j in soft_imp],
+                max_depth=3,
+                timer=timer,
+                matrix_timer=mtimer,
+            )
+        if f is None:
+            return None
+        else:
+            p = self.formula_to_predicate(f)
+            for i in pos:
+               assert eval_in_state(None, self.states[i], p)
+            for i in neg:
+               assert not eval_in_state(None, self.states[i], p)
+            for i, j in imp:
+               assert (not eval_in_state(None, self.states[i], p)) or eval_in_state(None, self.states[j], p)
+            return p
 
-    def state_to_model(self, state: State) -> folseparators.logic.Model:
-        # TODO: change to trace + index
+
+    def state_to_model(self, t: Trace, i: int = 0) -> folseparators.logic.Model:
+        relations = dict(itertools.chain(t.immut_rel_interps.items(), t.rel_interps[i].items()))
+        constants = dict(itertools.chain(t.immut_const_interps.items(), t.const_interps[i].items()))
+        functions = dict(itertools.chain(t.immut_func_interps.items(), t.func_interps[i].items()))
         m = folseparators.logic.Model(self.sig)
-        for sort in sorted(state.univs.keys(),key=str):
-            for e in state.univs[sort]:
+        for sort in sorted(t.univs.keys(),key=str):
+            for e in t.univs[sort]:
                 m.add_elem(e, sort.name)
-        for cd, e in state.const_interp.items():
+        for cd, e in constants.items():
             res = m.add_constant(cd.name, e)
             assert res
-        for rd in state.rel_interp:
-            for es, v in state.rel_interp[rd]:
+        for rd in relations:
+            for es, v in relations[rd]:
                 if v:
                     m.add_relation(rd.name, es)
-        for fd in state.func_interp:
-            for es, e in state.func_interp[fd]:
+        for fd in functions:
+            for es, e in functions[fd]:
                 m.add_function(fd.name, es, e)
         return m
 
@@ -1543,10 +1586,19 @@ class FOLSeparator(object):
                 else:
                     return AppExpr(None, f.rel, [term_to_expr(a) for a in f.args])
             elif isinstance(f, folseparators.logic.Exists):
-                return Exists([SortedVar(None, f.var, UninterpretedSort(None, f.sort))], helper(f.f))
+                body = helper(f.f)
+                v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
+                if isinstance(body, QuantifierExpr) and body.quant == 'EXISTS':
+                    return Exists([v] + body.binder.vs, body.body)
+                else:
+                    return Exists([v], body)
             elif isinstance(f, folseparators.logic.Forall):
-                return Forall([SortedVar(None, f.var, UninterpretedSort(None, f.sort))], helper(f.f))
-            # TODO: collapse multiple forall or exists
+                body = helper(f.f)
+                v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
+                if isinstance(body, QuantifierExpr) and body.quant == 'FORALL':
+                    return Forall([v] + body.binder.vs, body.body)
+                else:
+                    return Forall([v], body)
             else:
                 assert False
 
@@ -6670,6 +6722,51 @@ def enumerate_reachable_states(s: Solver) -> None:
             print('encountered unknown! all bets are off.')
 
 
+def fol_ice(solver: Solver) -> None:
+    prog = syntax.the_program
+    global cache_path
+    cache_path = Path(utils.args.filename).with_suffix('.cache')
+    load_caches()
+    # invs = list(chain(*(as_clauses(inv.expr) for inv in prog.invs())))
+    #print('Trying to FOL-ICE learn the following invariant:')
+    #for p in sorted(invs, key=lambda x: len(str(x))):
+    #    print(p)
+    #print('='*80)
+
+    states: List[PDState] = []
+    def add_state(s: PDState) -> int:
+        i = len(states)
+        states.append(s)
+        return i
+
+    mp = FOLSeparator(states)
+    pos: List[int] = []
+    neg: List[int] = []
+    imp: List[Tuple[int, int]] = []
+    while True:
+        q = mp.separate(pos=pos, neg=neg, imp=imp)
+        if q is None:
+            print(f'FOLSeparator returned none')
+            return
+        print(f'FOLSeparator returned the following formula:\n{q}')
+        # qs = list(as_clauses(q))
+        res_imp = check_two_state_implication(solver, [q], q)
+        if res_imp is not None:
+            s1, s2 = res_imp
+            imp.append((add_state(s1), add_state(s2)))
+            continue
+        res_init = check_initial(solver, q)
+        if res_init is not None:
+            pos.append(add_state(res_init))
+            continue
+        res_safe = check_safe(solver, q)
+        if res_safe is not None:
+            neg.append(add_state(res_safe))
+            continue
+        print(f'Inductive invariant found!')
+        break
+
+
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
 
@@ -6714,6 +6811,12 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s = subparsers.add_parser('pd-primal-dual-houdini', help='Run the "Primal-Dual" algorithm')
     s.set_defaults(main=primal_dual_houdini)
     result.append(s)
+
+    # primal_dual_houdini
+    s = subparsers.add_parser('pd-fol-ice', help='Run ICE learning with folseparators')
+    s.set_defaults(main=fol_ice)
+    result.append(s)
+
 
     for s in result:
         s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
