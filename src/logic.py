@@ -1438,7 +1438,7 @@ class Trace(object):
                 return _lookup_assoc(table, args)
             elif isinstance(expr, syntax.QuantifierExpr):
                 assert expr.quant in ['FORALL', 'EXISTS']
-                p = all if expr.quant == 'AND' else any
+                p = all if expr.quant == 'FORALL' else any
                 # TODO: replaced the following line due to pickling non-uniqueness of SortDecl
                 # doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
                 univs_from_str = dict((s.name, univ) for (s, univ) in self.univs.items())
@@ -1546,7 +1546,7 @@ class State(object):
             return _lookup_assoc(table, args)
         elif isinstance(expr, syntax.QuantifierExpr):
             assert expr.quant in ['FORALL', 'EXISTS']
-            p = all if expr.quant == 'AND' else any
+            p = all if expr.quant == 'FORALL' else any
             # TODO: replaced the following line due to pickling non-uniqueness of SortDecl
             # doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
             univs_from_str = dict((s.name, univ) for (s, univ) in self.univs.items())
