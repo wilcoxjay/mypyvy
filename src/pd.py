@@ -1496,7 +1496,7 @@ class FOLSeparator(object):
                 self.sig.relations[d.name] = tuple(sort_to_name(s) for s in d.arity)
             elif isinstance(d, FunctionDecl):
                 self.sig.functions[d.name] = (tuple(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
-        self.separator = folseparators.separate.SeparatorReductionV3(self.sig) # typing: ignore
+        self.separator = folseparators.separate.GeneralizedSeparator(self.sig, logic=utils.args.logic) # typing: ignore
 
     def _state_id(self, i: int) -> int:
         assert 0 <= i < len(self.states)
@@ -1524,7 +1524,7 @@ class FOLSeparator(object):
                 soft_pos=[self._state_id(i) for i in soft_pos],
                 soft_neg=[self._state_id(i) for i in soft_neg],
                 soft_imp=[(self._state_id(i), self._state_id(j)) for i, j in soft_imp],
-                max_depth=3,
+                max_depth=100,
                 timer=timer,
                 matrix_timer=mtimer,
             )
@@ -6815,6 +6815,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     # primal_dual_houdini
     s = subparsers.add_parser('pd-fol-ice', help='Run ICE learning with folseparators')
     s.set_defaults(main=fol_ice)
+    s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     result.append(s)
 
 
