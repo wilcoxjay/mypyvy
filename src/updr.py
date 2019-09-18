@@ -400,7 +400,7 @@ class Frames(object):
     def record_state(self, m: Trace) -> None:
         self.state_count += 1
         utils.logger.info(f'learned state {self.state_count}')
-        utils.logger.info(str(m))
+        utils.logger.debug(str(m))
 
     def record_predicate(self, e: Expr) -> None:
         for x in self.predicates:
