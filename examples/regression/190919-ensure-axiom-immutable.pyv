@@ -1,0 +1,8 @@
+# MYPYVY: typecheck --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+sort node
+sort round
+
+mutable relation left_round(node, round)
+
+axiom exists node0, node1, node2, round1. node0 != node1 & node0 != node2 & node1 != node2 & !left_round(node2, round1)
