@@ -419,9 +419,45 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
 
         return sat_checker(s, keys)
 
+
+def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> syntax.TraceDecl:
+    import xml.dom.minidom # type: ignore
+    collection = xml.dom.minidom.parse("paxos_derived_trace.xml").documentElement
+
+    components = []
+
+    for elm in reversed(collection.childNodes):
+        if isinstance(elm, xml.dom.minidom.Text):
+            continue
+        if elm.tagName == 'state':
+            diagram = parser.parse_expr(elm.childNodes[0].data)
+            print(diagram)
+            print(type(diagram.body))
+            diagram.resolve(prog.scope, syntax.BoolSort)
+            assert False
+            c = syntax.AssertDecl(tok=None, expr=diagram)
+            components.append(c)
+        elif elm.tagName == 'action':
+            action_name = elm.childNodes[0].data.split()[0]
+            c = syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(tok=None, target=action_name, args=None)]))
+            components.append(c)
+            print('action')
+        else:
+            assert False, "unknown xml tagName"
+
+    trace_decl = syntax.TraceDecl(tok=None, components=components, sat=True)
+    migrated_trace = bmc_trace(prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True), log=False)
+    assert migrated_trace is not None
+    return migrated_trace
+
+
 def sandbox(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
+
+    e = parser.parse_expr('exists node0, node1, node2, round1. node0 != node1 & node0 != node2 & node1 != node2 & !left_round(node2, round1)')
+    e.resolve(syntax.the_program.scope, syntax.BoolSort)
+    assert False
 
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
@@ -465,7 +501,10 @@ def sandbox(s: Solver) -> None:
 
     trace_decl = next(syntax.the_program.traces())
     trns2_o = bmc_trace(new_prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True))
-    assert trns2_o is not None
+    assert trns2_o is None
+
+    migrated_trace = load_relaxed_trace_from_updr_cex(syntax.the_program, s)
+
     trns2 = cast(logic.Trace, trns2_o)
     print(trns2)
     print()
