@@ -420,11 +420,11 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
         return sat_checker(s, keys)
 
 
-def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> syntax.TraceDecl:
+def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
     import xml.dom.minidom # type: ignore
     collection = xml.dom.minidom.parse("paxos_derived_trace.xml").documentElement
 
-    components = []
+    components: List[syntax.TraceComponent] = []
 
     for elm in reversed(collection.childNodes):
         if isinstance(elm, xml.dom.minidom.Text):
