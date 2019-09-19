@@ -97,6 +97,8 @@ class SortInferencePlaceholder(object):
         assert other.parent is None
         assert self.sort is None
         assert other.sort is None
+        if self == other:
+            return
 
         other.parent = self
         self.backpatches.extend(other.backpatches)
