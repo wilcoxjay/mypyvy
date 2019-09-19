@@ -891,6 +891,12 @@ class AppExpr(Expr):
             utils.print_error(self.tok, 'Only relations, functions, or definitions can be applied, not %s' % self.callee)
             return sort  # bogus
 
+        if ((isinstance(d, RelationDecl) or isinstance(d, FunctionDecl))
+            and d.mutable and scope.in_zero_state_context):
+            name = 'relation' if isinstance(d, RelationDecl) else 'function'
+            utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
+            # note that we don't return here. typechecking can continue.
+
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
             utils.print_error(self.tok, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(self.args, d.arity):
@@ -1064,6 +1070,12 @@ class Id(Expr):
 
         if isinstance(d, FunctionDecl):
             utils.print_error(self.tok, 'Function %s must be applied to arguments' % (self.name,))
+            return sort  # bogus
+
+        if ((isinstance(d, RelationDecl) or isinstance(d, ConstantDecl))
+            and d.mutable and scope.in_zero_state_context):
+            name = 'relation' if isinstance(d, RelationDecl) else 'constant'
+            utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
             return sort  # bogus
 
         if isinstance(d, RelationDecl):
@@ -1658,7 +1670,8 @@ class AxiomDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
-        self.expr.resolve(scope, BoolSort)
+        with scope.zero_state():
+            self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
         return 'AxiomDecl(tok=None, name=%s, expr=%s)' % (
@@ -2031,6 +2044,7 @@ class Scope(Generic[B]):
         self.definitions: Dict[str, DefinitionDecl] = {}
         self.phases: Dict[str, PhaseDecl] = {}
         self.in_two_state_context = False
+        self.in_zero_state_context = False
         self.in_old_context = False
         self.in_phase_context = False
 
@@ -2144,10 +2158,20 @@ class Scope(Generic[B]):
     def two_state(self, twostate: bool) -> Iterator[None]:
         if twostate:
             assert not self.in_two_state_context
+            assert not self.in_zero_state_context
             self.in_two_state_context = True
         yield None
         if twostate:
             self.in_two_state_context = False
+
+    @contextmanager
+    def zero_state(self) -> Iterator[None]:
+        assert not self.in_zero_state_context
+        assert not self.in_two_state_context
+        self.in_zero_state_context = True
+        yield None
+        assert self.in_zero_state_context
+        self.in_zero_state_context = False
 
     @contextmanager
     def in_phase(self) -> Iterator[None]:
