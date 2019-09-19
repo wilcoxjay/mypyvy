@@ -284,7 +284,7 @@ def verify(s: Solver) -> None:
         obj['is_inductive'] = json_cex is None
         if json_cex is not None:
             obj['counterexample'] = json_cex
-        json.dump(obj, sys.stdout, indent=4)
+            json.dump(obj, sys.stdout, indent=4)
 
     if utils.error_count == old_count:
         utils.logger.always_print('all ok!')
