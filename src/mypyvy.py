@@ -431,10 +431,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> syntax.TraceDe
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
-            print(diagram)
-            print(type(diagram.body))
             diagram.resolve(prog.scope, syntax.BoolSort)
-            assert False
             c = syntax.AssertDecl(tok=None, expr=diagram)
             components.append(c)
         elif elm.tagName == 'action':
@@ -454,11 +451,6 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> syntax.TraceDe
 def sandbox(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
-
-    e = parser.parse_expr('exists node0, node1, node2, round1. node0 != node1 & node0 != node2 & node1 != node2 & !left_round(node2, round1)')
-    e.resolve(syntax.the_program.scope, syntax.BoolSort)
-    assert False
-
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 
