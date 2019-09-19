@@ -81,6 +81,7 @@ class MypyvyArgs(object):
     query_time: bool
     print_counterexample: bool
     print_cmdline: bool
+    print_exit_code: bool
     simplify_diagram: bool
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
@@ -131,11 +132,11 @@ def print_error(tok: Optional[Token], msg: str) -> None:
     if 'json' not in args or not args.json:
         print('error%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
     if args.exit_on_error:
-        sys.exit(1)
+        exit(1)
 
 def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
     print_error(tok, msg)
-    sys.exit(1)
+    exit(1)
 
 def print_warning(tok: Optional[Token], msg: str) -> None:
     print('warning%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
@@ -273,3 +274,8 @@ class YesNoAction(argparse.Action):
         assert option_string is not None, 'Cannot use Flag as a positional argument'
         assert option_string in [self._yes, self._no]
         setattr(namespace, self.dest, option_string == self._yes)
+
+def exit(returncode: int) -> NoReturn:
+    if args.print_exit_code:
+        print(f'mypyvy exiting with status {returncode}')
+    sys.exit(returncode)

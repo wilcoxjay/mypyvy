@@ -642,6 +642,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the caches already contain all the answers')
         s.add_argument('--cache-only-discovered', action=utils.YesNoAction, default=False,
                        help='assert that the discovered states already contain all the answers')
+        s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
+                       help='print the exit code before exiting (good for regression testing)o')
 
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
@@ -756,7 +758,7 @@ def main() -> None:
 
         if utils.error_count > pre_parse_error_count:
             utils.logger.always_print('program has syntax errors.')
-            sys.exit(1)
+            utils.exit(1)
 
         if utils.args.print_program_repr:
             utils.logger.always_print(repr(prog))
@@ -768,7 +770,7 @@ def main() -> None:
         prog.resolve()
         if utils.error_count > pre_resolve_error_count:
             utils.logger.always_print('program has resolution errors.')
-            sys.exit(1)
+            utils.exit(1)
 
         syntax.the_program = prog
 
@@ -786,7 +788,7 @@ def main() -> None:
         if utils.args.ipython:
             ipython(s)
 
-    sys.exit(1 if utils.error_count > 0 else 0)
+    utils.exit(1 if utils.error_count > 0 else 0)
 
 
 if __name__ == '__main__':
