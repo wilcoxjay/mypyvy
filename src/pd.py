@@ -74,7 +74,7 @@ def load_caches() -> None:
                 m, p = k
                 assert v == all(eval_clause_in_state(clause, m) for clause in as_clauses(p)), f'{p}\n=========\n{m}'
                 # assert v == cheap_check_implication([m.as_onestate_formula(0)], [p]), f'{p}\n=========\n{m}'
-            sys.exit(0)
+            utils.exit(0)
 
 # signal handler to dump caches
 import signal
