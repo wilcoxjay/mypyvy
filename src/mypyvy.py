@@ -432,12 +432,10 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
             diagram.resolve(prog.scope, syntax.BoolSort)
-            c = syntax.AssertDecl(tok=None, expr=diagram)
-            components.append(c)
+            components.append(syntax.AssertDecl(tok=None, expr=diagram))
         elif elm.tagName == 'action':
             action_name = elm.childNodes[0].data.split()[0]
-            c = syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(tok=None, target=action_name, args=None)]))
-            components.append(c)
+            components.append(syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(tok=None, target=action_name, args=None)])))
             print('action')
         else:
             assert False, "unknown xml tagName"
