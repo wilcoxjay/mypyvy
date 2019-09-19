@@ -1,4 +1,4 @@
-# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline
+# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
 
 sort T
 definition all_equal(t: T) = (forall Y. t = Y)
