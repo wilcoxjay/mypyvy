@@ -84,6 +84,12 @@ def first_relax_step_idx(trns: Trace) -> int:
     assert first_relax_idx + 1 < len(trns.keys)
     return first_relax_idx
 
+def all_relax_step_idx(trns: Trace) -> List[int]:
+    res = [i for (i,x) in enumerate(trns.transitions) if x == 'decrease_domain']
+    assert len(res) > 0
+    assert all(i + 1 < len(trns.keys) for i in res)
+    return res
+
 def active_rel(sort: syntax.SortDecl) -> syntax.RelationDecl:
     res = syntax.the_program.scope.get_relation('active_%s' % sort.name)
     assert res is not None
@@ -106,9 +112,16 @@ def closing_qa_cycle(prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl
 
     return not networkx.is_directed_acyclic_graph(qa_graph)
 
-def is_rel_blocking_relax(trns: Trace, idx: int,
+def is_rel_blocking_relax(trns: Trace,
                           derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]) -> bool:
-    # TODO: probably can obtain the sort from the sortedvar when not using scapy
+    relax_idxs = all_relax_step_idx(trns)
+    assert len(relax_idxs) > 0
+    return any(is_rel_blocking_relax_step(trns, idx, derived_rel)
+               for idx in relax_idxs)
+
+def is_rel_blocking_relax_step(trns: Trace, idx: int,
+                          derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]) -> bool:
+    # TODO: probably can obtain the sort from the sortedvar when not using pickle
     free_vars, derived_relation_formula = derived_rel
     free_vars_active_clause = syntax.And(*(active_var(v.name, sort_name) for (v, sort_name) in free_vars))
 
@@ -206,7 +219,7 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             continue
 
         # if trns.eval_double_vocab(diffing_formula, first_relax_idx):
-        if is_rel_blocking_relax(trns, first_relax_idx,
+        if is_rel_blocking_relax_step(trns, first_relax_idx,
                                  ([(vars_from_elm[elm], pre_relax_state.element_sort(elm).name) for elm in parameter_elements],
                                   derived_relation_formula)):
             # if all(trs.eval_double_vocab(diffing_formula, first_relax_step_idx(trs)) for trs in more_traces):

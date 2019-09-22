@@ -480,7 +480,7 @@ def sandbox(s: Solver) -> None:
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 
-    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
+    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 2, 3)
 
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
@@ -517,30 +517,48 @@ def sandbox(s: Solver) -> None:
 
     syntax.the_program = new_prog
 
-    trace_decl = next(syntax.the_program.traces())
-    trns2_o = bmc_trace(new_prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True))
-    assert trns2_o is None
+    # TODO: recover this, making sure the candidate blocks the trace
+    # trace_decl = next(syntax.the_program.traces())
+    # trns2_o = bmc_trace(new_prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True))
+    # assert trns2_o is None
 
-    migrated_trace = load_relaxed_trace_from_updr_cex(syntax.the_program, s)
+    # migrated_trace = load_relaxed_trace_from_updr_cex(syntax.the_program, s)
+    import pickle
+    trns2_o = pickle.load(open("migrated_trace.p", "rb"))
 
     trns2 = cast(logic.Trace, trns2_o)
     print(trns2)
     print()
-    print(trns2.as_state(relaxed_traces.first_relax_step_idx(trns2) + 1).rel_interp[derrel])
-    assert not relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
+    assert not relaxed_traces.is_rel_blocking_relax(trns2,
                                                     ([(v, str(syntax.safe_cast_sort(v.sort))) for v in free_vars], def_expr))
 
+    # for candidate in diff_conjunctions:
+    #     print("start checking")
+    #     print()
+    #     if str(candidate[1]) == 'exists v0:node. member(v0, v1) & left_round(v0, v2) & !vote(v0, v2, v3) & active_node(v0)':
+    #         print(candidate)
+    #         assert False
+    #         resush = relaxed_traces.is_rel_blocking_relax_step(trns2, 11,
+    #                                                       ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
+    #                                                        candidate[1]))
+    #         # res2 = trns2.as_state(0).eval(syntax.And(*[i.expr for i in syntax.the_program.inits()]))
+    #
+    #         # resush = trns2.as_state(7).eval(syntax.And(*[i.expr for i in syntax.the_program.inits()]))
+    #         print(resush)
+    #         assert False
+    # assert False
+
     diff_conjunctions = list(
-        filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
-                                                                      ([(v, str(syntax.safe_cast_sort(v.sort))) for v in
-                                                                        free_vars], def_expr)),
+        filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2,
+                                                                      ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
+                                                                       candidate[1])),
                diff_conjunctions))
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
         # print("relation:")
         # for conj in diffing_conjunction:
         #     print("\t %s" % str(conj))
-        print(diffing_conjunction)
+        print(diffing_conjunction[1])
 
     print()
 
