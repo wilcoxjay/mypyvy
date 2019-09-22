@@ -1056,6 +1056,9 @@ class QuantifierExpr(Expr):
     def free_ids(self) -> List[str]:
         return [x for x in self.body.free_ids() if not any(v.name == x for v in self.binder.vs)]
 
+    def vs(self) -> List[SortedVar]:
+        return self.binder.vs
+
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     def __init__(self, tok: Optional[Token], name: str) -> None:

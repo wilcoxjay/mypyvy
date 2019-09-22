@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Set, Union
+from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Set, Union, Sequence
 import z3
 import resource
 
@@ -426,23 +426,51 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
 
     components: List[syntax.TraceComponent] = []
 
-    for elm in reversed(collection.childNodes):
+    xml_decls = reversed(collection.childNodes)
+    seen_first = False
+
+    for elm in xml_decls:
         if isinstance(elm, xml.dom.minidom.Text):
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
             diagram.resolve(prog.scope, syntax.BoolSort)
-            components.append(syntax.AssertDecl(tok=None, expr=diagram))
+            assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
+            active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
+
+            if not seen_first:
+                # restrict the domain to be subdomain of the diagram's existentials
+                seen_first = True
+                import itertools # type: ignore
+                for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort): # TODO; need to sort first
+                    free_var = syntax.SortedVar(None, syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
+                    consts = list(filter(lambda c: c.sort == sort, prog.constants())) # TODO: diagram simplification omits them from the exists somewhere
+                    els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
+                    els = list(vars)
+                    els += consts
+                    restrict_domain = syntax.Forall([free_var],
+                                                    syntax.Or(*(syntax.Eq(syntax.Id(None, free_var.name),
+                                                                          syntax.Id(None, v.name))
+                                                                for v in els)))
+                    active_clauses += [restrict_domain]
+
+            diagram_active = syntax.Exists(diagram.vs(),
+                                           syntax.And(diagram.body, *active_clauses))
+            diagram_active.resolve(prog.scope, syntax.BoolSort)
+
+            components.append(syntax.AssertDecl(tok=None, expr=diagram_active))
         elif elm.tagName == 'action':
             action_name = elm.childNodes[0].data.split()[0]
             components.append(syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(tok=None, target=action_name, args=None)])))
-            print('action')
         else:
             assert False, "unknown xml tagName"
 
     trace_decl = syntax.TraceDecl(tok=None, components=components, sat=True)
     migrated_trace = bmc_trace(prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True), log=False)
+
     assert migrated_trace is not None
+    import pickle
+    pickle.dump(migrated_trace, open("migrated_trace.p", "wb"))
     return migrated_trace
 
 
