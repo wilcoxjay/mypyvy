@@ -104,6 +104,7 @@ class MypyvyArgs(object):
     cpus: Optional[int]
     restarts: bool
     induction_width: int
+    logic: str
     all_subclauses: bool
     optimize_ctis: bool
     json: bool

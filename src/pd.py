@@ -21,7 +21,7 @@ from syntax import *
 from logic import *
 
 try:
-    import folseparators.separate
+    import separators
 except ModuleNotFoundError:
     pass
 
@@ -1118,7 +1118,7 @@ class SubclausesMapTurbo(object):
         self.n = len(self.literals)
         self.all_n = set(range(self.n))  # used in complement fairly frequently
         self.optimize = optimize
-        self.solver = z3.Optimize() if optimize else z3.Solver()  # type: ignore # TODO - fix typing
+        self.solver: Union[z3.Optimize, z3.Solver] = z3.Optimize() if optimize else z3.Solver()
         self.lit_vs = [z3.Bool(f'lit_{i}') for i in range(self.n)]
         self.state_vs: List[z3.ExprRef] = []
         self.predicate_vs: List[z3.ExprRef] = []
@@ -1258,7 +1258,7 @@ class SubclausesMapTurbo(object):
             (self.predicate_vs[i] for i in sorted(soft_ps)),
         ))
         if len(soft) > 0:
-            assert self.optimize
+            assert self.optimize and isinstance(self.solver, z3.Optimize)
             self.solver.push()
             for c in soft:
                 self.solver.add_soft(c)
@@ -1324,7 +1324,7 @@ class MultiSubclausesMapICE(object):
         self.n = [len(self.literals[k]) for k in range(self.m)]
         self.all_n = [set(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
         self.optimize = optimize
-        self.solver = z3.Optimize() if optimize else z3.Solver()  # type: ignore # TODO - fix typing
+        self.solver: Union[z3.Optimize, z3.Solver] = z3.Optimize() if optimize else z3.Solver()
         self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)]
         self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
@@ -1415,7 +1415,7 @@ class MultiSubclausesMapICE(object):
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(imp)),
-            (self.predicate_vs[i] for i in sorted(ps)),
+            *(self.predicate_vs[i] for i in sorted(ps)),
         ))
         soft = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos)),
@@ -1424,16 +1424,17 @@ class MultiSubclausesMapICE(object):
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(soft_imp)),
-            (self.predicate_vs[i] for i in sorted(soft_ps)),
+            *(self.predicate_vs[i] for i in sorted(soft_ps)),
         ))
         self.solver.push()
         for c in sep:
             self.solver.add(c)
         if len(soft) > 0:
-            assert self.optimize
-            for c in soft:
-                self.solver.add_soft(c)
+            assert self.optimize and isinstance(self.solver, z3.Optimize)
+            for cc in soft:
+                self.solver.add_soft(cc)
         if self.optimize:
+            assert isinstance(self.solver, z3.Optimize)
             # optimize for smaller clauses
             for v in chain(*self.lit_vs):
                 self.solver.add_soft(z3.Not(v))
@@ -1483,7 +1484,7 @@ class FOLSeparator(object):
         self.states = states
         self.ids: Dict[int, int] = {}
         # TODO: if mypyvy get's a signature class, update this
-        self.sig = folseparators.logic.Signature() # typing: ignore
+        self.sig = separators.logic.Signature()
         def sort_to_name(s: Sort) -> str:
             assert isinstance(s, UninterpretedSort)
             return s.name
@@ -1493,10 +1494,10 @@ class FOLSeparator(object):
             elif isinstance(d, ConstantDecl):
                 self.sig.constants[d.name] = sort_to_name(d.sort)
             elif isinstance(d, RelationDecl):
-                self.sig.relations[d.name] = tuple(sort_to_name(s) for s in d.arity)
+                self.sig.relations[d.name] = list(sort_to_name(s) for s in d.arity)
             elif isinstance(d, FunctionDecl):
-                self.sig.functions[d.name] = (tuple(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
-        self.separator = folseparators.separate.GeneralizedSeparator(self.sig, logic=utils.args.logic) # typing: ignore
+                self.sig.functions[d.name] = (list(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
+        self.separator = separators.separate.GeneralizedSeparator(self.sig, logic=utils.args.logic)
 
     def _state_id(self, i: int) -> int:
         assert 0 <= i < len(self.states)
@@ -1514,8 +1515,8 @@ class FOLSeparator(object):
                  soft_neg: Collection[int] = (),
                  soft_imp: Collection[Tuple[int, int]] = (),
     ) -> Optional[Predicate]:
-        mtimer = folseparators.timer.UnlimitedTimer()
-        timer = folseparators.timer.UnlimitedTimer()
+        mtimer = separators.timer.UnlimitedTimer()
+        timer = separators.timer.UnlimitedTimer()
         with timer:
             f = self.separator.separate(
                 pos=[self._state_id(i) for i in pos],
@@ -1541,11 +1542,11 @@ class FOLSeparator(object):
             return p
 
 
-    def state_to_model(self, t: Trace, i: int = 0) -> folseparators.logic.Model:
+    def state_to_model(self, t: Trace, i: int = 0) -> separators.logic.Model:
         relations = dict(itertools.chain(t.immut_rel_interps.items(), t.rel_interps[i].items()))
         constants = dict(itertools.chain(t.immut_const_interps.items(), t.const_interps[i].items()))
         functions = dict(itertools.chain(t.immut_func_interps.items(), t.func_interps[i].items()))
-        m = folseparators.logic.Model(self.sig)
+        m = separators.logic.Model(self.sig)
         for sort in sorted(t.univs.keys(),key=str):
             for e in t.univs[sort]:
                 m.add_elem(e, sort.name)
@@ -1561,38 +1562,38 @@ class FOLSeparator(object):
                 m.add_function(fd.name, es, e)
         return m
 
-    def formula_to_predicate(self, f: folseparators.logic.Formula) -> Predicate:
+    def formula_to_predicate(self, f: separators.logic.Formula) -> Predicate:
 
-        def helper(f: folseparators.logic.Formula) -> Predicate:
-            def term_to_expr(t: folseparators.logic.Term) -> Expr:
-                if isinstance(t, folseparators.logic.Var):
+        def helper(f: separators.logic.Formula) -> Predicate:
+            def term_to_expr(t: separators.logic.Term) -> Expr:
+                if isinstance(t, separators.logic.Var):
                     return Id(None, t.var)
-                elif isinstance(t, folseparators.logic.Func):
+                elif isinstance(t, separators.logic.Func):
                     return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
                 else:
                     assert False
 
-            if isinstance(f, folseparators.logic.And):
+            if isinstance(f, separators.logic.And):
                 return And(*(helper(a) for a in f.c))
-            elif isinstance(f, folseparators.logic.Or):
+            elif isinstance(f, separators.logic.Or):
                 return Or(*(helper(a) for a in f.c))
-            elif isinstance(f, folseparators.logic.Not):
+            elif isinstance(f, separators.logic.Not):
                 return Not(helper(f.f))
-            elif isinstance(f, folseparators.logic.Equal):
+            elif isinstance(f, separators.logic.Equal):
                 return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
-            elif isinstance(f, folseparators.logic.Relation):
+            elif isinstance(f, separators.logic.Relation):
                 if len(f.args) == 0:
                     return Id(None, f.rel)
                 else:
                     return AppExpr(None, f.rel, [term_to_expr(a) for a in f.args])
-            elif isinstance(f, folseparators.logic.Exists):
+            elif isinstance(f, separators.logic.Exists):
                 body = helper(f.f)
                 v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
                 if isinstance(body, QuantifierExpr) and body.quant == 'EXISTS':
                     return Exists([v] + body.binder.vs, body.body)
                 else:
                     return Exists([v], body)
-            elif isinstance(f, folseparators.logic.Forall):
+            elif isinstance(f, separators.logic.Forall):
                 body = helper(f.f)
                 v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
                 if isinstance(body, QuantifierExpr) and body.quant == 'FORALL':
