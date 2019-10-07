@@ -109,6 +109,8 @@ class MypyvyArgs(object):
     optimize_ctis: bool
     json: bool
     subcommand: str
+    checkpoint_in: Optional[str]
+    checkpoint_out: Optional[str]
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
 

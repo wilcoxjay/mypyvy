@@ -9,6 +9,7 @@ from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, Ce
 import phases
 import syntax
 from syntax import Expr, AutomatonDecl
+import pickle
 from typing import List, Optional, Set, Tuple, Union, Dict, Sequence
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
@@ -47,6 +48,8 @@ class Frames(object):
         self.predicates: List[Expr] = []
         self.state_count = 0
 
+        self._first_frame()
+
     def __getitem__(self, i: int) -> Frame:
         return self.fs[i]
 
@@ -55,6 +58,12 @@ class Frames(object):
 
     def __len__(self) -> int:
         return len(self.fs)
+
+    def _first_frame(self) -> None:
+        init_conjuncts = [init.expr for init in syntax.the_program.inits()]
+        self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
+                                          else [syntax.FalseExpr]
+                         for p in self.automaton.phases()})
 
     @utils.log_start_end_xml(utils.logger, logging.DEBUG)
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]] = None) -> None:
@@ -67,16 +76,6 @@ class Frames(object):
         self.push_forward_frames()
 
         with utils.LogTag(utils.logger, 'current-frames-after-push', lvl=logging.DEBUG):
-            self.print_frames(lvl=logging.DEBUG)
-
-        self.establish_safety()
-
-        with utils.LogTag(utils.logger, 'current-frames-after-safety', lvl=logging.DEBUG):
-            self.print_frames(lvl=logging.DEBUG)
-
-        self.simplify()
-
-        with utils.LogTag(utils.logger, 'current-frames-after-simplify', lvl=logging.DEBUG):
             self.print_frames(lvl=logging.DEBUG)
 
     @utils.log_start_end_xml(utils.logger)
@@ -305,6 +304,8 @@ class Frames(object):
                 utils.logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') +
                                                     str(diag) for t, diag in trace))
                 print('abstract counterexample: the system has no universal inductive invariant proving safety')
+                if utils.args.checkpoint_out:
+                    self.store_frames(utils.args.checkpoint_out)
                 raise AbstractCounterexample()
             else:
                 if utils.logger.isEnabledFor(logging.DEBUG):
@@ -598,14 +599,15 @@ class Frames(object):
             self.print_frame(i, lvl=lvl)
 
     def search(self) -> Frame:
-        init_conjuncts = [init.expr for init in syntax.the_program.inits()]
-        self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
-                        else [syntax.FalseExpr]
-                        for p in self.automaton.phases()})
-
-        self.new_frame()
-
         while True:
+            self.establish_safety()
+            with utils.LogTag(utils.logger, 'current-frames-after-safety', lvl=logging.DEBUG):
+                self.print_frames(lvl=logging.DEBUG)
+
+            self.simplify()
+            with utils.LogTag(utils.logger, 'current-frames-after-simplify', lvl=logging.DEBUG):
+                self.print_frames(lvl=logging.DEBUG)
+
             n = len(self) - 1
             with utils.LogTag(utils.logger, 'check-frame', lvl=logging.INFO, n=str(n)):
                 with utils.LogTag(utils.logger, 'current-frames', lvl=logging.INFO):
@@ -624,3 +626,19 @@ class Frames(object):
 
                 utils.logger.info('frame is safe but not inductive. starting new frame')
             self.new_frame()
+
+    def store_frames(self, out_filename: str) -> None:
+        s = self.solver
+        try:
+            self.solver = None # type: ignore
+            with open(out_filename, "wb") as f:
+                pickle.dump(self, f)
+        finally:
+            self.solver = s
+
+
+def load_frames(in_filename: str, s: Solver) -> Frames:
+    with open(in_filename, "rb") as f:
+        fs = pickle.load(f)
+    fs.solver = s
+    return fs

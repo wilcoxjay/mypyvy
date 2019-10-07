@@ -42,7 +42,6 @@ def get_safety() -> List[Expr]:
 
     return safety
 
-
 @utils.log_start_end_xml(utils.logger, logging.INFO)
 @utils.log_start_end_time(utils.logger, logging.INFO)
 def do_updr(s: Solver) -> None:
@@ -51,7 +50,11 @@ def do_updr(s: Solver) -> None:
 
     logic.check_init(s, safety_only=True)
 
-    fs = updr.Frames(s)
+    if not utils.args.checkpoint_in:
+        fs = updr.Frames(s)
+    else:
+        fs = updr.load_frames(utils.args.checkpoint_in, s)
+
     try:
         fs.search()
     except updr.AbstractCounterexample:
@@ -756,6 +759,10 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                                   help="when verifying inductiveness, check only these invariants")
     verify_subparser.add_argument('--json', action='store_true',
                                   help="output machine-parseable verification results in JSON format")
+    updr_subparser.add_argument('--checkpoint-in',
+                                help='start from internal state as stored in given file')
+    updr_subparser.add_argument('--checkpoint-out',
+                                help='store internal state to given file') # TODO: say when
 
 
     bmc_subparser.add_argument('--safety', help='property to check')
