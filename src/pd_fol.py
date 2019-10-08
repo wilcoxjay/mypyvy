@@ -1,14 +1,15 @@
 '''
 This file contains code for the Primal Dual research project
 '''
-
-import argparse, itertools
+import argparse
+import itertools
 from itertools import product, chain, combinations, repeat
 from collections import defaultdict
 
 from syntax import *
 from logic import *
 from pd import check_two_state_implication, check_initial
+
 try:
     import separators
 except ModuleNotFoundError:
@@ -16,14 +17,12 @@ except ModuleNotFoundError:
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
 
-A = TypeVar('A')
 PDState = Tuple[Trace, int]
 
 def eval_predicate(s: PDState, p: Expr) -> bool:
     r = s[0].as_state(s[1]).eval(p)
     assert isinstance(r, bool)
     return r
-
 
 class FOLSeparator(object):
     '''Class used to call into the folseparators code'''
@@ -107,22 +106,20 @@ class FOLSeparator(object):
         return m
 
     def formula_to_predicate(self, f: separators.logic.Formula) -> Expr:
-
-        def helper(f: separators.logic.Formula) -> Expr:
-            def term_to_expr(t: separators.logic.Term) -> Expr:
-                if isinstance(t, separators.logic.Var):
-                    return Id(None, t.var)
-                elif isinstance(t, separators.logic.Func):
-                    return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
-                else:
-                    assert False
-
+        def term_to_expr(t: separators.logic.Term) -> Expr:
+            if isinstance(t, separators.logic.Var):
+                return Id(None, t.var)
+            elif isinstance(t, separators.logic.Func):
+                return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
+            else:
+                assert False
+        def formula_to_expr(f: separators.logic.Formula) -> Expr:
             if isinstance(f, separators.logic.And):
-                return And(*(helper(a) for a in f.c))
+                return And(*(formula_to_expr(a) for a in f.c))
             elif isinstance(f, separators.logic.Or):
-                return Or(*(helper(a) for a in f.c))
+                return Or(*(formula_to_expr(a) for a in f.c))
             elif isinstance(f, separators.logic.Not):
-                return Not(helper(f.f))
+                return Not(formula_to_expr(f.f))
             elif isinstance(f, separators.logic.Equal):
                 return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
             elif isinstance(f, separators.logic.Relation):
@@ -131,14 +128,14 @@ class FOLSeparator(object):
                 else:
                     return AppExpr(None, f.rel, [term_to_expr(a) for a in f.args])
             elif isinstance(f, separators.logic.Exists):
-                body = helper(f.f)
+                body = formula_to_expr(f.f)
                 v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
                 if isinstance(body, QuantifierExpr) and body.quant == 'EXISTS':
                     return Exists([v] + body.binder.vs, body.body)
                 else:
                     return Exists([v], body)
             elif isinstance(f, separators.logic.Forall):
-                body = helper(f.f)
+                body = formula_to_expr(f.f)
                 v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
                 if isinstance(body, QuantifierExpr) and body.quant == 'FORALL':
                     return Forall([v] + body.binder.vs, body.body)
@@ -147,7 +144,7 @@ class FOLSeparator(object):
             else:
                 assert False
 
-        e = helper(f)
+        e = formula_to_expr(f)
         e.resolve(syntax.the_program.scope, BoolSort)
         return e
 
@@ -163,7 +160,7 @@ def fol_pd_houdini(solver: Solver) -> None:
     transitions: Set[Tuple[int, int]] = set() # known transitions between states
 
     # all predicates should be true in the initial states
-    predicates: List[Expr] = []  
+    predicates: List[Expr] = []
     inductive_predicates: Set[int] = set()
     DualTransition = Tuple[FrozenSet[int], FrozenSet[int]]
     dual_transitions: Set[DualTransition] = set()
@@ -172,7 +169,6 @@ def fol_pd_houdini(solver: Solver) -> None:
         for i, (t, index) in enumerate(states):
             if t is s[0] and index == s[1]:
                 return i
-
         k = len(states)
         states.append(s)
         return k
@@ -181,37 +177,14 @@ def fol_pd_houdini(solver: Solver) -> None:
         for i, pred in enumerate(predicates):
             if pred == p:
                 return i
-
         k = len(predicates)
         predicates.append(p)
         return k
 
-    # end of algorithm state
-
-    def houdini(live_predicates: Set[int]) -> Tuple[Set[Tuple[int, int]], Set[int]]: # ctis, inductive subset of live
-        live = set(live_predicates)
-        ctis: Set[Tuple[int,int]] = set()
-        while True:
-            # check if conjunction is inductive.
-            assumptions = [predicates[i] for i in sorted(live)]
-            for a in sorted(live):
-                res = check_two_state_implication(solver, assumptions, predicates[a])
-                if res is not None:
-                    pre, post = (res[0], 0), (res[1], 0)
-                    pre_i = add_state(pre)
-                    post_i = add_state(post)
-                    ctis.add((pre_i, post_i))
-                    live = set(l for l in live if eval_predicate(post, predicates[l]))
-                    break
-            else:
-                # live is inductive
-                return (ctis, live)
-    
     def check_dual_edge(p: List[Expr], q: List[Expr]) -> Optional[Tuple[PDState, PDState]]:
         r = check_two_state_implication(solver, p+q, Implies(And(*p), And(*q)))
         if r is None: return None
         return (r[0],0), (r[1],0)
-        
 
     def dual_edge(live: Set[int], a: int, induction_width: int) -> Optional[Tuple[List[Expr], List[Expr]]]:
         # find conjunctions p,q such that:
@@ -220,7 +193,7 @@ def fol_pd_houdini(solver: Solver) -> None:
         # - !(states[a] |= q)
         # or return None if no such p,q exist where |q| <= induction_width
         p: List[Expr] = [predicates[i] for i in sorted(inductive_predicates)]
-        internal_ctis: Set[Tuple[int, int]] = set() # W, could 
+        internal_ctis: Set[Tuple[int, int]] = set() # W, could
         separator = FOLSeparator(states)
         while True:
             q = separator.separate(pos=list(sorted(abstractly_reachable_states)),
@@ -257,7 +230,7 @@ def fol_pd_houdini(solver: Solver) -> None:
                             i = add_state((res2,0))
                             abstractly_reachable_states.add(i)
                         else:
-                            break    
+                            break
                     if p_new_conj is None:
                         continue
                     # strengthen p
@@ -267,7 +240,26 @@ def fol_pd_houdini(solver: Solver) -> None:
                     break
                 else:
                     return None
-                
+
+    def primal_houdini(live_predicates: Set[int]) -> Tuple[Set[Tuple[int, int]], Set[int]]: # ctis, inductive subset of live
+        live = set(live_predicates)
+        ctis: Set[Tuple[int,int]] = set()
+        while True:
+            # check if conjunction is inductive.
+            assumptions = [predicates[i] for i in sorted(live)]
+            for a in sorted(live):
+                res = check_two_state_implication(solver, assumptions, predicates[a])
+                if res is not None:
+                    pre, post = (res[0], 0), (res[1], 0)
+                    pre_i = add_state(pre)
+                    post_i = add_state(post)
+                    ctis.add((pre_i, post_i))
+                    live = set(l for l in live if eval_predicate(post, predicates[l]))
+                    break
+            else:
+                # live is inductive
+                return (ctis, live)
+
     def dual_houdini(live_states: Set[int], induction_width: int) -> Tuple[Set[DualTransition], Set[int]]: # dual cits, subset of "abstractly" reachable states
         live = set(live_states)
         dual_ctis: Set[DualTransition] = set()
@@ -295,7 +287,7 @@ def fol_pd_houdini(solver: Solver) -> None:
     live_states: Set[int] = set() # states that are "live"
     print([str(predicates[x]) for x in safety])
     while True:
-        (ctis, inductive) = houdini(live_predicates)
+        (ctis, inductive) = primal_houdini(live_predicates)
         inductive_predicates.update(inductive)
         live_states.update(x for cti in ctis for x in cti)
         # filter live_states
