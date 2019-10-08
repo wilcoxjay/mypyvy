@@ -111,6 +111,7 @@ def eval_quant(m: z3.ModelRef, e: z3.ExprRef) -> bool:
             m.get_universe(e.var_sort(i)) for i in range(e.num_vars() - 1, -1, -1) # de Bruijn
         )))
 
+# TODO: eliminate this in favor of logic.State.eval or its successor
 def eval_clause_in_state(
         clause: Expr,
         state: PDState,
@@ -1391,11 +1392,11 @@ class MultiSubclausesMapICE(object):
                  pos: Collection[int] = (),
                  neg: Collection[int] = (),
                  imp: Collection[Tuple[int, int]] = (),
-                 ps: Collection[int] = (),
+                 # ps: Collection[int] = (),  # see note below
                  soft_pos: Collection[int] = (),
                  soft_neg: Collection[int] = (),
                  soft_imp: Collection[Tuple[int, int]] = (),
-                 soft_ps: Collection[int] = (),
+                 # soft_ps: Collection[int] = (),  # see note below
     ) -> Optional[List[FrozenSet[int]]]:
         '''
         find a conjunction of subclauses that respects given constraints, and optionally as many soft constraints as possible
@@ -1403,36 +1404,40 @@ class MultiSubclausesMapICE(object):
         TODO: to we need an unsat core in case there is no subclause?
 
         NOTE: the result must contain a subclause of each top clause, i.e., true cannot be used instead of one of the top clauses
+
+        NOTE: the ps and soft ps functionality is implemented but not used, so it cannot be trusted to be implemented correctly. therefore, it's currently removed from the function declaration
         '''
+        ps: Collection[int] = ()
+        soft_ps: Collection[int] = ()
         self._new_states()
         self._new_predicates()
         assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
         assert all(0 <= i < len(self.predicates) for i in chain(ps, soft_ps))
-        sep = list(chain(
+        sep: List[z3.ExprRef] = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(pos)),
             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(neg)),
             (z3.Implies(
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(imp)),
-            *(self.predicate_vs[i] for i in sorted(ps)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(ps)),
         ))
-        soft = list(chain(
+        soft: List[z3.ExprRef] = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos)),
             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(soft_neg)),
             (z3.Implies(
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(soft_imp)),
-            *(self.predicate_vs[i] for i in sorted(soft_ps)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(soft_ps)),
         ))
         self.solver.push()
         for c in sep:
             self.solver.add(c)
         if len(soft) > 0:
             assert self.optimize and isinstance(self.solver, z3.Optimize)
-            for cc in soft:
-                self.solver.add_soft(cc)
+            for c in soft:
+                self.solver.add_soft(c)
         if self.optimize:
             assert isinstance(self.solver, z3.Optimize)
             # optimize for smaller clauses
@@ -1475,6 +1480,7 @@ class MultiSubclausesMapICE(object):
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
+# TODO: move this to pd_fol.py?
 class FOLSeparator(object):
     '''Class used to call into the folseparators code'''
     def __init__(self,
@@ -6723,6 +6729,7 @@ def enumerate_reachable_states(s: Solver) -> None:
             print('encountered unknown! all bets are off.')
 
 
+# TODO: move this to pd_fol.py?
 def fol_ice(solver: Solver) -> None:
     prog = syntax.the_program
     global cache_path
