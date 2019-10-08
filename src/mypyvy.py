@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Set, Union
+from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Set, Union, Sequence
 import z3
 import resource
 
@@ -42,7 +42,6 @@ def get_safety() -> List[Expr]:
 
     return safety
 
-
 @utils.log_start_end_xml(utils.logger, logging.INFO)
 @utils.log_start_end_time(utils.logger, logging.INFO)
 def do_updr(s: Solver) -> None:
@@ -51,7 +50,11 @@ def do_updr(s: Solver) -> None:
 
     logic.check_init(s, safety_only=True)
 
-    fs = updr.Frames(s)
+    if not utils.args.checkpoint_in:
+        fs = updr.Frames(s)
+    else:
+        fs = updr.load_frames(utils.args.checkpoint_in, s)
+
     try:
         fs.search()
     except updr.AbstractCounterexample:
@@ -284,7 +287,7 @@ def verify(s: Solver) -> None:
         obj['is_inductive'] = json_cex is None
         if json_cex is not None:
             obj['counterexample'] = json_cex
-        json.dump(obj, sys.stdout, indent=4)
+            json.dump(obj, sys.stdout, indent=4)
 
     if utils.error_count == old_count:
         utils.logger.always_print('all ok!')
@@ -419,14 +422,68 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
 
         return sat_checker(s, keys)
 
+
+def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
+    import xml.dom.minidom # type: ignore
+    collection = xml.dom.minidom.parse("paxos_derived_trace.xml").documentElement
+
+    components: List[syntax.TraceComponent] = []
+
+    xml_decls = reversed(collection.childNodes)
+    seen_first = False
+
+    for elm in xml_decls:
+        if isinstance(elm, xml.dom.minidom.Text):
+            continue
+        if elm.tagName == 'state':
+            diagram = parser.parse_expr(elm.childNodes[0].data)
+            diagram.resolve(prog.scope, syntax.BoolSort)
+            assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
+            active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
+
+            if not seen_first:
+                # restrict the domain to be subdomain of the diagram's existentials
+                seen_first = True
+                import itertools # type: ignore
+                for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort): # TODO; need to sort first
+                    free_var = syntax.SortedVar(None, syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
+                    consts = list(filter(lambda c: c.sort == sort, prog.constants())) # TODO: diagram simplification omits them from the exists somewhere
+                    els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
+                    els = list(vars)
+                    els += consts
+                    restrict_domain = syntax.Forall([free_var],
+                                                    syntax.Or(*(syntax.Eq(syntax.Id(None, free_var.name),
+                                                                          syntax.Id(None, v.name))
+                                                                for v in els)))
+                    active_clauses += [restrict_domain]
+
+            diagram_active = syntax.Exists(diagram.vs(),
+                                           syntax.And(diagram.body, *active_clauses))
+            diagram_active.resolve(prog.scope, syntax.BoolSort)
+
+            components.append(syntax.AssertDecl(tok=None, expr=diagram_active))
+        elif elm.tagName == 'action':
+            action_name = elm.childNodes[0].data.split()[0]
+            components.append(syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(tok=None, target=action_name, args=None)])))
+        else:
+            assert False, "unknown xml tagName"
+
+    trace_decl = syntax.TraceDecl(tok=None, components=components, sat=True)
+    migrated_trace = bmc_trace(prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True), log=False)
+
+    assert migrated_trace is not None
+    import pickle
+    pickle.dump(migrated_trace, open("migrated_trace.p", "wb"))
+    return migrated_trace
+
+
 def sandbox(s: Solver) -> None:
     ####################################################################################
     # SANDBOX for playing with relaxed traces
-
     import pickle
     trns: logic.Trace = pickle.load(open("paxos_trace.p", "rb"))
 
-    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 1, 3)
+    diff_conjunctions = relaxed_traces.derived_rels_candidates_from_trace(trns, [], 2, 3)
 
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
@@ -463,27 +520,48 @@ def sandbox(s: Solver) -> None:
 
     syntax.the_program = new_prog
 
-    trace_decl = next(syntax.the_program.traces())
-    trns2_o = bmc_trace(new_prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True))
-    assert trns2_o is not None
+    # TODO: recover this, making sure the candidate blocks the trace
+    # trace_decl = next(syntax.the_program.traces())
+    # trns2_o = bmc_trace(new_prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True))
+    # assert trns2_o is None
+
+    # migrated_trace = load_relaxed_trace_from_updr_cex(syntax.the_program, s)
+    import pickle
+    trns2_o = pickle.load(open("migrated_trace.p", "rb"))
+
     trns2 = cast(logic.Trace, trns2_o)
     print(trns2)
     print()
-    print(trns2.as_state(relaxed_traces.first_relax_step_idx(trns2) + 1).rel_interp[derrel])
-    assert not relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
+    assert not relaxed_traces.is_rel_blocking_relax(trns2,
                                                     ([(v, str(syntax.safe_cast_sort(v.sort))) for v in free_vars], def_expr))
 
+    # for candidate in diff_conjunctions:
+    #     print("start checking")
+    #     print()
+    #     if str(candidate[1]) == 'exists v0:node. member(v0, v1) & left_round(v0, v2) & !vote(v0, v2, v3) & active_node(v0)':
+    #         print(candidate)
+    #         assert False
+    #         resush = relaxed_traces.is_rel_blocking_relax_step(trns2, 11,
+    #                                                       ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
+    #                                                        candidate[1]))
+    #         # res2 = trns2.as_state(0).eval(syntax.And(*[i.expr for i in syntax.the_program.inits()]))
+    #
+    #         # resush = trns2.as_state(7).eval(syntax.And(*[i.expr for i in syntax.the_program.inits()]))
+    #         print(resush)
+    #         assert False
+    # assert False
+
     diff_conjunctions = list(
-        filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2, relaxed_traces.first_relax_step_idx(trns2),
-                                                                      ([(v, str(syntax.safe_cast_sort(v.sort))) for v in
-                                                                        free_vars], def_expr)),
+        filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2,
+                                                                      ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
+                                                                       candidate[1])),
                diff_conjunctions))
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
         # print("relation:")
         # for conj in diffing_conjunction:
         #     print("\t %s" % str(conj))
-        print(diffing_conjunction)
+        print(diffing_conjunction[1])
 
     print()
 
@@ -642,6 +720,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the caches already contain all the answers')
         s.add_argument('--cache-only-discovered', action=utils.YesNoAction, default=False,
                        help='assert that the discovered states already contain all the answers')
+        s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
+                       help='print the exit code before exiting (good for regression testing)o')
 
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
@@ -679,6 +759,10 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                                   help="when verifying inductiveness, check only these invariants")
     verify_subparser.add_argument('--json', action='store_true',
                                   help="output machine-parseable verification results in JSON format")
+    updr_subparser.add_argument('--checkpoint-in',
+                                help='start from internal state as stored in given file')
+    updr_subparser.add_argument('--checkpoint-out',
+                                help='store internal state to given file') # TODO: say when
 
 
     bmc_subparser.add_argument('--safety', help='property to check')
@@ -756,7 +840,7 @@ def main() -> None:
 
         if utils.error_count > pre_parse_error_count:
             utils.logger.always_print('program has syntax errors.')
-            sys.exit(1)
+            utils.exit(1)
 
         if utils.args.print_program_repr:
             utils.logger.always_print(repr(prog))
@@ -768,7 +852,7 @@ def main() -> None:
         prog.resolve()
         if utils.error_count > pre_resolve_error_count:
             utils.logger.always_print('program has resolution errors.')
-            sys.exit(1)
+            utils.exit(1)
 
         syntax.the_program = prog
 
@@ -786,7 +870,7 @@ def main() -> None:
         if utils.args.ipython:
             ipython(s)
 
-    sys.exit(1 if utils.error_count > 0 else 0)
+    utils.exit(1 if utils.error_count > 0 else 0)
 
 
 if __name__ == '__main__':

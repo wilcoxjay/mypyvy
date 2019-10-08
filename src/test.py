@@ -123,7 +123,7 @@ class RegressionTests(unittest.TestCase):
                 expect_path = p.with_suffix('.expect')
                 python_cmd = build_python_cmd() + shlex.split(line) + [str(p)]
                 with open(out_path, 'w') as f_out:
-                    subprocess.run(python_cmd, stdout=f_out)
+                    proc = subprocess.run(python_cmd, stdout=f_out, stderr=subprocess.STDOUT)
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')

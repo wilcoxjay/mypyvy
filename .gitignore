@@ -5,6 +5,6 @@
 parser.out
 parsetab.py
 lextab.py
-examples/regression/*.output
+regression/*.output
 lockserv*.log
 examples/*.cache

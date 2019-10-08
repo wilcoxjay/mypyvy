@@ -3,3 +3,4 @@ checking theorems:
 error 190516-theorem-boundvar.pyv:7:1: theorem on line 7 may not hold
  theorem on line 8... 
 error 190516-theorem-boundvar.pyv:8:1: theorem on line 8 may not hold
+mypyvy exiting with status 1
