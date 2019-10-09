@@ -46,6 +46,9 @@ class Denotable(object):
 
 
 class Sort(Denotable):
+    def __init__(self) -> None:
+        super().__init__()
+
     def __repr__(self) -> str:
         raise Exception('Unexpected sort %s does not implement __repr__ method' % type(self))
 
@@ -1305,7 +1308,10 @@ def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
             assert False
     return ([ModifiesClause(None, name) for name in mods_str_list], And(*conjuncts))
 
-class Decl(object):
+class Decl(Denotable):
+    def __init__(self) -> None:
+        super().__init__()
+
     def __repr__(self) -> str:
         raise Exception('Unexpected decl %s does not implement __repr__ method' % type(self))
 
@@ -1315,6 +1321,7 @@ class Decl(object):
 
 class SortDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, annotations: List[Annotation]) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.annotations = annotations
@@ -1325,6 +1332,9 @@ class SortDecl(Decl):
             self.__dict__,
             z3=None,
         )
+
+    def _denote(self) -> Tuple:
+        return (self.name,)
 
     def resolve(self, scope: Scope) -> None:
         scope.add_sort(self)
@@ -1343,6 +1353,7 @@ class SortDecl(Decl):
 
 class FunctionDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, arity: Arity, sort: Sort, mutable: bool, annotations: List[Annotation]) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.arity = arity
@@ -1360,6 +1371,9 @@ class FunctionDecl(Decl):
             mut_z3={},
             immut_z3=None,
         )
+
+    def _denote(self) -> Tuple:
+        return (self.name, tuple(self.arity), self.sort, self.mutable)
 
     def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
@@ -1400,6 +1414,7 @@ class FunctionDecl(Decl):
 
 class RelationDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, arity: Arity, mutable: bool, derived: Optional[Expr], annotations: List[Annotation]) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.arity = arity
@@ -1415,6 +1430,9 @@ class RelationDecl(Decl):
             mut_z3={},
             immut_z3=None,
         )
+
+    def _denote(self) -> Tuple:
+        return (self.name, tuple(self.arity), self.mutable, self.derived_axiom)
 
     def resolve(self, scope: Scope) -> None:
         for sort in self.arity:
@@ -1465,6 +1483,7 @@ class RelationDecl(Decl):
 
 class ConstantDecl(Decl):
     def __init__(self, tok: Optional[Token], name: str, sort: Sort, mutable: bool, annotations: List[Annotation]) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.sort = sort
@@ -1479,6 +1498,9 @@ class ConstantDecl(Decl):
             mut_z3={},
             immut_z3=None,
         )
+
+    def _denote(self) -> Tuple:
+        return (self.name, self.sort, self.mutable)
 
     def __repr__(self) -> str:
         return 'ConstantDecl(tok=None, name=%s, sort=%s, mutable=%s)' % (repr(self.name), self.sort, self.mutable)
@@ -1513,9 +1535,13 @@ def close_free_vars(tok: Optional[Token], expr: Expr, in_scope: List[str]=[]) ->
 
 class InitDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.expr = expr
+
+    def _denote(self) -> Tuple:
+        return (self.name, self.expr)
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
@@ -1561,6 +1587,7 @@ class DefinitionDecl(Decl):
         assert implies(public, twostate)
         assert isinstance(body, BlockStatement) or len(body[0]) == 0 or twostate
 
+        super().__init__()
         self.tok = tok
         self.public = public
         self.twostate = twostate
@@ -1573,6 +1600,9 @@ class DefinitionDecl(Decl):
             self.mods, self.expr = translate_block(self.body)
         else:
             self.mods, self.expr = self.body
+
+    def _denote(self) -> Tuple:
+        return (self.public, self.twostate, self.name, self.binder, self.body)
 
     def resolve(self, scope: Scope) -> None:
         assert len(scope.stack) == 0
@@ -1638,11 +1668,15 @@ class DefinitionDecl(Decl):
 
 class InvariantDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, is_safety: bool, is_sketch: bool) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.expr = expr
         self.is_safety = is_safety
         self.is_sketch = is_sketch
+
+    def _denote(self) -> Tuple:
+        return (self.name, self.expr)
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
@@ -1669,9 +1703,13 @@ class InvariantDecl(Decl):
 
 class AxiomDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.expr = expr
+
+    def _denote(self) -> Tuple:
+        return (self.name, self.expr)
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
@@ -1689,10 +1727,14 @@ class AxiomDecl(Decl):
 
 class TheoremDecl(Decl):
     def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, twostate: bool) -> None:
+        super().__init__()
         self.tok = tok
         self.name = name
         self.expr = expr
         self.twostate = twostate
+
+    def _denote(self) -> Tuple:
+        return (self.name, self.expr, self.twostate)
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
@@ -1714,12 +1756,15 @@ class TheoremDecl(Decl):
 
 ## decls inside an automaton block
 
-class PhaseTransitionDecl(object):
+class PhaseTransitionDecl(Denotable):
     def __init__(self, tok: Optional[Token], transition: str, precond: Optional[Expr], target: Optional[str]) -> None:
         self.tok = tok
         self.transition = transition
         self.precond = precond
         self.target = target
+
+    def _denote(self) -> Tuple:
+        return (self.transition, self.precond, self.target)
 
     def __repr__(self) -> str:
         return 'PhaseTransitionDecl(tok=None, transition=%s, target=%s, precond=%s)' % (
@@ -1752,10 +1797,13 @@ class PhaseTransitionDecl(object):
 
 PhaseComponent = Union[PhaseTransitionDecl, InvariantDecl]
 
-class GlobalPhaseDecl(object):
+class GlobalPhaseDecl(Denotable):
     def __init__(self, tok: Optional[Token], components: Sequence[PhaseComponent]) -> None:
         self.tok = tok
         self.components = components
+
+    def _denote(self) -> Tuple:
+        return tuple(self.components)
 
     def __repr__(self) -> str:
         return 'GlobalPhaseDecl(tok=None, components=%s)' % (
@@ -1776,10 +1824,13 @@ class GlobalPhaseDecl(object):
         for c in self.components:
             c.resolve(scope)
 
-class InitPhaseDecl(object):
+class InitPhaseDecl(Denotable):
     def __init__(self, tok: Optional[Token], phase: str) -> None:
         self.tok = tok
         self.phase = phase
+
+    def _denote(self) -> Tuple:
+        return (self.phase,)
 
     def __repr__(self) -> str:
         return 'InitPhaseDecl(tok=None, phase=%s)' % (
@@ -1796,11 +1847,14 @@ class InitPhaseDecl(object):
             utils.print_error(self.tok, 'unknown phase %s' % (self.phase,))
 
 
-class PhaseDecl(object):
+class PhaseDecl(Denotable):
     def __init__(self, tok: Optional[Token], name: str, components: Sequence[PhaseComponent]) -> None:
         self.tok = tok
         self.name = name
         self.components = components
+
+    def _denote(self) -> Tuple:
+        return (self.name, tuple(self.components))
 
     def __repr__(self) -> str:
         return 'PhaseDecl(tok=None, name=%s, components=%s)' % (
@@ -1850,8 +1904,12 @@ AutomatonComponent = Union[GlobalPhaseDecl, InitPhaseDecl, PhaseDecl]
 
 class AutomatonDecl(Decl):
     def __init__(self, tok: Optional[Token], components: Sequence[AutomatonComponent]) -> None:
+        super().__init__()
         self.tok = tok
         self.components = components
+
+    def _denote(self) -> Tuple:
+        return tuple(self.components)
 
     def inits(self) -> Iterator[InitPhaseDecl]:
         for c in self.components:
@@ -1919,24 +1977,32 @@ class AutomatonDecl(Decl):
             msg
         )
 
-@dataclass
-class AnyTransition(object):
+class AnyTransition(Denotable):
+    def _denote(self) -> Tuple:
+        return ()
+
     def __str__(self) -> str:
         return 'any transition'
 
     def resolve(self, scope: Scope) -> None:
         pass
 
-@dataclass
-class Star(object):
+class Star(Denotable):
+    def _denote(self) -> Tuple:
+        return ()
+
     def __str__(self) -> str:
         return '*'
 
-@dataclass
-class TransitionCall(object):
-    tok: Optional[Token]
-    target: str
-    args: Optional[List[Union[Star, Expr]]]
+class TransitionCall(Denotable):
+    def __init__(self, tok: Optional[Token], target: str, args: Optional[List[Union[Star, Expr]]]) -> None:
+        super().__init__()
+        self.tok = tok
+        self.target = target
+        self.args = args
+
+    def _denote(self) -> Tuple:
+        return (self.target, self.args)
 
     def __str__(self) -> str:
         return '%s%s' % (
@@ -1960,9 +2026,13 @@ class TransitionCall(object):
                 if isinstance(a, Expr):
                     a.resolve(scope, sort)
 
-@dataclass
-class TransitionCalls(object):
-    calls: List[TransitionCall]
+class TransitionCalls(Denotable):
+    def __init__(self, calls: List[TransitionCall]) -> None:
+        super().__init__()
+        self.calls = calls
+
+    def _denote(self) -> Tuple:
+        return tuple(self.calls)
 
     def __str__(self) -> str:
         return ' | '.join(str(c) for c in self.calls)
@@ -1973,9 +2043,13 @@ class TransitionCalls(object):
 
 TransitionExpr = Union[AnyTransition, TransitionCalls]
 
-@dataclass
-class TraceTransitionDecl(object):
-    transition: TransitionExpr
+class TraceTransitionDecl(Denotable):
+    def __init__(self, transition: TransitionExpr) -> None:
+        super().__init__()
+        self.transition = transition
+
+    def _denote(self) -> Tuple:
+        return (self.transition,)
 
     def __str__(self) -> str:
         return str(self.transition)
@@ -1984,10 +2058,15 @@ class TraceTransitionDecl(object):
         self.transition.resolve(scope)
 
 
-@dataclass
-class AssertDecl(object):
-    tok: Optional[Token]
-    expr: Optional[Expr]  # None is only allowed in first step, and means "init"
+class AssertDecl(Denotable):
+    # expr may only be None in first step, where it means "init"
+    def __init__(self, tok: Optional[Token], expr: Optional[Expr]) -> None:
+        super().__init__()
+        self.tok = tok
+        self.expr = expr
+
+    def _denote(self) -> Tuple:
+        return (self.expr, )
 
     def __str__(self) -> str:
         return 'assert %s' % (str(self.expr),)
@@ -2000,11 +2079,15 @@ class AssertDecl(object):
 
 TraceComponent = Union[TraceTransitionDecl, AssertDecl] # , AxiomDecl, ConstantDecl]
 
-@dataclass
 class TraceDecl(Decl):
-    tok: Optional[Token]
-    components: List[TraceComponent]
-    sat: bool  # whether the user expects this query to be satisfiable or not
+    def __init__(self, tok: Optional[Token], components: List[TraceComponent], sat: bool) -> None:
+        super().__init__()
+        self.tok = tok
+        self.components = components
+        self.sat = sat
+
+    def _denote(self) -> Tuple:
+        return (tuple(self.components), self.sat)
 
     def __str__(self) -> str:
         return 'trace {%s\n}' % (
