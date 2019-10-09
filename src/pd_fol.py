@@ -11,7 +11,7 @@ from logic import *
 from pd import check_two_state_implication, check_initial
 
 try:
-    import separators
+    import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
 except ModuleNotFoundError:
     pass
 

@@ -21,7 +21,7 @@ from syntax import *
 from logic import *
 
 try:
-    import separators
+    import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
 except ModuleNotFoundError:
     pass
 
