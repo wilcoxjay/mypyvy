@@ -1329,7 +1329,7 @@ class SortDecl(Decl):
 
     def __getstate__(self) -> Any:
         return dict(
-            self.__dict__,
+            super().__getstate__(),
             z3=None,
         )
 
@@ -1367,7 +1367,7 @@ class FunctionDecl(Decl):
 
     def __getstate__(self) -> Any:
         return dict(
-            self.__dict__,
+            super().__getstate__(),
             mut_z3={},
             immut_z3=None,
         )
@@ -1426,7 +1426,7 @@ class RelationDecl(Decl):
 
     def __getstate__(self) -> Any:
         return dict(
-            self.__dict__,
+            super().__getstate__(),
             mut_z3={},
             immut_z3=None,
         )
@@ -1494,7 +1494,7 @@ class ConstantDecl(Decl):
 
     def __getstate__(self) -> Any:
         return dict(
-            self.__dict__,
+            super().__getstate__(),
             mut_z3={},
             immut_z3=None,
         )
