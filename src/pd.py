@@ -206,8 +206,20 @@ def eval_in_state(s: Optional[Solver], m: PDState, p: Expr) -> bool:
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
-        # cache[k] = eval_clause_in_state(p, m) # TODO: eliminate eval_clause_in_state from pd.py
-        cache[k] = m.as_state(0).eval(p)
+        # cache[k] = eval_clause_in_state(p, m) # TODO: eliminate eval_clause_in_state
+        # print('='*80)
+        # print(m)
+        # print('-'*80)
+        # print(m.as_state(0).rel_interp)
+        # print('-'*80)
+        # print(p)
+        # print('-'*80)
+        # print(type(p))
+        # print('='*80)
+        res = m.as_state(0).eval(p)
+        assert isinstance(res, bool)
+        cache[k] = res
+
         # if m.z3model is not None:
         #     try:
         #         cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
