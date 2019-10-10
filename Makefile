@@ -6,7 +6,7 @@ SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
 
-test: check check-imports unit typecheck verify trace updr pd
+test: check check-imports unit typecheck verify trace updr pd-old pd
 
 unit: check
 	$(PYTHON) -m unittest discover -s src -v
@@ -34,7 +34,7 @@ bench:
 %.updr: %.pyv
 	time $(PYTHON) src/mypyvy.py updr $(MYPYVY_OPTS) $<
 
-pd:
+pd-old:
 	# enumerate-reachable-states
 	time $(PYTHON) src/mypyvy.py enumerate-reachable-states $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.enumerate_reachable_states.log
 	grep "found 25 states" lockserv.enumerate_reachable_states.log
@@ -72,6 +72,11 @@ pd:
 	time $(PYTHON) src/mypyvy.py pd-cdcl-invariant --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.cdcl_invariant_clear_cache.log
 	time $(PYTHON) src/mypyvy.py pd-cdcl-invariant --cache-only $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.cdcl_invariant_cache_only.log
 
+pd:
+	# primal-dual-houdini
+	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_clear_cache.log
+	# time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --cache-only $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_cache_only.log # TODO: this currently fails, should debug
+
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
 src/%.importable: src/%.py
@@ -80,4 +85,4 @@ src/%.importable: src/%.py
 clear-cache:
 	rm -iv examples/*.cache
 
-.PHONY: check run test verify updr bench typecheck trace pd unit check-imports clear-cache
+.PHONY: check run test verify updr bench typecheck trace pd pd-old unit check-imports clear-cache
