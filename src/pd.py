@@ -1366,9 +1366,9 @@ class MultiSubclausesMapICE(object):
                 all_mus, all_mss = results.pop(0)
                 assert len(all_mus) == 0
                 # use only all_mss
-                self.solver.add(z3.Or(z3.Not(self.predicate_vs[k][i]), *(
-                    z3.And(*(
-                        z3.Not(self.lit_vs[k][j]) for j in sorted(self.all_n[k] - v)
+                self.solver.add(self.predicate_vs[k][i] == z3.And(*(
+                    z3.Or(*(
+                        self.lit_vs[k][j] for j in sorted(self.all_n[k] - v)
                     ))
                     for v in all_mss
                 )))
@@ -1380,11 +1380,13 @@ class MultiSubclausesMapICE(object):
                  pos: Collection[int] = (),
                  neg: Collection[int] = (),
                  imp: Collection[Tuple[int, int]] = (),
-                 ps: Collection[int] = (),
+                 pos_ps: Collection[int] = (), # each clause must be implied by these predicates (used to force initiation)
+                 neg_ps: Collection[int] = (), # each clause must not be implied by these predicates
                  soft_pos: Collection[int] = (),
                  soft_neg: Collection[int] = (),
                  soft_imp: Collection[Tuple[int, int]] = (),
-                 soft_ps: Collection[int] = (),
+                 soft_pos_ps: Collection[int] = (),
+                 soft_neg_ps: Collection[int] = (),
     ) -> Optional[List[FrozenSet[int]]]:
         '''
         find a conjunction of subclauses that respects given constraints, and optionally as many soft constraints as possible
@@ -1396,7 +1398,7 @@ class MultiSubclausesMapICE(object):
         self._new_states()
         self._new_predicates()
         assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
-        assert all(0 <= i < len(self.predicates) for i in chain(ps, soft_ps))
+        assert all(0 <= i < len(self.predicates) for i in chain(pos_ps, neg_ps, soft_pos_ps, soft_neg_ps))
         sep = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(pos)),
             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(neg)),
@@ -1404,7 +1406,8 @@ class MultiSubclausesMapICE(object):
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(imp)),
-            (self.predicate_vs[i] for i in sorted(ps)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(pos_ps)),
+            (z3.And(*(z3.Not(self.predicate_vs[k][i]) for k in range(self.m))) for i in sorted(neg_ps)),
         ))
         soft = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos)),
@@ -1413,7 +1416,8 @@ class MultiSubclausesMapICE(object):
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(soft_imp)),
-            (self.predicate_vs[i] for i in sorted(soft_ps)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos_ps)),
+            (z3.And(*(z3.Not(self.predicate_vs[k][i]) for k in range(self.m))) for i in sorted(soft_neg_ps)),
         ))
         self.solver.push()
         for c in sep:
@@ -3820,10 +3824,11 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    init_ps = [And(*inits)] # to be used with MultiSubclausesMapICE
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[PDState] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
-    maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram, not really used, but still used to get the negation of diagram of a state TODO: remove
+    maps: List[MultiSubclausesMapICE] = []  # for each state, a MultiSubclausesMapICE map with only the negation of its diagram. used in several places either to get the negation of the state's diagram or to find a clause that excludes it (mostly when finding p's, I think)
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
     live_states: FrozenSet[int] = frozenset() # not yet ruled out by invariant, and also currently active in the houdini level
@@ -3900,7 +3905,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cs = as_clauses(Not(s.as_diagram(0).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
-                maps.append(SubclausesMapTurbo(c, states, [], True))
+                maps.append(MultiSubclausesMapICE([c], states, init_ps, True))
             if internal_cti:
                 internal_ctis |= {i}
             else:
@@ -4104,8 +4109,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'houdini_frames: checking for backward-transition from states[{i}]')
                 res = check_two_state_implication(
                     solver,
-                    a + [maps[i].to_clause(maps[i].all_n)],
-                    maps[i].to_clause(maps[i].all_n),
+                    a + [maps[i].to_clause(0, maps[i].all_n[0])],
+                    maps[i].to_clause(0, maps[i].all_n[0]),
                     f'backward-transition from states[{i}]'
                 )
                 print(f'houdini_frames: done checking for backward-transition from states[{i}]')
@@ -4554,7 +4559,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         stateof: Dict[Expr, int] = {}
         if isinstance(goal, PDState):
             goal_i = states.index(goal)
-            goal = maps[goal_i].to_clause(maps[goal_i].all_n)
+            goal = maps[goal_i].to_clause(0, maps[goal_i].all_n[0])
             stateof[goal] = goal_i
             print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         else:
@@ -4580,7 +4585,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             mp = MultiSubclausesMapICE(
                 [g for g in goals],
                 states,
-                [],
+                init_ps,
                 True,
             )
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
@@ -4588,6 +4593,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 res = mp.separate(
                     pos=sorted(reachable),
                     imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
+                    pos_ps=[0],
                     soft_neg=soft_goals_i,
                 )
                 if res is None:
@@ -4712,6 +4718,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     for qq in q:
                         s = check_initial(solver, qq)
                         if s is not None:
+                            assert False # TODO: remove all this to simplify the code
                             initial = False
                             print(f'  this predicate is not initial, learned a new initial state')
                             i = add_state(s, False)
@@ -4797,16 +4804,18 @@ def primal_dual_houdini(solver: Solver) -> str:
                             seed = maps[i].separate(
                                 pos=(pos | reachable),
                                 neg=[i],
+                                pos_ps=[0],
                                 soft_neg=soft_neg, # TODO: or to_eliminate ?
                             )
                             if seed is None:
                                 break
-                            p = maps[i].to_clause(seed)
+                            p = maps[i].to_clause(0, seed[0])
                             print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential p is: {p}')
                             s = check_initial(solver, p)
                             if s is None:
                                 break
                             else:
+                                assert False # TODO: remove all this to simplify the code
                                 print(f'  this predicate is not initial, learned a new initial state')
                                 reachable |= {add_state(s, False)}
                                 reachable = close_forward(reachable) # just in case
@@ -4833,10 +4842,10 @@ def primal_dual_houdini(solver: Solver) -> str:
                 if len(ctis) == 0:
                     print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
                 else:
-                    ctis = frozenset(i for i in ctis if maps[i].to_clause(maps[i].all_n) not in goals)
+                    ctis = frozenset(i for i in ctis if maps[i].to_clause(0, maps[i].all_n[0]) not in goals)
                     print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
                     for i in sorted(ctis):
-                        g = maps[i].to_clause(maps[i].all_n)
+                        g = maps[i].to_clause(0, maps[i].all_n[0])
                         #production# assert g not in goals
                         stateof[g] = i
                         new_goals = goals + (g,)
@@ -5024,16 +5033,18 @@ def primal_dual_houdini(solver: Solver) -> str:
                     seed = maps[i].separate(
                         pos=(pos | reachable),
                         neg=[i],
+                        pos_ps=[0],
                         soft_neg=soft_neg, # TODO: or to_eliminate ?
                     )
                     if seed is None:
                         break
-                    p = maps[i].to_clause(seed)
+                    p = maps[i].to_clause(0, seed[0])
                     print(f'find_dual_backward_transition: potential p is: {p}')
                     s = check_initial(solver, p)
                     if s is None:
                         break
                     else:
+                        assert False # TODO: remove all this to simplify the code
                         print(f'  this predicate is not initial, learned a new initial state')
                         reachable |= {add_state(s, False)}
                         reachable = close_forward(reachable) # just in case
