@@ -83,6 +83,6 @@ src/%.importable: src/%.py
 	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" || { echo "file $< is not importable"; exit 1; }
 
 clear-cache:
-	rm -iv examples/*.cache
+	rm -iv examples/*.cache examples/*/*.cache
 
 .PHONY: check run test verify updr bench typecheck trace pd pd-old unit check-imports clear-cache
