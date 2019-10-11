@@ -1345,7 +1345,7 @@ class MultiSubclausesMapICE(object):
                 )))
                 total_mus += len(all_mus)
                 total_mss += len(all_mss)
-            print(f'Done subclauses-states (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
+            print(f'[{datetime.now()}] Done subclauses-states (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
 
     def _new_predicates(self) -> None:
         if self.m == 0:
@@ -1374,7 +1374,7 @@ class MultiSubclausesMapICE(object):
                 )))
                 total_mus += len(all_mus)
                 total_mss += len(all_mss)
-            print(f'Done subclauses-predicates (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
+            print(f'[{datetime.now()}] Done subclauses-predicates (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
 
     def separate(self,
                  pos: Collection[int] = (),
@@ -1397,6 +1397,7 @@ class MultiSubclausesMapICE(object):
         '''
         self._new_states()
         self._new_predicates()
+        print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: starting')
         assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
         assert all(0 <= i < len(self.predicates) for i in chain(pos_ps, neg_ps, soft_pos_ps, soft_neg_ps))
         sep = list(chain(
@@ -1436,6 +1437,7 @@ class MultiSubclausesMapICE(object):
         assert res in (z3.unsat, z3.sat)
         if res == z3.unsat:
             self.solver.pop()
+            print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
             return None
         # minimize for strongest possible clause
         # TODO: just use z3's Optimize instead of minimizing manually
@@ -1458,6 +1460,7 @@ class MultiSubclausesMapICE(object):
         assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat
         result = [frozenset(self.all_n[k] - forced_to_false[k]) for k in range(self.m)]
         self.solver.pop()
+        print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
         return result
 
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
@@ -3820,7 +3823,7 @@ def primal_dual_houdini(solver: Solver) -> str:
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
 
-    print(f'\nStarting primal_dual_houdini, PID={os.getpid()} [{datetime.now()}]\n')
+    print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting primal_dual_houdini\n')
 
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
@@ -3888,15 +3891,15 @@ def primal_dual_houdini(solver: Solver) -> str:
                     i for i, t in enumerate(states)
                     if is_substructure(s, t)
                 )
-            print(f'done')
+            print(f'[{datetime.now()}] done')
             isomorphic = substructures & superstructures
             if len(isomorphic) > 0:
                 #production# assert len(isomorphic) == 1, sorted(isomorphic)
                 i = list(isomorphic)[0]
-                print(f'add_state{note}: isomorphic to previous state: states[{i}]')
+                print(f'[{datetime.now()}] add_state{note}: isomorphic to previous state: states[{i}]')
             else:
                 i = len(states)
-                print(f'add_state{note}: adding new state: states[{i}]')
+                print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}]')
                 states.append(s)
                 for j in sorted(substructures):
                     substructure.append((i, j))
@@ -3915,16 +3918,16 @@ def primal_dual_houdini(solver: Solver) -> str:
             i = states.index(s)
             if internal_cti:
                 if i not in internal_ctis:
-                    print(f'add_state{note}: adding states[{i}] to internal_ctis')
+                    print(f'[{datetime.now()}] add_state{note}: adding states[{i}] to internal_ctis')
                     internal_ctis |= {i}
                 else:
-                    print(f'add_state{note}: already have states[{i}] in internal_ctis')
+                    print(f'[{datetime.now()}] add_state{note}: already have states[{i}] in internal_ctis')
             else:
                 if i not in live_states:
-                    print(f'add_state{note}: adding states[{i}] to live_states')
+                    print(f'[{datetime.now()}] add_state{note}: adding states[{i}] to live_states')
                     live_states |= {i}
                 else:
-                    print(f'add_state{note}: already have states[{i}] in live_states')
+                    print(f'[{datetime.now()}] add_state{note}: already have states[{i}] in live_states')
             return i
 
     def add_transition(i: int, j: int) -> None:
@@ -3949,20 +3952,20 @@ def primal_dual_houdini(solver: Solver) -> str:
         if p not in predicates:
             for j, q in enumerate(predicates):
                 if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
-                    print(f'add_predicate: equivalent to existing predicate {j}: {p} <=> {q}')
+                    print(f'[{datetime.now()}] add_predicate: equivalent to existing predicate {j}: {p} <=> {q}')
                     if j not in live_predicates:
-                        print(f'add_predicate: reviving predicate {j}')
+                        print(f'[{datetime.now()}] add_predicate: reviving predicate {j}')
                     break
             else:
                 j = len(predicates)
-                print(f'add_predicate: adding new predicate {j}: {p}')
+                print(f'[{datetime.now()}] add_predicate: adding new predicate {j}: {p}')
                 predicates.append(p)
         else:
             j = predicates.index(p)
             if j in live_predicates:
-                print(f'add_predicate: already have this predicate {j}: {p}')
+                print(f'[{datetime.now()}] add_predicate: already have this predicate {j}: {p}')
             else:
-                print(f'add_predicate: reviving previous predicate {j}: {p}')
+                print(f'[{datetime.now()}] add_predicate: reviving previous predicate {j}: {p}')
         live_predicates |= {j}
         #TODO# assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
         # if reason is not None:
@@ -4020,7 +4023,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         # according to the current sharp predicates, using unrolling
         # of k
         # NOTE: this may find new reachable states
-        print(f'Starting forward_explore_from_states({sorted(src)})')
+        print(f'[{datetime.now()}] Starting forward_explore_from_states({sorted(src)})')
         nonlocal reachable
         r: FrozenSet[int] = reachable | src
         r = close_forward(r)
@@ -4059,7 +4062,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             reachable = close_forward(reachable)
             r = close_forward(r)
             assert frozenset(index_map.values()) <= r
-        print(f'Finished forward_explore_from_states({sorted(src)})')
+        print(f'[{datetime.now()}] Finished forward_explore_from_states({sorted(src)})')
 
     def houdini_frames() -> None:
         '''Check if any subset of the sharp predicates is inductive, and
@@ -4081,12 +4084,14 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal frames
         assert_invariants()
 
+        print(f'[{datetime.now()}] houdini_frames: starting')
+
         # first forward_explore from the reachable states
         n_reachable = len(reachable)
         n_live_predicates = len(live_predicates)
         forward_explore_from_states(reachable)
         new_reachable_states()
-        print(f'Forward explore of reachable states found {len(reachable) - n_reachable} new reachable states, eliminating {n_live_predicates - len(live_predicates)} predicates')
+        print(f'[{datetime.now()}] Forward explore of reachable states found {len(reachable) - n_reachable} new reachable states, eliminating {n_live_predicates - len(live_predicates)} predicates')
         assert_invariants()
 
         frames = [[predicates[i] for i in sorted(live_predicates)]]
@@ -4106,14 +4111,14 @@ def primal_dual_houdini(solver: Solver) -> str:
             for i in sorted(live_states):
                 if i in r:
                     continue
-                print(f'houdini_frames: checking for backward-transition from states[{i}]')
+                print(f'[{datetime.now()}] houdini_frames: checking for backward-transition from states[{i}]')
                 res = check_two_state_implication(
                     solver,
                     a + [maps[i].to_clause(0, maps[i].all_n[0])],
                     maps[i].to_clause(0, maps[i].all_n[0]),
                     f'backward-transition from states[{i}]'
                 )
-                print(f'houdini_frames: done checking for backward-transition from states[{i}]')
+                print(f'[{datetime.now()}] houdini_frames: done checking for backward-transition from states[{i}]')
                 if res is not None:
                     prestate, poststate = res
                     i_pre = add_state(prestate, False)
@@ -4131,9 +4136,9 @@ def primal_dual_houdini(solver: Solver) -> str:
             for p in b[:]:
                 if p not in b or predicates.index(p) in inductive_invariant:
                     continue
-                print(f'houdini_frames: checking for CTI to {p}')
+                print(f'[{datetime.now()}] houdini_frames: checking for CTI to {p}')
                 res = check_two_state_implication(solver, a, p, 'CTI')
-                print(f'houdini_frames: done checking for CTI to {p}')
+                print(f'[{datetime.now()}] houdini_frames: done checking for CTI to {p}')
                 if res is not None:
                     prestate, poststate = res
                     i_pre = add_state(prestate, False)
@@ -4160,10 +4165,11 @@ def primal_dual_houdini(solver: Solver) -> str:
         inv = frozenset(predicates.index(p) for p in a)
         #production# assert inductive_invariant <= inv
         inductive_invariant = inv
+        print(f'[{datetime.now()}] houdini_frames: done')
 
     def compute_step_frames() -> None:
         nonlocal step_frames
-        print(f'compute_step_frames: starting')
+        print(f'[{datetime.now()}] compute_step_frames: starting')
         step_frames = [[predicates[i] for i in sorted(live_predicates)]]
         while True:
             a = step_frames[-1]
@@ -4183,7 +4189,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         #production# assert step_frames[-1] == a == b
         inv = frozenset(predicates.index(p) for p in a)
         #production# assert inductive_invariant == inv
-        print(f'compute_step_frames: done')
+        print(f'[{datetime.now()}] compute_step_frames: done')
 
     def dual_houdini_frames() -> None:
         '''
@@ -4195,14 +4201,14 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal dual_frames
         nonlocal live_states
         assert_invariants()
-        print(f'dual_houdini_frames: starting')
+        print(f'[{datetime.now()}] dual_houdini_frames: starting')
         # first forward_explore from the current inductive invariant
         n_inductive_invariant = len(inductive_invariant)
         n_reachable_states = len(reachable)
         forward_explore_from_predicates(inductive_invariant)
         new_inductive_invariants()
         new_reachable_states()
-        print(f'dual_houdini_frames: forward explore of inductive invariant found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates and {len(reachable) - n_reachable_states} new reachable states')
+        print(f'[{datetime.now()}] dual_houdini_frames: forward explore of inductive invariant found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates and {len(reachable) - n_reachable_states} new reachable states')
         assert_invariants()
         # TODO: should we stop here in case we found anything and go back to primal houdini?
 
@@ -4213,11 +4219,11 @@ def primal_dual_houdini(solver: Solver) -> str:
             #production# assert r == dual_close_forward(r)
             a = dual_frames[-1]
             #production# assert all(eval_in_state(None, states[i], predicates[j]) for i, j in product(a, sorted(r)))
-            print(f'dual_houdini_frames: starting iteration, r={sorted(r)}, a=reachable+{sorted(frozenset(a) - reachable)}')
+            print(f'[{datetime.now()}] dual_houdini_frames: starting iteration, r={sorted(r)}, a=reachable+{sorted(frozenset(a) - reachable)}')
             r_0 = r
             for j in sorted(live_predicates):
                 if j not in r and all(eval_in_state(None, states[i], predicates[j]) for i in a):
-                    print(f'dual_houdini_frames: adding {j} to r by abstract implication')
+                    print(f'[{datetime.now()}] dual_houdini_frames: adding {j} to r by abstract implication')
                     r |= {j}
                     r = dual_close_forward(r)
             n_reachable = len(reachable)
@@ -4229,13 +4235,13 @@ def primal_dual_houdini(solver: Solver) -> str:
             # try to add edges to existing predicates (dual-backward-transitions)
             goals = live_predicates - r
             if len(goals) > 0:
-                print(f'dual_houdini_frames: checking for dual-backward-transition from predicates{sorted(goals)}')
+                print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-backward-transition from predicates{sorted(goals)}')
                 res = find_dual_backward_transition(
                     a,
                     r_0,
                     goals,
                 )
-                print(f'dual_houdini_frames: done checking for dual-backward-transition predicates{sorted(goals)}')
+                print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-backward-transition predicates{sorted(goals)}')
                 if res is not None:
                     ps = frozenset(add_predicate(p) for p in res[0])
                     qs = frozenset(add_predicate(q) for q in res[1]) # should not add any new predicates actually
@@ -4252,7 +4258,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             # for j in sorted(live_predicates):
             #     if j in r:
             #         continue
-            #     print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
             #     res = find_dual_edge(
             #         a,
             #         r_0,
@@ -4261,7 +4267,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             #          if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
             #         ], # TODO: change this when find_dual_edge supports greedy predicate goals
             #     )
-            #     print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
             #     if res is not None:
             #         ps = frozenset(add_predicate(p) for p in res[0])
             #         qs = frozenset(add_predicate(q) for q in res[1])
@@ -4295,7 +4301,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 )
                 if len(roots) == 0:
                     continue
-                print(f'dual_houdini_frames: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+                print(f'[{datetime.now()}] dual_houdini_frames: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
                 for i in sorted(roots):
                     #TODO# assert i not in reachable ??? see paxos_forall.pd-primal-dual-houdini.5e0ed39.seed-1234.log
                     if i in reachable:
@@ -4304,7 +4310,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         # already eliminated i
                         #production# assert changes
                         continue
-                    print(f'dual_houdini_frames: checking for dual-CTI to states[{i}]')
+                    print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-CTI to states[{i}]')
                     n_reachable = len(reachable)
                     res = find_dual_edge(
                         a,
@@ -4315,7 +4321,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         ],
                     )
                     #TODO# assert n_reachable == len(reachable), '?'
-                    print(f'dual_houdini_frames: done checking for dual-CTI to states[{i}]')
+                    print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-CTI to states[{i}]')
                     if res is not None:
                         ps = frozenset(add_predicate(p) for p in res[0])
                         qs = frozenset(add_predicate(q) for q in res[1])
@@ -4346,7 +4352,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         continue
                     assert find_dual_edge(a, r_0, states[i], []) is None, i
             b = [i for i in a if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
-            print(f'dual_houdini_frames: next frame is: {sorted(b)}')
+            print(f'[{datetime.now()}] dual_houdini_frames: next frame is: {sorted(b)}')
             if a == b:
                 break
             else:
@@ -4359,7 +4365,8 @@ def primal_dual_houdini(solver: Solver) -> str:
         # TODO: this assertion is actually not true when there is a
         # cycle of unreachable states, we should think about it more
         # assert frozenset(dual_frames[-1]) <= reachable, sorted(frozenset(dual_frames[-1]) - reachable)
-        print(f'dual_houdini_frames computed {len(dual_frames)} dual frames:')
+        print(f'[{datetime.now()}] dual_houdini_frames: done')
+        print(f'[{datetime.now()}] dual_houdini_frames computed {len(dual_frames)} dual frames:')
         for f in dual_frames:
             print(f'  {sorted(f)}')
         if frozenset(dual_frames[-1]) <= reachable:
@@ -4378,7 +4385,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         from pos.
         '''
         # TODO: think about this again and run more thorough validation tests
-        print(f'compute_roots: starting with: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}')
+        print(f'[{datetime.now()}] compute_roots: starting with: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}')
         # assert a is None or reachable <= a TODO: this can be violated if a new reachable state is discovered in dual_houdini_frames, think about this
         #production# assert reachable <= pos
         # assert pos <= s TODO: think about this again, but for now I think it makes sense even of pos is not a subset of s
@@ -4402,7 +4409,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if i in dom and j in dom:
                 z3s.add(z3.Implies(v(i), v(j)))
         z3s.add(z3.Or(*(z3.Not(v(i)) for i in sorted(s))))
-        # print(f'compute_roots: z3s:\n{z3s}')
+        # print(f'[{datetime.now()}] compute_roots: z3s:\n{z3s}')
         def f(r: FrozenSet[int]) -> bool:
             res = z3s.check(*(v(i) for i in r))
             assert res in (z3.unsat, z3.sat)
@@ -4417,7 +4424,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if f(r - {i}):
                 r -= {i}
         assert f(r)
-        print(f'compute_roots: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}, result is {sorted(r)}')
+        print(f'[{datetime.now()}] compute_roots: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}, result is {sorted(r)}')
         return r
 
     def forward_explore_from_predicates(src: FrozenSet[int],
@@ -4431,7 +4438,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 
         for now, assuming k=1, i.e., to rule out a state we will only use one clause
         '''
-        print(f'forward_explore_from_predicates: starting with predicates{sorted(src)}')
+        print(f'[{datetime.now()}] forward_explore_from_predicates: starting with predicates{sorted(src)}')
         nonlocal inductive_invariant
         n_inductive_invariant = len(inductive_invariant)
         r: FrozenSet[int] = inductive_invariant | src
@@ -4461,7 +4468,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     r = dual_close_forward(r)
                     #production# assert qs <= r
                     changes = True
-                    print(f'forward_explore_from_predicates: connecting to existing predicates: predicates{sorted(qs)}')
+                    print(f'[{datetime.now()}] forward_explore_from_predicates: connecting to existing predicates: predicates{sorted(qs)}')
                     break
                 else:
                     prestate, poststate = cti
@@ -4502,15 +4509,15 @@ def primal_dual_houdini(solver: Solver) -> str:
                 a=None,
             )
             if len(roots) > 0:
-                print(f'forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+                print(f'[{datetime.now()}] forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
             # try to find a new predicate that eliminates a root and is inductive relative to r
             for i in sorted(roots):
                 #TODO# assert i not in reachable, i # TODO: see paxos_forall_choosable.pd-primal-dual-houdini.6d3c0fd.seed-5678.log
                 if i in reachable:
                     continue
-                print(f'forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
+                print(f'[{datetime.now()}] forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
                 res = find_dual_edge([], r, states[i], [states[i] for i in sorted(to_eliminate)], n_ps=0)
-                print(f'forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
+                print(f'[{datetime.now()}] forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
                 if res is not None:
                     ps_i = frozenset(add_predicate(p) for p in res[0])
                     qs_i = frozenset(add_predicate(q) for q in res[1])
@@ -4519,7 +4526,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     dual_transitions.append((ps_i, qs_i))
                     r = dual_close_forward(r)
                     #production# assert qs_i <= r
-                    print(f'forward_explore_from_predicates: connecting to new predicates: predicates{sorted(qs_i)}')
+                    print(f'[{datetime.now()}] forward_explore_from_predicates: connecting to new predicates: predicates{sorted(qs_i)}')
                     changes = True
                     break # to prioritize using existing predicates (no stratification, unlike in dual_houdini_frames)
             else:
@@ -4532,7 +4539,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         assert find_dual_edge([], r, states[i], [], n_ps=0) is None, i
         # here there are no more dual edges that can be added
         inductive_invariant = dual_close_forward(inductive_invariant)
-        print(f'forward_explore_from_predicates: finished exploring from predicates{sorted(src)}, found {len(r) - n_r} new provable predicates: predicates{sorted(r - src)}, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
+        print(f'[{datetime.now()}] forward_explore_from_predicates: finished exploring from predicates{sorted(src)}, found {len(r) - n_r} new provable predicates: predicates{sorted(r - src)}, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
 
     def find_dual_edge(
             pos: Collection[int], # indices into states that ps must satisfy
@@ -4561,23 +4568,23 @@ def primal_dual_houdini(solver: Solver) -> str:
             goal_i = states.index(goal)
             goal = maps[goal_i].to_clause(0, maps[goal_i].all_n[0])
             stateof[goal] = goal_i
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         else:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         n_internal_ctis = len(internal_ctis)
         n_reachable = len(reachable)
         ps: List[Predicate] = [predicates[j] for j in sorted(r)]
         worklist: List[Tuple[Expr,...]] = [(goal,)]
         seen_before: FrozenSet[FrozenSet[Expr]] = frozenset()
         while len(worklist) > 0 and worklist_budget > 0:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
             for goals in worklist:
                 notes = ', '.join(f'states[{stateof[g]}]' if g in stateof else str(g) for g in goals)
                 print(f'    ({notes}, )')
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: trying the top one')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: trying the top one')
             goals = worklist.pop(0)
             if frozenset(goals) in seen_before:
-                print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: already seen this one, skipping')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: already seen this one, skipping')
                 continue
             worklist_budget -= 1
             seen_before |= {frozenset(goals)}
@@ -4659,7 +4666,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cti_solver_add_p(p)
             def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[PDState, PDState]]:
                 for q_indicator, transition_indicator in product(q_indicators_post, transition_indicators):
-                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
                         [q_indicator, transition_indicator],
                         (lit_indicators_pre[k][i] for k in range(mp.m) for i in sorted(mp.all_n[k] - q_seed[k])),
@@ -4668,7 +4675,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     ))
                     z3res = cti_solver.check(indicators)
                     assert z3res in (z3.sat, z3.unsat)
-                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): {z3res}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): {z3res}')
                     if z3res == z3.unsat:
                         continue
                     if optimize:
@@ -4682,13 +4689,13 @@ def primal_dual_houdini(solver: Solver) -> str:
                             z3res = cti_solver.check(indicators + (extra,))
                             assert z3res in (z3.sat, z3.unsat)
                             if z3res == z3.sat:
-                                print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): adding extra: {extra}')
+                                print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): adding extra: {extra}')
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
                     z3model = cti_solver.model(indicators)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
                     poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): found new cti violating dual edge')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
                         if all(eval_in_state(None, state, p) for p in inits):
@@ -4709,9 +4716,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                     # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
                     # first, check if init |= q, if not, we learn a new initial state
                     if len(q) == 1:
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
                     else:
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential q is:')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: potential q is:')
                         for k in range(mp.m):
                             print(f'  ({len(destruct_clause(q[k])[1])} literals): {q[k]}')
                     initial = True
@@ -4735,11 +4742,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                         p_seed = frozenset(range(len(ps)))
                         _cti = check_q(q_seed, p_seed,  utils.args.optimize_ctis)
                         if _cti is None:
-                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: dual edge is valid, minimizing ps')
+                            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: dual edge is valid, minimizing ps')
                             for i in sorted(p_seed, reverse=True):
                                 if check_q(q_seed, p_seed - {i}, False) is None:
                                     p_seed -= {i}
-                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: done minimizing ps')
+                            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: done minimizing ps')
                             _ps = tuple(ps[i] for i in sorted(p_seed))
                         else:
                             _ps = None
@@ -4772,8 +4779,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if _cti is None:
                         assert _ps is not None
                         _qs = tuple(q)
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                         for p in _ps:
                             print(f'  {p}')
                         print('  --> ')
@@ -4798,7 +4805,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                            ctis -= {i}
                     #production# assert check_sep(ctis) is None
                     to_eliminate = ctis - pos
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
                     for i in sorted(to_eliminate):
                         while True:
                             seed = maps[i].separate(
@@ -4822,14 +4829,14 @@ def primal_dual_houdini(solver: Solver) -> str:
                         if seed is not None:
                             add_p(p)
                             added_new_p = True
-                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: found new p predicate: {p}')
+                            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new p predicate: {p}')
                             break
                 if added_new_p:
                     continue
-                print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: cannot find any new p predicate')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find any new p predicate')
                 # we have not added a new p
                 if len(goals) == n_qs:
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: cannot find dual edge for this worklist item')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find dual edge for this worklist item')
                     break
                 # minimize ctis (including ones in pos) and add more worklist items
                 # TODO: use unsat cores
@@ -4840,10 +4847,10 @@ def primal_dual_houdini(solver: Solver) -> str:
                 #production# assert check_sep(ctis) is None
                 #production# assert len(ctis & reachable) == 0, sorted(ctis & reachable)
                 if len(ctis) == 0:
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
                 else:
                     ctis = frozenset(i for i in ctis if maps[i].to_clause(0, maps[i].all_n[0]) not in goals)
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
                     for i in sorted(ctis):
                         g = maps[i].to_clause(0, maps[i].all_n[0])
                         #production# assert g not in goals
@@ -4851,11 +4858,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
         if len(worklist) == 0:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: no more worklist items, so cannot find dual edge')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: no more worklist items, so cannot find dual edge')
         else:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
         return None
 
     def find_dual_backward_transition(
@@ -4875,7 +4882,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         ps: List[Predicate] = [] # will be increasing
         goals = sorted(goals)
         qs = tuple(predicates[j] for j in goals)
-        print(f'find_dual_backward_transition: starting, pos=states{sorted(pos)}, r=predicates{sorted(r)}, goals=predicates{goals}')
+        print(f'[{datetime.now()}] find_dual_backward_transition: starting, pos=states{sorted(pos)}, r=predicates{sorted(r)}, goals=predicates{goals}')
         n = len(qs)
         all_n = frozenset(range(n))
         #production# assert n > 0
@@ -4967,18 +4974,18 @@ def primal_dual_houdini(solver: Solver) -> str:
                 qs_seed = find_fixpoint(ctis)
                 if len(qs_seed) == 0:
                     break
-                print(f'find_dual_backward_transition: potential {len(qs_seed)} qs are: predicates{sorted(goals[i] for i in qs_seed)}')
+                print(f'[{datetime.now()}] find_dual_backward_transition: potential {len(qs_seed)} qs are: predicates{sorted(goals[i] for i in qs_seed)}')
                 # now, check if r /\ ps /\ qs_seed |= wp(r /\ ps -> qs_seed)
                 _cti: Optional[Tuple[PDState, PDState]]
                 _ps: Optional[Tuple[Predicate,...]]
                 p_seed = frozenset(range(len(ps)))
                 _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
                 if _cti is None:
-                    print(f'find_dual_backward_transition: dual edge is valid, minimizing ps')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: dual edge is valid, minimizing ps')
                     for i in sorted(p_seed, reverse=True):
                         if check_qs(qs_seed, p_seed - {i}, False) is None:
                             p_seed -= {i}
-                    print(f'find_dual_backward_transition: done minimizing ps')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: done minimizing ps')
                     _ps = tuple(ps[i] for i in sorted(p_seed))
                 else:
                     _ps = None
@@ -5003,8 +5010,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 if _cti is None:
                     assert _ps is not None
                     _qs = tuple(qs[i] for i in sorted(qs_seed))
-                    print(f'find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                    print(f'find_dual_backward_transition: found new dual edge:')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: found new dual edge:')
                     for p in _ps:
                         print(f'  {p}')
                     print(f'  -->')
@@ -5027,7 +5034,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                    ctis -= {i}
             #production# assert len(find_fixpoint(ctis)) == 0
             to_eliminate = ctis - pos
-            print(f'find_dual_backward_transition: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+            print(f'[{datetime.now()}] find_dual_backward_transition: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
             for i in sorted(to_eliminate):
                 while True:
                     seed = maps[i].separate(
@@ -5050,11 +5057,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                         reachable = close_forward(reachable) # just in case
                 if seed is not None:
                     add_p(p)
-                    print(f'find_dual_backward_transition: found new p predicate: {p}')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: found new p predicate: {p}')
                     break
             else:
-                print(f'find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                print(f'find_dual_backward_transition: cannot find any new p predicate, so cannot find dual edge')
+                print(f'[{datetime.now()}] find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                print(f'[{datetime.now()}] find_dual_backward_transition: cannot find any new p predicate, so cannot find dual edge')
                 return None
 
     def new_reachable_states() -> None:
@@ -5119,10 +5126,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         houdini_frames()
         compute_step_frames()
         if len(reachable) > n_reachable:
-            print(f'Primal Houdini found {len(reachable) - n_reachable} new reachable states')
+            print(f'[{datetime.now()}] Primal Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
-            print(f'Primal Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            print(f'[{datetime.now()}] Primal Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             new_inductive_invariants()
 
         assert_invariants()
@@ -5142,7 +5149,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
         for i in reachable:
             if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
-                print(f'\nFound safety violation by reachable state (states[{i}]).')
+                print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
         print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
@@ -5180,10 +5187,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         #production# assert reachable == close_forward(reachable)
         #production# assert inductive_invariant == dual_close_forward(inductive_invariant)
         if len(reachable) > n_reachable:
-            print(f'Dual Houdini found {len(reachable) - n_reachable} new reachable states')
+            print(f'[{datetime.now()}] Dual Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
-            print(f'Dual Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            print(f'[{datetime.now()}] Dual Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             new_inductive_invariants()
         assert_invariants()
         print(f'\n[{datetime.now()}] After Dual Houdini: learned {len(predicates) - n_predicates} new predicates,'
