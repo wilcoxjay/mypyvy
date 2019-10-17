@@ -889,12 +889,13 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
             n = 1
         else:
             n = min(utils.args.cpus, len(real_work))
+        results: List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = []
         if n > 1:
             with multiprocessing.Pool(n) as pool:
-                results = pool.map_async(
-                    _map_clause_state_interaction_helper,
-                    real_work,
-                ).get(9999999) # see: https://stackoverflow.com/a/1408476
+               results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should check again to see if they fix it
+                   _map_clause_state_interaction_helper,
+                   real_work,
+               ).get(9999999) # see: https://stackoverflow.com/a/1408476
         else:
             results = list(map(_map_clause_state_interaction_helper, real_work))
         for k, v in zip(real_work, results):
