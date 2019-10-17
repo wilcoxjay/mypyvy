@@ -409,13 +409,19 @@ class Solver(object):
         if 'restarts' not in utils.args or not utils.args.restarts:
             res = self.z3solver.check(*assumptions)
             if res == z3.unknown:
+                print(f'[{datetime.now()}] Solver.check: encountered unknown, printing debug information')
+                print(f'[{datetime.now()}] Solver.check: self.assertions:')
                 for e in self.assertions():
                     print(e)
-                print('stats:')
+                print(f'[{datetime.now()}] Solver.check: assumptions:')
+                for e in assumptions:
+                    print(e)
+                print(f'[{datetime.now()}] Solver.check: self.z3solver stats:')
                 print(self.z3solver.statistics())
+                print(f'[{datetime.now()}] Solver.check: self.z3solver to_smt2:')
                 print(self.z3solver.to_smt2())
 
-                print('trying fresh solver')
+                print(f'[{datetime.now()}] Solver.check: trying fresh solver')
                 s2 = z3.Solver()
                 lator = self.get_translator()
                 for a in syntax.the_program.axioms():
@@ -423,12 +429,12 @@ class Solver(object):
                 for e in self.assertions():
                     s2.add(e)
 
-                print('s2.check()', s2.check())
-                print('s2 stats:')
+                print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
+                print(f'[{datetime.now()}] Solver.check: s2 stats:')
                 print(s2.statistics())
                 print(s2.to_smt2())
 
-                print('trying fresh context')
+                print(f'[{datetime.now()}] Solver.check: trying fresh context')
                 ctx = z3.Context()
                 s3 = z3.Solver(ctx=ctx)
                 for a in syntax.the_program.axioms():
@@ -436,8 +442,8 @@ class Solver(object):
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
 
-                print('s3.check()', s3.check())
-                print('s3 stats:')
+                print(f'[{datetime.now()}] Solver.check: s3.check()', s3.check(*(e.translate(ctx) for e in assumptions)))
+                print(f'[{datetime.now()}] Solver.check: s3 stats:')
                 print(s3.statistics())
                 print(s3.to_smt2())
 
@@ -1598,4 +1604,3 @@ class CexFound(object):
     pass
 class GaveUp(object):
     pass
-
