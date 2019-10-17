@@ -541,7 +541,6 @@ def check_dual_edge_old(
 # Here is the less stupid version (reusing code from find_dual_backward_transition, much refactoring needed):
 # TODO: cache valid dual edges like we cache transitions
 def check_dual_edge(
-        # TODO: this is very inefficient since it lets z3 handle the disjunction, keeping for reference, and should remove after thorough validation of the new version
         s: Solver,
         ps: Tuple[Expr,...],
         qs: Tuple[Expr,...],
@@ -555,7 +554,8 @@ def check_dual_edge(
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     k = (ps, qs)
     cache = _cache_dual_edge
-    print(f'check_dual_edge: starting to check the following edge:')
+    print(f'[{datetime.now()}] check_dual_edge: starting')
+    print(f'[{datetime.now()}] check_dual_edge: starting to check the following edge:')
     for p in ps:
         print(f'  {p}')
     print('  -->')
@@ -574,7 +574,7 @@ def check_dual_edge(
                 # TODO: we're not really minimizing the cti here... probably fine
                 cache[k] = ((prestate, poststate), None)
                 cache['r'] += 1
-                print(f'check_dual_edge: found previous {msg} violating dual edge')
+                print(f'[{datetime.now()}] check_dual_edge: found previous {msg} violating dual edge')
                 # print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 break
         else:
@@ -597,14 +597,14 @@ def check_dual_edge(
                 cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
                 for q_indicator, transition_indicator in product(q_indicators, transition_indicators):
-                    print(f'check_dual_edge: testing {q_indicator}, {transition_indicator}')
+                    print(f'[{datetime.now()}] check_dual_edge: testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
                         [q_indicator, transition_indicator],
                         (p_indicators[i] for i in sorted(ps_seed)),
                     ))
                     z3res = cti_solver.check(indicators)
                     assert z3res in (z3.sat, z3.unsat)
-                    print(f'check_dual_edge: {z3res}')
+                    print(f'[{datetime.now()}] check_dual_edge: {z3res}')
                     if z3res == z3.unsat:
                         continue
                     z3model = cti_solver.model(indicators, minimize)
@@ -625,17 +625,17 @@ def check_dual_edge(
                 if utils.args.cache_only_discovered:
                     assert False
                 prestate, poststate = res
-                print(f'check_dual_edge: found new {msg} violating dual edge')
+                print(f'[{datetime.now()}] check_dual_edge: found new {msg} violating dual edge')
                 cache[k] = ((prestate, poststate), None)
             else:
                 # minimize ps_i
-                print(f'check_dual_edge: minimizing ps')
+                print(f'[{datetime.now()}] check_dual_edge: minimizing ps')
                 for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
                     if i in ps_i and check(ps_i - {i}, False) is None:
                         ps_i -= {i}
                 _ps = tuple(ps[i] for i in ps_i)
-                print(f'check_dual_edge: done minimizing ps')
-                print(f'check_dual_edge: found new valid dual edge:')
+                print(f'[{datetime.now()}] check_dual_edge: done minimizing ps')
+                print(f'[{datetime.now()}] check_dual_edge: found new valid dual edge:')
                 for p in _ps:
                     print(f'  {p}')
                 print('  -->')
@@ -656,9 +656,9 @@ def check_dual_edge(
     else:
         cti, ps = cache[k]
         if cti is not None:
-            print(f'check_dual_edge: found cached {msg} violating dual edge')
+            print(f'[{datetime.now()}] check_dual_edge: found cached {msg} violating dual edge')
         else:
-            print(f'check_dual_edge: found cached valid dual edge:')
+            print(f'[{datetime.now()}] check_dual_edge: found cached valid dual edge:')
             for p in ps:
                 print(f'  {p}')
             print('  -->')
@@ -666,6 +666,7 @@ def check_dual_edge(
                 print(f'  {q}')
         cache['h'] += 1
 
+    print(f'[{datetime.now()}] check_dual_edge: done')
     return cache[k]
 
 
@@ -4744,7 +4745,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
                     _cti: Optional[Tuple[PDState, PDState]]
                     _ps: Optional[Tuple[Predicate,...]]
-                    if True:
+                    if False:
                         # version using cti_solver
                         p_seed = frozenset(range(len(ps)))
                         _cti = check_q(q_seed, p_seed,  utils.args.optimize_ctis)
