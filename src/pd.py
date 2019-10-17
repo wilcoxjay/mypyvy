@@ -578,28 +578,27 @@ def check_dual_edge(
                 # print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 break
         else:
-            # now we really have to check, use a specilized solver
-            cti_solver = Solver() # TODO: maybe solver per transition
-            t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
-            for q in qs:
-                cti_solver.add(t.translate_expr(q, old=True))
-            # add transition indicators
-            transition_indicators: List[z3.ExprRef] = []
-            for i, trans in enumerate(prog.transitions()):
-                transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
-            p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
-            for i, p in enumerate(ps):
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
-            q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
-            for i, q in enumerate(qs):
-                cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
+            # now we really have to check, use a specilized solver, with one solver per transition (older version that uses a single solver is available in commit c533c48)
+            cti_solvers: List[Solver] = []
+            for trans in prog.transitions():
+                _cti_solver = Solver()
+                t = _cti_solver.get_translator(KEY_NEW, KEY_OLD)
+                for q in qs:
+                    _cti_solver.add(t.translate_expr(q, old=True))
+                _cti_solver.add(t.translate_transition(trans))
+                p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
+                for i, p in enumerate(ps):
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+                q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
+                for i, q in enumerate(qs):
+                    _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
+                cti_solvers.append(_cti_solver)
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
-                for q_indicator, transition_indicator in product(q_indicators, transition_indicators):
-                    print(f'[{datetime.now()}] check_dual_edge: testing {q_indicator}, {transition_indicator}')
+                for q_indicator, (cti_solver, trans) in product(q_indicators, zip(cti_solvers, prog.transitions())):
+                    print(f'[{datetime.now()}] check_dual_edge: testing {q_indicator}, transition {trans.name}')
                     indicators = tuple(chain(
-                        [q_indicator, transition_indicator],
+                        [q_indicator],
                         (p_indicators[i] for i in sorted(ps_seed)),
                     ))
                     z3res = cti_solver.check(indicators)
@@ -609,7 +608,7 @@ def check_dual_edge(
                         continue
                     z3model = cti_solver.model(indicators, minimize)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
-                    poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                    poststate = Trace.from_z3([KEY_NEW], z3model)
                     if minimize:
                         # TODO: should we put it in the cache anyway? for now not
                         _cache_transitions.append((prestate, poststate))
@@ -629,6 +628,7 @@ def check_dual_edge(
                 cache[k] = ((prestate, poststate), None)
             else:
                 # minimize ps_i
+                # TODO: maybe use unsat cores
                 print(f'[{datetime.now()}] check_dual_edge: minimizing ps')
                 for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
                     if i in ps_i and check(ps_i - {i}, False) is None:
