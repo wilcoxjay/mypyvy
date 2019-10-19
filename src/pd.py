@@ -16,6 +16,7 @@ import os
 import math
 import multiprocessing
 from contextlib import nullcontext
+from random import randint
 
 from syntax import *
 from logic import *
@@ -540,6 +541,75 @@ def check_dual_edge_old(
     return cache[k]
 # Here is the less stupid version (reusing code from find_dual_backward_transition, much refactoring needed):
 # TODO: cache valid dual edges like we cache transitions
+def check_dual_edge_multiprocessing_helper(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        i_transition: int,
+        i_q: int,
+        minimize: bool,
+) -> Optional[Tuple[PDState, PDState]]:
+    prog = syntax.the_program
+    trans = list(prog.transitions())[i_transition]
+    s = Solver()
+    #seed = randint(0, 10**6)
+    #print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: setting z3 seed to {seed}')
+    #s.z3solver.set(seed=seed, random_seed=seed)  # type: ignore  # TODO: fix typing # TODO: ask Nikolaj how to set the seed
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+    for q in qs:
+        s.add(t.translate_expr(q, old=True))
+    s.add(t.translate_transition(trans))
+    for i, p in enumerate(ps):
+        s.add(t.translate_expr(p, old=True))
+        s.add(t.translate_expr(p, old=False))
+    q = qs[i_q]
+    s.add(z3.Not(t.translate_expr(q, old=False)))
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: checking transition {i_transition} on q {i_q}')
+    z3res = s.check()
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: got {z3res}')
+    assert z3res in (z3.sat, z3.unsat)
+    if z3res == z3.unsat:
+        return None
+    else:
+        z3model = s.model(minimize=minimize)
+        prestate = Trace.from_z3([KEY_OLD], z3model)
+        poststate = Trace.from_z3([KEY_NEW], z3model)
+        return prestate, poststate
+def check_dual_edge_multiprocessing(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        minimize: bool,
+) -> Optional[Tuple[Trace, Trace]]:
+    # this function uses multiprocessing to start multiple solvers for different transitions and qs
+    prog = syntax.the_program
+    n_transitions = trans = len(list(prog.transitions()))
+    n = n_transitions * len(qs)
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: starting {n} processes')
+    with multiprocessing.Pool(processes=n) as pool:
+        results = []
+        for i_q, i_transition in product(range(len(qs)), range(n_transitions)):
+            results.append(pool.apply_async(
+                check_dual_edge_multiprocessing_helper,
+                (ps, qs, i_transition, i_q, minimize),
+            ))
+        while True:
+            not_ready = []
+            for r in results:
+                r.wait(1)
+                if r.ready():
+                    res = r.get(1)
+                    if res is not None:
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: got a SAT result, returning')
+                        return res  # the context manager of pool will terminate the processes
+                    else:
+                        pass # unsat result, keep waiting for others
+                else:
+                    not_ready.append(r)
+            if len(not_ready) == 0:
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: got all UNSAT results, returning')
+                return None
+            else:
+                results = not_ready
+    assert False
 def check_dual_edge(
         s: Solver,
         ps: Tuple[Expr,...],
@@ -595,29 +665,47 @@ def check_dual_edge(
                     _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
                 cti_solvers.append(_cti_solver)
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
-                for q_indicator, (cti_solver, trans) in product(q_indicators, zip(cti_solvers, prog.transitions())):
-                    print(f'[{datetime.now()}] check_dual_edge: testing {q_indicator}, transition {trans.name}')
-                    indicators = tuple(chain(
-                        [q_indicator],
-                        (p_indicators[i] for i in sorted(ps_seed)),
-                    ))
-                    z3res = cti_solver.check(indicators)
-                    assert z3res in (z3.sat, z3.unsat)
-                    print(f'[{datetime.now()}] check_dual_edge: {z3res}')
-                    if z3res == z3.unsat:
-                        continue
-                    z3model = cti_solver.model(indicators, minimize)
-                    prestate = Trace.from_z3([KEY_OLD], z3model)
-                    poststate = Trace.from_z3([KEY_NEW], z3model)
-                    if minimize:
+                if True:
+                    # use multiprocessing
+                    res = check_dual_edge_multiprocessing(
+                        ps=tuple(ps[i] for i in sorted(ps_seed)),
+                        qs=qs,
+                        minimize=minimize,
+                    )
+                    if res is not None and minimize:
                         # TODO: should we put it in the cache anyway? for now not
+                        prestate, poststate = res
                         _cache_transitions.append((prestate, poststate))
                         for state in (prestate, poststate):
                             if all(eval_in_state(None, state, p) for p in inits):
                                 _cache_initial.append(state)
-                        # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
-                    return prestate, poststate
-                return None
+                                # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
+                    return res
+                else:
+                    # no multiprocessing
+                    for q_indicator, (cti_solver, trans) in product(q_indicators, zip(cti_solvers, prog.transitions())):
+                        print(f'[{datetime.now()}] check_dual_edge: testing {q_indicator}, transition {trans.name}')
+                        indicators = tuple(chain(
+                            [q_indicator],
+                            (p_indicators[i] for i in sorted(ps_seed)),
+                        ))
+                        z3res = cti_solver.check(indicators)
+                        assert z3res in (z3.sat, z3.unsat)
+                        print(f'[{datetime.now()}] check_dual_edge: {z3res}')
+                        if z3res == z3.unsat:
+                            continue
+                        z3model = cti_solver.model(indicators, minimize)
+                        prestate = Trace.from_z3([KEY_OLD], z3model)
+                        poststate = Trace.from_z3([KEY_NEW], z3model)
+                        if minimize:
+                            # TODO: should we put it in the cache anyway? for now not
+                            _cache_transitions.append((prestate, poststate))
+                            for state in (prestate, poststate):
+                                if all(eval_in_state(None, state, p) for p in inits):
+                                    _cache_initial.append(state)
+                            # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
+                        return prestate, poststate
+                    return None
             ps_i = frozenset(range(len(ps)))
             res = check(ps_i, True)
             if res is not None:
