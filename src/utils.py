@@ -111,6 +111,7 @@ class MypyvyArgs(object):
     subcommand: str
     checkpoint_in: Optional[str]
     checkpoint_out: Optional[str]
+    domain_independence: bool
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
 
