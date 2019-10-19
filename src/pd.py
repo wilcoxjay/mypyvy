@@ -1410,6 +1410,44 @@ class MultiSubclausesMapICE(object):
         self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
 
+        self._constrain_domain_independence()
+
+    def get_lit(self, clause_num: int, lit_num: int) -> z3.ExprRef:
+        return z3.Bool(f'lit_{clause_num}_{lit_num}')
+
+    def _constrain_domain_independence(self) -> None:
+        '''for each equality literal between two vars, if the literal is used, then some "domain constraining" literal for each var must also be used.'''
+        def destruct_variable_equality(lit: Expr) -> Optional[Tuple[str, str]]:
+            if not isinstance(lit, BinaryExpr):
+                return None
+            assert lit.op == 'EQUAL'
+            left = lit.arg1
+            right = lit.arg2
+            def is_var(x: Id) -> bool:
+                prog = syntax.the_program
+                scope = prog.scope
+                o = scope.get(x.name)
+                assert o is None or isinstance(o, ConstantDecl)
+                return o is None
+
+            if not isinstance(left, Id) or not is_var(left) or \
+               not isinstance(right, Id) or not is_var(right):
+                return None
+
+            return left.name, right.name
+
+        def domain_independent_literals_for_var(lits: Tuple[Expr, ...], v: str) -> Iterable[int]:
+            for j, lit in enumerate(lits):
+                if v in lit.free_ids() and destruct_variable_equality(lit) is None:  # I think this is not quite right for arguments to function symbols, which shouldn't count
+                    yield j
+
+        for k in range(self.m):
+            for i, l in enumerate(self.literals[k]):
+                o = destruct_variable_equality(l)
+                if o:
+                    for v in o:
+                        self.solver.add(z3.Implies(self.get_lit(k,i), z3.Or(*[self.get_lit(k,j) for j in domain_independent_literals_for_var(self.literals[k], v)])))
+
     def _new_states(self) -> None:
         if self.m == 0:
             return
