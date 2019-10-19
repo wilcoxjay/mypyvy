@@ -17,11 +17,14 @@ import math
 import multiprocessing
 from contextlib import nullcontext
 from random import randint
+import queue
+from datetime import datetime, timedelta
+from hashlib import sha1
 
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -316,7 +319,7 @@ def check_two_state_implication_multiprocessing(
 ) -> Optional[Tuple[Trace, Trace]]:
     # this function uses multiprocessing to start multiple solvers
     # with different random seeds and return the first result obtained
-    if utils.args.cpus is None or utils.args.cpus == 1:
+    if utils.args.cpus is None or utils.args.cpus == 1 or True:
         return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc, minimize)
     with multiprocessing.Pool(utils.args.cpus) as pool:
         results = []
@@ -547,13 +550,18 @@ def check_dual_edge_multiprocessing_helper(
         i_transition: int,
         i_q: int,
         minimize: bool,
+        save_smt2: bool = False,
 ) -> Optional[Tuple[PDState, PDState]]:
     prog = syntax.the_program
     trans = list(prog.transitions())[i_transition]
     s = Solver()
-    #seed = randint(0, 10**6)
-    #print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: setting z3 seed to {seed}')
-    #s.z3solver.set(seed=seed, random_seed=seed)  # type: ignore  # TODO: fix typing # TODO: ask Nikolaj how to set the seed
+    seed = randint(0, 10**6)
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: setting z3 seed to {seed}')
+    # TODO: not sure any of these has any actual effect
+    z3.set_param('smt.random_seed',seed)
+    z3.set_param('sat.random_seed',seed)
+    s.z3solver.set(seed=seed)
+    s.z3solver.set(random_seed=seed)
     t = s.get_translator(KEY_NEW, KEY_OLD)
     for q in qs:
         s.add(t.translate_expr(q, old=True))
@@ -563,9 +571,14 @@ def check_dual_edge_multiprocessing_helper(
         s.add(t.translate_expr(p, old=False))
     q = qs[i_q]
     s.add(z3.Not(t.translate_expr(q, old=False)))
-    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: checking transition {i_transition} on q {i_q}')
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: checking')
+    if save_smt2:
+        smt2 = s.z3solver.to_smt2()
+        fn = f'{sha1(smt2.encode()).hexdigest()}.smt2'
+        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: saving smt2 to {fn} ({len(smt2)} bytes)')
+        open(fn, 'w').write(smt2)
     z3res = s.check()
-    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: got {z3res}')
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: got {z3res}')
     assert z3res in (z3.sat, z3.unsat)
     if z3res == z3.unsat:
         return None
@@ -573,6 +586,7 @@ def check_dual_edge_multiprocessing_helper(
         z3model = s.model(minimize=minimize)
         prestate = Trace.from_z3([KEY_OLD], z3model)
         poststate = Trace.from_z3([KEY_NEW], z3model)
+        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: found model')
         return prestate, poststate
 def check_dual_edge_multiprocessing(
         ps: Tuple[Expr,...],
@@ -581,7 +595,7 @@ def check_dual_edge_multiprocessing(
 ) -> Optional[Tuple[Trace, Trace]]:
     # this function uses multiprocessing to start multiple solvers for different transitions and qs
     prog = syntax.the_program
-    n_transitions = trans = len(list(prog.transitions()))
+    n_transitions = len(list(prog.transitions()))
     n = n_transitions * len(qs)
     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: starting {n} processes')
     with multiprocessing.Pool(processes=n) as pool:
@@ -610,6 +624,116 @@ def check_dual_edge_multiprocessing(
             else:
                 results = not_ready
     assert False
+# see: https://mypy.readthedocs.io/en/latest/common_issues.html#using-classes-that-are-generic-in-stubs-but-not-at-runtime
+if TYPE_CHECKING:
+    CheckDualEdgeQueue = multiprocessing.Queue[Optional[Tuple[PDState, PDState]]]  # this is only processed by mypy
+else:
+    CheckDualEdgeQueue = multiprocessing.Queue  # this is not seen by mypy but will be executed at runtime.
+def check_dual_edge_multiprocessing_seeds_helper(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        i_transition: int,
+        i_q: int,
+        minimize: bool,
+        save_smt2: bool,
+        result_queue: CheckDualEdgeQueue,
+) -> None:
+    # time.sleep(randint(0,120)) # for debugging
+    result_queue.put(check_dual_edge_multiprocessing_helper(ps, qs, i_transition, i_q, minimize, save_smt2))
+_luby_sequence: List[int] = [1]
+def luby(i: int) -> int:
+    global _luby_sequence
+    # return the (i+1)'th element of the Luby sequence (so i=0 is the first element)
+    while not i < len(_luby_sequence):
+        _luby_sequence += _luby_sequence
+        _luby_sequence.append(2 * _luby_sequence[-1])
+    return _luby_sequence[i]
+def check_dual_edge_multiprocessing_seeds(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        minimize: bool,
+) -> Optional[Tuple[Trace, Trace]]:
+    # this function uses multiprocessing to start multiple solvers for
+    # different transitions, qs, and random seeds, and restarts the solvers using a Luby sequence
+    prog = syntax.the_program
+    n_transitions = len(list(prog.transitions()))
+    n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
+    # list of: process, result_queue, deadline, i_transition, i_q
+    running: List[Tuple[multiprocessing.Process, CheckDualEdgeQueue, datetime, int, int]] = []
+    # map from (i_transition, i_q) to number of attempts spent on it (note that attempt i takes Luby[i] time)
+    # once an unsat result is obtained, the (i_transition, i_q) are removed
+    tasks: Dict[Tuple[int, int], int] = dict(
+        ((i_transition, i_q), 0)
+        for i_transition in range(n_transitions)
+        for i_q in range(len(qs))
+    )
+    t0 = timedelta(seconds=60) # the base unit for timeouts is 60 seconds (i.e., Luby sequence starts at 60 seconds)
+    try:
+        while True:
+            # first, see if we got new results
+            for process, result_queue, deadline, i_transition, i_q in running:
+                try:
+                    res = result_queue.get_nowait() # this causes no results to be obtained even after a sat result was printed from the process
+                except queue.Empty:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: no result yet from PID={process.pid}, i_transition={i_transition}, i_q={i_q}')
+                    continue
+                if res is not None:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: got a SAT result from PID={process.pid}, i_transition={i_transition}, i_q={i_q}, returning')
+                    return res  # the finally will terminate all remaining processes
+                else:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: got an UNSAT result for i_transition={i_transition}, i_q={i_q}')
+                    tasks.pop((i_transition, i_q), None)
+            if len(tasks) == 0:
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: got all UNSAT results, returning')
+                return None
+
+            # second, terminate processes whose timeout has passed or whose task already returned unsat
+            now = datetime.now()
+            still_running = []
+            for process, result_queue, deadline, i_transition, i_q in running:
+                if now > deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: terminating process with PID={process.pid}, i_transition={i_transition}, i_q={i_q} due to timeout')
+                    process.terminate()
+                    process.join()
+                elif (i_transition, i_q) not in tasks:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: terminating process with PID={process.pid}, i_transition={i_transition}, i_q={i_q} due to unsat result')
+                    process.terminate()
+                    process.join()
+                else:
+                    still_running.append((process, result_queue, deadline, i_transition, i_q))
+            running = still_running
+
+            # third, start new processes
+            while len(running) < n_cpus:
+                minimum = min(tasks.values())
+                for i_transition, i_q in sorted(tasks.keys()):
+                    if tasks[i_transition, i_q] == minimum:
+                        break
+                assert tasks[i_transition, i_q] == minimum
+                timeout = t0 * luby(tasks[i_transition, i_q])
+                tasks[i_transition, i_q] += 1
+                result_queue = CheckDualEdgeQueue()
+                process = multiprocessing.Process(
+                    target=check_dual_edge_multiprocessing_seeds_helper,
+                    args=(ps, qs, i_transition, i_q, minimize,
+                          tasks[i_transition, i_q] == 10, # on the 10'th attempt, save to smt2 for later analysis
+                          result_queue),
+                )
+                deadline = datetime.now() +  timeout
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: starting new process for i_transition={i_transition}, i_q={i_q} with a timeout of {timeout.total_seconds()} seconds')
+                running.append((process, result_queue, deadline, i_transition, i_q))
+                process.start()
+
+            # fourth, wait for a bit
+            time.sleep(0.1)
+        assert False
+    finally:
+        # terminate all running processeses
+        for process, result_queue, deadline, i_transition, i_q in running:
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: terminating process with PID={process.pid}')
+            process.terminate()
+            process.join()
+        assert len(multiprocessing.active_children()) == 0
 def check_dual_edge(
         s: Solver,
         ps: Tuple[Expr,...],
@@ -667,7 +791,7 @@ def check_dual_edge(
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
                 if True:
                     # use multiprocessing
-                    res = check_dual_edge_multiprocessing(
+                    res = check_dual_edge_multiprocessing_seeds(
                         ps=tuple(ps[i] for i in sorted(ps_seed)),
                         qs=qs,
                         minimize=minimize,
@@ -1561,9 +1685,17 @@ class MultiSubclausesMapICE(object):
             for v in chain(*self.lit_vs):
                 self.solver.add_soft(z3.Not(v))
         print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
+        t_start = datetime.now()
         res = self.solver.check()
+        t_end = datetime.now()
         print(res)
         assert res in (z3.unsat, z3.sat)
+        if (t_end - t_start).total_seconds() > 3600:
+            # TODO: Optimize does not have to_smt2, is sexpr the same?
+            smt2 = self.solver.sexpr()
+            fn = f'{sha1(smt2.encode()).hexdigest()}.sexpr'
+            print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: that took very long, saving saving query to {fn} ({len(smt2)} bytes)')
+            open(fn, 'w').write(smt2)
         if res == z3.unsat:
             self.solver.pop()
             print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
