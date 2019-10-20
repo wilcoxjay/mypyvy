@@ -12,8 +12,6 @@ import subprocess
 
 from typing import List
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 class SyntaxTests(unittest.TestCase):
     def setUp(self) -> None:
         utils.args = mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
@@ -53,7 +51,7 @@ class SyntaxTests(unittest.TestCase):
                     print(syntax.as_clauses(parser.parse_expr(expr)))
 
     def test_as_clauses_lockserv(self) -> None:
-        with open(PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
             prog = mypyvy.parse_program(f.read())
         prog.resolve()
         for inv in prog.invs():
@@ -62,9 +60,9 @@ class SyntaxTests(unittest.TestCase):
                 syntax.as_clauses(expr)
 
     def test_consistent_hashing(self) -> None:
-        with open(PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
             prog1 = mypyvy.parse_program(f.read())
-        with open(PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
             prog2 = mypyvy.parse_program(f.read())
 
         prog1.resolve()
@@ -111,11 +109,11 @@ class SyntaxTests(unittest.TestCase):
 
 def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3.7'
-    return [python, str((PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
+    return [python, str((utils.PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
 
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
-        for p in sorted(Path(PROJECT_ROOT / 'examples' / 'regression').glob('*.pyv')):
+        for p in sorted(Path(utils.PROJECT_ROOT / 'examples' / 'regression').glob('*.pyv')):
             with self.subTest(testFile=str(p)):
                 with open(p) as f:
                     line = f.readline()

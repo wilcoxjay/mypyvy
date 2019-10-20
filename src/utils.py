@@ -16,6 +16,8 @@ from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, No
                    Any, Callable, cast, Sequence
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 T = TypeVar('T')
 
 class OrderedSet(Generic[T], Iterable[T]):
