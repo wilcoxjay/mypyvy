@@ -721,7 +721,10 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--cache-only-discovered', action=utils.YesNoAction, default=False,
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
-                       help='print the exit code before exiting (good for regression testing)o')
+                       help='print the exit code before exiting (good for regression testing)')
+
+        s.add_argument('--cvc4', action='store_true',
+                       help='use CVC4 as the backend solver. this is not very well supported.')
 
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
@@ -856,7 +859,7 @@ def main() -> None:
 
         syntax.the_program = prog
 
-        s = Solver()
+        s = Solver(use_cvc4=utils.args.cvc4)
 
         # initialize common keys
         s.get_translator(KEY_ONE)
