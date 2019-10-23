@@ -8,9 +8,8 @@ else
     if type ./cvc4-1.7-x86_64-linux-opt &>/dev/null; then
 	CVC4CMD=./cvc4-1.7-x86_64-linux-opt
     else
-	wget -q https://github.com/CVC4/CVC4/releases/download/1.7/cvc4-1.7-x86_64-linux-opt &> /dev/null
-	chmod +x ./cvc4-1.7-x86_64-linux-opt cvc4
-	CVC4CMD=./cvc4-1.7-x86_64-linux-opt
+	echo "Error: cannot find CVC4 executable" >&2
+	exit 1
     fi
 fi
 
