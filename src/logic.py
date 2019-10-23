@@ -118,6 +118,11 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                 if res is not None:
                     if utils.args.smoke_test_solver:
                         state = res.as_state(i=0)
+                        for ax in prog.axioms():
+                            if state.eval(ax.expr) is not True:
+                                print('\n\n'.join(str(x) for x in s.debug_recent()))
+                                print(res)
+                                assert False, f'bad initial counterexample for axiom {ax.expr}'
                         for init in prog.inits():
                             if state.eval(init.expr) is not True:
                                 print('\n\n'.join(str(x) for x in s.debug_recent()))
@@ -173,6 +178,11 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                         if res is not None:
                             if utils.args.smoke_test_solver:
                                 pre_state = res.as_state(i=0)
+                                for ax in prog.axioms():
+                                    if pre_state.eval(ax.expr) is not True:
+                                        print('\n\n'.join(str(x) for x in s.debug_recent()))
+                                        print(res)
+                                        assert False, f'bad transition counterexample for axiom {ax.expr} in pre state'
                                 for pre_inv in prog.invs():
                                     if pre_state.eval(pre_inv.expr) is not True:
                                         print('\n\n'.join(str(x) for x in s.debug_recent()))
