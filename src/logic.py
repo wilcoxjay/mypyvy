@@ -121,10 +121,12 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                         for init in prog.inits():
                             if state.eval(init.expr) is not True:
                                 print('\n\n'.join(str(x) for x in s.debug_recent()))
-                                assert False, 'bad counterexample'
+                                print(res)
+                                assert False, 'bad initial counterexample for initial condition {init.expr}'
                         if state.eval(inv.expr) is not False:
                             print('\n\n'.join(str(x) for x in s.debug_recent()))
-                            assert False, 'bad counterexample'
+                            print(res)
+                            assert False, 'bad initial counterexample for invariant {inv.expr}'
 
                     return inv, res
     return None
@@ -180,7 +182,8 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                                 post_state = res.as_state(i=1)
                                 if post_state.eval(inv.expr) is not False:
                                     print('\n\n'.join(str(x) for x in s.debug_recent()))
-                                    assert False, 'bad counterexample'
+                                    print(res)
+                                    assert False, f'bad transition counterexample for invariant {inv.expr} in post state'
 
                             return inv, res, trans
     return None
