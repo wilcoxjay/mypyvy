@@ -762,6 +762,9 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                                   help="when verifying inductiveness, check only these invariants")
     verify_subparser.add_argument('--json', action='store_true',
                                   help="output machine-parseable verification results in JSON format")
+    verify_subparser.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
+                                help='(for debugging mypyvy itself) double check countermodels by evaluation')
+
     updr_subparser.add_argument('--checkpoint-in',
                                 help='start from internal state as stored in given file')
     updr_subparser.add_argument('--checkpoint-out',

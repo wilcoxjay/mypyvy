@@ -116,6 +116,16 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                 res = check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
                                   s, [KEY_ONE])
                 if res is not None:
+                    if utils.args.smoke_test_solver:
+                        state = res.as_state(i=0)
+                        for init in prog.inits():
+                            if state.eval(init.expr) is not True:
+                                print('\n\n'.join(str(x) for x in s.debug_recent()))
+                                assert False, 'bad counterexample'
+                        if state.eval(inv.expr) is not False:
+                            print('\n\n'.join(str(x) for x in s.debug_recent()))
+                            assert False, 'bad counterexample'
+
                     return inv, res
     return None
 
@@ -159,6 +169,18 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                                             % (msg,))],
                                           s, [KEY_OLD, KEY_NEW])
                         if res is not None:
+                            if utils.args.smoke_test_solver:
+                                pre_state = res.as_state(i=0)
+                                for init in prog.inits():
+                                    if pre_state.eval(init.expr) is not True:
+                                        print('\n\n'.join(str(x) for x in s.debug_recent()))
+                                        assert False, 'bad counterexample'
+                                # res.eval_double_vocabulary(transition, start_location=0)  # need to implement mypyvy-level transition->expression translation
+                                post_state = res.as_state(i=0)
+                                if post_state.eval(inv.expr) is not False:
+                                    print('\n\n'.join(str(x) for x in s.debug_recent()))
+                                    assert False, 'bad counterexample'
+
                             return inv, res, trans
     return None
 

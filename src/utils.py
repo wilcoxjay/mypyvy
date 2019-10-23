@@ -88,6 +88,7 @@ class MypyvyArgs(object):
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
     smoke_test: bool
+    smoke_test_solver: bool
     assert_inductive_trace: bool
     sketch: bool
     block_may_cexs: bool
