@@ -523,6 +523,8 @@ class Solver(object):
         self.include_program = include_program
         self.use_cvc4 = use_cvc4
         self.cvc4_proc: Optional[subprocess.Popen] = None
+        self.cvc4_last_query: Optional[str] = None
+        self.cvc4_last_model_response: Optional[str] = None
 
         if include_program:
             self.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations()
@@ -535,6 +537,9 @@ class Solver(object):
         if self.cvc4_proc is None:
             self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return self.cvc4_proc
+
+    def debug_recent(self) -> Tuple[str, Optional[str], Optional[str]]:
+        return (self.z3solver.to_smt2(), self.cvc4_last_query, self.cvc4_last_model_response)
 
     def restart(self) -> None:
         print('z3solver restart!')
@@ -611,6 +616,7 @@ class Solver(object):
 
         if self.use_cvc4:
             cvc4script = cvc4_preprocess(self.z3solver.to_smt2())
+            self.cvc4_last_query = cvc4script
             proc = self.get_cvc4_proc()
             print('(reset)', file=proc.stdin)
             print(cvc4script, file=proc.stdin)
@@ -714,10 +720,12 @@ class Solver(object):
             proc = self.get_cvc4_proc()
             print('(get-model)', file=proc.stdin)
             parser = sexp.get_parser('')
+            lines = []
             for s in parser.parse():
                 if isinstance(s, sexp.EOF):
                     # print('got intermediate EOF')
                     line = proc.stdout.readline()
+                    lines.append(line)
                     if line == '':
                         assert False, 'unexpected underlying EOF'
                     else:
@@ -725,6 +733,7 @@ class Solver(object):
                         # print(f'got new data line: {line}')
                         parser.add_input(line)
                 else:
+                    self.cvc4_last_model_response = ''.join(lines)
                     # print('got s-expression. not looking for any more input.')
                     assert isinstance(s, sexp.SList), s
                     # for sub in s:
