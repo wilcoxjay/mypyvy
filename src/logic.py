@@ -127,11 +127,11 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                             if state.eval(init.expr) is not True:
                                 print('\n\n'.join(str(x) for x in s.debug_recent()))
                                 print(res)
-                                assert False, 'bad initial counterexample for initial condition {init.expr}'
+                                assert False, f'bad initial counterexample for initial condition {init.expr}'
                         if state.eval(inv.expr) is not False:
                             print('\n\n'.join(str(x) for x in s.debug_recent()))
                             print(res)
-                            assert False, 'bad initial counterexample for invariant {inv.expr}'
+                            assert False, f'bad initial counterexample for invariant {inv.expr}'
 
                     return inv, res
     return None
