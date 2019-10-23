@@ -171,12 +171,13 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                         if res is not None:
                             if utils.args.smoke_test_solver:
                                 pre_state = res.as_state(i=0)
-                                for init in prog.inits():
-                                    if pre_state.eval(init.expr) is not True:
+                                for pre_inv in prog.invs():
+                                    if pre_state.eval(pre_inv.expr) is not True:
                                         print('\n\n'.join(str(x) for x in s.debug_recent()))
-                                        assert False, 'bad counterexample'
+                                        print(res)
+                                        assert False, f'bad transition counterexample for invariant {pre_inv.expr} in pre state'
                                 # res.eval_double_vocabulary(transition, start_location=0)  # need to implement mypyvy-level transition->expression translation
-                                post_state = res.as_state(i=0)
+                                post_state = res.as_state(i=1)
                                 if post_state.eval(inv.expr) is not False:
                                     print('\n\n'.join(str(x) for x in s.debug_recent()))
                                     assert False, 'bad counterexample'
