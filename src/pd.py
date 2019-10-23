@@ -15,11 +15,14 @@ import sys
 import os
 import math
 import multiprocessing
+import multiprocessing.connection
 from contextlib import nullcontext
+import random
 from random import randint
 import queue
 from datetime import datetime, timedelta
 from hashlib import sha1
+from dataclasses import dataclass
 
 from syntax import *
 from logic import *
@@ -716,7 +719,7 @@ def check_dual_edge_multiprocessing_seeds(
                 process = multiprocessing.Process(
                     target=check_dual_edge_multiprocessing_seeds_helper,
                     args=(ps, qs, i_transition, i_q, minimize,
-                          tasks[i_transition, i_q] == 10, # on the 10'th attempt, save to smt2 for later analysis
+                          tasks[i_transition, i_q] == n_cpus + 1, # on the (n_cpus + 1)'th attempt, save to smt2 for later analysis
                           result_queue),
                 )
                 deadline = datetime.now() +  timeout
@@ -881,106 +884,311 @@ def check_dual_edge(
     print(f'[{datetime.now()}] check_dual_edge: done')
     return cache[k]
 
+#
 # check_dual_edge_optimize and friends
+#
+
+@dataclass(frozen=True)
+class HoareQuery(object):
+    '''Class that represents a check during check_dual_edge_optimize'''
+    # TODO: maybe include ps here too
+    q_pre: Tuple[FrozenSet[int],...]
+    q_post: Tuple[FrozenSet[int],...]
+    cardinalities: Tuple[Optional[int],...]
+    i_transition: int
+    # maybe use in repr/str: f'precondition_seed={[sorted(x) for x in precondition_seed]}, postcondition_seed={[sorted(x) for x in postcondition_seed]}, cardinalities={cardinalities}'
+    def __post_init__(self) -> None:
+        assert len(self.q_pre) == len(self.q_post)
+        assert len(self.cardinalities) == 0 # for now
+    def __str__(self) -> str:
+        def str_seed(seed: Tuple[FrozenSet[int], ...]) -> str:
+            return str([sorted(x) for x in seed]).replace(' ', '')
+
+        return f'({str_seed(self.q_pre)}, {str_seed(self.q_post)}, {self.i_transition})'
+    def __le__(self, other: HoareQuery) -> bool:
+        return (
+            (self.i_transition == other.i_transition) and
+            len(self.q_pre) == len(other.q_pre) and
+            len(self.q_post) == len(other.q_post) and
+            len(self.cardinalities) == len(other.cardinalities) and
+            all(x <= y for x, y in zip(self.q_pre, other.q_pre)) and
+            all(x >= y for x, y in zip(self.q_post, other.q_post)) and
+            all(
+                (y is None) or (x is not None and x <= y)
+                for x, y in zip(self.cardinalities, other.cardinalities)
+            )
+        )
+    def __ge__(self, other: HoareQuery) -> bool:
+        return other <= self
+    def __lt__(self, other: HoareQuery) -> bool:
+        return self != other and self <= other
+    def __gt__(self, other: HoareQuery) -> bool:
+        return self != other and other <= self
+    def strengthen_q_pre(self, k: int, i: int) -> HoareQuery:
+        q_pre = list(self.q_pre)
+        q_pre[k] -= {i}
+        return HoareQuery(
+            q_pre=tuple(q_pre),
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def weaken_q_pre(self, k: int, i: int) -> HoareQuery:
+        q_pre = list(self.q_pre)
+        q_pre[k] |= {i}
+        return HoareQuery(
+            q_pre=tuple(q_pre),
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def strengthen_q_post(self, k: int, i: int) -> HoareQuery:
+        q_post = list(self.q_post)
+        q_post[k] -= {i}
+        return HoareQuery(
+            q_pre=self.q_pre,
+            q_post=tuple(q_post),
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def weaken_q_post(self, k: int, i: int) -> HoareQuery:
+        q_post = list(self.q_post)
+        q_post[k] |= {i}
+        return HoareQuery(
+            q_pre=self.q_pre,
+            q_post=tuple(q_post),
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def replace_cardinality(self, k: int, n: Optional[int]) -> HoareQuery:
+        cardinalities = list(self.cardinalities)
+        cardinalities[k] = n
+        return HoareQuery(
+            q_pre=self.q_pre,
+            q_post=self.q_post,
+            cardinalities=tuple(cardinalities),
+            i_transition=self.i_transition,
+        )
+    def replace_transition(self, i_transition: int) -> HoareQuery:
+        return HoareQuery(
+            q_pre=self.q_pre,
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=i_transition,
+        )
+
+# see: https://mypy.readthedocs.io/en/latest/common_issues.html#using-classes-that-are-generic-in-stubs-but-not-at-runtime
+if TYPE_CHECKING:
+    # this is only processed by mypy
+    T = Tuple[
+        HoareQuery,
+        Optional[Tuple[PDState, PDState]], # None for unsat, CTI for sat
+    ]
+    class CheckDualEdgeOptimizeConnection:
+        def close(self) -> None: ...
+        def send(self, obj: T) -> None: ...
+        def recv(self) -> T: ...
+        def poll(self, timeout: Optional[float] = ...) -> bool: ...
+    CheckDualEdgeOptimizeQueue = multiprocessing.Queue[T]
+else:
+    # this is not seen by mypy but will be executed at runtime.
+    CheckDualEdgeOptimizeConnection = multiprocessing.connection.Connection
+    CheckDualEdgeOptimizeQueue = multiprocessing.Queue  # this is not seen by mypy but will be executed at runtime.
+
 def check_dual_edge_optimize_multiprocessing_helper(
         ps: Tuple[Expr,...],
         top_clauses: Tuple[Expr,...],
-        q_seed: List[FrozenSet[int]],
-        i_transition: int,
-        i_q: int,
+        hq: HoareQuery,
         use_cvc4: bool,
-        save_smt2: bool,
-        result_queue: CheckDualEdgeQueue,
+        save_smt2: bool, # TODO: move to separate function
+        # connection: CheckDualEdgeOptimizeConnection,
+        q1: multiprocessing.JoinableQueue,
+        q2: multiprocessing.Queue,
 ) -> None:
+    def send_result(hq: HoareQuery, cti: Optional[Tuple[PDState, PDState]]) -> None:
+        #connection.send((hq, cti))
+        q1.put((hq, cti))
+    assert len(hq.q_pre) == len(top_clauses)
+    assert not use_cvc4 # TODO: support
+    # make copies as we change these
     prog = syntax.the_program
-    trans = list(prog.transitions())[i_transition]
     mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
-    qs = tuple(mp.to_clause(k, q_seed[k]) for k in range(mp.m))
     s = Solver(use_cvc4=use_cvc4)
     seed = randint(0, 10**6)
+    greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
+    # TODO: better logging, maybe with meaningful process names
     if not use_cvc4:
-        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: setting z3 seed to {seed}')
+        print(f'[{datetime.now()}] {greeting}: setting z3 seed to {seed}')
         # TODO: not sure any of these has any actual effect
         z3.set_param('smt.random_seed',seed)
         z3.set_param('sat.random_seed',seed)
         s.z3solver.set(seed=seed) # type: ignore
         s.z3solver.set(random_seed=seed) # type: ignore
     else:
-        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: using cvc4')
+        print(f'[{datetime.now()}] {greeting}: using cvc4')
     t = s.get_translator(KEY_NEW, KEY_OLD)
-    for q in qs:
-        s.add(t.translate_expr(q, old=True))
-    s.add(t.translate_transition(trans))
-    for i, p in enumerate(ps):
+    # add transition relation
+    s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
+    # add ps
+    for p in ps:
         s.add(t.translate_expr(p, old=True))
         s.add(t.translate_expr(p, old=False))
-    q = qs[i_q]
-    s.add(z3.Not(t.translate_expr(q, old=False)))
-    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: checking')
+    # add precondition constraints
+    for k in range(mp.m):
+        s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+    # add postcondition constraints, note we must violate all clauses (the selection of which one to violate is represented by making the others empty
+    active_post_qs = [] # we will first try to weaken these
+    for k in range(mp.m):
+        if len(hq.q_post[k]) > 0:
+            s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
+            active_post_qs.append(k)
     if save_smt2:
         smt2 = s.z3solver.to_smt2()
         fn = f'{sha1(smt2.encode()).hexdigest()}.smt2'
-        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: saving smt2 to {fn} ({len(smt2)} bytes)')
+        print(f'[{datetime.now()}] {greeting}: saving smt2 to {fn} ({len(smt2)} bytes)')
         open(fn, 'w').write(smt2)
+        # TODO: we should actually exit here, i.e., make saving to smt2 a separate function
+    print(f'[{datetime.now()}] {greeting}: checking')
     z3res = s.check()
-    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: got {z3res}')
+    print(f'[{datetime.now()}] {greeting}: got {z3res}')
     assert z3res in (z3.sat, z3.unsat)
     if z3res == z3.unsat:
-        result_queue.put(None)
-    else:
-        # optimize to get an optimal cti
-        # first try for the post-state to violate a weaker subclause of top_clauses[i_q]
-        # then try for the pre-state to satisfy stronger subclauses of top_clauses
-        # lastly, minimize the model (i.e., cardinalities)
-        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: optimizing cti')
-        post_seed = q_seed[i_q]
-        for i in range(mp.n[i_q]):
-            if i not in post_seed:
-                s.push()
-                s.add(z3.Not(t.translate_expr(mp.to_clause(i_q, post_seed | {i}), old=False)))
-                z3res = s.check()
-                assert z3res in (z3.sat, z3.unsat)
-                if z3res == z3.sat:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: weakening postcondition')
-                    post_seed |= {i}
-                s.pop() # TODO: pop only if unsat?
-        postcondition = mp.to_clause(i_q, post_seed)
-        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: optimal postcondition: {postcondition}')
-        s.add(z3.Not(t.translate_expr(postcondition, old=False)))
+        send_result(hq, None)
+        # we do not try to optimize unsats, as this isn't marco, we only optimize one direction
+        # TODO: maybe we should do marco? also note that the unsat is only for this transition
+        return
+
+    # TODO: optimize from model and send SAT result
+
+    def validate_cti(prestate: PDState, poststate: PDState) -> None:
+        # TODO: remove this once we trust the code enough
+        assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}'
+        assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}'
+        assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}'
+        assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}'
+
+    # hear about unsats from other process via the connection
+    known_unsats: List[HoareQuery] = []
+    def recv_unsats() -> None:
+        # while connection.poll():
+        #     _hq, x = connection.recv()
+        #     assert x is None
+        #     known_unsats.append(_hq)
+        while True:
+            try:
+                _hq, x = q2.get_nowait()
+            except queue.Empty:
+                break
+            assert x is None
+            known_unsats.append(_hq)
+    def known_to_be_unsat(_hq: HoareQuery) -> bool:
+        if any(len(x) == 0 for x in _hq.q_pre):
+            return True
+        recv_unsats()
+        return any(
+            _hq <= unsat_hq
+            for unsat_hq in known_unsats
+        )
+    recv_unsats()
+
+    # optimize to get an optimal cti
+    # first try for the post-state to violate weaker subclauses of top_clauses[active_post_qs]
+    # then try for the post-state to violate non-empty subclauses of the other top_clauses
+    # then try for the pre-state to satisfy stronger subclauses of top_clauses
+    # TODO: lastly, minimize the model (i.e., cardinalities)
+    # TODO: maybe we should minimize cardinalities before the other top_clauses, as it could lead to larger models
+    print(f'[{datetime.now()}] {greeting}: optimizing postcondition')
+    for k in chain(active_post_qs, (kk for kk in range(mp.m) if kk not in active_post_qs)): # TODO: random shuffle?
+        to_try = mp.all_n[k] - hq.q_post[k]
+        while len(to_try) > 0:
+            i = random.choice(list(to_try))
+            to_try -= {i}
+            assert i not in hq.q_post[k]
+            hq_try = hq.weaken_q_post(k, i)
+            if known_to_be_unsat(hq_try):
+                continue
+            s.push()
+            s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq_try.q_post[k]), old=False)))
+            print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, i={i}')
+            z3res = s.check()
+            print(f'[{datetime.now()}] {greeting}: got {z3res}')
+            assert z3res in (z3.sat, z3.unsat)
+            if z3res == z3.unsat:
+                # send unsat result via connection
+                send_result(hq_try, None)
+            else:
+                print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, i={i}')
+                hq = hq_try
+                z3model = s.model(minimize=True)
+                prestate = Trace.from_z3([KEY_OLD], z3model)
+                poststate = Trace.from_z3([KEY_NEW], z3model)
+                validate_cti(prestate, poststate)
+                for j in sorted(to_try):
+                    if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
+                        print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
+                        hq = hq.weaken_q_post(k, j)
+                        to_try -= {j}
+                validate_cti(prestate, poststate)
+                send_result(hq, (prestate, poststate))
+            s.pop()
+        print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {hq.q_post[k]}')
+        s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
         assert s.check() == z3.sat
-        preconditions: List[Expr] = []
-        for k in range(mp.m):
-            pre_seed = q_seed[k]
-            for i in range(mp.n[k]):
-                if i in pre_seed:
-                    s.push()
-                    s.add(t.translate_expr(mp.to_clause(k, pre_seed - {i}), old=True))
-                    z3res = s.check()
-                    assert z3res in (z3.sat, z3.unsat)
-                    if z3res == z3.sat:
-                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: strengthening precondition')
-                        pre_seed -= {i}
-                    s.pop() # TODO: pop only if unsat?
-            preconditions.append(mp.to_clause(k, pre_seed))
-            s.add(t.translate_expr(preconditions[-1], old=True))
-            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: optimal precondition: {preconditions[-1]}')
-            assert s.check() == z3.sat
-        z3res = s.check() # note, this check is important, not just an assertion
-        assert z3res == z3.sat
-        z3model = s.model(minimize=True)
-        prestate = Trace.from_z3([KEY_OLD], z3model)
-        poststate = Trace.from_z3([KEY_NEW], z3model)
-        # TODO: remove assertions after we trust the code
-        assert all(eval_in_state(None, prestate,  p) for p in ps)
-        assert all(eval_in_state(None, poststate, p) for p in ps)
-        assert all(eval_in_state(None, prestate,  p) for p in preconditions)
-        assert not eval_in_state(None, poststate, postcondition)
-        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}: found optimal cti')
-        result_queue.put((prestate, poststate))
+    print(f'[{datetime.now()}] {greeting}: optimizing precondition')
+    for k in range(mp.m):  # TODO: random shuffle?
+        to_try = hq.q_pre[k]
+        while len(to_try) > 0:
+            i = random.choice(list(to_try))
+            to_try -= {i}
+            assert i in hq.q_pre[k]
+            hq_try = hq.strengthen_q_pre(k, i)
+            if known_to_be_unsat(hq_try):
+                continue
+            s.push()
+            s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), old=True))
+            print(f'[{datetime.now()}] {greeting}: trying to strengthen postcondition k={k}, i={i}')
+            z3res = s.check()
+            print(f'[{datetime.now()}] {greeting}: got {z3res}')
+            assert z3res in (z3.sat, z3.unsat)
+            if z3res == z3.unsat:
+                # send unsat result via connection
+                send_result(hq_try, None)
+            else:
+                print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, i={i}')
+                hq = hq_try
+                z3model = s.model(minimize=True)
+                prestate = Trace.from_z3([KEY_OLD], z3model)
+                poststate = Trace.from_z3([KEY_NEW], z3model)
+                validate_cti(prestate, poststate)
+                for j in sorted(to_try):
+                    if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - {j})):
+                        print(f'[{datetime.now()}] {greeting}: strengthening precondition from model k={k}, j={j}')
+                        hq = hq.strengthen_q_pre(k, j)
+                        to_try -= {j}
+                validate_cti(prestate, poststate)
+                send_result(hq, (prestate, poststate))
+            s.pop()
+        print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {hq.q_pre[k]}')
+        s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+        assert s.check() == z3.sat
+    print(f'[{datetime.now()}] {greeting}: found optimal cti, returning')
+    q1.join()
+    print(f'[{datetime.now()}] {greeting}: found optimal cti, and joined q1 returning')
+
+@dataclass
+class RunningProcess(object):
+    process: multiprocessing.Process
+    #connection: CheckDualEdgeOptimizeConnection
+    q1: CheckDualEdgeOptimizeQueue
+    q2: CheckDualEdgeOptimizeQueue
+    deadline: datetime
+    hq: HoareQuery
+    use_cvc4: bool
+
 def check_dual_edge_optimize_multiprocessing(
-        ps: Tuple[Expr,...],
-        top_clauses: Tuple[Expr,...],
-        q_seed: List[FrozenSet[int]],
+        ps: Tuple[Expr, ...],
+        top_clauses: Tuple[Expr, ...],
+        q_seed: Tuple[FrozenSet[int], ...],
 ) -> Optional[Tuple[PDState, PDState]]:
     '''
     this uses multiprocessing to check a dual edge, and get an
@@ -989,94 +1197,196 @@ def check_dual_edge_optimize_multiprocessing(
     this function uses multiprocessing to start multiple solvers for
     different transitions, qs, and random seeds, and restarts the solvers using a Luby sequence
 
-    ### planned: this function also tries to use cvc4 in parallel to z3
-
     '''
+    assert len(top_clauses) == len(q_seed)
+    mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
     prog = syntax.the_program
     n_transitions = len(list(prog.transitions()))
     n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
-    # list of: process, result_queue, deadline, i_transition, i_q, use_cvc4
-    running: List[Tuple[multiprocessing.Process, CheckDualEdgeQueue, datetime, int, int, bool]] = []
-    # map from (i_transition, i_q, use_cvc4) to number of attempts spent on it (note that attempt i takes Luby[i] time)
-    # once an unsat result is obtained, the (i_transition, i_q, *) are removed
-    tasks: Dict[Tuple[int, int, bool], int] = dict(
-        ((i_transition, i_q, use_cvc4), 0)
-        for i_transition in range(n_transitions)
-        for i_q in range(len(q_seed))
-        for use_cvc4 in ([False, True] if utils.args.cvc4 else [False])
-    )
+    n_cpus = max(n_cpus, 2) # we need at least 2 processes or we will block on the last one that found a model
     t0 = timedelta(seconds=60) # the base unit for timeouts is 60 seconds (i.e., Luby sequence starts at 60 seconds)
+
+    known_unsats: List[HoareQuery] = []
+    def known_to_be_unsat(_hq: HoareQuery) -> bool:
+        return any(len(x) == 0 for x in _hq.q_pre) or any(
+            _hq <= unsat_hq
+            for unsat_hq in known_unsats
+        )
+
+    active_queries = [
+        HoareQuery(
+            q_pre=q_seed,
+            q_post=tuple(q_seed[k] if k == i_q else frozenset() for k in range(mp.m)),
+            cardinalities=(),
+            i_transition=i_transition,
+        )
+        for i_transition in range(n_transitions)
+        for i_q in range(mp.m)
+    ]
+    # map (hq, use_cvc4) to number of attempts spent on it (note that attempt i takes Luby[i] time)
+    tasks: Dict[Tuple[HoareQuery, bool], int] = defaultdict(int)
+    # nothing is ever removed from tasks, and active_queries is used to maintain the active ones
+
+    running: List[RunningProcess] = [] # list of currently running processes
+
+    # details about the best SAT result we got so far:
+    current_cti: Optional[Tuple[PDState, PDState]] = None
+    current_hq: Optional[HoareQuery] = None
+    current_sat_rp: Optional[RunningProcess] = None
+
     try:
         while True:
-            # first, see if we got new results
-            for process, result_queue, deadline, i_transition, i_q, use_cvc4 in running:
+            # see if we got new results
+            n_known_unsats = len(known_unsats) # to later send the new onces
+            worklist = list(running)
+            while len(worklist) > 0:
+                rp = worklist[0]
+                # if not rp.connection.poll():
+                #     continue
+                # hq, cti = rp.connection.recv()
                 try:
-                    res = result_queue.get_nowait() # this causes no results to be obtained even after a sat result was printed from the process
+                    hq, cti = rp.q1.get_nowait()
+                    rp.q1.task_done()
                 except queue.Empty:
-                    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: no result yet from PID={process.pid}, i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}')
+                    worklist = worklist[1:]
                     continue
-                if res is not None:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: got a SAT result from PID={process.pid}, i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}, returning')
-                    return res  # the finally will terminate all remaining processes
+                assert hq <= rp.hq
+                if cti is None:
+                    # got new unsat result
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: got an UNSAT result from PID={rp.process.pid} for hq={hq}, use_cvc4={rp.use_cvc4}')
+                    known_unsats.append(hq)
+                elif current_hq is not None and not hq.replace_transition(0) < current_hq.replace_transition(0):
+                    # got a new cti but it's not better than our current best model (ignoring the transition), so we ignore it
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: got a SAT result from PID={rp.process.pid} that we discard (hq={hq}, use_cvc4={rp.use_cvc4})')
                 else:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: got an UNSAT result for i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4}')
-                    tasks.pop((i_transition, i_q, False), None)
-                    tasks.pop((i_transition, i_q, True), None)
-            if len(tasks) == 0:
-                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: got all UNSAT results, returning')
-                return None
+                    # the new cti is strictly better than our current
+                    # cti. this is a big deal. the process that found
+                    # it becomes not subject to timeout, all the other
+                    # processes die, and new queries will get started
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: got a SAT result from PID={rp.process.pid} that is better than what we had (hq={hq}, use_cvc4={rp.use_cvc4})')
+                    current_cti = cti
+                    current_hq = hq
+                    current_sat_rp = rp
+                    active_queries = []
+                    # first, see if there is a way to weaken the postcondition where it was non-trivial before
+                    for k in range(mp.m):
+                        if len(hq.q_post[k]) == 0:
+                            continue
+                        for i in sorted(mp.all_n[k] - hq.q_post[k]):
+                            for i_transition in range(n_transitions):
+                                new_hq = hq.weaken_q_post(k, i).replace_transition(i_transition)
+                                if not known_to_be_unsat(new_hq):
+                                    active_queries.append(new_hq)
+                    # second, weaken the postcondition elsewhere
+                    if len(active_queries) == 0:
+                        for k in range(mp.m):
+                            if len(hq.q_post[k]) != 0:
+                                continue
+                            for i in sorted(mp.all_n[k] - hq.q_post[k]):
+                                for i_transition in range(n_transitions):
+                                    new_hq = hq.weaken_q_post(k, i).replace_transition(i_transition)
+                                    if not known_to_be_unsat(new_hq):
+                                        active_queries.append(new_hq)
+                    # third, strengthen the precondition
+                    if len(active_queries) == 0:
+                        for k in range(mp.m):
+                            for i in sorted(hq.q_pre[k]):
+                                for i_transition in range(n_transitions):
+                                    new_hq = hq.strengthen_q_pre(k, i).replace_transition(i_transition)
+                                    if not known_to_be_unsat(new_hq):
+                                        active_queries.append(new_hq)
 
-            # second, terminate processes whose timeout has passed or whose task already returned unsat
+            # filter using unknown unsats and possibly return
+            active_queries = [hq for hq in active_queries if not known_to_be_unsat(hq)]
+            if len(active_queries) == 0:
+                # we are done
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: no more active queries, returning')
+                return current_cti
+            else:
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: {len(active_queries)} more active queries:')
+                for hq in active_queries:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing:     {hq}')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: carrying on')
+
+            # kill processes that timed out or whose query is no longer active (except for current_sat_rp - the last process to return a model)
             now = datetime.now()
             still_running = []
-            for process, result_queue, deadline, i_transition, i_q, use_cvc4 in running:
-                if now > deadline:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: terminating process with PID={process.pid}, i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4} due to timeout')
-                    process.terminate()
-                    process.join()
-                elif (i_transition, i_q, use_cvc4) not in tasks:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: terminating process with PID={process.pid}, i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4} due to unsat result')
-                    process.terminate()
-                    process.join()
+            for rp in running:
+                if not rp.process.is_alive():
+                    rp.process.join(0)
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: process with PID={rp.process.pid} terminated with exit status {rp.process.exitcode}')
+                    assert rp.process.exitcode is not None
+                elif rp is current_sat_rp:
+                    # this processes is protected, and its task doesn't need to be in tasks
+                    still_running.append(rp)
+                elif now > rp.deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    rp.process.terminate()
+                    rp.process.join()
+                elif rp.hq not in active_queries:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
+                    rp.process.terminate()
+                    rp.process.join()
                 else:
-                    still_running.append((process, result_queue, deadline, i_transition, i_q, use_cvc4))
+                    still_running.append(rp)
             running = still_running
 
-            # third, start new processes
+            # send new_unsats to everyone whose still running
+            for hq in known_unsats[n_known_unsats:]:
+                for rp in running:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: sending new unsat to process with PID={rp.process.pid}')
+                    # rp.connection.send((hq, None))
+                    rp.q2.put((hq, None))
+
+            # start new processes
+            active_tasks = list(product(
+                active_queries,
+                [False], #[False, True]
+            ))
             while len(running) < n_cpus:
-                minimum = min(tasks.values())
-                for i_transition, i_q, use_cvc4 in sorted(tasks.keys()):
-                    if tasks[i_transition, i_q, use_cvc4] == minimum:
-                        break
-                assert tasks[i_transition, i_q, use_cvc4] == minimum
-                timeout = t0 * luby(tasks[i_transition, i_q, use_cvc4])
-                tasks[i_transition, i_q, use_cvc4] += 1
-                result_queue = CheckDualEdgeQueue()
+                task_to_run = min(active_tasks, key=tasks.__getitem__)
+                hq, use_cvc4 = task_to_run
+                timeout = t0 * luby(tasks[task_to_run])
+                tasks[task_to_run] += 1
+                #parent_conn, child_conn = multiprocessing.Pipe()
+                q1: CheckDualEdgeOptimizeQueue = multiprocessing.JoinableQueue()
+                q2: CheckDualEdgeOptimizeQueue = multiprocessing.Queue()
                 process = multiprocessing.Process(
                     target=check_dual_edge_optimize_multiprocessing_helper,
-                    args=(ps, top_clauses, q_seed, i_transition, i_q, use_cvc4,
-                          not use_cvc4 and tasks[i_transition, i_q, use_cvc4] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
-                          result_queue),
+                    args=(ps, top_clauses, hq, use_cvc4,
+                          not use_cvc4 and tasks[task_to_run] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
+                          #child_conn,
+                          q1, q2,
+                    ),
                 )
                 deadline = datetime.now() +  timeout
-                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: starting new process for i_transition={i_transition}, i_q={i_q}, use_cvc4={use_cvc4} with a timeout of {timeout.total_seconds()} seconds')
-                running.append((process, result_queue, deadline, i_transition, i_q, use_cvc4))
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: starting new process for hq={hq}, use_cvc4={use_cvc4} with a timeout of {timeout.total_seconds()} seconds')
+                running.append(RunningProcess(
+                    process, q1, q2,
+                    #cast(CheckDualEdgeOptimizeConnection, parent_conn),
+                    deadline,
+                    hq,
+                    use_cvc4,
+                ))
                 process.start()
 
-            # fourth, wait for a bit
+            # wait for a bit
+            #print('\n\nsleeping for a bit\n\n')
             time.sleep(0.1)
+            #print('\n\nwaking up again\n\n')
         assert False
     finally:
         # terminate all running processeses
-        for process, result_queue, deadline, i_transition, i_q, use_cvc4 in running:
-            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: terminating process with PID={process.pid}')
-            process.terminate()
-            process.join()
+        for rp in running:
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: terminating process with PID={rp.process.pid}')
+            rp.process.terminate()
+            rp.process.join()
         assert len(multiprocessing.active_children()) == 0
+
 def check_dual_edge_optimize(
         ps: Tuple[Expr,...],
-        top_clauses: Tuple[Expr,...],
-        q_seed: List[FrozenSet[int]],
+        top_clauses: Tuple[Expr, ...],
+        q_seed: Tuple[FrozenSet[int], ...],
 ) -> Tuple[Optional[Tuple[PDState, PDState]], Optional[Tuple[Expr,...]]]:
     '''
     this checks if ps /\ qs |= wp(ps -> qs)
@@ -1370,7 +1680,7 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
         results: List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = []
         if n > 1:
             with multiprocessing.Pool(n) as pool:
-               results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should check again to see if they fix it
+               results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should
                    _map_clause_state_interaction_helper,
                    real_work,
                ).get(9999999) # see: https://stackoverflow.com/a/1408476
@@ -1793,7 +2103,7 @@ class MultiSubclausesMapICE(object):
         self.variables = [destruct_clause(self.top_clauses[k])[0] for k in range(self.m)]
         self.literals = [destruct_clause(self.top_clauses[k])[1] for k in range(self.m)]
         self.n = [len(self.literals[k]) for k in range(self.m)]
-        self.all_n = [set(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
+        self.all_n = [frozenset(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
         self.optimize = optimize
         self.solver = z3.Optimize() if optimize else z3.Solver()  # type: ignore # TODO - fix typing
         self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)] # lit_vs[k][i] represents the i'th literal in the k'th clause
@@ -5305,7 +5615,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         _cti, _ps = check_dual_edge_optimize(
                             tuple(ps),
                             mp.top_clauses,
-                            q_seed,
+                            tuple(q_seed),
                         )
                     else:
                         # version using check_dual_edge
