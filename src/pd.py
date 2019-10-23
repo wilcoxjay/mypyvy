@@ -1058,7 +1058,18 @@ def check_dual_edge_optimize_multiprocessing_helper(
         # TODO: maybe we should do marco? also note that the unsat is only for this transition
         return
 
-    # TODO: optimize from model and send SAT result
+    # optimize from model and send SAT result (but only optimize top priority, i.e., active_post_qs)
+    z3model = s.model(minimize=True)
+    prestate = Trace.from_z3([KEY_OLD], z3model)
+    poststate = Trace.from_z3([KEY_NEW], z3model)
+    validate_cti(prestate, poststate)
+    for k in active_post_qs:
+        for j in sorted(mp.all_n[k] - hq.q_post[k]):
+            if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
+                print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
+                hq = hq.weaken_q_post(k, j)
+    validate_cti(prestate, poststate)
+    send_result(hq, (prestate, poststate))
 
     def validate_cti(prestate: PDState, poststate: PDState) -> None:
         # TODO: remove this once we trust the code enough
@@ -1146,7 +1157,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 continue
             s.push()
             s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), old=True))
-            print(f'[{datetime.now()}] {greeting}: trying to strengthen postcondition k={k}, i={i}')
+            print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, i={i}')
             z3res = s.check()
             print(f'[{datetime.now()}] {greeting}: got {z3res}')
             assert z3res in (z3.sat, z3.unsat)
@@ -1239,6 +1250,7 @@ def check_dual_edge_optimize_multiprocessing(
             # see if we got new results
             n_known_unsats = len(known_unsats) # to later send the new onces
             worklist = list(running)
+            any_news = False
             while len(worklist) > 0:
                 rp = worklist[0]
                 # if not rp.connection.poll():
@@ -1250,6 +1262,7 @@ def check_dual_edge_optimize_multiprocessing(
                 except queue.Empty:
                     worklist = worklist[1:]
                     continue
+                any_news = True
                 assert hq <= rp.hq
                 if cti is None:
                     # got new unsat result
@@ -1302,7 +1315,7 @@ def check_dual_edge_optimize_multiprocessing(
                 # we are done
                 print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: no more active queries, returning')
                 return current_cti
-            else:
+            elif any_news:
                 print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: {len(active_queries)} more active queries:')
                 for hq in active_queries:
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing:     {hq}')
