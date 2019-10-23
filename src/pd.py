@@ -1008,6 +1008,12 @@ def check_dual_edge_optimize_multiprocessing_helper(
     def send_result(hq: HoareQuery, cti: Optional[Tuple[PDState, PDState]]) -> None:
         #connection.send((hq, cti))
         q1.put((hq, cti))
+    def validate_cti(prestate: PDState, poststate: PDState) -> None:
+        # TODO: remove this once we trust the code enough
+        assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}'
+        assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}'
+        assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}'
+        assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}'
     assert len(hq.q_pre) == len(top_clauses)
     assert not use_cvc4 # TODO: support
     # make copies as we change these
@@ -1070,13 +1076,6 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 hq = hq.weaken_q_post(k, j)
     validate_cti(prestate, poststate)
     send_result(hq, (prestate, poststate))
-
-    def validate_cti(prestate: PDState, poststate: PDState) -> None:
-        # TODO: remove this once we trust the code enough
-        assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}'
-        assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}'
-        assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}'
-        assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}'
 
     # hear about unsats from other process via the connection
     known_unsats: List[HoareQuery] = []
@@ -1327,8 +1326,8 @@ def check_dual_edge_optimize_multiprocessing(
             for rp in running:
                 if not rp.process.is_alive():
                     rp.process.join(0)
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: process with PID={rp.process.pid} terminated with exit status {rp.process.exitcode}')
-                    assert rp.process.exitcode is not None
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_multiprocessing: process with PID={rp.process.pid} terminated')
+                    assert rp.process.exitcode == 0, rp.process.exitcode
                 elif rp is current_sat_rp:
                     # this processes is protected, and its task doesn't need to be in tasks
                     still_running.append(rp)
