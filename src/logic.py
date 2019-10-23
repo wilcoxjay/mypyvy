@@ -354,6 +354,8 @@ def cvc4_preprocess(z3str: str) -> str:
         lines.append(st)
     return '\n'.join(lines)
 
+def cvc4_postprocess(cvc4line: str) -> str:
+    return cvc4line.replace('member2', 'member')
 
 # The following classes whose names start with 'CVC4' impersonate various classes from z3 in a
 # duck typing style. Sometimes, they are given intentionally false type annotations to match
@@ -760,7 +762,7 @@ class Solver(object):
             for s in parser.parse():
                 if isinstance(s, sexp.EOF):
                     # print('got intermediate EOF')
-                    line = proc.stdout.readline()
+                    line = cvc4_postprocess(proc.stdout.readline())
                     lines.append(line)
                     if line == '':
                         assert False, 'unexpected underlying EOF'
