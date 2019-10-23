@@ -1010,10 +1010,10 @@ def check_dual_edge_optimize_multiprocessing_helper(
         q1.put((hq, cti))
     def validate_cti(prestate: PDState, poststate: PDState) -> None:
         # TODO: remove this once we trust the code enough
-        assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}'
-        assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}'
-        assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}'
-        assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}'
+        assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}: {s.debug_recent()}'
+        assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}: {s.debug_recent()}'
+        assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}: {s.debug_recent()}'
+        assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}: {s.debug_recent()}'
     assert len(hq.q_pre) == len(top_clauses)
     assert not use_cvc4 # TODO: support
     # make copies as we change these
