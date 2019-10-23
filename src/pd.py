@@ -1015,7 +1015,6 @@ def check_dual_edge_optimize_multiprocessing_helper(
         assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}: {s.debug_recent()}'
         assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}: {s.debug_recent()}'
     assert len(hq.q_pre) == len(top_clauses)
-    assert not use_cvc4 # TODO: support
     # make copies as we change these
     prog = syntax.the_program
     mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
@@ -1031,7 +1030,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
         s.z3solver.set(seed=seed) # type: ignore
         s.z3solver.set(random_seed=seed) # type: ignore
     else:
-        print(f'[{datetime.now()}] {greeting}: using cvc4')
+        print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
     t = s.get_translator(KEY_NEW, KEY_OLD)
     # add transition relation
     s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
@@ -1352,8 +1351,8 @@ def check_dual_edge_optimize_multiprocessing(
 
             # start new processes
             active_tasks = list(product(
-                active_queries,
-                [False], #[False, True]
+                active_queries, # hq
+                [False, True], # use_cvc4
             ))
             while len(running) < n_cpus:
                 task_to_run = min(active_tasks, key=tasks.__getitem__)
