@@ -660,6 +660,12 @@ class Solver(object):
             print(cvc4script, file=proc.stdin)
             # print(cvc4script)
             ans = proc.stdout.readline()
+            if len(ans) == 0:
+                print(cvc4script)
+                out, err = proc.communicate()
+                print(out)
+                print(err)
+                assert False, 'cvc4 closed its stdout before we could get an answer'
             assert ans[-1] == '\n', repr(ans)
             ans = ans.strip()
             ans_map = {
