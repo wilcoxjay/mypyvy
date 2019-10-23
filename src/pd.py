@@ -6831,9 +6831,14 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     result.append(s)
 
     # fol_pd_houdini
-    from pd_fol import fol_pd_houdini
+    from pd_fol import fol_pd_houdini, fol_ic3
     s = subparsers.add_parser('pd-fol-houdini', help='Run PD inference with folseparators')
     s.set_defaults(main=fol_pd_houdini)
+    s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+    result.append(s)
+
+    s = subparsers.add_parser('fol-ic3', help='Run IC3 inference with folseparators')
+    s.set_defaults(main=fol_ic3)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     result.append(s)
 

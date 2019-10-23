@@ -304,3 +304,105 @@ def fol_pd_houdini(solver: Solver) -> None:
         if not safety <= live_predicates:
             print("found abstractly reachable state(s) violating safety!")
             break
+
+def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
+    '''Used only in fol_ice, not cached'''
+    prog = syntax.the_program
+    safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
+    z3m = check_implication(solver, ps, safety)
+    if z3m is not None:
+        s = Trace.from_z3([KEY_ONE], z3m)
+        print(f'Found bad state satisfying {" and ".join(map(str,ps))}:')
+        print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
+        return s
+    return None
+
+
+def fol_ic3(solver: Solver) -> None:
+    prog = syntax.the_program
+
+    predicates: List[Expr] = []
+    frame_numbers: List[int] = [] # for each predicate, what is the highest frame?
+    frame_n: int = 1 # highest frame
+
+    pushing_candidates: Set[int] = set()
+
+
+    def frame_predicates(i: int) -> List[Expr]:
+        return [p for p,f in zip(predicates, frame_numbers) if i <= f]
+
+    def block(s: PDState, i: int) -> None:
+        print(f"blocking state in {i}")
+        if i == 0:
+            raise RuntimeError("Protocol is UNSAFE!") # this should exit more cleanly
+        while True:
+            edge = check_two_state_implication(solver, frame_predicates(i-1), s[0].as_onestate_formula(s[1]))
+            if edge is None:
+                break
+            (pre, post) = edge
+            print ("Pre\n",pre)
+            print ("Post\n",post)
+            block((pre, 0), i-1)
+        generalize(s, i) 
+
+    def generalize(s: PDState, i: int) -> None:
+        # find p s.t. p is negative on s, F_i-1 => p, and F_i-1 => wp(p)
+        states: List[PDState] = [s]
+        pos: Set[int] = set()
+        
+        sep = FOLSeparator(states)
+        while True:
+            p = sep.separate(pos=pos, neg=[0], imp=[])
+            if p is None: raise RuntimeError("couldn't separate in generalize()")
+            
+            # F_0 => p?
+            state = check_initial(solver, p)
+            if state is not None:
+                pos.add(len(states))
+                states.append((state, 0))
+                continue
+            # F_i-i => p?
+            cex = check_implication(solver,  frame_predicates(i-1), [p])
+            if cex is not None:
+                pos.add(len(states))
+                t = Trace.from_z3([KEY_ONE], cex)
+                states.append((t,0))
+                continue
+            
+            # F_i-i => wp(p)?
+            tr = check_two_state_implication(solver, frame_predicates(i-1), p)
+            if tr is not None:
+                (pre, post) = tr
+                pos.add(len(states))
+                states.append((pre,0))
+                pos.add(len(states))
+                states.append((post,0))
+                continue
+            
+            pushing_candidates.add(len(predicates))
+            predicates.append(p)
+            frame_numbers.append(i)
+
+    for inv_decl in prog.inits():
+        predicates.append(inv_decl.expr)
+        frame_numbers.append(0)
+
+
+    while True:
+        for frame, p in zip(frame_numbers, predicates):
+            print(frame, p)
+        bad_state = check_safe(solver, frame_predicates(frame_n))
+        if bad_state is not None:
+            block((bad_state, 0), frame_n)
+        else:
+            cex = check_implication(solver, frame_predicates(frame_n), frame_predicates(frame_n-1))
+            if cex is not None:
+                frame_n += 1
+            else:
+                inductive_invariant = frame_predicates(frame_n)
+                print("Found inductive invariant!")
+                for inv in inductive_invariant:
+                    print(f"invariant {inv}")
+                return
+
+    
