@@ -43,6 +43,7 @@
 (define-derived-mode mypyvy-mode prog-mode "Mypyvy"
   "Major mode for editing Mypyvy proof files"
   :syntax-table mypyvy-mode-syntax-table
+  (setq-local comment-start "#")
   (set (make-local-variable 'font-lock-defaults) '(mypyvy-font-lock-keywords))
   (font-lock-fontify-buffer)
   (set (make-local-variable 'compile-command)
