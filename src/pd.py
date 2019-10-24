@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from syntax import *
 from logic import *
 
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -926,25 +926,25 @@ class HoareQuery(object):
         return self != other and self <= other
     def __gt__(self, other: HoareQuery) -> bool:
         return self != other and other <= self
-    def strengthen_p(self, i: int) -> HoareQuery:
+    def strengthen_p(self, d: AbstractSet[int]) -> HoareQuery:
         return HoareQuery(
-            p=self.p | {i},
+            p=self.p | d,
             q_pre=self.q_pre,
             q_post=self.q_post,
             cardinalities=self.cardinalities,
             i_transition=self.i_transition,
         )
-    def weaken_p(self, i: int) -> HoareQuery:
+    def weaken_p(self, d: AbstractSet[int]) -> HoareQuery:
         return HoareQuery(
-            p=self.p - {i},
+            p=self.p - d,
             q_pre=self.q_pre,
             q_post=self.q_post,
             cardinalities=self.cardinalities,
             i_transition=self.i_transition,
         )
-    def strengthen_q_pre(self, k: int, i: int) -> HoareQuery:
+    def strengthen_q_pre(self, k: int, d: AbstractSet[int]) -> HoareQuery:
         q_pre = list(self.q_pre)
-        q_pre[k] -= {i}
+        q_pre[k] -= d
         return HoareQuery(
             p=self.p,
             q_pre=tuple(q_pre),
@@ -952,9 +952,9 @@ class HoareQuery(object):
             cardinalities=self.cardinalities,
             i_transition=self.i_transition,
         )
-    def weaken_q_pre(self, k: int, i: int) -> HoareQuery:
+    def weaken_q_pre(self, k: int, d: AbstractSet[int]) -> HoareQuery:
         q_pre = list(self.q_pre)
-        q_pre[k] |= {i}
+        q_pre[k] |= d
         return HoareQuery(
             p=self.p,
             q_pre=tuple(q_pre),
@@ -962,9 +962,9 @@ class HoareQuery(object):
             cardinalities=self.cardinalities,
             i_transition=self.i_transition,
         )
-    def strengthen_q_post(self, k: int, i: int) -> HoareQuery:
+    def strengthen_q_post(self, k: int, d: AbstractSet[int]) -> HoareQuery:
         q_post = list(self.q_post)
-        q_post[k] -= {i}
+        q_post[k] -= d
         return HoareQuery(
             p=self.p,
             q_pre=self.q_pre,
@@ -972,9 +972,9 @@ class HoareQuery(object):
             cardinalities=self.cardinalities,
             i_transition=self.i_transition,
         )
-    def weaken_q_post(self, k: int, i: int) -> HoareQuery:
+    def weaken_q_post(self, k: int, d: AbstractSet[int]) -> HoareQuery:
         q_post = list(self.q_post)
-        q_post[k] |= {i}
+        q_post[k] |= d
         return HoareQuery(
             p=self.p,
             q_pre=self.q_pre,
@@ -1022,6 +1022,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
         hq: HoareQuery,
         produce_cti: bool, # if False, we do not get models from the solver
         optimize: bool, # if False, we do not try to optimize an invalid Hoare triple
+        whole_clauses: bool, # if True, only try the empty clause or the entire top_clause (used in find_dual_backward_transition)
         use_cvc4: bool,
         save_smt2: bool, # TODO: move to separate function
         q1: CheckDualEdgeOptimizeJoinableQueue,
@@ -1121,11 +1122,19 @@ def check_dual_edge_optimize_multiprocessing_helper(
             return
 
         # optimize from model and send result (but only optimize top priority, i.e., active_post_qs)
-        for k in active_post_qs:
-            for j in sorted(mp.all_n[k] - hq.q_post[k]):
-                if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
-                    print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
-                    hq = hq.weaken_q_post(k, j)
+        if not whole_clauses:
+            for k in active_post_qs:
+                for j in sorted(mp.all_n[k] - hq.q_post[k]):
+                    if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
+                        print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
+                        hq = hq.weaken_q_post(k, {j})
+        else:
+            # in this case, we optimize all post_qs from model
+            for k in range(mp.m):
+                if not eval_in_state(None, poststate, mp.to_clause(k, mp.all_n[k])):
+                    print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k} (whole clauses)')
+                    hq = hq.weaken_q_post(k, mp.all_n[k])
+
         validate_cti(prestate, poststate)
         send_result(hq, False, (prestate, poststate))
 
@@ -1137,74 +1146,82 @@ def check_dual_edge_optimize_multiprocessing_helper(
         # TODO: maybe we should minimize cardinalities before the other top_clauses, as it could lead to larger models
         print(f'[{datetime.now()}] {greeting}: optimizing postcondition')
         for k in chain(active_post_qs, (kk for kk in range(mp.m) if kk not in active_post_qs)): # TODO: random shuffle?
-            to_try = mp.all_n[k] - hq.q_post[k]
+            if not whole_clauses:
+                to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
+            else:
+                to_try = [] if hq.q_post[k] == mp.all_n[k] else [mp.all_n[k]]
             while len(to_try) > 0:
-                i = random.choice(list(to_try))
-                to_try -= {i}
-                assert i not in hq.q_post[k]
-                hq_try = hq.weaken_q_post(k, i)
+                d = random.choice(to_try)
+                to_try.remove(d)
+                assert not d <= hq.q_post[k]
+                hq_try = hq.weaken_q_post(k, d)
                 if known_to_be_unsat(hq_try):
                     continue
                 s.push()
                 s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq_try.q_post[k]), old=False)))
-                print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, i={i}')
+                print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, d={sorted(d)}')
                 z3res = s.check()
                 print(f'[{datetime.now()}] {greeting}: got {z3res}')
                 assert z3res in (z3.sat, z3.unsat)
                 if z3res == z3.unsat:
                     send_result(hq_try, True)
                 else:
-                    print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, i={i}')
+                    print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
                     hq = hq_try
                     z3model = s.model(minimize=True)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
                     poststate = Trace.from_z3([KEY_NEW], z3model)
                     validate_cti(prestate, poststate)
-                    for j in sorted(to_try):
-                        if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
-                            print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
-                            hq = hq.weaken_q_post(k, j)
-                            to_try -= {j}
+                    for dd in to_try:
+                        if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | dd)):
+                            print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, dd={sorted(dd)}')
+                            hq = hq.weaken_q_post(k, dd)
+                            to_try.remove(dd)
+                    # TODO: weaken from model for other k's?
                     validate_cti(prestate, poststate)
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
-            print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {hq.q_post[k]}')
+            print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {sorted(hq.q_post[k])}')
             s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
             assert s.check() == z3.sat
         print(f'[{datetime.now()}] {greeting}: optimizing precondition')
         for k in range(mp.m):  # TODO: random shuffle?
-            to_try = hq.q_pre[k]
+            if not whole_clauses:
+                to_try = [frozenset([i]) for i in sorted(hq.q_pre[k])]
+            else:
+                to_try = []
             while len(to_try) > 0:
-                i = random.choice(list(to_try))
-                to_try -= {i}
-                assert i in hq.q_pre[k]
-                hq_try = hq.strengthen_q_pre(k, i)
+                d = random.choice(to_try)
+                to_try.remove(d)
+                assert d <= hq.q_pre[k]
+                hq_try = hq.strengthen_q_pre(k, d)
                 if known_to_be_unsat(hq_try):
                     continue
                 s.push()
                 s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), old=True))
-                print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, i={i}')
+                print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, d={sorted(d)}')
                 z3res = s.check()
                 print(f'[{datetime.now()}] {greeting}: got {z3res}')
                 assert z3res in (z3.sat, z3.unsat)
                 if z3res == z3.unsat:
                     send_result(hq_try, True)
                 else:
-                    print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, i={i}')
+                    print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
                     hq = hq_try
                     z3model = s.model(minimize=True)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
                     poststate = Trace.from_z3([KEY_NEW], z3model)
                     validate_cti(prestate, poststate)
-                    for j in sorted(to_try):
-                        if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - {j})):
-                            print(f'[{datetime.now()}] {greeting}: strengthening precondition from model k={k}, j={j}')
-                            hq = hq.strengthen_q_pre(k, j)
-                            to_try -= {j}
+                    for dd in to_try:
+                        if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - dd)):
+                            print(f'[{datetime.now()}] {greeting}: strengthening precondition from model k={k}, dd={sorted(dd)}')
+                            hq = hq.strengthen_q_pre(k, dd)
+                            to_try.remove(dd)
+                    # TODO: strengthen other k's from model?
                     validate_cti(prestate, poststate)
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
-            print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {hq.q_pre[k]}')
+            print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {sorted(hq.q_pre[k])}')
             s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
             assert s.check() == z3.sat
         print(f'[{datetime.now()}] {greeting}: found optimal cti')
@@ -1225,6 +1242,7 @@ def check_dual_edge_optimize_find_cti(
         ps: Tuple[Expr, ...],
         top_clauses: Tuple[Expr, ...],
         q_seed: Tuple[FrozenSet[int], ...],
+        whole_clauses: bool, # if True, only try the empty clause or the entire top_clause (used in find_dual_backward_transition)
 ) -> Optional[Tuple[PDState, PDState]]:
     '''
     this uses multiprocessing to check a dual edge, and get an
@@ -1312,9 +1330,14 @@ def check_dual_edge_optimize_find_cti(
                     for k in range(mp.m):
                         if len(hq.q_post[k]) == 0:
                             continue
-                        for i in sorted(mp.all_n[k] - hq.q_post[k]):
+                        if not whole_clauses:
+                            to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
+                        else:
+                            to_try = [] if hq.q_post[k] == mp.all_n[k] else [mp.all_n[k]]
+                        for d in to_try:
+                            assert not d <= hq.q_post[k]
                             for i_transition in range(n_transitions):
-                                new_hq = hq.weaken_q_post(k, i).replace_transition(i_transition)
+                                new_hq = hq.weaken_q_post(k, d).replace_transition(i_transition)
                                 if not known_to_be_unsat(new_hq):
                                     active_queries.append(new_hq)
                     # second, weaken the postcondition elsewhere
@@ -1322,17 +1345,22 @@ def check_dual_edge_optimize_find_cti(
                         for k in range(mp.m):
                             if len(hq.q_post[k]) != 0:
                                 continue
-                            for i in sorted(mp.all_n[k] - hq.q_post[k]):
+                            if not whole_clauses:
+                                to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
+                            else:
+                                to_try = [] if hq.q_post[k] == mp.all_n[k] else [mp.all_n[k]]
+                            for d in to_try:
+                                assert not d <= hq.q_post[k]
                                 for i_transition in range(n_transitions):
-                                    new_hq = hq.weaken_q_post(k, i).replace_transition(i_transition)
+                                    new_hq = hq.weaken_q_post(k, d).replace_transition(i_transition)
                                     if not known_to_be_unsat(new_hq):
                                         active_queries.append(new_hq)
                     # third, strengthen the precondition
-                    if len(active_queries) == 0:
+                    if len(active_queries) == 0 and not whole_clauses:
                         for k in range(mp.m):
                             for i in sorted(hq.q_pre[k]):
                                 for i_transition in range(n_transitions):
-                                    new_hq = hq.strengthen_q_pre(k, i).replace_transition(i_transition)
+                                    new_hq = hq.strengthen_q_pre(k, {i}).replace_transition(i_transition)
                                     if not known_to_be_unsat(new_hq):
                                         active_queries.append(new_hq)
 
@@ -1352,20 +1380,28 @@ def check_dual_edge_optimize_find_cti(
             # kill processes that timed out or whose query is no longer active (except for current_sat_rp - the last process to return a model)
             now = datetime.now()
             still_running = []
+            def join_queue_threads(rp: RunningProcess) -> None:
+                rp.q1.close()
+                rp.q1.join_thread()
+                rp.q2.close()
+                rp.q2.join_thread()
             for rp in running:
                 if not rp.process.is_alive():
-                    rp.process.join(0)
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: process with PID={rp.process.pid} terminated')
                     assert rp.process.exitcode == 0, rp.process.exitcode
+                    join_queue_threads(rp)
+                    rp.process.join(0)
                 elif rp is current_sat_rp:
                     # this processes is protected, and its task doesn't need to be in tasks
                     still_running.append(rp)
                 elif now > rp.deadline:
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    join_queue_threads(rp)
                     rp.process.terminate()
                     rp.process.join()
                 elif rp.hq not in active_queries:
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
+                    join_queue_threads(rp)
                     rp.process.terminate()
                     rp.process.join()
                 else:
@@ -1396,6 +1432,7 @@ def check_dual_edge_optimize_find_cti(
                     hq,
                     True, # produce_cti
                     True, # optimize
+                    whole_clauses,
                     use_cvc4,
                     not use_cvc4 and tasks[task_to_run] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
                     q1,
@@ -1613,6 +1650,7 @@ def check_dual_edge_optimize_minimize_ps(
                     hq,
                     False, # produce_cti
                     False, # optimize
+                    False, # whole_clauses
                     use_cvc4,
                     not use_cvc4 and tasks[task_to_run] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
                     q1,
@@ -1663,6 +1701,7 @@ def check_dual_edge_optimize(
         ps: Tuple[Expr,...],
         top_clauses: Tuple[Expr, ...],
         q_seed: Tuple[FrozenSet[int], ...],
+        whole_clauses: bool = False, # if True, only try the empty clause or the entire top_clause (used in find_dual_backward_transition)
 ) -> Tuple[Optional[Tuple[PDState, PDState]], Optional[Tuple[Expr,...]]]:
     '''
     this checks if ps /\ qs |= wp(ps -> qs)
@@ -1684,7 +1723,7 @@ def check_dual_edge_optimize(
     print('  -->')
     for q in qs:
         print(f'  {q}')
-    res = check_dual_edge_optimize_find_cti(ps, top_clauses, q_seed)
+    res = check_dual_edge_optimize_find_cti(ps, top_clauses, q_seed, whole_clauses)
     if res is not None:
         # res contains optimal cti
         prestate, poststate = res
@@ -1698,7 +1737,7 @@ def check_dual_edge_optimize(
     else:
         # the dual edge is valid, minimize ps
         ps_i = check_dual_edge_optimize_minimize_ps(ps, top_clauses, q_seed)
-        if True:
+        if False:
             # TODO: remove once we trust check_dual_edge_optimize_minimize_ps
             def check_old(ps_seed: FrozenSet[int]) -> bool:
                 return check_dual_edge_multiprocessing_seeds(
@@ -6087,23 +6126,37 @@ def primal_dual_houdini(solver: Solver) -> str:
                 qs_seed = find_fixpoint(ctis)
                 if len(qs_seed) == 0:
                     break
-                print(f'[{datetime.now()}] find_dual_backward_transition: potential {len(qs_seed)} qs are: predicates{sorted(goals[i] for i in qs_seed)}')
+                print(f'[{datetime.now()}] find_dual_backward_transition: potential qs are ({len(qs_seed)}): predicates{sorted(goals[i] for i in qs_seed)}')
                 # now, check if r /\ ps /\ qs_seed |= wp(r /\ ps -> qs_seed)
                 _cti: Optional[Tuple[PDState, PDState]]
                 _ps: Optional[Tuple[Predicate,...]]
-                p_seed = frozenset(range(len(ps)))
-                _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
-                if _cti is None:
-                    print(f'[{datetime.now()}] find_dual_backward_transition: dual edge is valid, minimizing ps')
-                    for i in sorted(p_seed, reverse=True):
-                        if check_qs(qs_seed, p_seed - {i}, False) is None:
-                            p_seed -= {i}
-                    print(f'[{datetime.now()}] find_dual_backward_transition: done minimizing ps')
-                    _ps = tuple(ps[i] for i in sorted(p_seed))
-                else:
-                    _ps = None
                 if False:
-                    # just check cti_solver result vs. check_dual_edge
+                    # version using cti_solver
+                    p_seed = frozenset(range(len(ps)))
+                    _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
+                    if _cti is None:
+                        print(f'[{datetime.now()}] find_dual_backward_transition: dual edge is valid, minimizing ps')
+                        for i in sorted(p_seed, reverse=True):
+                            if check_qs(qs_seed, p_seed - {i}, False) is None:
+                                p_seed -= {i}
+                        print(f'[{datetime.now()}] find_dual_backward_transition: done minimizing ps')
+                        _ps = tuple(ps[i] for i in sorted(p_seed))
+                    else:
+                        _ps = None
+                else:
+                    mp = MultiSubclausesMapICE(tuple(qs[i] for i in sorted(qs_seed)), [], [], False) # only used to compute q_seed
+                    q_seed = tuple(
+                        frozenset(range(mp.n[k]))
+                        for k in range(mp.m)
+                    )
+                    _cti, _ps = check_dual_edge_optimize(
+                        tuple(ps),
+                        mp.top_clauses,
+                        q_seed,
+                        whole_clauses=True,
+                    )
+                if False:
+                    # just check result vs. check_dual_edge
                     # TODO: run this on all examples sometime
                     if _cti is None:
                         assert _ps is not None
@@ -6160,7 +6213,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if seed is None:
                         break
                     p = maps[i].to_clause(0, seed[0])
-                    print(f'find_dual_backward_transition: potential p is: {p}')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: potential p is: {p}')
                     s = check_initial(solver, p)
                     if s is None:
                         break
