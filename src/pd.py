@@ -1234,6 +1234,7 @@ def check_dual_edge_optimize_find_cti(
     different transitions, qs, and random seeds, and restarts the solvers using a Luby sequence
 
     '''
+    print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: starting')
     assert len(top_clauses) == len(q_seed)
     mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
     prog = syntax.the_program
@@ -1339,7 +1340,8 @@ def check_dual_edge_optimize_find_cti(
             active_queries = [hq for hq in active_queries if not known_to_be_unsat(hq)]
             if len(active_queries) == 0:
                 # we are done
-                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: no more active queries, returning')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: no more active queries, returning {"cti" if current_cti is not None else "unsat"}')
+                print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: done')
                 return current_cti
             elif any_news:
                 print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: {len(active_queries)} more active queries:')
@@ -1447,6 +1449,216 @@ def check_dual_edge_optimize_find_cti(
             rp.process.join()
         assert len(multiprocessing.active_children()) == 0
 
+def check_dual_edge_optimize_minimize_ps(
+        ps: Tuple[Expr, ...],
+        top_clauses: Tuple[Expr, ...],
+        q_seed: Tuple[FrozenSet[int], ...],
+) -> FrozenSet[int]:
+    '''
+    this uses multiprocessing to minimize the ps required for the given valid dual edge
+
+    this function uses multiprocessing to start multiple solvers for
+    different transitions, ps, and random seeds, and restarts the solvers using a Luby sequence
+
+    '''
+    assert len(top_clauses) == len(q_seed)
+    if len(ps) == 0:
+        return frozenset()
+    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: starting')
+    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: minimizing {len(ps)} ps')
+    mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
+    prog = syntax.the_program
+    n_ps = len(ps)
+    n_transitions = len(list(prog.transitions()))
+    n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
+    n_cpus = max(n_cpus, 2) # we need at least 2 processes or we will block on the last one that found a model
+    t0 = timedelta(seconds=60) # the base unit for timeouts is 60 seconds (i.e., Luby sequence starts at 60 seconds)
+
+    # the smallest set of ps for which the dual edge is known to be valid
+    current_p = frozenset(range(n_ps))
+
+    def hoare_queries_for_p(p: FrozenSet[int]) -> List[HoareQuery]:
+        # return the queries that must all be unsat for a dual edge with the given p to be valid
+        return [
+            HoareQuery(
+                p=p,
+                q_pre=q_seed,
+                q_post=tuple(q_seed[k] if k == i_q else frozenset() for k in range(mp.m)),
+                cardinalities=(),
+                i_transition=i_transition,
+            )
+            for i_transition in range(n_transitions)
+            for i_q in range(mp.m)
+        ]
+
+    known_unsats = hoare_queries_for_p(current_p) # these are known to be unsat since we assume the given dual edge is valid
+    def known_to_be_unsat(hq: HoareQuery) -> bool:
+        return any(len(x) == 0 for x in hq.q_pre) or any(
+            hq <= unsat_hq
+            for unsat_hq in known_unsats
+        )
+    known_sats: List[HoareQuery] = []
+    def known_to_be_sat(hq: HoareQuery) -> bool:
+        return any(
+            hq >= sat_hq
+            for sat_hq in known_sats
+        )
+    def known_to_be_valid(p: FrozenSet[int]) -> bool:
+        return all(known_to_be_unsat(hq) for hq in hoare_queries_for_p(p))
+    def known_to_be_invalid(p: FrozenSet[int]) -> bool:
+        return any(known_to_be_sat(hq) for hq in hoare_queries_for_p(p))
+
+    assert known_to_be_valid(current_p)
+
+    active_queries: List[HoareQuery] = list(chain(*(
+        hoare_queries_for_p(current_p - {i})
+        for i in sorted(current_p, reverse=True) # TODO: maybe random order?
+    )))
+
+    running: List[RunningProcess] = [] # list of currently running processes
+
+    # map (hq, use_cvc4) to number of attempts spent on it (note that attempt i takes Luby[i] time)
+    # nothing is ever removed from tasks, and active_queries is used to maintain the active ones
+    tasks: Dict[Tuple[HoareQuery, bool], int] = defaultdict(int)
+
+    try:
+        while True:
+            # see if we got new results
+            worklist = list(running)
+            any_news = False
+            while len(worklist) > 0:
+                rp = worklist[0]
+                try:
+                    hq, valid, cti = rp.q1.get_nowait()
+                    rp.q1.task_done()
+                except queue.Empty:
+                    worklist = worklist[1:]
+                    continue
+                any_news = True
+                assert cti is None
+                if valid:
+                    # got new unsat result
+                    # this may trigger changing the current_p, but we'll check that later since it requires more than one result
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: got an UNSAT result from PID={rp.process.pid} for hq={hq}, use_cvc4={rp.use_cvc4}')
+                    known_unsats.append(hq)
+                else:
+                    # got new sat result
+                    # this makes some other queries unneeded, but we'll filter them later
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: got a SAT result from PID={rp.process.pid} for hq={hq}, use_cvc4={rp.use_cvc4}')
+                    known_sats.append(hq)
+
+            if any_news:
+                # check if we can lower the current_p
+                for i in sorted(current_p, reverse=True): # TODO: maybe random order?
+                    if known_to_be_valid(current_p - {i}):
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: removing {i}')
+                        current_p -= {i}
+                        active_queries = list(chain(*(
+                            hoare_queries_for_p(current_p - {i})
+                            for i in sorted(current_p, reverse=True) # TODO: maybe random order?
+                        )))
+                        break
+                # filter using known facts and possibly return
+                active_queries = [hq for hq in active_queries if not (
+                    known_to_be_unsat(hq) or
+                    known_to_be_sat(hq) or
+                    known_to_be_invalid(hq.p)
+                )]
+                if len(active_queries) == 0:
+                    # we are done
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: no more active queries, returning optimial p: {sorted(current_p)}')
+                    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: done')
+                    return current_p
+                else:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: {len(active_queries)} more active queries:')
+                    for hq in active_queries:
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps:     {hq}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: carrying on')
+
+            # kill processes that timed out or whose query is no longer active
+            now = datetime.now()
+            still_running = []
+            for rp in running:
+                if not rp.process.is_alive():
+                    rp.process.join(0)
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: process with PID={rp.process.pid} terminated')
+                    assert rp.process.exitcode == 0, rp.process.exitcode
+                elif now > rp.deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    rp.process.terminate()
+                    rp.process.join()
+                elif rp.hq not in active_queries:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
+                    rp.process.terminate()
+                    rp.process.join()
+                else:
+                    still_running.append(rp)
+            running = still_running
+
+            # start new processes
+            active_tasks = list(product(
+                active_queries, # hq
+                [False, True], # use_cvc4
+            ))
+            while len(running) < n_cpus:
+                task_to_run = min(active_tasks, key=tasks.__getitem__)
+                hq, use_cvc4 = task_to_run
+                timeout = t0 * luby(tasks[task_to_run])
+                tasks[task_to_run] += 1
+                q1 = CheckDualEdgeOptimizeJoinableQueue()
+                q2 = CheckDualEdgeOptimizeQueue()
+                args = (
+                    ps,
+                    top_clauses,
+                    hq,
+                    False, # produce_cti
+                    False, # optimize
+                    use_cvc4,
+                    not use_cvc4 and tasks[task_to_run] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
+                    q1,
+                    q2,
+                )
+                if TYPE_CHECKING: # trick to get typechecking for check_dual_edge_optimize_multiprocessing_helper
+                    check_dual_edge_optimize_multiprocessing_helper(*args)
+                process = multiprocessing.Process(
+                    target=check_dual_edge_optimize_multiprocessing_helper,
+                    args=args,
+                )
+                deadline = datetime.now() +  timeout
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: starting new process for hq={hq}, use_cvc4={use_cvc4} with a timeout of {timeout.total_seconds()} seconds')
+                rp = RunningProcess(
+                    process,
+                    q1,
+                    q2,
+                    deadline,
+                    hq,
+                    use_cvc4,
+                )
+                process.start()
+                running.append(rp)
+
+            # wait until we have new results, or until the next deadline expires
+            earliest_deadline = min(
+                (rp.deadline for rp in running),
+                default=None,
+            )
+            seconds = (0.1 if earliest_deadline is None else
+                       (earliest_deadline - datetime.now()).total_seconds())
+            seconds = max(0.1, seconds)
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: waiting for news with a timeout of {seconds} seconds')
+            multiprocessing.connection.wait(
+                [rp.q1._reader for rp in running], # type: ignore
+                timeout=seconds,
+            )
+        assert False
+    finally:
+        # terminate all running processeses
+        for rp in running:
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}')
+            rp.process.terminate()
+            rp.process.join()
+        assert len(multiprocessing.active_children()) == 0
+
 def check_dual_edge_optimize(
         ps: Tuple[Expr,...],
         top_clauses: Tuple[Expr, ...],
@@ -1472,46 +1684,31 @@ def check_dual_edge_optimize(
     print('  -->')
     for q in qs:
         print(f'  {q}')
-    def check(ps_seed: FrozenSet[int], optimize: bool) -> Optional[Tuple[PDState, PDState]]:
-        # use multiprocessing
-        if not optimize:
-            # used to minimize the ps, no need to optimize ctis. TODO: don't even need to get the models
-            return check_dual_edge_multiprocessing_seeds(
-                ps=tuple(ps[i] for i in sorted(ps_seed)),
-                qs=qs,
-                minimize=False,
-            )
-        else:
-            # used with all the ps, should optimize the cti
-            assert ps_seed == frozenset(range(len(ps)))
-            res = check_dual_edge_optimize_find_cti(
-                ps,
-                top_clauses,
-                q_seed,
-            )
-            if res is not None:
-                prestate, poststate = res
-                _cache_transitions.append((prestate, poststate))
-                for state in (prestate, poststate):
-                    if all(eval_in_state(None, state, p) for p in inits):
-                        _cache_initial.append(state)
-            return res
-    ps_i = frozenset(range(len(ps)))
-    res = check(ps_i, True)
+    res = check_dual_edge_optimize_find_cti(ps, top_clauses, q_seed)
     if res is not None:
+        # res contains optimal cti
         prestate, poststate = res
+        _cache_transitions.append((prestate, poststate))
+        for state in (prestate, poststate):
+            if all(eval_in_state(None, state, p) for p in inits):
+                _cache_initial.append(state)
         print(f'[{datetime.now()}] check_dual_edge_optimize: found new cti violating dual edge')
         print(f'[{datetime.now()}] check_dual_edge_optimize: done')
         return ((prestate, poststate), None)
     else:
-        # minimize ps_i
-        # TODO: maybe use unsat cores and/or incrementality
-        print(f'[{datetime.now()}] check_dual_edge_optimize: minimizing ps')
-        for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
-            if i in ps_i and check(ps_i - {i}, False) is None:
-                ps_i -= {i}
-        _ps = tuple(ps[i] for i in ps_i)
-        print(f'[{datetime.now()}] check_dual_edge_optimize: done minimizing ps')
+        # the dual edge is valid, minimize ps
+        ps_i = check_dual_edge_optimize_minimize_ps(ps, top_clauses, q_seed)
+        if True:
+            # TODO: remove once we trust check_dual_edge_optimize_minimize_ps
+            def check_old(ps_seed: FrozenSet[int]) -> bool:
+                return check_dual_edge_multiprocessing_seeds(
+                    ps=tuple(ps[i] for i in sorted(ps_seed)),
+                    qs=qs,
+                    minimize=False,
+                ) is None
+            assert check_old(ps_i)
+            assert all(not check_old(ps_i - {i}) for i in sorted(ps_i))
+        _ps = tuple(ps[i] for i in sorted(ps_i))
         print(f'[{datetime.now()}] check_dual_edge_optimize: found new valid dual edge:')
         for p in _ps:
             print(f'  {p}')
