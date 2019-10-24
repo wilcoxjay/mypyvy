@@ -330,63 +330,80 @@ def fol_ic3(solver: Solver) -> None:
 
     def frame_predicates(i: int) -> List[Expr]:
         return [p for p,f in zip(predicates, frame_numbers) if i <= f]
+    def add_predicate_to_frame(p: Expr, f: int) -> int:
+        for i in range(len(predicates)):
+            if p == predicates[i]:
+                frame_numbers[i] = max(frame_numbers[i], f)
+                return i
+        i = len(predicates)
+        predicates.append(p)
+        frame_numbers.append(f)
+        return i
 
     def block(s: PDState, i: int) -> None:
         print(f"blocking state in {i}")
         if i == 0:
             raise RuntimeError("Protocol is UNSAFE!") # this should exit more cleanly
+        # block all predecesors
         while True:
-            edge = check_two_state_implication(solver, frame_predicates(i-1), s[0].as_onestate_formula(s[1]))
+            edge = check_two_state_implication(solver, frame_predicates(i-1), Not(s[0].as_onestate_formula(s[1])))
             if edge is None:
                 break
             (pre, post) = edge
             print ("Pre\n",pre)
             print ("Post\n",post)
             block((pre, 0), i-1)
-        generalize(s, i) 
+        generalize(s, i)
 
     def generalize(s: PDState, i: int) -> None:
         # find p s.t. p is negative on s, F_i-1 => p, and F_i-1 => wp(p)
         states: List[PDState] = [s]
         pos: Set[int] = set()
-        
         sep = FOLSeparator(states)
+
         while True:
             p = sep.separate(pos=pos, neg=[0], imp=[])
             if p is None: raise RuntimeError("couldn't separate in generalize()")
-            
+            print(f"Candidate predicate is: {p}")
+
             # F_0 => p?
+            print("check initial")
             state = check_initial(solver, p)
             if state is not None:
+                print("Adding new initial state")
                 pos.add(len(states))
                 states.append((state, 0))
                 continue
-            # F_i-i => p?
-            cex = check_implication(solver,  frame_predicates(i-1), [p])
+            # F_i-1 => p?
+            print("check implication")
+            cex = check_implication(solver, frame_predicates(i-1), [p])
             if cex is not None:
+                print("Adding new free pre-state")
                 pos.add(len(states))
                 t = Trace.from_z3([KEY_ONE], cex)
                 states.append((t,0))
                 continue
-            
-            # F_i-i => wp(p)?
+
+            # F_i-1 => wp(p)?
             tr = check_two_state_implication(solver, frame_predicates(i-1), p)
             if tr is not None:
                 (pre, post) = tr
+                print("Adding new edge")
                 pos.add(len(states))
                 states.append((pre,0))
                 pos.add(len(states))
                 states.append((post,0))
                 continue
-            
-            pushing_candidates.add(len(predicates))
-            predicates.append(p)
-            frame_numbers.append(i)
 
-    for inv_decl in prog.inits():
-        predicates.append(inv_decl.expr)
+
+            print(f"Learned new predicate: {p}")
+            idx = add_predicate_to_frame(p, i)
+            # pushing_candidates.add(idx)
+            return
+
+    for init_decl in prog.inits():
+        predicates.append(init_decl.expr)
         frame_numbers.append(0)
-
 
     while True:
         for frame, p in zip(frame_numbers, predicates):
@@ -395,14 +412,17 @@ def fol_ic3(solver: Solver) -> None:
         if bad_state is not None:
             block((bad_state, 0), frame_n)
         else:
-            cex = check_implication(solver, frame_predicates(frame_n), frame_predicates(frame_n-1))
-            if cex is not None:
-                frame_n += 1
-            else:
-                inductive_invariant = frame_predicates(frame_n)
-                print("Found inductive invariant!")
-                for inv in inductive_invariant:
-                    print(f"invariant {inv}")
-                return
+            for inv_frame in range(1,frame_n + 1):
+                ps = frame_predicates(inv_frame)
+                if all(check_two_state_implication(solver, ps, p) is None for p in ps):
+                    print("Found inductive invariant!")
+                    for p in ps:
+                        print(f"invariant {p}")
+                    return
+            print(f"Expanding new frame {frame_n+1}")
+            print(f"Predicate frame numbers: {frame_numbers}")
+            print ("predicate ----")
+            for f,p in sorted(zip(frame_numbers, predicates), key = lambda x: x[0]):
+                print(f"predicate {f} {p}")
 
-    
+            frame_n += 1
