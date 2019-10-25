@@ -1066,14 +1066,15 @@ def check_dual_edge_optimize_multiprocessing_helper(
         greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
         # TODO: better logging, maybe with meaningful process names
         if not use_cvc4:
-            print(f'[{datetime.now()}] {greeting}: setting z3 seed to {seed}')
+            # print(f'[{datetime.now()}] {greeting}: setting z3 seed to {seed}')
             # TODO: not sure any of these has any actual effect
             z3.set_param('smt.random_seed',seed)
             z3.set_param('sat.random_seed',seed)
             s.z3solver.set(seed=seed) # type: ignore
             s.z3solver.set(random_seed=seed) # type: ignore
         else:
-            print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
+            # print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
+            pass
         t = s.get_translator(KEY_NEW, KEY_OLD)
         # add transition relation
         s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
@@ -1096,9 +1097,9 @@ def check_dual_edge_optimize_multiprocessing_helper(
             print(f'[{datetime.now()}] {greeting}: saving smt2 to {fn} ({len(smt2)} bytes)')
             open(fn, 'w').write(smt2)
             # TODO: we should actually exit here, i.e., make saving to smt2 a separate function
-        print(f'[{datetime.now()}] {greeting}: checking')
+        print(f'[{datetime.now()}] {greeting}: checking input queury')
         z3res = s.check()
-        print(f'[{datetime.now()}] {greeting}: got {z3res}')
+        print(f'[{datetime.now()}] {greeting}: got {z3res}' + (', optimizing cti' if z3res == z3.sat and optimize else ''))
         assert z3res in (z3.sat, z3.unsat)
         if z3res == z3.unsat:
             send_result(hq, True)
@@ -1126,13 +1127,13 @@ def check_dual_edge_optimize_multiprocessing_helper(
             for k in active_post_qs:
                 for j in sorted(mp.all_n[k] - hq.q_post[k]):
                     if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
-                        print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
+                        # print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
                         hq = hq.weaken_q_post(k, {j})
         else:
             # in this case, we optimize all post_qs from model
             for k in range(mp.m):
                 if not eval_in_state(None, poststate, mp.to_clause(k, mp.all_n[k])):
-                    print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k} (whole clauses)')
+                    # print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k} (whole clauses)')
                     hq = hq.weaken_q_post(k, mp.all_n[k])
 
         validate_cti(prestate, poststate)
@@ -1144,7 +1145,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
         # then try for the pre-state to satisfy stronger subclauses of top_clauses
         # TODO: lastly, minimize the model (i.e., cardinalities)
         # TODO: maybe we should minimize cardinalities before the other top_clauses, as it could lead to larger models
-        print(f'[{datetime.now()}] {greeting}: optimizing postcondition')
+        # print(f'[{datetime.now()}] {greeting}: optimizing postcondition')
         for k in chain(active_post_qs, (kk for kk in range(mp.m) if kk not in active_post_qs)): # TODO: random shuffle?
             if not whole_clauses:
                 to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
@@ -1159,14 +1160,14 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     continue
                 s.push()
                 s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq_try.q_post[k]), old=False)))
-                print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, d={sorted(d)}')
+                # print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, d={sorted(d)}')
                 z3res = s.check()
-                print(f'[{datetime.now()}] {greeting}: got {z3res}')
+                # print(f'[{datetime.now()}] {greeting}: got {z3res}')
                 assert z3res in (z3.sat, z3.unsat)
                 if z3res == z3.unsat:
                     send_result(hq_try, True)
                 else:
-                    print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
+                    # print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
                     hq = hq_try
                     z3model = s.model(minimize=True)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
@@ -1174,17 +1175,17 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     validate_cti(prestate, poststate)
                     for dd in to_try:
                         if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | dd)):
-                            print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, dd={sorted(dd)}')
+                            # print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, dd={sorted(dd)}')
                             hq = hq.weaken_q_post(k, dd)
                             to_try.remove(dd)
                     # TODO: weaken from model for other k's?
                     validate_cti(prestate, poststate)
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
-            print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {sorted(hq.q_post[k])}')
+            # print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {sorted(hq.q_post[k])}')
             s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
             assert s.check() == z3.sat
-        print(f'[{datetime.now()}] {greeting}: optimizing precondition')
+        # print(f'[{datetime.now()}] {greeting}: optimizing precondition')
         for k in range(mp.m):  # TODO: random shuffle?
             if not whole_clauses:
                 to_try = [frozenset([i]) for i in sorted(hq.q_pre[k])]
@@ -1199,14 +1200,14 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     continue
                 s.push()
                 s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), old=True))
-                print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, d={sorted(d)}')
+                # print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, d={sorted(d)}')
                 z3res = s.check()
-                print(f'[{datetime.now()}] {greeting}: got {z3res}')
+                # print(f'[{datetime.now()}] {greeting}: got {z3res}')
                 assert z3res in (z3.sat, z3.unsat)
                 if z3res == z3.unsat:
                     send_result(hq_try, True)
                 else:
-                    print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
+                    # print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
                     hq = hq_try
                     z3model = s.model(minimize=True)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
@@ -1214,20 +1215,20 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     validate_cti(prestate, poststate)
                     for dd in to_try:
                         if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - dd)):
-                            print(f'[{datetime.now()}] {greeting}: strengthening precondition from model k={k}, dd={sorted(dd)}')
+                            # print(f'[{datetime.now()}] {greeting}: strengthening precondition from model k={k}, dd={sorted(dd)}')
                             hq = hq.strengthen_q_pre(k, dd)
                             to_try.remove(dd)
                     # TODO: strengthen other k's from model?
                     validate_cti(prestate, poststate)
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
-            print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {sorted(hq.q_pre[k])}')
+            # print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {sorted(hq.q_pre[k])}')
             s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
             assert s.check() == z3.sat
-        print(f'[{datetime.now()}] {greeting}: found optimal cti')
+        # print(f'[{datetime.now()}] {greeting}: found optimal cti')
     finally:
         q1.join()
-        print(f'[{datetime.now()}] {greeting}: joined q1, returning')
+        print(f'[{datetime.now()}] {greeting}: finished and joined q1, returning')
 
 @dataclass
 class RunningProcess(object):
