@@ -462,7 +462,7 @@ def check_dual_edge_old(
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     k = (ps, qs)
     cache: Dict[Any,Any] = dict(h=0,r=0) # so that we don't interfere with the new version
-    print(f'check_dual_edge_old: starting to check the following edge:')
+    print(f'check_dual_edge_old: starting to check the following edge ({len(ps)}, {len(qs)}):')
     for p in ps:
         print(f'  {p}')
     print('  -->')
@@ -752,7 +752,7 @@ def check_dual_edge(
     k = (ps, qs)
     cache = _cache_dual_edge
     print(f'[{datetime.now()}] check_dual_edge: starting')
-    print(f'[{datetime.now()}] check_dual_edge: starting to check the following edge:')
+    print(f'[{datetime.now()}] check_dual_edge: starting to check the following edge ({len(ps)}, {len(qs)}):')
     for p in ps:
         print(f'  {p}')
     print('  -->')
@@ -1237,6 +1237,25 @@ class RunningProcess(object):
     deadline: datetime
     hq: HoareQuery
     use_cvc4: bool
+    def terminate(self) -> None:
+        '''Terminate the process if it's still alive (using SIGTERM).
+
+        Makes sure to close the queues and join their thread so it
+        does not get pipe errors.
+        '''
+        if not self.process.is_alive():
+            # no need to close and join the queues here, and doing so
+            # leads to a rare deadlock
+            self.process.join()
+        else:
+            # need to close and join the queues here, otherwise we'll
+            # get pipe errors from the queues' threads.
+            self.q1.close()
+            self.q2.close()
+            self.q1.join_thread()
+            self.q2.join_thread()
+            self.process.terminate()
+            self.process.join()
 
 def check_dual_edge_optimize_find_cti(
         ps: Tuple[Expr, ...],
@@ -1372,10 +1391,10 @@ def check_dual_edge_optimize_find_cti(
                 print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: done')
                 return current_cti
             elif any_news:
-                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: {len(active_queries)} more active queries:')
-                for hq in active_queries:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti:     {hq}')
-                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: carrying on')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: {len(active_queries)} more active queries, carrying on')
+                # for hq in active_queries:
+                #    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti:     {hq}')
+                # print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: carrying on')
 
             # kill processes that timed out or whose query is no longer active (except for current_sat_rp - the last process to return a model)
             now = datetime.now()
@@ -1388,22 +1407,17 @@ def check_dual_edge_optimize_find_cti(
             for rp in running:
                 if not rp.process.is_alive():
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: process with PID={rp.process.pid} terminated')
+                    rp.terminate()
                     assert rp.process.exitcode == 0, rp.process.exitcode
-                    join_queue_threads(rp)
-                    rp.process.join(0)
                 elif rp is current_sat_rp:
                     # this processes is protected, and its task doesn't need to be in tasks
                     still_running.append(rp)
-                elif now > rp.deadline:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
-                    join_queue_threads(rp)
-                    rp.process.terminate()
-                    rp.process.join()
                 elif rp.hq not in active_queries:
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
-                    join_queue_threads(rp)
-                    rp.process.terminate()
-                    rp.process.join()
+                    rp.terminate()
+                elif now > rp.deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    rp.terminate()
                 else:
                     still_running.append(rp)
             running = still_running
@@ -1482,8 +1496,7 @@ def check_dual_edge_optimize_find_cti(
         # terminate all running processeses
         for rp in running:
             print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}')
-            rp.process.terminate()
-            rp.process.join()
+            rp.terminate()
         assert len(multiprocessing.active_children()) == 0
 
 def check_dual_edge_optimize_minimize_ps(
@@ -1603,31 +1616,29 @@ def check_dual_edge_optimize_minimize_ps(
                 )]
                 if len(active_queries) == 0:
                     # we are done
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: no more active queries, returning optimial p: {sorted(current_p)}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: no more active queries, returning optimial p ({len(current_p)} / {n_ps}): {sorted(current_p)}')
                     print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: done')
                     return current_p
                 else:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: {len(active_queries)} more active queries:')
-                    for hq in active_queries:
-                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps:     {hq}')
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: carrying on')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: {len(active_queries)} more active queries, carrying on')
+                    # for hq in active_queries:
+                    #     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps:     {hq}')
+                    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: carrying on')
 
             # kill processes that timed out or whose query is no longer active
             now = datetime.now()
             still_running = []
             for rp in running:
                 if not rp.process.is_alive():
-                    rp.process.join(0)
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: process with PID={rp.process.pid} terminated')
+                    rp.terminate()
                     assert rp.process.exitcode == 0, rp.process.exitcode
-                elif now > rp.deadline:
-                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
-                    rp.process.terminate()
-                    rp.process.join()
                 elif rp.hq not in active_queries:
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
-                    rp.process.terminate()
-                    rp.process.join()
+                    rp.terminate()
+                elif now > rp.deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    rp.terminate()
                 else:
                     still_running.append(rp)
             running = still_running
@@ -1693,8 +1704,7 @@ def check_dual_edge_optimize_minimize_ps(
         # terminate all running processeses
         for rp in running:
             print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}')
-            rp.process.terminate()
-            rp.process.join()
+            rp.terminate()
         assert len(multiprocessing.active_children()) == 0
 
 def check_dual_edge_optimize(
@@ -1717,7 +1727,7 @@ def check_dual_edge_optimize(
     assert len(q_seed) == mp.m
     assert all(all(i < mp.n[k] for i in q_seed[k]) for k in range(mp.m))
     qs = tuple(mp.to_clause(k, q_seed[k]) for k in range(mp.m))
-    print(f'[{datetime.now()}] check_dual_edge_optimize: starting to check the following edge:')
+    print(f'[{datetime.now()}] check_dual_edge_optimize: starting to check the following edge ({len(ps)}, {len(qs)}):')
     for p in ps:
         print(f'  {p}')
     print('  -->')
