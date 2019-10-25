@@ -1253,8 +1253,9 @@ class RunningProcess(object):
             # get pipe errors from the queues' threads.
             self.q1.close()
             self.q2.close()
-            self.q1.join_thread()
-            self.q2.join_thread()
+            # it seems this can lead to deadlocks even if self.process.is_alive returned true. maybe its enough just to close the queue? (question is will we get pipe errors)
+            # self.q1.join_thread()
+            # self.q2.join_thread()
             self.process.terminate()
             self.process.join()
 
@@ -1400,11 +1401,6 @@ def check_dual_edge_optimize_find_cti(
             # kill processes that timed out or whose query is no longer active (except for current_sat_rp - the last process to return a model)
             now = datetime.now()
             still_running = []
-            def join_queue_threads(rp: RunningProcess) -> None:
-                rp.q1.close()
-                rp.q1.join_thread()
-                rp.q2.close()
-                rp.q2.join_thread()
             for rp in running:
                 if not rp.process.is_alive():
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: process with PID={rp.process.pid} terminated')
