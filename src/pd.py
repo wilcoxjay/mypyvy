@@ -1065,36 +1065,37 @@ def check_dual_edge_optimize_multiprocessing_helper(
         recv_unsats()
         prog = syntax.the_program
         mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
-        s = Solver(use_cvc4=use_cvc4)
-        seed = randint(0, 10**6)
         greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
         # TODO: better logging, maybe with meaningful process names
-        if not use_cvc4:
-            # print(f'[{datetime.now()}] {greeting}: setting z3 seed to {seed}')
-            # TODO: not sure any of these has any actual effect
-            z3.set_param('smt.random_seed',seed)
-            z3.set_param('sat.random_seed',seed)
-            s.z3solver.set(seed=seed) # type: ignore
-            s.z3solver.set(random_seed=seed) # type: ignore
-        else:
-            # print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
-            pass
-        t = s.get_translator(KEY_NEW, KEY_OLD)
-        # add transition relation
-        s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
-        # add ps
-        for i in sorted(hq.p):
-            s.add(t.translate_expr(ps[i], old=True))
-            s.add(t.translate_expr(ps[i], old=False))
-        # add precondition constraints
-        for k in range(mp.m):
-            s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
-        # add postcondition constraints, note we must violate all clauses (the selection of which one to violate is represented by making the others empty
-        active_post_qs = [] # we will first try to weaken these
-        for k in range(mp.m):
-            if len(hq.q_post[k]) > 0:
-                s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
-                active_post_qs.append(k)
+        def get_solver(hq: HoareQuery) -> Tuple[Solver, Z3Translator]:
+            s = Solver(use_cvc4=use_cvc4)
+            seed = randint(0, 10**6)
+            if not use_cvc4:
+                # print(f'[{datetime.now()}] {greeting}: setting z3 seed to {seed}')
+                # TODO: not sure any of these has any actual effect
+                z3.set_param('smt.random_seed',seed)
+                z3.set_param('sat.random_seed',seed)
+                s.z3solver.set(seed=seed) # type: ignore
+                s.z3solver.set(random_seed=seed) # type: ignore
+            else:
+                # print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
+                pass
+            t = s.get_translator(KEY_NEW, KEY_OLD)
+            # add transition relation
+            s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
+            # add ps
+            for i in sorted(hq.p):
+                s.add(t.translate_expr(ps[i], old=True))
+                s.add(t.translate_expr(ps[i], old=False))
+            # add precondition constraints
+            for k in range(mp.m):
+                s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+            # add postcondition constraints, note we must violate all clauses (the selection of which one to violate is represented by making the others empty
+            for k in range(mp.m):
+                if len(hq.q_post[k]) > 0:
+                    s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
+            return s, t
+        s, t = get_solver(hq)
         if save_smt2:
             smt2 = s.z3solver.to_smt2()
             fn = f'{sha1(smt2.encode()).hexdigest()}.smt2'
@@ -1109,7 +1110,36 @@ def check_dual_edge_optimize_multiprocessing_helper(
             send_result(hq, True)
             # we do not try to optimize unsats, as this isn't marco, we only optimize one direction
             # TODO: maybe we should do marco? also note that the unsat is only for this transition
-            return
+
+            # to safe some forking (e.g., in cache there are 15 transitions), we other transitions in random order so that we may switch
+            # TODO: we can also check violations of other conjuncts of q, but this would require changing the interface
+            n_transitions = len(list(prog.transitions()))
+            worklist = [
+                hq.replace_transition(i_transition)
+                for i_transition in range(n_transitions)
+                if i_transition != hq.i_transition
+            ]
+            worklist = [other_hq for other_hq in worklist if not known_to_be_unsat(other_hq)]
+            random.shuffle(worklist)
+            print(f'[{datetime.now()}] {greeting}: input was unsat, trying {len(worklist)} other transitions')
+            for other_hq in worklist:
+                if known_to_be_unsat(other_hq):
+                    continue
+                s, t = get_solver(other_hq)
+                z3res = s.check()
+                assert z3res in (z3.sat, z3.unsat)
+                if z3res == z3.unsat:
+                    send_result(other_hq, True)
+                else:
+                    # we found a cti, now continue us usual and optimize it
+                    hq = other_hq
+                    break
+            else:
+                # all transitions are unsat, return
+                return
+
+        assert s.check() == z3.sat
+
         if not optimize and not produce_cti:
             # just report that the Hoare triple is invalid
             send_result(hq, False)
@@ -1127,6 +1157,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             return
 
         # optimize from model and send result (but only optimize top priority, i.e., active_post_qs)
+        active_post_qs = [k for k in range(mp.m) if len(hq.q_post[k]) > 0] # we will first try to weaken these
         if not whole_clauses:
             for k in active_post_qs:
                 for j in sorted(mp.all_n[k] - hq.q_post[k]):
@@ -1305,6 +1336,8 @@ def check_dual_edge_optimize_find_cti(
         for i_q in range(mp.m)
     ]
 
+    print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: initially with {len(active_queries)} active queries')
+
     running: List[RunningProcess] = [] # list of currently running processes
 
     # details about the best SAT result we got so far:
@@ -1331,7 +1364,7 @@ def check_dual_edge_optimize_find_cti(
                     worklist = worklist[1:]
                     continue
                 any_news = True
-                assert hq <= rp.hq
+                assert hq <= rp.hq.replace_transition(hq.i_transition) # we may get a cti for another transition, and we allow it
                 assert (valid and cti is None) or (not valid and cti is not None)
                 if valid:
                     # got new unsat result
@@ -1413,7 +1446,7 @@ def check_dual_edge_optimize_find_cti(
                 elif rp is current_sat_rp:
                     # this processes is protected, and its task doesn't need to be in tasks
                     still_running.append(rp)
-                elif rp.hq not in active_queries:
+                elif all(rp.hq.replace_transition(i_transition) not in active_queries for i_transition in range(n_transitions)): # rp will also try other transitions
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
                     rp.terminate()
                 elif now > rp.deadline:
@@ -1566,6 +1599,8 @@ def check_dual_edge_optimize_minimize_ps(
         for i in sorted(current_p, reverse=True) # TODO: maybe random order?
     )))
 
+    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: initially with {len(active_queries)} active queries')
+
     running: List[RunningProcess] = [] # list of currently running processes
 
     # map (hq, use_cvc4) to number of attempts spent on it (note that attempt i takes Luby[i] time)
@@ -1634,7 +1669,7 @@ def check_dual_edge_optimize_minimize_ps(
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: process with PID={rp.process.pid} terminated')
                     rp.terminate()
                     assert rp.process.exitcode == 0, rp.process.exitcode
-                elif rp.hq not in active_queries:
+                elif all(rp.hq.replace_transition(i_transition) not in active_queries for i_transition in range(n_transitions)): # rp will also try other transitions
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
                     rp.terminate()
                 elif now > rp.deadline:
