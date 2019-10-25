@@ -297,14 +297,14 @@ def check_two_state_implication_multiprocessing_helper(
     if s is None:
         s = Solver()
     if seed is not None:
-        print(f'PID={os.getpid()} setting z3 seed to {seed}')
+        # print(f'PID={os.getpid()} setting z3 seed to {seed}')
         # z3.set_param('smt.random_seed', seed) -- this probably needs to be called before creating the solver
         # TODO: figure out if this is a good way to set the seed
         s.z3solver.set(seed=seed)  # type: ignore  # TODO: fix typing
 
-    print(f'[{datetime.now()}] [PID={os.getpid()}] check_two_state_implication_all_transitions: starting')
+    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_two_state_implication_all_transitions: starting')
     res = check_two_state_implication_all_transitions(s, old_hyps, new_conc, minimize)
-    print(f'[{datetime.now()}] [PID={os.getpid()}] check_two_state_implication_all_transitions: done')
+    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_two_state_implication_all_transitions: done')
     if seed is not None:
         print(f'PID={os.getpid()} z3 returned {"unsat" if res is None else "sat"}')
     if res is None:
@@ -322,20 +322,24 @@ def check_two_state_implication_multiprocessing(
 ) -> Optional[Tuple[Trace, Trace]]:
     # this function uses multiprocessing to start multiple solvers
     # with different random seeds and return the first result obtained
-    if utils.args.cpus is None or utils.args.cpus == 1 or True:
-        return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc, minimize)
-    with multiprocessing.Pool(utils.args.cpus) as pool:
-        results = []
-        for i in itertools.count():
-            if i < utils.args.cpus:
-                results.append(pool.apply_async(
-                    check_two_state_implication_multiprocessing_helper,
-                    (i, None, list(old_hyps), new_conc, minimize)
-                ))
-            results[0].wait(1)
-            ready = [r for r in results if r.ready()]
-            if len(ready) > 0:
-                return ready[0].get(1)  # the context manager of pool will terminate the processes
+    print(f'[{datetime.now()}] check_two_state_implication_multiprocessing: starting')
+    try:
+        if utils.args.cpus is None or utils.args.cpus == 1 or True:
+            return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc, minimize)
+        with multiprocessing.Pool(utils.args.cpus) as pool:
+            results = []
+            for i in itertools.count():
+                if i < utils.args.cpus:
+                    results.append(pool.apply_async(
+                        check_two_state_implication_multiprocessing_helper,
+                        (i, None, list(old_hyps), new_conc, minimize)
+                    ))
+                results[0].wait(1)
+                ready = [r for r in results if r.ready()]
+                if len(ready) > 0:
+                    return ready[0].get(1)  # the context manager of pool will terminate the processes
+    finally:
+        print(f'[{datetime.now()}] check_two_state_implication_multiprocessing: done')
     assert False
 def check_two_state_implication(
         s: Solver,
