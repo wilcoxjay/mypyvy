@@ -80,7 +80,7 @@ class Frames(object):
 
     @utils.log_start_end_xml(utils.logger)
     def establish_safety(self) -> None:
-        self.assert_inductive_trace()
+        self.debug_assert_inductive_trace()
 
         frame_no = len(self.fs) - 1
 
@@ -94,7 +94,7 @@ class Frames(object):
                 (violating, diag) = res
                 self.block(diag, frame_no, violating, [(None, diag)], True)
 
-        self.assert_inductive_trace()
+        self.debug_assert_inductive_trace()
 
     def _get_some_cex_to_safety(self) -> Optional[Tuple[Phase, Diagram]]:
         f = self.fs[-1]
@@ -211,7 +211,7 @@ class Frames(object):
 
                     # assert self.clause_implied_by_transitions_from_frame(f, p, c) is None
                     self[frame_no + 1].strengthen(p, c)
-                    self.assert_inductive_trace()
+                    self.debug_assert_inductive_trace()
                     break
 
                 pre_phase, (m, t) = res
@@ -237,7 +237,7 @@ class Frames(object):
 
     @utils.log_start_end_xml(utils.logger, logging.DEBUG)
     def push_forward_frames(self) -> None:
-        self.assert_inductive_trace()
+        self.debug_assert_inductive_trace()
         for i, f in enumerate(self.fs[:-1]):
             if ((utils.args.push_frame_zero == 'if_trivial' and self.automaton.nontrivial) or
                     (utils.args.push_frame_zero == 'never')) and i == 0:
@@ -246,14 +246,17 @@ class Frames(object):
                 for p in self.automaton.phases():
                     utils.logger.debug('pushing in frame %d phase %s' % (i, p.name()))
                     self.push_phase_from_pred(i, f, p)
-                    # self.assert_inductive_trace()
+                    # self.debug_assert_inductive_trace()
 
-        self.assert_inductive_trace()
+        self.debug_assert_inductive_trace()
 
-    def assert_inductive_trace(self) -> None:
+    def debug_assert_inductive_trace(self) -> None:
         if not utils.args.assert_inductive_trace:
             return
 
+        self.debug_assert_inductive_trace()
+
+    def always_assert_inductive_trace(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
             with utils.LogTag(utils.logger, 'inductive-trace-assert', lvl=logging.DEBUG, i=str(i)):
                 for p in self.automaton.phases():
@@ -424,12 +427,12 @@ class Frames(object):
             utils.logger.debug('smoke testing at depth %s...' % (depth,))
             logic.check_bmc(self.solver, e, depth)
 
-        self.assert_inductive_trace()
+        self.debug_assert_inductive_trace()
         for i in range(depth + 1):
             self[i].strengthen(p, e)
             utils.logger.debug("%d %s %s" % (i, p.name(), e))
-            self.assert_inductive_trace()
-        self.assert_inductive_trace()
+            self.debug_assert_inductive_trace()
+        self.debug_assert_inductive_trace()
 
     @utils.log_start_end_xml(utils.logger, lvl=logging.DEBUG)
     def find_predecessor(
@@ -639,6 +642,9 @@ class Frames(object):
 
 def load_frames(in_filename: str, s: Solver) -> Frames:
     with open(in_filename, "rb") as f:
-        fs = pickle.load(f)
+        fs: Frames = pickle.load(f)
     fs.solver = s
+
+    fs.always_assert_inductive_trace()
+
     return fs
