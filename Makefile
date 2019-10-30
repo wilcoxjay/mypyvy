@@ -1,4 +1,4 @@
-PYTHON := python3.7 -u
+PYTHON := python3.8 -u
 MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
