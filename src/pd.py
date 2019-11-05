@@ -1041,10 +1041,10 @@ def check_dual_edge_optimize_multiprocessing_helper(
             q1.put((hq, valid, cti))
         def validate_cti(prestate: PDState, poststate: PDState) -> None:
             # TODO: remove this once we trust the code enough
-            assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}: {s.debug_recent()}'
-            assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}: {s.debug_recent()}'
-            assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}: {s.debug_recent()}'
-            assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}: {s.debug_recent()}'
+            assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+            assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+            assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+            assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
         known_unsats: List[HoareQuery] = []
         def recv_unsats() -> None:
             while True:
@@ -1064,7 +1064,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             )
         recv_unsats()
         prog = syntax.the_program
-        mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
+        mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
         greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
         # TODO: better logging, maybe with meaningful process names
         def get_solver(hq: HoareQuery) -> Tuple[Solver, Z3Translator]:
@@ -1310,7 +1310,7 @@ def check_dual_edge_optimize_find_cti(
     '''
     print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: starting')
     assert len(top_clauses) == len(q_seed)
-    mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
     prog = syntax.the_program
     n_transitions = len(list(prog.transitions()))
     n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
@@ -1550,7 +1550,7 @@ def check_dual_edge_optimize_minimize_ps(
         return frozenset()
     print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: starting')
     print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: minimizing {len(ps)} ps')
-    mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
     prog = syntax.the_program
     n_ps = len(ps)
     n_transitions = len(list(prog.transitions()))
@@ -1759,7 +1759,7 @@ def check_dual_edge_optimize(
     prog = syntax.the_program
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     print(f'[{datetime.now()}] check_dual_edge_optimize: starting')
-    mp = MultiSubclausesMapICE(top_clauses, [], [], False) # only used to get clauses from seeds
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
     assert len(q_seed) == mp.m
     assert all(all(i < mp.n[k] for i in q_seed[k]) for k in range(mp.m))
     qs = tuple(mp.to_clause(k, q_seed[k]) for k in range(mp.m))
@@ -2436,7 +2436,7 @@ class MultiSubclausesMapICE(object):
                  top_clauses: Sequence[Expr],
                  states: List[PDState],  # assumed to only grow
                  predicates: List[Expr],  # assumed to only grow
-                 optimize: bool = False,
+                 # optimize: bool = False, # see comment about soft_* in separate
     ):
         '''
         states is assumed to be a list that is increasing but never modified
@@ -2450,11 +2450,12 @@ class MultiSubclausesMapICE(object):
         self.literals = [destruct_clause(self.top_clauses[k])[1] for k in range(self.m)]
         self.n = [len(self.literals[k]) for k in range(self.m)]
         self.all_n = [frozenset(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
-        self.optimize = optimize
-        self.solver = z3.Optimize() if optimize else z3.Solver()  # type: ignore # TODO - fix typing
+        self.optimize = False # optimize
+        self.solver = z3.Optimize() if self.optimize else z3.Solver()  # type: ignore # TODO - fix typing
         self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)] # lit_vs[k][i] represents the i'th literal in the k'th clause
         self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # state_vs[k][i] represents the value of the k'th clause in self.states[i]
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # predicate_vs[k][i] represents the implication of value of the k'th clause by self.predicates[i]
+        self.states_mapped: Set[int] = set() # i for which states[i] has been mapped and self.state_vs[*][i] is constrained in the solver
 
         if utils.args.domain_independence:
             self._constrain_domain_independence()
@@ -2493,22 +2494,27 @@ class MultiSubclausesMapICE(object):
                     for v in o:
                         self.solver.add(z3.Implies(self.lit_vs[k][i], z3.Or(*[self.lit_vs[k][j] for j in domain_independent_literals_for_var(self.literals[k], v)])))
 
-    def _new_states(self) -> None:
+    def _new_states(self, to_map: List[int]) -> None:
         if self.m == 0:
             return
+        # first, just add new variables for all new states
         new = range(len(self.state_vs[0]), len(self.states))
-        if len(new) == 0:
-            return
         for k in range(self.m):
             self.state_vs[k].extend(z3.Bool(f's_{k}_{i}') for i in new)
-            print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(k, self.all_n[k])}')
+        # now, actually map the states that are needed to map
+        to_map = sorted(i for i in to_map if i not in self.states_mapped)
+        if len(to_map) == 0:
+            return
+        self.states_mapped.update(to_map)
+        for k in range(self.m):
+            print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(to_map)} new states for {self.to_clause(k, self.all_n[k])}')
             total_mus = 0
             total_mss = 0
             results = multiprocessing_map_clause_state_interaction([
                 (self.variables[k], self.literals[k], self.states[i])
-                for i in new
+                for i in to_map
             ])
-            for i in new:
+            for i in to_map:
                 all_mus, all_mss = results.pop(0)
                 assert len(all_mus) == 0
                 # use only all_mss
@@ -2557,11 +2563,12 @@ class MultiSubclausesMapICE(object):
                  imp: Collection[Tuple[int, int]] = (),
                  pos_ps: Collection[int] = (), # each clause must be implied by these predicates (used to force initiation)
                  neg_ps: Collection[int] = (), # each clause must not be implied by these predicates
-                 soft_pos: Collection[int] = (),
-                 soft_neg: Collection[int] = (),
-                 soft_imp: Collection[Tuple[int, int]] = (),
-                 soft_pos_ps: Collection[int] = (),
-                 soft_neg_ps: Collection[int] = (),
+                 # the following were removed when we saw z3.Optimize is slow. maybe bring back later with local optimization:
+                 # soft_pos: Collection[int] = (),
+                 # soft_neg: Collection[int] = (),
+                 # soft_imp: Collection[Tuple[int, int]] = (),
+                 # soft_pos_ps: Collection[int] = (),
+                 # soft_neg_ps: Collection[int] = (),
     ) -> Optional[List[FrozenSet[int]]]:
         '''
         find a conjunction of subclauses that respects given constraints, and optionally as many soft constraints as possible
@@ -2570,7 +2577,19 @@ class MultiSubclausesMapICE(object):
 
         NOTE: the result must contain a subclause of each top clause, i.e., true cannot be used instead of one of the top clauses
         '''
-        self._new_states()
+        soft_pos: Collection[int] = ()
+        soft_neg: Collection[int] = ()
+        soft_imp: Collection[Tuple[int, int]] = ()
+        soft_pos_ps: Collection[int] = ()
+        soft_neg_ps: Collection[int] = ()
+        self._new_states(list(chain(
+            pos,
+            neg,
+            chain(*imp),
+            soft_pos,
+            soft_neg,
+            chain(*soft_imp),
+        )))
         self._new_predicates()
         print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: starting')
         assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
@@ -2594,23 +2613,20 @@ class MultiSubclausesMapICE(object):
             ) for i, j in sorted(soft_imp)),
             (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos_ps)),
             (z3.And(*(z3.Not(self.predicate_vs[k][i]) for k in range(self.m))) for i in sorted(soft_neg_ps)),
+            # also optimize for smaller clauses
+            (z3.Not(v) for v in chain(*self.lit_vs)),
         ))
         self.solver.push()
         for c in sep:
             self.solver.add(c)
-        if len(soft) > 0:
-            assert self.optimize
+        if self.optimize:
             for c in soft:
                 self.solver.add_soft(c)
-        if self.optimize:
-            # optimize for smaller clauses
-            for v in chain(*self.lit_vs):
-                self.solver.add_soft(z3.Not(v))
-        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ')
         t_start = datetime.now()
         res = self.solver.check()
         t_end = datetime.now()
-        print(res)
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... got {res}')
         assert res in (z3.unsat, z3.sat)
         if (t_end - t_start).total_seconds() > 3600:
             # TODO: Optimize does not have to_smt2, is sexpr the same?
@@ -2622,25 +2638,30 @@ class MultiSubclausesMapICE(object):
             self.solver.pop()
             print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
             return None
-        # minimize for strongest possible clause
-        # TODO: just use z3's Optimize instead of minimizing manually
         model = self.solver.model()
         forced_to_false = [set(
             i for i, v in enumerate(self.lit_vs[k])
             if not z3.is_true(model[v])
         ) for k in range(self.m)]
-        for k in range(self.m):
-            for i in range(self.n[k]):
-                if i not in forced_to_false[k]:
-                    ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
-                    print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
-                    res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
-                    print(res)
-                    assert res in (z3.unsat, z3.sat)
-                    if res == z3.sat:
-                        forced_to_false[k].add(i)
+        if not self.optimize:
+            # minimize for strongest possible clause (and ignore other soft constraints)
+            for k in range(self.m):
+                for i in range(self.n[k]):
+                    if i not in forced_to_false[k]:
+                        ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... ')
+                        res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... got {res}')
+                        assert res in (z3.unsat, z3.sat)
+                        if res == z3.sat:
+                            model = self.solver.model()
+                            for kk in range(self.m):
+                                for ii, v in enumerate(self.lit_vs[k]):
+                                    if ii not in forced_to_false[kk] and not z3.is_true(model[v]):
+                                        forced_to_false[kk].add(ii)
+                            assert i in forced_to_false[k]
         ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]]
-        assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat
+        assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat # TODO: remove assertion after we are confident about this code
         result = [frozenset(self.all_n[k] - forced_to_false[k]) for k in range(self.m)]
         self.solver.pop()
         print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
@@ -4180,7 +4201,6 @@ def cdcl_state_bounds(solver: Solver) -> str:
             [maps[i].to_clause(maps[i].all_n) for i in states_to_exclude],
             states,
             [],
-            False
         )
         def check_sep(s: Collection[int], pos: Collection[int]) -> Optional[List[Predicate]]:
             res = mp.separate(
@@ -4774,7 +4794,6 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
             top_clauses,
             states,
             [],
-            False
         )
         def check_sep(s: FrozenSet[int]) -> Optional[List[Predicate]]:
             res = mp.separate(
@@ -5091,7 +5110,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cs = as_clauses(Not(s.as_diagram(0).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
-                maps.append(MultiSubclausesMapICE([c], states, init_ps, True))
+                maps.append(MultiSubclausesMapICE([c], states, init_ps))
             if internal_cti:
                 internal_ctis |= {i}
             else:
@@ -5781,7 +5800,6 @@ def primal_dual_houdini(solver: Solver) -> str:
                 [g for g in goals],
                 states,
                 init_ps,
-                True,
             )
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
                 s = frozenset(s) | reachable
@@ -5789,7 +5807,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     pos=sorted(reachable),
                     imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
                     pos_ps=[0],
-                    soft_neg=soft_goals_i,
+                    # soft_neg=soft_goals_i,
                 )
                 if res is None:
                     return None
@@ -6008,7 +6026,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                                 pos=(pos | reachable),
                                 neg=[i],
                                 pos_ps=[0],
-                                soft_neg=soft_neg, # TODO: or to_eliminate ?
+                                # soft_neg=soft_neg, # TODO: or to_eliminate ?
                             )
                             if seed is None:
                                 break
@@ -6190,7 +6208,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     else:
                         _ps = None
                 else:
-                    mp = MultiSubclausesMapICE(tuple(qs[i] for i in sorted(qs_seed)), [], [], False) # only used to compute q_seed
+                    mp = MultiSubclausesMapICE(tuple(qs[i] for i in sorted(qs_seed)), [], []) # only used to compute q_seed
                     q_seed = tuple(
                         frozenset(range(mp.n[k]))
                         for k in range(mp.m)
@@ -6254,7 +6272,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         pos=(pos | reachable),
                         neg=[i],
                         pos_ps=[0],
-                        soft_neg=soft_neg, # TODO: or to_eliminate ?
+                        # soft_neg=soft_neg, # TODO: or to_eliminate ?
                     )
                     if seed is None:
                         break
