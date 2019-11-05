@@ -1,0 +1,52 @@
+sort node
+
+immutable relation le(node, node)
+
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation btw(node, node, node)
+
+axiom btw(W,X,Y) & btw(W,Y,Z) -> btw(W,X,Z)
+axiom btw(W,X,Y) -> !btw(W,Y,X)
+axiom btw(W,X,Y) | btw(W,Y,X) | W=X | W=Y | X=Y
+axiom btw(X,Y,Z) -> btw(Y,Z,X)
+
+mutable relation leader(node)
+mutable relation pending(node, node)
+
+init !leader(N)
+init !pending(N1, N2)
+
+transition send(n: node, next: node)
+  modifies pending
+  (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
+  (forall N1, N2. pending(N1, N2) <-> old(pending(N1, N2)) | N1 = n & N2 = next)
+
+transition recv(sender: node, n: node, next: node)
+  modifies leader, pending
+  (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
+  old(pending(sender, n)) &
+  if sender = n
+  then
+    (forall N. leader(N) <-> old(leader(N)) | N = n) &
+    (forall N1, N2.
+      !(N1 = sender & N2 = n) ->  # message may or may not be removed
+      (pending(N1, N2) <-> old(pending(N1, N2))))
+  else 
+    (forall N. leader(N) <-> old(leader(N))) &
+    if le(n, sender)
+    then
+      forall N1, N2.
+        !(N1 = sender & N2 = n) ->  # message may or may not be removed
+        (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next)
+    else 
+      forall N1, N2.
+        !(N1 = sender & N2 = n) ->  # message may or may not be removed
+        (pending(N1, N2) <-> old(pending(N1, N2)))
+
+safety [leader_max] leader(L) -> le(N, L)
+invariant pending(S, D) & btw(S, N, D) -> le(N, S)
+invariant pending(L, L) -> le(N, L)

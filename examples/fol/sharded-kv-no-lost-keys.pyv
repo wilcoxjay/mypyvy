@@ -1,0 +1,38 @@
+sort key
+sort value
+sort node
+
+mutable relation table(node, key, value)
+mutable relation owner(node, key)
+mutable relation transfer_msg(node, key, value)
+
+init !table(N, K, V)
+init !transfer_msg(N, K, V)
+init owner(N1, K) & owner(N2, K) -> N1 = N2
+init forall K. exists N. owner(N, K)
+
+transition reshard(k: key, v: value, n_old: node, n_new: node)
+  modifies table, owner, transfer_msg
+  old(table(n_old, k, v)) &
+  (table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
+  (owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
+  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) | (N = n_new & K = k & V = v))
+
+
+transition recv_transfer_msg(n: node, k: key, v: value)
+  modifies table, owner, transfer_msg
+  old(transfer_msg(n, k, v)) &
+  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) & !(N = n & K = k & V = v)) &
+  (table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
+  (owner(N, K) <-> old(owner(N, K)) | (N = n & K = k))
+
+
+transition put(n: node, k: key, v: value)
+  modifies table
+  old(owner(n, k)) &
+  (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) &
+  (table(n, k, V) <-> V = v)
+
+safety (exists N,K,V. transfer_msg(N,K,V)) | (forall K. exists N. owner(N,K))
+
+invariant forall K. (exists N. owner(N, K)) | (exists N, V. transfer_msg(N, K, V))

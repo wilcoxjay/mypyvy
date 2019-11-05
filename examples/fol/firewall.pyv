@@ -1,0 +1,27 @@
+sort node
+
+immutable relation internal(node)
+
+mutable relation sent(node, node)
+mutable relation allowed_in(node)
+
+init !sent(S,D)
+init !allowed_in(N)
+
+transition send_from_internal(src: node, dst: node)
+  modifies sent, allowed_in
+  & old(internal(src))
+  & !old(internal(dst))
+  & (forall S,D. sent(S,D) <-> old(sent(S,D)) | S = src & D = dst)
+  & (forall N. allowed_in(N) <-> old(allowed_in(N)) | N = dst)
+
+transition send_to_internal(src: node, dst: node)
+  modifies sent
+  & !old(internal(src))
+  & old(internal(dst))
+  & old(allowed_in(src))
+  & (forall S,D. sent(S,D) <-> old(sent(S,D)) | S = src & D = dst)
+
+safety sent(S,D) & internal(D) -> exists I. internal(I) & sent(I,S)
+
+invariant allowed_in(D) -> exists I. internal(I) & sent(I,D)

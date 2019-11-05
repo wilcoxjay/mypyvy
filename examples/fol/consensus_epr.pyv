@@ -1,0 +1,56 @@
+sort node
+sort quorum
+sort value
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation vote_request_msg(node, node)
+mutable relation voted(node)
+mutable relation vote_msg(node, node)
+mutable relation votes(node, node)
+mutable relation leader(node)
+mutable relation decided(node, value)
+
+init !vote_request_msg(N1, N2)
+init !voted(N)
+init !vote_msg(N1, N2)
+init !votes(N1, N2)
+init !leader(N1)
+init !decided(N, V)
+
+transition send_request_vote(src: node, dst: node)
+	modifies vote_request_msg
+	vote_request_msg(N1, N2) <-> (old(vote_request_msg(N1, N2)) | (N1=src & N2=dst))
+
+transition send_vote(src: node, dst: node)
+  modifies vote_msg, voted, vote_request_msg
+  (old(!voted(src)) & (old(vote_request_msg(dst, src)))) &
+  (vote_msg(N1, N2) <-> old(vote_msg(N1, N2)) | N1 = src & N2 = dst) &
+  (voted(N) <-> old(voted(N)) | N=src) &
+  ((!(N1=dst & N2=src)) -> (vote_request_msg(N1, N2) <-> old(vote_request_msg(N1, N2))))
+
+
+transition recv_vote(n: node, sender: node)
+  modifies votes
+  old(vote_msg(sender, n)) &
+  (votes(N1, N2) <-> old(votes(N1, N2)) | N1 = n & N2 = sender)
+
+transition become_leader(n: node, q: quorum)
+  modifies leader
+  (member(N, q) -> old(votes(n, N))) &
+  (leader(N) <-> old(leader(N)) | N = n)
+
+transition decide(n: node, v: value)
+  modifies decided
+  (old(leader(n)) & !old(decided(n, V))) &
+  (decided(N,V) <-> (old(decided(N, V)) | (N=n & V=v)))
+
+safety decided(N1, V1) & decided(N2, V2) -> V1 = V2
+
+invariant leader(N1) & leader(N2) -> N1 = N2
+invariant votes(N, N1) -> vote_msg(N1, N)
+invariant vote_msg(N, N1) & vote_msg(N, N2) -> N1 = N2
+invariant vote_msg(N, N1) -> voted(N)
+invariant exists Q. forall N, M. leader(N) & member(M, Q) -> votes(N, M)
+invariant decided(N, V) -> leader(N)
