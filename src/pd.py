@@ -2502,7 +2502,7 @@ class MultiSubclausesMapICE(object):
         for k in range(self.m):
             self.state_vs[k].extend(z3.Bool(f's_{k}_{i}') for i in new)
         # now, actually map the states that are needed to map
-        to_map = sorted(i for i in to_map if i not in self.states_mapped)
+        to_map = sorted(set(to_map) - self.states_mapped)
         if len(to_map) == 0:
             return
         self.states_mapped.update(to_map)
