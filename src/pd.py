@@ -5779,6 +5779,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         else:
             print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         n_internal_ctis = len(internal_ctis)
+        n_ctis = 0
         n_reachable = len(reachable)
         ps: List[Predicate] = [predicates[j] for j in sorted(r)]
         worklist: List[Tuple[Expr,...]] = [(goal,)]
@@ -5805,7 +5806,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 s = frozenset(s) | reachable
                 res = mp.separate(
                     pos=sorted(reachable),
-                    imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
+                    # imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
+                    imp=sorted((i, j) for i, j in transitions if i in s and j in s), # ODED: I think we don't need substructures here since for them the implication must hold anyway
                     pos_ps=[0],
                     # soft_neg=soft_goals_i,
                 )
@@ -5908,12 +5910,21 @@ def primal_dual_houdini(solver: Solver) -> str:
                             _cache_initial.append(state)
                     return prestate, poststate
                 return None
+            ctis: FrozenSet[int] = frozenset()
             while True:
                 while True: # find a Q or discover there is none and learn internal_ctis
-                    ctis = frozenset(
-                        i for i in sorted((live_states | internal_ctis) - reachable)
-                        if all(eval_in_state(None, states[i], p) for p in ps)
-                    )
+                    if False:
+                        # use all previously known internal_ctis
+                        ctis = frozenset(
+                            i for i in sorted((live_states | internal_ctis) - reachable)
+                            if all(eval_in_state(None, states[i], p) for p in ps)
+                        )
+                    else:
+                        # use only ctis discovered for this worklist item (i.e., this mp)
+                        ctis = frozenset(
+                            i for i in sorted(ctis - reachable)
+                            if all(eval_in_state(None, states[i], p) for p in ps)
+                        )
                     res = check_sep(ctis)
                     if res is None:
                         break
@@ -5992,7 +6003,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if _cti is None:
                         assert _ps is not None
                         _qs = tuple(q)
-                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                         print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                         for p in _ps:
                             print(f'  {p}')
@@ -6007,6 +6018,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                         i_post = add_state(poststate, True)
                         #production# assert (i_pre, i_post) not in transitions
                         add_transition(i_pre, i_post)
+                        ctis |= {i_pre, i_post}
+                        n_ctis += 1
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new cti')
                 # here, we have enough internal_ctis to rule out all possible q's
                 #production# assert check_sep(ctis) is None
                 added_new_p = False
@@ -6072,7 +6086,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
         if len(worklist) == 0:
             print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: no more worklist items, so cannot find dual edge')
         else:
@@ -6241,7 +6255,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     assert _ps is not None
                     _qs = tuple(qs[i] for i in sorted(qs_seed))
                     print(f'[{datetime.now()}] find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                    print(f'[{datetime.now()}] find_dual_backward_transition: found new dual edge:')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                     for p in _ps:
                         print(f'  {p}')
                     print(f'  -->')
