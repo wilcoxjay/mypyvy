@@ -46,7 +46,11 @@ class FOLSeparator(object):
                 self.sig.relations[d.name] = list(sort_to_name(s) for s in d.arity)
             elif isinstance(d, FunctionDecl):
                 self.sig.functions[d.name] = (list(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
-        self.separator = separators.separate.GeneralizedSeparator(self.sig, logic=utils.args.logic, quiet=True)
+        self.sig.finalize_sorts()
+        S = separators.separate.HybridSeparator if utils.args.separator == 'hybrid' else\
+            separators.separate.GeneralizedSeparator if utils.args.separator == 'generalized' else\
+            separators.separate.SeparatorNaive
+        self.separator = S(self.sig, logic=utils.args.logic, quiet=True)
 
     def _state_id(self, i: int) -> int:
         assert 0 <= i < len(self.states)
@@ -69,10 +73,23 @@ class FOLSeparator(object):
                 neg=[self._state_id(i) for i in neg],
                 imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
                 max_depth=100,
-                timer=timer,
-                matrix_timer=mtimer,
+                timer=timer
             )
         if f is None:
+            
+            _pos=[self._state_id(i) for i in pos]
+            _neg=[self._state_id(i) for i in neg]
+            _imp=[(self._state_id(i), self._state_id(j)) for i, j in imp]
+                
+            fi = open("/tmp/error.fol", "w")
+            fi.write(str(self.sig))
+            for i,j in self.ids.items():
+                m = self.state_to_model(self.states[i])
+                m.label = str(j)
+                fi.write(str(m))
+            fi.write(f"(constraint {' '.join(str(x) for x in _pos)})\n")
+            fi.write(f"(constraint {' '.join('(not '+str(x)+')' for x in _neg)})\n")
+            fi.write(f"(constraint {' '.join('(implies '+str(x)+' '+str(y)+')' for x, y in _imp)})\n")
             return None
         else:
             p = self.formula_to_predicate(f)
@@ -236,12 +253,14 @@ def fol_pd_houdini(solver: Solver) -> None:
                     # strengthen p
                     p.append(p_new_conj)
                     # make sure all CTIs satisfy p in both initial and post state
-                    internal_ctis = set(c for c in internal_ctis if eval_predicate(states[c[0]], p_new_conj) and eval_predicate(states[c[1]], p_new_conj))
+                    internal_ctis = set(c for c in internal_ctis if eval_predicate(states[c[0]], p_new_conj)\
+                                                                    and eval_predicate(states[c[1]], p_new_conj))
                     break
                 else:
                     return None
 
-    def primal_houdini(live_predicates: Set[int]) -> Tuple[Set[Tuple[int, int]], Set[int]]: # ctis, inductive subset of live
+    def primal_houdini(live_predicates: Set[int]) -> Tuple[Set[Tuple[int, int]], Set[int]]:
+        # returns ctis, inductive subset of live
         live = set(live_predicates)
         ctis: Set[Tuple[int,int]] = set()
         while True:
@@ -260,7 +279,8 @@ def fol_pd_houdini(solver: Solver) -> None:
                 # live is inductive
                 return (ctis, live)
 
-    def dual_houdini(live_states: Set[int], induction_width: int) -> Tuple[Set[DualTransition], Set[int]]: # dual cits, subset of "abstractly" reachable states
+    def dual_houdini(live_states: Set[int], induction_width: int) -> Tuple[Set[DualTransition], Set[int]]:
+        # returns dual cits, subset of "abstractly" reachable states
         live = set(live_states)
         dual_ctis: Set[DualTransition] = set()
         while True:
@@ -317,15 +337,12 @@ def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
         return s
     return None
 
-
 def fol_ic3(solver: Solver) -> None:
     prog = syntax.the_program
 
     predicates: List[Expr] = []
     frame_numbers: List[int] = [] # for each predicate, what is the highest frame?
     frame_n: int = 1 # highest frame
-
-    initial_states: List[PDState] = []
 
     def frame_predicates(i: int) -> List[Expr]:
         return [p for p,f in zip(predicates, frame_numbers) if i <= f]
@@ -338,6 +355,42 @@ def fol_ic3(solver: Solver) -> None:
         predicates.append(p)
         frame_numbers.append(f)
         return i
+
+    initial_states: List[int] = []
+    states: List[PDState] = []
+    free_states: List[int] = []
+    transitions: List[Tuple[int,int]] = []
+    eval_cache: Dict[Tuple[int,int], bool] = {}
+
+    def add_initial(s: PDState) -> int:
+        i = len(states)
+        states.append(s)
+        initial_states.append(i)
+        return i
+    def add_state(s: PDState, frame: int) -> int:
+        i = len(states)
+        states.append(s)
+        free_states.append(i)
+        return i       
+    def add_transition(pre: PDState, post: PDState, frame: int) -> Tuple[int, int]:
+        i = len(states)
+        states.append(pre)
+        j = len(states)
+        states.append(post)
+        transitions.append((i,j))
+        return (i,j)
+    def eval_pred_state(pred_idx: int, state_idx: int) -> bool:
+        if (pred_idx, state_idx) not in eval_cache:
+            eval_cache[(pred_idx, state_idx)] = eval_predicate(states[state_idx], predicates[pred_idx])
+        return eval_cache[(pred_idx, state_idx)]
+        
+    def frame_states(frame:int) -> Sequence[PDState]:
+        pred_indices = [i for i,f in enumerate(frame_numbers) if frame <= f]
+        return [s for i,s in enumerate(states) if all(eval_pred_state(p, i) for p in pred_indices)]
+
+    def frame_transitions(frame:int) -> Sequence[Tuple[PDState, PDState]]:
+        pred_indices = [i for i,f in enumerate(frame_numbers) if frame <= f]
+        return [(states[a], states[b]) for a,b in transitions if all(eval_pred_state(p, a) for p in pred_indices)]
 
     def block(s: PDState, i: int) -> None:
         print(f"blocking state in {i}")
@@ -359,15 +412,29 @@ def fol_ic3(solver: Solver) -> None:
             if not all(eval_predicate(s, p) for p in frame_predicates(i)):
                 print(f"State blocked by pushed predicate, would have been in frame {i}")
                 return # s is already blocked
-        generalize(s, i)
+        if utils.args.inductive_generalize:
+            inductive_generalize(s, i)
+        else:
+            generalize(s, i)
 
     def generalize(s: PDState, i: int) -> None:
-        # find p s.t. p is negative on s, F_i-1 => p, and F_i-1 => wp(p)
-        states: List[PDState] = [s] + initial_states
-        pos: Set[int] = set(range(1, len(initial_states)+1))
-        sep = FOLSeparator(states)
+        print("Generalizing")
+        # find p s.t. p is negative on s, init => p, F_i-1 => p, and F_i-1 => wp(p)
+        separation_states: List[PDState] = [s]
+        pos: Set[int] = set()
+        for st in frame_states(i-1):
+            pos.add(len(separation_states))
+            separation_states.append(st)
+        for (pre, post) in frame_transitions(i-1):
+            pos.add(len(separation_states))
+            separation_states.append(pre)
+            pos.add(len(separation_states))
+            separation_states.append(post)
+
+        sep = FOLSeparator(separation_states)
 
         while True:
+            print("Separating")
             p = sep.separate(pos=pos, neg=[0], imp=[])
             if p is None: raise RuntimeError("couldn't separate in generalize()")
             print(f"Candidate predicate is: {p}")
@@ -377,31 +444,80 @@ def fol_ic3(solver: Solver) -> None:
             state = check_initial(solver, p)
             if state is not None:
                 print("Adding new initial state")
-                pos.add(len(states))
-                states.append((state, 0))
-                initial_states.append((state, 0))
+                pos.add(len(separation_states))
+                separation_states.append((state, 0))
+                add_initial((state, 0))
                 continue
             # F_i-1 => p?
             print("check implication")
             cex = check_implication(solver, frame_predicates(i-1), [p])
             if cex is not None:
                 print("Adding new free pre-state")
-                pos.add(len(states))
+                pos.add(len(separation_states))
                 t = Trace.from_z3([KEY_ONE], cex)
-                states.append((t,0))
+                separation_states.append((t,0))
+                add_state((t,0), i)
                 continue
 
             # F_i-1 => wp(p)?
             tr = check_two_state_implication(solver, frame_predicates(i-1), p)
             if tr is not None:
-                (pre, post) = tr
+                (pre_st, post_st) = tr
                 print("Adding new edge")
-                pos.add(len(states))
-                states.append((pre,0))
-                pos.add(len(states))
-                states.append((post,0))
+                pos.add(len(separation_states))
+                separation_states.append((pre_st,0))
+                pos.add(len(separation_states))
+                separation_states.append((post_st,0))
+                add_transition((pre_st,0), (post_st,0), i)
                 continue
 
+
+            print(f"Learned new predicate: {p}")
+            idx = add_predicate_to_frame(p, i)
+            push()
+            return
+    
+    def inductive_generalize(s: PDState, i: int) -> None:
+        print("Inductive generalizing")
+        # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
+        separation_states: List[PDState] = [s]
+        pos: Set[int] = set()
+        imp: Set[Tuple[int,int]] = set()
+        for st_idx in initial_states:
+            pos.add(len(separation_states))
+            separation_states.append(states[st_idx])
+        for (pre, post) in frame_transitions(i-1):
+            imp.add((len(separation_states), len(separation_states)+1))
+            separation_states.append(pre)
+            separation_states.append(post)
+
+        sep = FOLSeparator(separation_states)
+
+        while True:
+            print("Separating")
+            p = sep.separate(pos=pos, neg=[0], imp=imp)
+            if p is None: raise RuntimeError("couldn't separate in inductive_generalize()")
+            print(f"Candidate predicate is: {p}")
+
+            # init => p?
+            print("check initial")
+            state = check_initial(solver, p)
+            if state is not None:
+                print("Adding new initial state")
+                pos.add(len(separation_states))
+                separation_states.append((state, 0))
+                add_initial((state, 0))
+                continue
+            # F_i-1 ^ p => wp(p)?
+            tr = check_two_state_implication(solver, frame_predicates(i-1) + [p], p)
+            if tr is not None:
+                (pre_st, post_st) = tr
+                print("Adding new edge")
+                imp.add((len(separation_states), len(separation_states)+1))
+                separation_states.append((pre_st,0))
+                separation_states.append((post_st,0))
+                add_transition((pre_st,0), (post_st,0), i)
+                continue
 
             print(f"Learned new predicate: {p}")
             idx = add_predicate_to_frame(p, i)
@@ -434,7 +550,7 @@ def fol_ic3(solver: Solver) -> None:
         else:
             print_predicates()
             print("Checking for an inductive frame")
-            for inv_frame in range(1,frame_n + 1):
+            for inv_frame in reversed(range(1,frame_n + 1)):
                 # skip frames identical to a previous one
                 if not any(inv_frame == f for f in frame_numbers):
                     continue
@@ -446,3 +562,76 @@ def fol_ic3(solver: Solver) -> None:
                     return
             print(f"Expanding new frame {frame_n+1}")
             frame_n += 1
+
+def fol_ice(solver: Solver) -> None:
+    prog = syntax.the_program
+    # invs = list(chain(*(as_clauses(inv.expr) for inv in prog.invs())))
+    #print('Trying to FOL-ICE learn the following invariant:')
+    #for p in sorted(invs, key=lambda x: len(str(x))):
+    #    print(p)
+    #print('='*80)
+
+    states: List[PDState] = []
+    def add_state(s: PDState) -> int:
+        i = len(states)
+        states.append(s)
+        return i
+
+    mp = FOLSeparator(states)
+    pos: List[int] = []
+    neg: List[int] = []
+    imp: List[Tuple[int, int]] = []
+    while True:
+        q = mp.separate(pos=pos, neg=neg, imp=imp)
+        if q is None:
+            print(f'FOLSeparator returned none')
+            return
+        print(f'FOLSeparator returned the following formula:\n{q}')
+        res_imp = check_two_state_implication(solver, [q], q)
+        if res_imp is not None:
+            s1, s2 = res_imp
+            imp.append((add_state((s1, 0)), add_state((s2, 0))))
+            continue
+        res_init = check_initial(solver, q)
+        if res_init is not None:
+            pos.append(add_state((res_init,0)))
+            continue
+        res_safe = check_safe(solver, [q])
+        if res_safe is not None:
+            neg.append(add_state((res_safe, 0)))
+            continue
+        print(f'Inductive invariant found!')
+        break
+
+
+def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
+
+    result : List[argparse.ArgumentParser] = []
+
+    s = subparsers.add_parser('fol-pd-houdini', help='Run PD inference with folseparators')
+    s.set_defaults(main=fol_pd_houdini)
+    result.append(s)
+
+    s = subparsers.add_parser('fol-ic3', help='Run IC3 inference with folseparators')
+    s.set_defaults(main=fol_ic3)
+    s.add_argument('--inductive-generalize', action=utils.YesNoAction, default=True,
+                   help='Use inductive generalization when blocking states')
+    result.append(s)
+
+    s = subparsers.add_parser('fol-ice', help='Run ICE invariant learning with folseparators')
+    s.set_defaults(main=fol_ice)
+    result.append(s)
+
+    for s in result:
+        s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
+        s.add_argument('--cpus', type=int, help='Number of CPUs to use in parallel')
+        s.add_argument('--restarts', action=utils.YesNoAction, default=False, help='Use restarts outside of Z3 by setting Luby timeouts')
+        s.add_argument('--induction-width', type=int, default=1, help='Upper bound on weight of dual edges to explore.')
+        s.add_argument('--all-subclauses',  action=utils.YesNoAction, default=False, help='Add all subclauses of predicates.')
+        s.add_argument('--optimize-ctis',  action=utils.YesNoAction, default=True, help='Optimize internal ctis')
+        
+        # FOL specific options
+        s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+        s.add_argument("--separator", choices=('naive', 'generalized', 'hybrid'), default="hybrid", help="Use the specified separator algorithm")
+
+    return result

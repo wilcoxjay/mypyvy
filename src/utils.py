@@ -106,6 +106,8 @@ class MypyvyArgs(object):
     restarts: bool
     induction_width: int
     logic: str
+    inductive_generalize: bool
+    separator: str
     all_subclauses: bool
     optimize_ctis: bool
     json: bool
