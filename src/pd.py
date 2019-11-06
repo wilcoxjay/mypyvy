@@ -15,17 +15,19 @@ import sys
 import os
 import math
 import multiprocessing
+import multiprocessing.connection
 from contextlib import nullcontext
+import random
+from random import randint
+import queue
+from datetime import datetime, timedelta
+from hashlib import sha1
+from dataclasses import dataclass
 
 from syntax import *
 from logic import *
 
-try:
-    import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
-except ModuleNotFoundError:
-    pass
-
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
@@ -201,6 +203,8 @@ def cheap_check_implication(
 
 _cache_eval_in_state : Dict[Any,Any] = dict(h=0,m=0)
 def eval_in_state(s: Optional[Solver], m: PDState, p: Expr) -> bool:
+    # if s is None:
+    #     s = get_solver()
     cache = _cache_eval_in_state
     k = (m, p)
     if k not in cache:
@@ -293,12 +297,14 @@ def check_two_state_implication_multiprocessing_helper(
     if s is None:
         s = Solver()
     if seed is not None:
-        print(f'PID={os.getpid()} setting z3 seed to {seed}')
+        # print(f'PID={os.getpid()} setting z3 seed to {seed}')
         # z3.set_param('smt.random_seed', seed) -- this probably needs to be called before creating the solver
         # TODO: figure out if this is a good way to set the seed
         s.z3solver.set(seed=seed)  # type: ignore  # TODO: fix typing
 
+    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_two_state_implication_all_transitions: starting')
     res = check_two_state_implication_all_transitions(s, old_hyps, new_conc, minimize)
+    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_two_state_implication_all_transitions: done')
     if seed is not None:
         print(f'PID={os.getpid()} z3 returned {"unsat" if res is None else "sat"}')
     if res is None:
@@ -316,20 +322,24 @@ def check_two_state_implication_multiprocessing(
 ) -> Optional[Tuple[Trace, Trace]]:
     # this function uses multiprocessing to start multiple solvers
     # with different random seeds and return the first result obtained
-    if utils.args.cpus is None or utils.args.cpus == 1:
-        return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc, minimize)
-    with multiprocessing.Pool(utils.args.cpus) as pool:
-        results = []
-        for i in itertools.count():
-            if i < utils.args.cpus:
-                results.append(pool.apply_async(
-                    check_two_state_implication_multiprocessing_helper,
-                    (i, None, list(old_hyps), new_conc, minimize)
-                ))
-            results[0].wait(1)
-            ready = [r for r in results if r.ready()]
-            if len(ready) > 0:
-                return ready[0].get(1)  # the context manager of pool will terminate the processes
+    print(f'[{datetime.now()}] check_two_state_implication_multiprocessing: starting')
+    try:
+        if utils.args.cpus is None or utils.args.cpus == 1 or True:
+            return check_two_state_implication_multiprocessing_helper(None, s, old_hyps, new_conc, minimize)
+        with multiprocessing.Pool(utils.args.cpus) as pool:
+            results = []
+            for i in itertools.count():
+                if i < utils.args.cpus:
+                    results.append(pool.apply_async(
+                        check_two_state_implication_multiprocessing_helper,
+                        (i, None, list(old_hyps), new_conc, minimize)
+                    ))
+                results[0].wait(1)
+                ready = [r for r in results if r.ready()]
+                if len(ready) > 0:
+                    return ready[0].get(1)  # the context manager of pool will terminate the processes
+    finally:
+        print(f'[{datetime.now()}] check_two_state_implication_multiprocessing: done')
     assert False
 def check_two_state_implication(
         s: Solver,
@@ -456,7 +466,7 @@ def check_dual_edge_old(
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     k = (ps, qs)
     cache: Dict[Any,Any] = dict(h=0,r=0) # so that we don't interfere with the new version
-    print(f'check_dual_edge_old: starting to check the following edge:')
+    print(f'check_dual_edge_old: starting to check the following edge ({len(ps)}, {len(qs)}):')
     for p in ps:
         print(f'  {p}')
     print('  -->')
@@ -541,8 +551,197 @@ def check_dual_edge_old(
     return cache[k]
 # Here is the less stupid version (reusing code from find_dual_backward_transition, much refactoring needed):
 # TODO: cache valid dual edges like we cache transitions
+def check_dual_edge_multiprocessing_helper(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        i_transition: int,
+        i_q: int,
+        minimize: bool,
+        save_smt2: bool = False,
+) -> Optional[Tuple[PDState, PDState]]:
+    prog = syntax.the_program
+    trans = list(prog.transitions())[i_transition]
+    s = Solver()
+    seed = randint(0, 10**6)
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: setting z3 seed to {seed}')
+    # TODO: not sure any of these has any actual effect
+    z3.set_param('smt.random_seed',seed)
+    z3.set_param('sat.random_seed',seed)
+    s.z3solver.set(seed=seed) # type: ignore
+    s.z3solver.set(random_seed=seed) # type: ignore
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+    for q in qs:
+        s.add(t.translate_expr(q, old=True))
+    s.add(t.translate_transition(trans))
+    for i, p in enumerate(ps):
+        s.add(t.translate_expr(p, old=True))
+        s.add(t.translate_expr(p, old=False))
+    q = qs[i_q]
+    s.add(z3.Not(t.translate_expr(q, old=False)))
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: checking')
+    if save_smt2:
+        smt2 = s.z3solver.to_smt2()
+        fn = f'{sha1(smt2.encode()).hexdigest()}.smt2'
+        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: saving smt2 to {fn} ({len(smt2)} bytes)')
+        open(fn, 'w').write(smt2)
+    z3res = s.check()
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: got {z3res}')
+    assert z3res in (z3.sat, z3.unsat)
+    if z3res == z3.unsat:
+        return None
+    else:
+        z3model = s.model(minimize=minimize)
+        prestate = Trace.from_z3([KEY_OLD], z3model)
+        poststate = Trace.from_z3([KEY_NEW], z3model)
+        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: found model')
+        return prestate, poststate
+def check_dual_edge_multiprocessing(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        minimize: bool,
+) -> Optional[Tuple[Trace, Trace]]:
+    # this function uses multiprocessing to start multiple solvers for different transitions and qs
+    prog = syntax.the_program
+    n_transitions = len(list(prog.transitions()))
+    n = n_transitions * len(qs)
+    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: starting {n} processes')
+    with multiprocessing.Pool(processes=n) as pool:
+        results = []
+        for i_q, i_transition in product(range(len(qs)), range(n_transitions)):
+            results.append(pool.apply_async(
+                check_dual_edge_multiprocessing_helper,
+                (ps, qs, i_transition, i_q, minimize),
+            ))
+        while True:
+            not_ready = []
+            for r in results:
+                r.wait(1)
+                if r.ready():
+                    res = r.get(1)
+                    if res is not None:
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: got a SAT result, returning')
+                        return res  # the context manager of pool will terminate the processes
+                    else:
+                        pass # unsat result, keep waiting for others
+                else:
+                    not_ready.append(r)
+            if len(not_ready) == 0:
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing: got all UNSAT results, returning')
+                return None
+            else:
+                results = not_ready
+    assert False
+# see: https://mypy.readthedocs.io/en/latest/common_issues.html#using-classes-that-are-generic-in-stubs-but-not-at-runtime
+if TYPE_CHECKING:
+    CheckDualEdgeQueue = multiprocessing.Queue[Optional[Tuple[PDState, PDState]]]  # this is only processed by mypy
+else:
+    CheckDualEdgeQueue = multiprocessing.Queue  # this is not seen by mypy but will be executed at runtime.
+def check_dual_edge_multiprocessing_seeds_helper(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        i_transition: int,
+        i_q: int,
+        minimize: bool,
+        save_smt2: bool,
+        result_queue: CheckDualEdgeQueue,
+) -> None:
+    # time.sleep(randint(0,120)) # for debugging
+    result_queue.put(check_dual_edge_multiprocessing_helper(ps, qs, i_transition, i_q, minimize, save_smt2))
+_luby_sequence: List[int] = [1]
+def luby(i: int) -> int:
+    global _luby_sequence
+    # return the (i+1)'th element of the Luby sequence (so i=0 is the first element)
+    while not i < len(_luby_sequence):
+        _luby_sequence += _luby_sequence
+        _luby_sequence.append(2 * _luby_sequence[-1])
+    return _luby_sequence[i]
+def check_dual_edge_multiprocessing_seeds(
+        ps: Tuple[Expr,...],
+        qs: Tuple[Expr,...],
+        minimize: bool,
+) -> Optional[Tuple[Trace, Trace]]:
+    # this function uses multiprocessing to start multiple solvers for
+    # different transitions, qs, and random seeds, and restarts the solvers using a Luby sequence
+    prog = syntax.the_program
+    n_transitions = len(list(prog.transitions()))
+    n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
+    # list of: process, result_queue, deadline, i_transition, i_q
+    running: List[Tuple[multiprocessing.Process, CheckDualEdgeQueue, datetime, int, int]] = []
+    # map from (i_transition, i_q) to number of attempts spent on it (note that attempt i takes Luby[i] time)
+    # once an unsat result is obtained, the (i_transition, i_q) are removed
+    tasks: Dict[Tuple[int, int], int] = dict(
+        ((i_transition, i_q), 0)
+        for i_transition in range(n_transitions)
+        for i_q in range(len(qs))
+    )
+    t0 = timedelta(seconds=60) # the base unit for timeouts is 60 seconds (i.e., Luby sequence starts at 60 seconds)
+    try:
+        while True:
+            # first, see if we got new results
+            for process, result_queue, deadline, i_transition, i_q in running:
+                try:
+                    res = result_queue.get_nowait() # this causes no results to be obtained even after a sat result was printed from the process
+                except queue.Empty:
+                    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: no result yet from PID={process.pid}, i_transition={i_transition}, i_q={i_q}')
+                    continue
+                if res is not None:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: got a SAT result from PID={process.pid}, i_transition={i_transition}, i_q={i_q}, returning')
+                    return res  # the finally will terminate all remaining processes
+                else:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: got an UNSAT result for i_transition={i_transition}, i_q={i_q}')
+                    tasks.pop((i_transition, i_q), None)
+            if len(tasks) == 0:
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: got all UNSAT results, returning')
+                return None
+
+            # second, terminate processes whose timeout has passed or whose task already returned unsat
+            now = datetime.now()
+            still_running = []
+            for process, result_queue, deadline, i_transition, i_q in running:
+                if now > deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: terminating process with PID={process.pid}, i_transition={i_transition}, i_q={i_q} due to timeout')
+                    process.terminate()
+                    process.join()
+                elif (i_transition, i_q) not in tasks:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: terminating process with PID={process.pid}, i_transition={i_transition}, i_q={i_q} due to unsat result')
+                    process.terminate()
+                    process.join()
+                else:
+                    still_running.append((process, result_queue, deadline, i_transition, i_q))
+            running = still_running
+
+            # third, start new processes
+            while len(running) < n_cpus:
+                minimum = min(tasks.values())
+                for i_transition, i_q in sorted(tasks.keys()):
+                    if tasks[i_transition, i_q] == minimum:
+                        break
+                assert tasks[i_transition, i_q] == minimum
+                timeout = t0 * luby(tasks[i_transition, i_q])
+                tasks[i_transition, i_q] += 1
+                result_queue = CheckDualEdgeQueue()
+                process = multiprocessing.Process(
+                    target=check_dual_edge_multiprocessing_seeds_helper,
+                    args=(ps, qs, i_transition, i_q, minimize,
+                          tasks[i_transition, i_q] == n_cpus + 1, # on the (n_cpus + 1)'th attempt, save to smt2 for later analysis
+                          result_queue),
+                )
+                deadline = datetime.now() +  timeout
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: starting new process for i_transition={i_transition}, i_q={i_q} with a timeout of {timeout.total_seconds()} seconds')
+                running.append((process, result_queue, deadline, i_transition, i_q))
+                process.start()
+
+            # fourth, wait for a bit
+            time.sleep(0.1)
+        assert False
+    finally:
+        # terminate all running processeses
+        for process, result_queue, deadline, i_transition, i_q in running:
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_seeds: terminating process with PID={process.pid}')
+            process.terminate()
+            process.join()
+        assert len(multiprocessing.active_children()) == 0
 def check_dual_edge(
-        # TODO: this is very inefficient since it lets z3 handle the disjunction, keeping for reference, and should remove after thorough validation of the new version
         s: Solver,
         ps: Tuple[Expr,...],
         qs: Tuple[Expr,...],
@@ -556,7 +755,8 @@ def check_dual_edge(
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     k = (ps, qs)
     cache = _cache_dual_edge
-    print(f'check_dual_edge: starting to check the following edge:')
+    print(f'[{datetime.now()}] check_dual_edge: starting')
+    print(f'[{datetime.now()}] check_dual_edge: starting to check the following edge ({len(ps)}, {len(qs)}):')
     for p in ps:
         print(f'  {p}')
     print('  -->')
@@ -575,68 +775,86 @@ def check_dual_edge(
                 # TODO: we're not really minimizing the cti here... probably fine
                 cache[k] = ((prestate, poststate), None)
                 cache['r'] += 1
-                print(f'check_dual_edge: found previous {msg} violating dual edge')
+                print(f'[{datetime.now()}] check_dual_edge: found previous {msg} violating dual edge')
                 # print('-'*80 + '\n' + str(poststate) + '\n' + '-'*80)
                 break
         else:
-            # now we really have to check, use a specilized solver
-            cti_solver = Solver() # TODO: maybe solver per transition
-            t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
-            for q in qs:
-                cti_solver.add(t.translate_expr(q, old=True))
-            # add transition indicators
-            transition_indicators: List[z3.ExprRef] = []
-            for i, trans in enumerate(prog.transitions()):
-                transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
-            p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
-            for i, p in enumerate(ps):
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
-            q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
-            for i, q in enumerate(qs):
-                cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
+            # now we really have to check, use a specilized solver, with one solver per transition (older version that uses a single solver is available in commit c533c48)
+            cti_solvers: List[Solver] = []
+            for trans in prog.transitions():
+                _cti_solver = Solver()
+                t = _cti_solver.get_translator(KEY_NEW, KEY_OLD)
+                for q in qs:
+                    _cti_solver.add(t.translate_expr(q, old=True))
+                _cti_solver.add(t.translate_transition(trans))
+                p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
+                for i, p in enumerate(ps):
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+                q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
+                for i, q in enumerate(qs):
+                    _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
+                cti_solvers.append(_cti_solver)
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
-                for q_indicator, transition_indicator in product(q_indicators, transition_indicators):
-                    print(f'check_dual_edge: testing {q_indicator}, {transition_indicator}')
-                    indicators = tuple(chain(
-                        [q_indicator, transition_indicator],
-                        (p_indicators[i] for i in sorted(ps_seed)),
-                    ))
-                    z3res = cti_solver.check(indicators)
-                    assert z3res in (z3.sat, z3.unsat)
-                    print(f'check_dual_edge: {z3res}')
-                    if z3res == z3.unsat:
-                        continue
-                    z3model = cti_solver.model(indicators, minimize)
-                    prestate = Trace.from_z3([KEY_OLD], z3model)
-                    poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                    if minimize:
+                if True:
+                    # use multiprocessing
+                    res = check_dual_edge_multiprocessing_seeds(
+                        ps=tuple(ps[i] for i in sorted(ps_seed)),
+                        qs=qs,
+                        minimize=minimize,
+                    )
+                    if res is not None and minimize:
                         # TODO: should we put it in the cache anyway? for now not
+                        prestate, poststate = res
                         _cache_transitions.append((prestate, poststate))
                         for state in (prestate, poststate):
                             if all(eval_in_state(None, state, p) for p in inits):
                                 _cache_initial.append(state)
-                        # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
-                    return prestate, poststate
-                return None
+                                # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
+                    return res
+                else:
+                    # no multiprocessing
+                    for q_indicator, (cti_solver, trans) in product(q_indicators, zip(cti_solvers, prog.transitions())):
+                        print(f'[{datetime.now()}] check_dual_edge: testing {q_indicator}, transition {trans.name}')
+                        indicators = tuple(chain(
+                            [q_indicator],
+                            (p_indicators[i] for i in sorted(ps_seed)),
+                        ))
+                        z3res = cti_solver.check(indicators)
+                        assert z3res in (z3.sat, z3.unsat)
+                        print(f'[{datetime.now()}] check_dual_edge: {z3res}')
+                        if z3res == z3.unsat:
+                            continue
+                        z3model = cti_solver.model(indicators, minimize)
+                        prestate = Trace.from_z3([KEY_OLD], z3model)
+                        poststate = Trace.from_z3([KEY_NEW], z3model)
+                        if minimize:
+                            # TODO: should we put it in the cache anyway? for now not
+                            _cache_transitions.append((prestate, poststate))
+                            for state in (prestate, poststate):
+                                if all(eval_in_state(None, state, p) for p in inits):
+                                    _cache_initial.append(state)
+                            # TODO: maybe we should first try to get (from Z3) a transition where the prestate is initial
+                        return prestate, poststate
+                    return None
             ps_i = frozenset(range(len(ps)))
             res = check(ps_i, True)
             if res is not None:
                 if utils.args.cache_only_discovered:
                     assert False
                 prestate, poststate = res
-                print(f'check_dual_edge: found new {msg} violating dual edge')
+                print(f'[{datetime.now()}] check_dual_edge: found new {msg} violating dual edge')
                 cache[k] = ((prestate, poststate), None)
             else:
                 # minimize ps_i
-                print(f'check_dual_edge: minimizing ps')
+                # TODO: maybe use unsat cores
+                print(f'[{datetime.now()}] check_dual_edge: minimizing ps')
                 for i in sorted(ps_i, reverse=True): # TODO: reverse or not?
                     if i in ps_i and check(ps_i - {i}, False) is None:
                         ps_i -= {i}
                 _ps = tuple(ps[i] for i in ps_i)
-                print(f'check_dual_edge: done minimizing ps')
-                print(f'check_dual_edge: found new valid dual edge:')
+                print(f'[{datetime.now()}] check_dual_edge: done minimizing ps')
+                print(f'[{datetime.now()}] check_dual_edge: found new valid dual edge:')
                 for p in _ps:
                     print(f'  {p}')
                 print('  -->')
@@ -657,9 +875,9 @@ def check_dual_edge(
     else:
         cti, ps = cache[k]
         if cti is not None:
-            print(f'check_dual_edge: found cached {msg} violating dual edge')
+            print(f'[{datetime.now()}] check_dual_edge: found cached {msg} violating dual edge')
         else:
-            print(f'check_dual_edge: found cached valid dual edge:')
+            print(f'[{datetime.now()}] check_dual_edge: found cached valid dual edge:')
             for p in ps:
                 print(f'  {p}')
             print('  -->')
@@ -667,7 +885,923 @@ def check_dual_edge(
                 print(f'  {q}')
         cache['h'] += 1
 
+    print(f'[{datetime.now()}] check_dual_edge: done')
     return cache[k]
+
+#
+# check_dual_edge_optimize and friends
+#
+
+@dataclass(frozen=True)
+class HoareQuery(object):
+    '''Class that represents a check during check_dual_edge_optimize'''
+    p: FrozenSet[int]
+    q_pre: Tuple[FrozenSet[int],...]
+    q_post: Tuple[FrozenSet[int],...]
+    cardinalities: Tuple[Optional[int],...]
+    i_transition: int
+    # maybe use in repr/str: f'precondition_seed={[sorted(x) for x in precondition_seed]}, postcondition_seed={[sorted(x) for x in postcondition_seed]}, cardinalities={cardinalities}'
+    def __post_init__(self) -> None:
+        assert len(self.q_pre) == len(self.q_post)
+        assert len(self.cardinalities) == 0 # for now
+    def __str__(self) -> str:
+        def str_seed(seed: Tuple[FrozenSet[int], ...]) -> str:
+            return str([sorted(x) for x in seed]).replace(' ', '')
+
+        return f'({sorted(self.p)}, {str_seed(self.q_pre)}, {str_seed(self.q_post)}, {self.i_transition})'
+    def __le__(self, other: HoareQuery) -> bool:
+        # TODO: maybe the order should be reversed?
+        return (
+            (self.i_transition == other.i_transition) and
+            len(self.q_pre) == len(other.q_pre) and
+            len(self.q_post) == len(other.q_post) and
+            len(self.cardinalities) == len(other.cardinalities) and
+            (self.p >= other.p) and
+            all(x <= y for x, y in zip(self.q_pre, other.q_pre)) and
+            all(x >= y for x, y in zip(self.q_post, other.q_post)) and
+            all(
+                (y is None) or (x is not None and x <= y)
+                for x, y in zip(self.cardinalities, other.cardinalities)
+            )
+        )
+    def __ge__(self, other: HoareQuery) -> bool:
+        return other <= self
+    def __lt__(self, other: HoareQuery) -> bool:
+        return self != other and self <= other
+    def __gt__(self, other: HoareQuery) -> bool:
+        return self != other and other <= self
+    def strengthen_p(self, d: AbstractSet[int]) -> HoareQuery:
+        return HoareQuery(
+            p=self.p | d,
+            q_pre=self.q_pre,
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def weaken_p(self, d: AbstractSet[int]) -> HoareQuery:
+        return HoareQuery(
+            p=self.p - d,
+            q_pre=self.q_pre,
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def strengthen_q_pre(self, k: int, d: AbstractSet[int]) -> HoareQuery:
+        q_pre = list(self.q_pre)
+        q_pre[k] -= d
+        return HoareQuery(
+            p=self.p,
+            q_pre=tuple(q_pre),
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def weaken_q_pre(self, k: int, d: AbstractSet[int]) -> HoareQuery:
+        q_pre = list(self.q_pre)
+        q_pre[k] |= d
+        return HoareQuery(
+            p=self.p,
+            q_pre=tuple(q_pre),
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def strengthen_q_post(self, k: int, d: AbstractSet[int]) -> HoareQuery:
+        q_post = list(self.q_post)
+        q_post[k] -= d
+        return HoareQuery(
+            p=self.p,
+            q_pre=self.q_pre,
+            q_post=tuple(q_post),
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def weaken_q_post(self, k: int, d: AbstractSet[int]) -> HoareQuery:
+        q_post = list(self.q_post)
+        q_post[k] |= d
+        return HoareQuery(
+            p=self.p,
+            q_pre=self.q_pre,
+            q_post=tuple(q_post),
+            cardinalities=self.cardinalities,
+            i_transition=self.i_transition,
+        )
+    def replace_cardinality(self, k: int, n: Optional[int]) -> HoareQuery:
+        cardinalities = list(self.cardinalities)
+        cardinalities[k] = n
+        return HoareQuery(
+            p=self.p,
+            q_pre=self.q_pre,
+            q_post=self.q_post,
+            cardinalities=tuple(cardinalities),
+            i_transition=self.i_transition,
+        )
+    def replace_transition(self, i_transition: int) -> HoareQuery:
+        return HoareQuery(
+            p=self.p,
+            q_pre=self.q_pre,
+            q_post=self.q_post,
+            cardinalities=self.cardinalities,
+            i_transition=i_transition,
+        )
+
+# see: https://mypy.readthedocs.io/en/latest/common_issues.html#using-classes-that-are-generic-in-stubs-but-not-at-runtime
+if TYPE_CHECKING:
+    # this is only processed by mypy
+    T = Tuple[
+        HoareQuery,
+        bool, # True means valid, False means invalid
+        Optional[Tuple[PDState, PDState]], # optional CTI for invalid, but not required
+    ]
+    CheckDualEdgeOptimizeQueue = multiprocessing.Queue[T]
+    CheckDualEdgeOptimizeJoinableQueue = multiprocessing.JoinableQueue[T]
+else:
+    # this is not seen by mypy but will be executed at runtime.
+    CheckDualEdgeOptimizeQueue = multiprocessing.Queue
+    CheckDualEdgeOptimizeJoinableQueue = multiprocessing.JoinableQueue
+
+def check_dual_edge_optimize_multiprocessing_helper(
+        ps: Tuple[Expr,...],
+        top_clauses: Tuple[Expr,...],
+        hq: HoareQuery,
+        produce_cti: bool, # if False, we do not get models from the solver
+        optimize: bool, # if False, we do not try to optimize an invalid Hoare triple
+        whole_clauses: bool, # if True, only try the empty clause or the entire top_clause (used in find_dual_backward_transition)
+        use_cvc4: bool,
+        save_smt2: bool, # TODO: move to separate function
+        q1: CheckDualEdgeOptimizeJoinableQueue,
+        q2: CheckDualEdgeOptimizeQueue,
+) -> None:
+    try:
+        assert len(hq.q_pre) == len(top_clauses)
+        def send_result(hq: HoareQuery, valid: bool, cti: Optional[Tuple[PDState, PDState]] = None) -> None:
+            assert cti is None or not valid
+            if not produce_cti:
+                cti = None
+            q1.put((hq, valid, cti))
+        def validate_cti(prestate: PDState, poststate: PDState) -> None:
+            # TODO: remove this once we trust the code enough
+            assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+            assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+            assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+            assert all(not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k])) for k in range(mp.m)), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
+        known_unsats: List[HoareQuery] = []
+        def recv_unsats() -> None:
+            while True:
+                try:
+                    hq, valid, cti = q2.get_nowait()
+                except queue.Empty:
+                    break
+                assert valid and cti is None
+                known_unsats.append(hq)
+        def known_to_be_unsat(hq: HoareQuery) -> bool:
+            if any(len(x) == 0 for x in hq.q_pre):
+                return True
+            recv_unsats()
+            return any(
+                hq <= unsat_hq
+                for unsat_hq in known_unsats
+            )
+        recv_unsats()
+        prog = syntax.the_program
+        mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
+        greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
+        # TODO: better logging, maybe with meaningful process names
+        def get_solver(hq: HoareQuery) -> Tuple[Solver, Z3Translator]:
+            s = Solver(use_cvc4=use_cvc4)
+            seed = randint(0, 10**6)
+            if not use_cvc4:
+                # print(f'[{datetime.now()}] {greeting}: setting z3 seed to {seed}')
+                # TODO: not sure any of these has any actual effect
+                z3.set_param('smt.random_seed',seed)
+                z3.set_param('sat.random_seed',seed)
+                s.z3solver.set(seed=seed) # type: ignore
+                s.z3solver.set(random_seed=seed) # type: ignore
+            else:
+                # print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
+                pass
+            t = s.get_translator(KEY_NEW, KEY_OLD)
+            # add transition relation
+            s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
+            # add ps
+            for i in sorted(hq.p):
+                s.add(t.translate_expr(ps[i], old=True))
+                s.add(t.translate_expr(ps[i], old=False))
+            # add precondition constraints
+            for k in range(mp.m):
+                s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+            # add postcondition constraints, note we must violate all clauses (the selection of which one to violate is represented by making the others empty
+            for k in range(mp.m):
+                if len(hq.q_post[k]) > 0:
+                    s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
+            return s, t
+        s, t = get_solver(hq)
+        if save_smt2:
+            smt2 = s.z3solver.to_smt2()
+            fn = f'{sha1(smt2.encode()).hexdigest()}.smt2'
+            print(f'[{datetime.now()}] {greeting}: saving smt2 to {fn} ({len(smt2)} bytes)')
+            open(fn, 'w').write(smt2)
+            # TODO: we should actually exit here, i.e., make saving to smt2 a separate function
+        print(f'[{datetime.now()}] {greeting}: checking input queury')
+        z3res = s.check()
+        print(f'[{datetime.now()}] {greeting}: got {z3res}' + (', optimizing cti' if z3res == z3.sat and optimize else ''))
+        assert z3res in (z3.sat, z3.unsat)
+        if z3res == z3.unsat:
+            send_result(hq, True)
+            # we do not try to optimize unsats, as this isn't marco, we only optimize one direction
+            # TODO: maybe we should do marco? also note that the unsat is only for this transition
+
+            # to safe some forking (e.g., in cache there are 15 transitions), we other transitions in random order so that we may switch
+            # TODO: we can also check violations of other conjuncts of q, but this would require changing the interface
+            n_transitions = len(list(prog.transitions()))
+            worklist = [
+                hq.replace_transition(i_transition)
+                for i_transition in range(n_transitions)
+                if i_transition != hq.i_transition
+            ]
+            worklist = [other_hq for other_hq in worklist if not known_to_be_unsat(other_hq)]
+            random.shuffle(worklist)
+            print(f'[{datetime.now()}] {greeting}: input was unsat, trying {len(worklist)} other transitions')
+            for other_hq in worklist:
+                if known_to_be_unsat(other_hq):
+                    continue
+                s, t = get_solver(other_hq)
+                z3res = s.check()
+                assert z3res in (z3.sat, z3.unsat)
+                if z3res == z3.unsat:
+                    send_result(other_hq, True)
+                else:
+                    # we found a cti, now continue us usual and optimize it
+                    hq = other_hq
+                    break
+            else:
+                # all transitions are unsat, return
+                return
+
+        assert s.check() == z3.sat
+
+        if not optimize and not produce_cti:
+            # just report that the Hoare triple is invalid
+            send_result(hq, False)
+            return
+
+        # get model
+        z3model = s.model(minimize=True)
+        prestate = Trace.from_z3([KEY_OLD], z3model)
+        poststate = Trace.from_z3([KEY_NEW], z3model)
+        validate_cti(prestate, poststate)
+
+        if not optimize:
+            # send model without optimizing it
+            send_result(hq, False, (prestate, poststate))
+            return
+
+        # optimize from model and send result (but only optimize top priority, i.e., active_post_qs)
+        active_post_qs = [k for k in range(mp.m) if len(hq.q_post[k]) > 0] # we will first try to weaken these
+        if not whole_clauses:
+            for k in active_post_qs:
+                for j in sorted(mp.all_n[k] - hq.q_post[k]):
+                    if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | {j})):
+                        # print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, j={j}')
+                        hq = hq.weaken_q_post(k, {j})
+        else:
+            # in this case, we optimize all post_qs from model
+            for k in range(mp.m):
+                if not eval_in_state(None, poststate, mp.to_clause(k, mp.all_n[k])):
+                    # print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k} (whole clauses)')
+                    hq = hq.weaken_q_post(k, mp.all_n[k])
+
+        validate_cti(prestate, poststate)
+        send_result(hq, False, (prestate, poststate))
+
+        # optimize to get an optimal cti
+        # first try for the post-state to violate weaker subclauses of top_clauses[active_post_qs]
+        # then try for the post-state to violate non-empty subclauses of the other top_clauses
+        # then try for the pre-state to satisfy stronger subclauses of top_clauses
+        # TODO: lastly, minimize the model (i.e., cardinalities)
+        # TODO: maybe we should minimize cardinalities before the other top_clauses, as it could lead to larger models
+        # print(f'[{datetime.now()}] {greeting}: optimizing postcondition')
+        for k in chain(active_post_qs, (kk for kk in range(mp.m) if kk not in active_post_qs)): # TODO: random shuffle?
+            if not whole_clauses:
+                to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
+            else:
+                to_try = [] if hq.q_post[k] == mp.all_n[k] else [mp.all_n[k]]
+            while len(to_try) > 0:
+                d = random.choice(to_try)
+                to_try.remove(d)
+                assert not d <= hq.q_post[k]
+                hq_try = hq.weaken_q_post(k, d)
+                if known_to_be_unsat(hq_try):
+                    continue
+                s.push()
+                s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq_try.q_post[k]), old=False)))
+                # print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, d={sorted(d)}')
+                z3res = s.check()
+                # print(f'[{datetime.now()}] {greeting}: got {z3res}')
+                assert z3res in (z3.sat, z3.unsat)
+                if z3res == z3.unsat:
+                    send_result(hq_try, True)
+                else:
+                    # print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
+                    hq = hq_try
+                    z3model = s.model(minimize=True)
+                    prestate = Trace.from_z3([KEY_OLD], z3model)
+                    poststate = Trace.from_z3([KEY_NEW], z3model)
+                    validate_cti(prestate, poststate)
+                    for dd in to_try:
+                        if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | dd)):
+                            # print(f'[{datetime.now()}] {greeting}: weakening postcondition from model k={k}, dd={sorted(dd)}')
+                            hq = hq.weaken_q_post(k, dd)
+                            to_try.remove(dd)
+                    # TODO: weaken from model for other k's?
+                    validate_cti(prestate, poststate)
+                    send_result(hq, False, (prestate, poststate))
+                s.pop()
+            # print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {sorted(hq.q_post[k])}')
+            s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
+            assert s.check() == z3.sat
+        # print(f'[{datetime.now()}] {greeting}: optimizing precondition')
+        for k in range(mp.m):  # TODO: random shuffle?
+            if not whole_clauses:
+                to_try = [frozenset([i]) for i in sorted(hq.q_pre[k])]
+            else:
+                to_try = []
+            while len(to_try) > 0:
+                d = random.choice(to_try)
+                to_try.remove(d)
+                assert d <= hq.q_pre[k]
+                hq_try = hq.strengthen_q_pre(k, d)
+                if known_to_be_unsat(hq_try):
+                    continue
+                s.push()
+                s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), old=True))
+                # print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, d={sorted(d)}')
+                z3res = s.check()
+                # print(f'[{datetime.now()}] {greeting}: got {z3res}')
+                assert z3res in (z3.sat, z3.unsat)
+                if z3res == z3.unsat:
+                    send_result(hq_try, True)
+                else:
+                    # print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
+                    hq = hq_try
+                    z3model = s.model(minimize=True)
+                    prestate = Trace.from_z3([KEY_OLD], z3model)
+                    poststate = Trace.from_z3([KEY_NEW], z3model)
+                    validate_cti(prestate, poststate)
+                    for dd in to_try:
+                        if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - dd)):
+                            # print(f'[{datetime.now()}] {greeting}: strengthening precondition from model k={k}, dd={sorted(dd)}')
+                            hq = hq.strengthen_q_pre(k, dd)
+                            to_try.remove(dd)
+                    # TODO: strengthen other k's from model?
+                    validate_cti(prestate, poststate)
+                    send_result(hq, False, (prestate, poststate))
+                s.pop()
+            # print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {sorted(hq.q_pre[k])}')
+            s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+            assert s.check() == z3.sat
+        # print(f'[{datetime.now()}] {greeting}: found optimal cti')
+    finally:
+        q1.join()
+        print(f'[{datetime.now()}] {greeting}: finished and joined q1, returning')
+
+@dataclass
+class RunningProcess(object):
+    process: multiprocessing.Process
+    q1: CheckDualEdgeOptimizeJoinableQueue
+    q2: CheckDualEdgeOptimizeQueue
+    deadline: datetime
+    hq: HoareQuery
+    use_cvc4: bool
+    def terminate(self) -> None:
+        '''Terminate the process if it's still alive (using SIGTERM).
+
+        Makes sure to close the queues and join their thread so it
+        does not get pipe errors.
+        '''
+        if not self.process.is_alive():
+            # no need to close and join the queues here, and doing so
+            # leads to a rare deadlock
+            self.process.join()
+        else:
+            # need to close and join the queues here, otherwise we'll
+            # get pipe errors from the queues' threads.
+            self.q1.close()
+            self.q2.close()
+            # it seems this can lead to deadlocks even if self.process.is_alive returned true. maybe its enough just to close the queue? (question is will we get pipe errors)
+            # self.q1.join_thread()
+            # self.q2.join_thread()
+            self.process.terminate()
+            self.process.join()
+
+def check_dual_edge_optimize_find_cti(
+        ps: Tuple[Expr, ...],
+        top_clauses: Tuple[Expr, ...],
+        q_seed: Tuple[FrozenSet[int], ...],
+        whole_clauses: bool, # if True, only try the empty clause or the entire top_clause (used in find_dual_backward_transition)
+) -> Optional[Tuple[PDState, PDState]]:
+    '''
+    this uses multiprocessing to check a dual edge, and get an
+    optimized cti in case the edge is not valid
+
+    this function uses multiprocessing to start multiple solvers for
+    different transitions, qs, and random seeds, and restarts the solvers using a Luby sequence
+
+    '''
+    print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: starting')
+    assert len(top_clauses) == len(q_seed)
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
+    prog = syntax.the_program
+    n_transitions = len(list(prog.transitions()))
+    n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
+    n_cpus = max(n_cpus, 2) # we need at least 2 processes or we will block on the last one that found a model
+    t0 = timedelta(seconds=60) # the base unit for timeouts is 60 seconds (i.e., Luby sequence starts at 60 seconds)
+
+    known_unsats: List[HoareQuery] = []
+    def known_to_be_unsat(hq: HoareQuery) -> bool:
+        return any(len(x) == 0 for x in hq.q_pre) or any(
+            hq <= unsat_hq
+            for unsat_hq in known_unsats
+        )
+
+    active_queries = [
+        HoareQuery(
+            p=frozenset(range(len(ps))),
+            q_pre=q_seed,
+            q_post=tuple(q_seed[k] if k == i_q else frozenset() for k in range(mp.m)),
+            cardinalities=(),
+            i_transition=i_transition,
+        )
+        for i_transition in range(n_transitions)
+        for i_q in range(mp.m)
+    ]
+
+    print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: initially with {len(active_queries)} active queries')
+
+    running: List[RunningProcess] = [] # list of currently running processes
+
+    # details about the best SAT result we got so far:
+    current_cti: Optional[Tuple[PDState, PDState]] = None
+    current_hq: Optional[HoareQuery] = None
+    current_sat_rp: Optional[RunningProcess] = None
+
+    # map (hq, use_cvc4) to number of attempts spent on it (note that attempt i takes Luby[i] time)
+    # nothing is ever removed from tasks, and active_queries is used to maintain the active ones
+    tasks: Dict[Tuple[HoareQuery, bool], int] = defaultdict(int)
+
+    try:
+        while True:
+            # see if we got new results
+            n_known_unsats = len(known_unsats) # to later send the new onces
+            worklist = list(running)
+            any_news = False
+            while len(worklist) > 0:
+                rp = worklist[0]
+                try:
+                    hq, valid, cti = rp.q1.get_nowait()
+                    rp.q1.task_done()
+                except queue.Empty:
+                    worklist = worklist[1:]
+                    continue
+                any_news = True
+                assert hq <= rp.hq.replace_transition(hq.i_transition) # we may get a cti for another transition, and we allow it
+                assert (valid and cti is None) or (not valid and cti is not None)
+                if valid:
+                    # got new unsat result
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: got an UNSAT result from PID={rp.process.pid} for hq={hq}, use_cvc4={rp.use_cvc4}')
+                    known_unsats.append(hq)
+                elif current_hq is not None and not hq.replace_transition(0) < current_hq.replace_transition(0):
+                    # got a new cti but it's not better than our current best model (ignoring the transition), so we ignore it
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: got a SAT result from PID={rp.process.pid} that we discard (hq={hq}, use_cvc4={rp.use_cvc4})')
+                else:
+                    # the new cti is strictly better than our current
+                    # cti. this is a big deal. the process that found
+                    # it becomes not subject to timeout, all the other
+                    # processes will get killed, and new queries will
+                    # get started
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: got a SAT result from PID={rp.process.pid} that is better than what we had (hq={hq}, use_cvc4={rp.use_cvc4})')
+                    current_cti = cti
+                    current_hq = hq
+                    current_sat_rp = rp
+                    active_queries = []
+                    # first, see if there is a way to weaken the postcondition where it was non-trivial before
+                    for k in range(mp.m):
+                        if len(hq.q_post[k]) == 0:
+                            continue
+                        if not whole_clauses:
+                            to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
+                        else:
+                            to_try = [] if hq.q_post[k] == mp.all_n[k] else [mp.all_n[k]]
+                        for d in to_try:
+                            assert not d <= hq.q_post[k]
+                            for i_transition in range(n_transitions):
+                                new_hq = hq.weaken_q_post(k, d).replace_transition(i_transition)
+                                if not known_to_be_unsat(new_hq):
+                                    active_queries.append(new_hq)
+                    # second, weaken the postcondition elsewhere
+                    if len(active_queries) == 0:
+                        for k in range(mp.m):
+                            if len(hq.q_post[k]) != 0:
+                                continue
+                            if not whole_clauses:
+                                to_try = [frozenset([i]) for i in sorted(mp.all_n[k] - hq.q_post[k])]
+                            else:
+                                to_try = [] if hq.q_post[k] == mp.all_n[k] else [mp.all_n[k]]
+                            for d in to_try:
+                                assert not d <= hq.q_post[k]
+                                for i_transition in range(n_transitions):
+                                    new_hq = hq.weaken_q_post(k, d).replace_transition(i_transition)
+                                    if not known_to_be_unsat(new_hq):
+                                        active_queries.append(new_hq)
+                    # third, strengthen the precondition
+                    if len(active_queries) == 0 and not whole_clauses:
+                        for k in range(mp.m):
+                            for i in sorted(hq.q_pre[k]):
+                                for i_transition in range(n_transitions):
+                                    new_hq = hq.strengthen_q_pre(k, {i}).replace_transition(i_transition)
+                                    if not known_to_be_unsat(new_hq):
+                                        active_queries.append(new_hq)
+
+            # filter using unknown unsats and possibly return
+            active_queries = [hq for hq in active_queries if not known_to_be_unsat(hq)]
+            if len(active_queries) == 0:
+                # we are done
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: no more active queries, returning {"cti" if current_cti is not None else "unsat"}')
+                print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: done')
+                return current_cti
+            elif any_news:
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: {len(active_queries)} more active queries, carrying on')
+                # for hq in active_queries:
+                #    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti:     {hq}')
+                # print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: carrying on')
+
+            # kill processes that timed out or whose query is no longer active (except for current_sat_rp - the last process to return a model)
+            now = datetime.now()
+            still_running = []
+            for rp in running:
+                if not rp.process.is_alive():
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: process with PID={rp.process.pid} terminated')
+                    rp.terminate()
+                    assert rp.process.exitcode == 0, rp.process.exitcode
+                elif rp is current_sat_rp:
+                    # this processes is protected, and its task doesn't need to be in tasks
+                    still_running.append(rp)
+                elif all(rp.hq.replace_transition(i_transition) not in active_queries for i_transition in range(n_transitions)): # rp will also try other transitions
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
+                    rp.terminate()
+                elif now > rp.deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    rp.terminate()
+                else:
+                    still_running.append(rp)
+            running = still_running
+
+            # send new_unsats to everyone whose still running
+            for hq in known_unsats[n_known_unsats:]:
+                for rp in running:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: sending new unsat to process with PID={rp.process.pid}')
+                    rp.q2.put((hq, True, None))
+
+            # start new processes
+            active_tasks = list(product(
+                active_queries, # hq
+                [False, True], # use_cvc4
+            ))
+            while len(running) < n_cpus:
+                task_to_run = min(active_tasks, key=tasks.__getitem__)
+                hq, use_cvc4 = task_to_run
+                timeout = t0 * luby(tasks[task_to_run])
+                tasks[task_to_run] += 1
+                q1 = CheckDualEdgeOptimizeJoinableQueue()
+                q2 = CheckDualEdgeOptimizeQueue()
+                args = (
+                    ps,
+                    top_clauses,
+                    hq,
+                    True, # produce_cti
+                    True, # optimize
+                    whole_clauses,
+                    use_cvc4,
+                    not use_cvc4 and tasks[task_to_run] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
+                    q1,
+                    q2,
+                )
+                if TYPE_CHECKING: # trick to get typechecking for check_dual_edge_optimize_multiprocessing_helper
+                    check_dual_edge_optimize_multiprocessing_helper(*args)
+                process = multiprocessing.Process(
+                    target=check_dual_edge_optimize_multiprocessing_helper,
+                    args=args,
+                )
+                deadline = datetime.now() +  timeout
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: starting new process for hq={hq}, use_cvc4={use_cvc4} with a timeout of {timeout.total_seconds()} seconds')
+                rp = RunningProcess(
+                    process,
+                    q1,
+                    q2,
+                    deadline,
+                    hq,
+                    use_cvc4,
+                )
+                for hq in known_unsats: # put known_unsats in q2 before starting the process
+                    rp.q2.put((hq, True, None))
+                process.start()
+                running.append(rp)
+
+            # wait for a bit
+            # print('\n\nsleeping for a bit\n\n')
+            # time.sleep(0.1)
+            # print('\n\nwaking up again\n\n')
+
+            # wait until we have new results, or until the next deadline expires
+            earliest_deadline = min(
+                (rp.deadline for rp in running if rp is not current_sat_rp),
+                default=None,
+            )
+            seconds = (0.1 if earliest_deadline is None else
+                       (earliest_deadline - datetime.now()).total_seconds())
+            seconds = max(0.1, seconds)
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: waiting for news with a timeout of {seconds} seconds')
+            multiprocessing.connection.wait(
+                [rp.q1._reader for rp in running], # type: ignore
+                timeout=seconds,
+            )
+        assert False
+    finally:
+        # terminate all running processeses
+        for rp in running:
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: terminating process with PID={rp.process.pid}')
+            rp.terminate()
+        assert len(multiprocessing.active_children()) == 0
+
+def check_dual_edge_optimize_minimize_ps(
+        ps: Tuple[Expr, ...],
+        top_clauses: Tuple[Expr, ...],
+        q_seed: Tuple[FrozenSet[int], ...],
+) -> FrozenSet[int]:
+    '''
+    this uses multiprocessing to minimize the ps required for the given valid dual edge
+
+    this function uses multiprocessing to start multiple solvers for
+    different transitions, ps, and random seeds, and restarts the solvers using a Luby sequence
+
+    '''
+    assert len(top_clauses) == len(q_seed)
+    if len(ps) == 0:
+        return frozenset()
+    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: starting')
+    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: minimizing {len(ps)} ps')
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
+    prog = syntax.the_program
+    n_ps = len(ps)
+    n_transitions = len(list(prog.transitions()))
+    n_cpus = utils.args.cpus if utils.args.cpus is not None else 1
+    n_cpus = max(n_cpus, 2) # we need at least 2 processes or we will block on the last one that found a model
+    t0 = timedelta(seconds=60) # the base unit for timeouts is 60 seconds (i.e., Luby sequence starts at 60 seconds)
+
+    # the smallest set of ps for which the dual edge is known to be valid
+    current_p = frozenset(range(n_ps))
+
+    def hoare_queries_for_p(p: FrozenSet[int]) -> List[HoareQuery]:
+        # return the queries that must all be unsat for a dual edge with the given p to be valid
+        return [
+            HoareQuery(
+                p=p,
+                q_pre=q_seed,
+                q_post=tuple(q_seed[k] if k == i_q else frozenset() for k in range(mp.m)),
+                cardinalities=(),
+                i_transition=i_transition,
+            )
+            for i_transition in range(n_transitions)
+            for i_q in range(mp.m)
+        ]
+
+    known_unsats = hoare_queries_for_p(current_p) # these are known to be unsat since we assume the given dual edge is valid
+    def known_to_be_unsat(hq: HoareQuery) -> bool:
+        return any(len(x) == 0 for x in hq.q_pre) or any(
+            hq <= unsat_hq
+            for unsat_hq in known_unsats
+        )
+    known_sats: List[HoareQuery] = []
+    def known_to_be_sat(hq: HoareQuery) -> bool:
+        return any(
+            hq >= sat_hq
+            for sat_hq in known_sats
+        )
+    def known_to_be_valid(p: FrozenSet[int]) -> bool:
+        return all(known_to_be_unsat(hq) for hq in hoare_queries_for_p(p))
+    def known_to_be_invalid(p: FrozenSet[int]) -> bool:
+        return any(known_to_be_sat(hq) for hq in hoare_queries_for_p(p))
+
+    assert known_to_be_valid(current_p)
+
+    active_queries: List[HoareQuery] = list(chain(*(
+        hoare_queries_for_p(current_p - {i})
+        for i in sorted(current_p, reverse=True) # TODO: maybe random order?
+    )))
+
+    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: initially with {len(active_queries)} active queries')
+
+    running: List[RunningProcess] = [] # list of currently running processes
+
+    # map (hq, use_cvc4) to number of attempts spent on it (note that attempt i takes Luby[i] time)
+    # nothing is ever removed from tasks, and active_queries is used to maintain the active ones
+    tasks: Dict[Tuple[HoareQuery, bool], int] = defaultdict(int)
+
+    try:
+        while True:
+            # see if we got new results
+            worklist = list(running)
+            any_news = False
+            while len(worklist) > 0:
+                rp = worklist[0]
+                try:
+                    hq, valid, cti = rp.q1.get_nowait()
+                    rp.q1.task_done()
+                except queue.Empty:
+                    worklist = worklist[1:]
+                    continue
+                any_news = True
+                assert cti is None
+                if valid:
+                    # got new unsat result
+                    # this may trigger changing the current_p, but we'll check that later since it requires more than one result
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: got an UNSAT result from PID={rp.process.pid} for hq={hq}, use_cvc4={rp.use_cvc4}')
+                    known_unsats.append(hq)
+                else:
+                    # got new sat result
+                    # this makes some other queries unneeded, but we'll filter them later
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: got a SAT result from PID={rp.process.pid} for hq={hq}, use_cvc4={rp.use_cvc4}')
+                    known_sats.append(hq)
+
+            if any_news:
+                # check if we can lower the current_p
+                for i in sorted(current_p, reverse=True): # TODO: maybe random order?
+                    if known_to_be_valid(current_p - {i}):
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: removing {i}')
+                        current_p -= {i}
+                        active_queries = list(chain(*(
+                            hoare_queries_for_p(current_p - {i})
+                            for i in sorted(current_p, reverse=True) # TODO: maybe random order?
+                        )))
+                        break
+                # filter using known facts and possibly return
+                active_queries = [hq for hq in active_queries if not (
+                    known_to_be_unsat(hq) or
+                    known_to_be_sat(hq) or
+                    known_to_be_invalid(hq.p)
+                )]
+                if len(active_queries) == 0:
+                    # we are done
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: no more active queries, returning optimial p ({len(current_p)} / {n_ps}): {sorted(current_p)}')
+                    print(f'[{datetime.now()}] check_dual_edge_optimize_minimize_ps: done')
+                    return current_p
+                else:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: {len(active_queries)} more active queries, carrying on')
+                    # for hq in active_queries:
+                    #     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps:     {hq}')
+                    # print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: carrying on')
+
+            # kill processes that timed out or whose query is no longer active
+            now = datetime.now()
+            still_running = []
+            for rp in running:
+                if not rp.process.is_alive():
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: process with PID={rp.process.pid} terminated')
+                    rp.terminate()
+                    assert rp.process.exitcode == 0, rp.process.exitcode
+                elif all(rp.hq.replace_transition(i_transition) not in active_queries for i_transition in range(n_transitions)): # rp will also try other transitions
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to another result')
+                    rp.terminate()
+                elif now > rp.deadline:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}, hq={rp.hq}, use_cvc4={rp.use_cvc4} due to timeout')
+                    rp.terminate()
+                else:
+                    still_running.append(rp)
+            running = still_running
+
+            # start new processes
+            active_tasks = list(product(
+                active_queries, # hq
+                [False, True], # use_cvc4
+            ))
+            while len(running) < n_cpus:
+                task_to_run = min(active_tasks, key=tasks.__getitem__)
+                hq, use_cvc4 = task_to_run
+                timeout = t0 * luby(tasks[task_to_run])
+                tasks[task_to_run] += 1
+                q1 = CheckDualEdgeOptimizeJoinableQueue()
+                q2 = CheckDualEdgeOptimizeQueue()
+                args = (
+                    ps,
+                    top_clauses,
+                    hq,
+                    False, # produce_cti
+                    False, # optimize
+                    False, # whole_clauses
+                    use_cvc4,
+                    not use_cvc4 and tasks[task_to_run] == n_cpus + 1, # on the (n_cpu + 1)'th attempt, save to smt2 for later analysis
+                    q1,
+                    q2,
+                )
+                if TYPE_CHECKING: # trick to get typechecking for check_dual_edge_optimize_multiprocessing_helper
+                    check_dual_edge_optimize_multiprocessing_helper(*args)
+                process = multiprocessing.Process(
+                    target=check_dual_edge_optimize_multiprocessing_helper,
+                    args=args,
+                )
+                deadline = datetime.now() +  timeout
+                print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: starting new process for hq={hq}, use_cvc4={use_cvc4} with a timeout of {timeout.total_seconds()} seconds')
+                rp = RunningProcess(
+                    process,
+                    q1,
+                    q2,
+                    deadline,
+                    hq,
+                    use_cvc4,
+                )
+                process.start()
+                running.append(rp)
+
+            # wait until we have new results, or until the next deadline expires
+            earliest_deadline = min(
+                (rp.deadline for rp in running),
+                default=None,
+            )
+            seconds = (0.1 if earliest_deadline is None else
+                       (earliest_deadline - datetime.now()).total_seconds())
+            seconds = max(0.1, seconds)
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: waiting for news with a timeout of {seconds} seconds')
+            multiprocessing.connection.wait(
+                [rp.q1._reader for rp in running], # type: ignore
+                timeout=seconds,
+            )
+        assert False
+    finally:
+        # terminate all running processeses
+        for rp in running:
+            print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_minimize_ps: terminating process with PID={rp.process.pid}')
+            rp.terminate()
+        assert len(multiprocessing.active_children()) == 0
+
+def check_dual_edge_optimize(
+        ps: Tuple[Expr,...],
+        top_clauses: Tuple[Expr, ...],
+        q_seed: Tuple[FrozenSet[int], ...],
+        whole_clauses: bool = False, # if True, only try the empty clause or the entire top_clause (used in find_dual_backward_transition)
+) -> Tuple[Optional[Tuple[PDState, PDState]], Optional[Tuple[Expr,...]]]:
+    '''
+    this checks if ps /\ qs |= wp(ps -> qs)
+    qs are given by top_clauses and q_seed
+    if there's a cti, we optimize it
+    if there's an induction edge, we find a minimal subset of ps required
+    for now there is no caching here
+    '''
+    prog = syntax.the_program
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    print(f'[{datetime.now()}] check_dual_edge_optimize: starting')
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
+    assert len(q_seed) == mp.m
+    assert all(all(i < mp.n[k] for i in q_seed[k]) for k in range(mp.m))
+    qs = tuple(mp.to_clause(k, q_seed[k]) for k in range(mp.m))
+    print(f'[{datetime.now()}] check_dual_edge_optimize: starting to check the following edge ({len(ps)}, {len(qs)}):')
+    for p in ps:
+        print(f'  {p}')
+    print('  -->')
+    for q in qs:
+        print(f'  {q}')
+    res = check_dual_edge_optimize_find_cti(ps, top_clauses, q_seed, whole_clauses)
+    if res is not None:
+        # res contains optimal cti
+        prestate, poststate = res
+        _cache_transitions.append((prestate, poststate))
+        for state in (prestate, poststate):
+            if all(eval_in_state(None, state, p) for p in inits):
+                _cache_initial.append(state)
+        print(f'[{datetime.now()}] check_dual_edge_optimize: found new cti violating dual edge')
+        print(f'[{datetime.now()}] check_dual_edge_optimize: done')
+        return ((prestate, poststate), None)
+    else:
+        # the dual edge is valid, minimize ps
+        ps_i = check_dual_edge_optimize_minimize_ps(ps, top_clauses, q_seed)
+        if False:
+            # TODO: remove once we trust check_dual_edge_optimize_minimize_ps
+            def check_old(ps_seed: FrozenSet[int]) -> bool:
+                return check_dual_edge_multiprocessing_seeds(
+                    ps=tuple(ps[i] for i in sorted(ps_seed)),
+                    qs=qs,
+                    minimize=False,
+                ) is None
+            assert check_old(ps_i)
+            assert all(not check_old(ps_i - {i}) for i in sorted(ps_i))
+        _ps = tuple(ps[i] for i in sorted(ps_i))
+        print(f'[{datetime.now()}] check_dual_edge_optimize: found new valid dual edge:')
+        for p in _ps:
+            print(f'  {p}')
+        print('  -->')
+        for q in qs:
+            print(f'  {q}')
+        print(f'[{datetime.now()}] check_dual_edge_optimize: done')
+        return (None, _ps)
 
 
 def check_k_state_implication(
@@ -889,12 +2023,13 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
             n = 1
         else:
             n = min(utils.args.cpus, len(real_work))
+        results: List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = []
         if n > 1:
             with multiprocessing.Pool(n) as pool:
-                results = pool.map_async(
-                    _map_clause_state_interaction_helper,
-                    real_work,
-                ).get(9999999) # see: https://stackoverflow.com/a/1408476
+               results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should
+                   _map_clause_state_interaction_helper,
+                   real_work,
+               ).get(9999999) # see: https://stackoverflow.com/a/1408476
         else:
             results = list(map(_map_clause_state_interaction_helper, real_work))
         for k, v in zip(real_work, results):
@@ -1110,7 +2245,7 @@ class SubclausesMapTurbo(object):
         self.n = len(self.literals)
         self.all_n = set(range(self.n))  # used in complement fairly frequently
         self.optimize = optimize
-        self.solver: Union[z3.Optimize, z3.Solver] = z3.Optimize() if optimize else z3.Solver()
+        self.solver: Any = z3.Optimize() if optimize else z3.Solver() # TODO - fix typing
         self.lit_vs = [z3.Bool(f'lit_{i}') for i in range(self.n)]
         self.state_vs: List[z3.ExprRef] = []
         self.predicate_vs: List[z3.ExprRef] = []
@@ -1250,7 +2385,7 @@ class SubclausesMapTurbo(object):
             (self.predicate_vs[i] for i in sorted(soft_ps)),
         ))
         if len(soft) > 0:
-            assert self.optimize and isinstance(self.solver, z3.Optimize)
+            assert self.optimize
             self.solver.push()
             for c in soft:
                 self.solver.add_soft(c)
@@ -1301,7 +2436,7 @@ class MultiSubclausesMapICE(object):
                  top_clauses: Sequence[Expr],
                  states: List[PDState],  # assumed to only grow
                  predicates: List[Expr],  # assumed to only grow
-                 optimize: bool = False,
+                 # optimize: bool = False, # see comment about soft_* in separate
     ):
         '''
         states is assumed to be a list that is increasing but never modified
@@ -1314,29 +2449,72 @@ class MultiSubclausesMapICE(object):
         self.variables = [destruct_clause(self.top_clauses[k])[0] for k in range(self.m)]
         self.literals = [destruct_clause(self.top_clauses[k])[1] for k in range(self.m)]
         self.n = [len(self.literals[k]) for k in range(self.m)]
-        self.all_n = [set(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
-        self.optimize = optimize
-        self.solver: Union[z3.Optimize, z3.Solver] = z3.Optimize() if optimize else z3.Solver()
-        self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)]
-        self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
-        self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)]
+        self.all_n = [frozenset(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
+        self.optimize = False # optimize
+        self.solver: Any = z3.Optimize() if self.optimize else z3.Solver() # TODO - fix typing
+        self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)] # lit_vs[k][i] represents the i'th literal in the k'th clause
+        self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # state_vs[k][i] represents the value of the k'th clause in self.states[i]
+        self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # predicate_vs[k][i] represents the implication of value of the k'th clause by self.predicates[i]
+        self.states_mapped: Set[int] = set() # i for which states[i] has been mapped and self.state_vs[*][i] is constrained in the solver
 
-    def _new_states(self) -> None:
+        if utils.args.domain_independence:
+            self._constrain_domain_independence()
+
+    def _constrain_domain_independence(self) -> None:
+        '''for each equality literal between two vars, if the literal is used, then some "domain constraining" literal for each var must also be used.'''
+        def destruct_variable_equality(lit: Expr) -> Optional[Tuple[str, str]]:
+            if not isinstance(lit, BinaryExpr):
+                return None
+            if lit.op == 'NOTEQ':
+                return None
+            assert lit.op == 'EQUAL', lit.op
+            left = lit.arg1
+            right = lit.arg2
+            def is_var(x: Id) -> bool:
+                prog = syntax.the_program
+                scope = prog.scope
+                o = scope.get(x.name)
+                assert o is None or isinstance(o, ConstantDecl)
+                return o is None
+            if (not isinstance(left, Id) or not is_var(left) or
+               not isinstance(right, Id) or not is_var(right)):
+                return None
+            else:
+                return left.name, right.name
+
+        def domain_independent_literals_for_var(lits: Tuple[Expr, ...], v: str) -> Iterable[int]:
+            for j, lit in enumerate(lits):
+                if v in lit.free_ids() and destruct_variable_equality(lit) is None:
+                    yield j
+
+        for k in range(self.m):
+            for i, l in enumerate(self.literals[k]):
+                o = destruct_variable_equality(l)
+                if o is not None:
+                    for v in o:
+                        self.solver.add(z3.Implies(self.lit_vs[k][i], z3.Or(*[self.lit_vs[k][j] for j in domain_independent_literals_for_var(self.literals[k], v)])))
+
+    def _new_states(self, to_map: List[int]) -> None:
         if self.m == 0:
             return
+        # first, just add new variables for all new states
         new = range(len(self.state_vs[0]), len(self.states))
-        if len(new) == 0:
-            return
         for k in range(self.m):
             self.state_vs[k].extend(z3.Bool(f's_{k}_{i}') for i in new)
-            print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(new)} new states for {self.to_clause(k, self.all_n[k])}')
+        # now, actually map the states that are needed to map
+        to_map = sorted(set(to_map) - self.states_mapped)
+        if len(to_map) == 0:
+            return
+        self.states_mapped.update(to_map)
+        for k in range(self.m):
+            print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(to_map)} new states for {self.to_clause(k, self.all_n[k])}')
             total_mus = 0
             total_mss = 0
             results = multiprocessing_map_clause_state_interaction([
                 (self.variables[k], self.literals[k], self.states[i])
-                for i in new
+                for i in to_map
             ])
-            for i in new:
+            for i in to_map:
                 all_mus, all_mss = results.pop(0)
                 assert len(all_mus) == 0
                 # use only all_mss
@@ -1348,7 +2526,7 @@ class MultiSubclausesMapICE(object):
                 )))
                 total_mus += len(all_mus)
                 total_mss += len(all_mss)
-            print(f'Done subclauses-states (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
+            print(f'[{datetime.now()}] Done subclauses-states (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
 
     def _new_predicates(self) -> None:
         if self.m == 0:
@@ -1369,25 +2547,28 @@ class MultiSubclausesMapICE(object):
                 all_mus, all_mss = results.pop(0)
                 assert len(all_mus) == 0
                 # use only all_mss
-                self.solver.add(z3.Or(z3.Not(self.predicate_vs[k][i]), *(
-                    z3.And(*(
-                        z3.Not(self.lit_vs[k][j]) for j in sorted(self.all_n[k] - v)
+                self.solver.add(self.predicate_vs[k][i] == z3.And(*(
+                    z3.Or(*(
+                        self.lit_vs[k][j] for j in sorted(self.all_n[k] - v)
                     ))
                     for v in all_mss
                 )))
                 total_mus += len(all_mus)
                 total_mss += len(all_mss)
-            print(f'Done subclauses-predicates (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
+            print(f'[{datetime.now()}] Done subclauses-predicates (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
 
     def separate(self,
                  pos: Collection[int] = (),
                  neg: Collection[int] = (),
                  imp: Collection[Tuple[int, int]] = (),
-                 # ps: Collection[int] = (),  # see note below
-                 soft_pos: Collection[int] = (),
-                 soft_neg: Collection[int] = (),
-                 soft_imp: Collection[Tuple[int, int]] = (),
-                 # soft_ps: Collection[int] = (),  # see note below
+                 pos_ps: Collection[int] = (), # each clause must be implied by these predicates (used to force initiation)
+                 neg_ps: Collection[int] = (), # each clause must not be implied by these predicates
+                 # the following were removed when we saw z3.Optimize is slow. maybe bring back later with local optimization:
+                 # soft_pos: Collection[int] = (),
+                 # soft_neg: Collection[int] = (),
+                 # soft_imp: Collection[Tuple[int, int]] = (),
+                 # soft_pos_ps: Collection[int] = (),
+                 # soft_neg_ps: Collection[int] = (),
     ) -> Optional[List[FrozenSet[int]]]:
         '''
         find a conjunction of subclauses that respects given constraints, and optionally as many soft constraints as possible
@@ -1395,73 +2576,95 @@ class MultiSubclausesMapICE(object):
         TODO: to we need an unsat core in case there is no subclause?
 
         NOTE: the result must contain a subclause of each top clause, i.e., true cannot be used instead of one of the top clauses
-
-        NOTE: the ps and soft ps functionality is implemented but not used, so it cannot be trusted to be implemented correctly. therefore, it's currently removed from the function declaration
         '''
-        ps: Collection[int] = ()
-        soft_ps: Collection[int] = ()
-        self._new_states()
+        soft_pos: Collection[int] = ()
+        soft_neg: Collection[int] = ()
+        soft_imp: Collection[Tuple[int, int]] = ()
+        soft_pos_ps: Collection[int] = ()
+        soft_neg_ps: Collection[int] = ()
+        self._new_states(list(chain(
+            pos,
+            neg,
+            chain(*imp),
+            soft_pos,
+            soft_neg,
+            chain(*soft_imp),
+        )))
         self._new_predicates()
+        print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: starting')
         assert all(0 <= i < len(self.states) for i in chain(pos, neg, soft_pos, soft_neg))
-        assert all(0 <= i < len(self.predicates) for i in chain(ps, soft_ps))
-        sep: List[z3.ExprRef] = list(chain(
+        assert all(0 <= i < len(self.predicates) for i in chain(pos_ps, neg_ps, soft_pos_ps, soft_neg_ps))
+        sep = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(pos)),
             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(neg)),
             (z3.Implies(
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(imp)),
-            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(ps)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(pos_ps)),
+            (z3.And(*(z3.Not(self.predicate_vs[k][i]) for k in range(self.m))) for i in sorted(neg_ps)),
         ))
-        soft: List[z3.ExprRef] = list(chain(
+        soft = list(chain(
             (z3.And(*(self.state_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos)),
             (z3.Or(*(z3.Not(self.state_vs[k][i]) for k in range(self.m))) for i in sorted(soft_neg)),
             (z3.Implies(
                 z3.And(*(self.state_vs[k][i] for k in range(self.m))),
                 z3.And(*(self.state_vs[k][j] for k in range(self.m))),
             ) for i, j in sorted(soft_imp)),
-            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(soft_ps)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(soft_pos_ps)),
+            (z3.And(*(z3.Not(self.predicate_vs[k][i]) for k in range(self.m))) for i in sorted(soft_neg_ps)),
+            # also optimize for smaller clauses
+            (z3.Not(v) for v in chain(*self.lit_vs)),
         ))
         self.solver.push()
         for c in sep:
             self.solver.add(c)
-        if len(soft) > 0:
-            assert self.optimize and isinstance(self.solver, z3.Optimize)
+        if self.optimize:
             for c in soft:
                 self.solver.add_soft(c)
-        if self.optimize:
-            assert isinstance(self.solver, z3.Optimize)
-            # optimize for smaller clauses
-            for v in chain(*self.lit_vs):
-                self.solver.add_soft(z3.Not(v))
-        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ')
+        t_start = datetime.now()
         res = self.solver.check()
-        print(res)
+        t_end = datetime.now()
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... got {res}')
         assert res in (z3.unsat, z3.sat)
+        if (t_end - t_start).total_seconds() > 3600:
+            # TODO: Optimize does not have to_smt2, is sexpr the same?
+            smt2 = self.solver.sexpr()
+            fn = f'{sha1(smt2.encode()).hexdigest()}.sexpr'
+            print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: that took very long, saving saving query to {fn} ({len(smt2)} bytes)')
+            open(fn, 'w').write(smt2)
         if res == z3.unsat:
             self.solver.pop()
+            print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
             return None
-        # minimize for strongest possible clause
-        # TODO: just use z3's Optimize instead of minimizing manually
         model = self.solver.model()
         forced_to_false = [set(
             i for i, v in enumerate(self.lit_vs[k])
             if not z3.is_true(model[v])
         ) for k in range(self.m)]
-        for k in range(self.m):
-            for i in range(self.n[k]):
-                if i not in forced_to_false[k]:
-                    ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
-                    print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ', end='')
-                    res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
-                    print(res)
-                    assert res in (z3.unsat, z3.sat)
-                    if res == z3.sat:
-                        forced_to_false[k].add(i)
+        if not self.optimize:
+            # minimize for strongest possible clause (and ignore other soft constraints)
+            for k in range(self.m):
+                for i in range(self.n[k]):
+                    if i not in forced_to_false[k]:
+                        ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... ')
+                        res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... got {res}')
+                        assert res in (z3.unsat, z3.sat)
+                        if res == z3.sat:
+                            model = self.solver.model()
+                            for kk in range(self.m):
+                                for ii, v in enumerate(self.lit_vs[k]):
+                                    if ii not in forced_to_false[kk] and not z3.is_true(model[v]):
+                                        forced_to_false[kk].add(ii)
+                            assert i in forced_to_false[k]
         ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]]
-        assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat
+        assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat # TODO: remove assertion after we are confident about this code
         result = [frozenset(self.all_n[k] - forced_to_false[k]) for k in range(self.m)]
         self.solver.pop()
+        print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
         return result
 
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
@@ -1469,7 +2672,6 @@ class MultiSubclausesMapICE(object):
         free = set(chain(*(lit.free_ids() for lit in lits)))
         vs = [v for v in self.variables[k] if v.name in free]
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
-
 
 
 
@@ -2999,7 +4201,6 @@ def cdcl_state_bounds(solver: Solver) -> str:
             [maps[i].to_clause(maps[i].all_n) for i in states_to_exclude],
             states,
             [],
-            False
         )
         def check_sep(s: Collection[int], pos: Collection[int]) -> Optional[List[Predicate]]:
             res = mp.separate(
@@ -3593,7 +4794,6 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
             top_clauses,
             states,
             [],
-            False
         )
         def check_sep(s: FrozenSet[int]) -> Optional[List[Predicate]]:
             res = mp.separate(
@@ -3825,14 +5025,15 @@ def primal_dual_houdini(solver: Solver) -> str:
     cache_path = Path(utils.args.filename).with_suffix('.cache')
     load_caches()
 
-    print(f'\nStarting primal_dual_houdini, PID={os.getpid()} [{datetime.now()}]\n')
+    print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting primal_dual_houdini\n')
 
     safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    init_ps = [And(*inits)] # to be used with MultiSubclausesMapICE
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[PDState] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
-    maps: List[SubclausesMapTurbo] = []  # for each state, a map with the negation of its diagram, not really used, but still used to get the negation of diagram of a state TODO: remove
+    maps: List[MultiSubclausesMapICE] = []  # for each state, a MultiSubclausesMapICE map with only the negation of its diagram. used in several places either to get the negation of the state's diagram or to find a clause that excludes it (mostly when finding p's, I think)
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
     live_states: FrozenSet[int] = frozenset() # not yet ruled out by invariant, and also currently active in the houdini level
@@ -3892,15 +5093,15 @@ def primal_dual_houdini(solver: Solver) -> str:
                     i for i, t in enumerate(states)
                     if is_substructure(s, t)
                 )
-            print(f'done')
+            print(f'[{datetime.now()}] done')
             isomorphic = substructures & superstructures
             if len(isomorphic) > 0:
                 #production# assert len(isomorphic) == 1, sorted(isomorphic)
                 i = list(isomorphic)[0]
-                print(f'add_state{note}: isomorphic to previous state: states[{i}]')
+                print(f'[{datetime.now()}] add_state{note}: isomorphic to previous state: states[{i}]')
             else:
                 i = len(states)
-                print(f'add_state{note}: adding new state: states[{i}]')
+                print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}]')
                 states.append(s)
                 for j in sorted(substructures):
                     substructure.append((i, j))
@@ -3909,7 +5110,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cs = as_clauses(Not(s.as_diagram(0).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
-                maps.append(SubclausesMapTurbo(c, states, [], True))
+                maps.append(MultiSubclausesMapICE([c], states, init_ps))
             if internal_cti:
                 internal_ctis |= {i}
             else:
@@ -3919,16 +5120,16 @@ def primal_dual_houdini(solver: Solver) -> str:
             i = states.index(s)
             if internal_cti:
                 if i not in internal_ctis:
-                    print(f'add_state{note}: adding states[{i}] to internal_ctis')
+                    print(f'[{datetime.now()}] add_state{note}: adding states[{i}] to internal_ctis')
                     internal_ctis |= {i}
                 else:
-                    print(f'add_state{note}: already have states[{i}] in internal_ctis')
+                    print(f'[{datetime.now()}] add_state{note}: already have states[{i}] in internal_ctis')
             else:
                 if i not in live_states:
-                    print(f'add_state{note}: adding states[{i}] to live_states')
+                    print(f'[{datetime.now()}] add_state{note}: adding states[{i}] to live_states')
                     live_states |= {i}
                 else:
-                    print(f'add_state{note}: already have states[{i}] in live_states')
+                    print(f'[{datetime.now()}] add_state{note}: already have states[{i}] in live_states')
             return i
 
     def add_transition(i: int, j: int) -> None:
@@ -3953,20 +5154,20 @@ def primal_dual_houdini(solver: Solver) -> str:
         if p not in predicates:
             for j, q in enumerate(predicates):
                 if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
-                    print(f'add_predicate: equivalent to existing predicate {j}: {p} <=> {q}')
+                    print(f'[{datetime.now()}] add_predicate: equivalent to existing predicate {j}: {p} <=> {q}')
                     if j not in live_predicates:
-                        print(f'add_predicate: reviving predicate {j}')
+                        print(f'[{datetime.now()}] add_predicate: reviving predicate {j}')
                     break
             else:
                 j = len(predicates)
-                print(f'add_predicate: adding new predicate {j}: {p}')
+                print(f'[{datetime.now()}] add_predicate: adding new predicate {j}: {p}')
                 predicates.append(p)
         else:
             j = predicates.index(p)
             if j in live_predicates:
-                print(f'add_predicate: already have this predicate {j}: {p}')
+                print(f'[{datetime.now()}] add_predicate: already have this predicate {j}: {p}')
             else:
-                print(f'add_predicate: reviving previous predicate {j}: {p}')
+                print(f'[{datetime.now()}] add_predicate: reviving previous predicate {j}: {p}')
         live_predicates |= {j}
         #TODO# assert all(eval_in_state(None, states[i], p) for i in sorted(reachable))
         # if reason is not None:
@@ -4024,7 +5225,8 @@ def primal_dual_houdini(solver: Solver) -> str:
         # according to the current sharp predicates, using unrolling
         # of k
         # NOTE: this may find new reachable states
-        print(f'Starting forward_explore_from_states({sorted(src)})')
+        print(f'[{datetime.now()}] forward_explore_from_states: starting')
+        print(f'[{datetime.now()}] Starting forward_explore_from_states({sorted(src)})')
         nonlocal reachable
         r: FrozenSet[int] = reachable | src
         r = close_forward(r)
@@ -4063,7 +5265,8 @@ def primal_dual_houdini(solver: Solver) -> str:
             reachable = close_forward(reachable)
             r = close_forward(r)
             assert frozenset(index_map.values()) <= r
-        print(f'Finished forward_explore_from_states({sorted(src)})')
+        print(f'[{datetime.now()}] Finished forward_explore_from_states({sorted(src)})')
+        print(f'[{datetime.now()}] forward_explore_from_states: done')
 
     def houdini_frames() -> None:
         '''Check if any subset of the sharp predicates is inductive, and
@@ -4085,12 +5288,14 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal frames
         assert_invariants()
 
+        print(f'[{datetime.now()}] houdini_frames: starting')
+
         # first forward_explore from the reachable states
         n_reachable = len(reachable)
         n_live_predicates = len(live_predicates)
         forward_explore_from_states(reachable)
         new_reachable_states()
-        print(f'Forward explore of reachable states found {len(reachable) - n_reachable} new reachable states, eliminating {n_live_predicates - len(live_predicates)} predicates')
+        print(f'[{datetime.now()}] Forward explore of reachable states found {len(reachable) - n_reachable} new reachable states, eliminating {n_live_predicates - len(live_predicates)} predicates')
         assert_invariants()
 
         frames = [[predicates[i] for i in sorted(live_predicates)]]
@@ -4110,14 +5315,14 @@ def primal_dual_houdini(solver: Solver) -> str:
             for i in sorted(live_states):
                 if i in r:
                     continue
-                print(f'houdini_frames: checking for backward-transition from states[{i}]')
+                print(f'[{datetime.now()}] houdini_frames: checking for backward-transition from states[{i}]')
                 res = check_two_state_implication(
                     solver,
-                    a + [maps[i].to_clause(maps[i].all_n)],
-                    maps[i].to_clause(maps[i].all_n),
+                    a + [maps[i].to_clause(0, maps[i].all_n[0])],
+                    maps[i].to_clause(0, maps[i].all_n[0]),
                     f'backward-transition from states[{i}]'
                 )
-                print(f'houdini_frames: done checking for backward-transition from states[{i}]')
+                print(f'[{datetime.now()}] houdini_frames: done checking for backward-transition from states[{i}]')
                 if res is not None:
                     prestate, poststate = res
                     i_pre = add_state(prestate, False)
@@ -4135,9 +5340,9 @@ def primal_dual_houdini(solver: Solver) -> str:
             for p in b[:]:
                 if p not in b or predicates.index(p) in inductive_invariant:
                     continue
-                print(f'houdini_frames: checking for CTI to {p}')
+                print(f'[{datetime.now()}] houdini_frames: checking for CTI to {p}')
                 res = check_two_state_implication(solver, a, p, 'CTI')
-                print(f'houdini_frames: done checking for CTI to {p}')
+                print(f'[{datetime.now()}] houdini_frames: done checking for CTI to {p}')
                 if res is not None:
                     prestate, poststate = res
                     i_pre = add_state(prestate, False)
@@ -4164,10 +5369,11 @@ def primal_dual_houdini(solver: Solver) -> str:
         inv = frozenset(predicates.index(p) for p in a)
         #production# assert inductive_invariant <= inv
         inductive_invariant = inv
+        print(f'[{datetime.now()}] houdini_frames: done')
 
     def compute_step_frames() -> None:
         nonlocal step_frames
-        print(f'compute_step_frames: starting')
+        print(f'[{datetime.now()}] compute_step_frames: starting')
         step_frames = [[predicates[i] for i in sorted(live_predicates)]]
         while True:
             a = step_frames[-1]
@@ -4187,7 +5393,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         #production# assert step_frames[-1] == a == b
         inv = frozenset(predicates.index(p) for p in a)
         #production# assert inductive_invariant == inv
-        print(f'compute_step_frames: done')
+        print(f'[{datetime.now()}] compute_step_frames: done')
 
     def dual_houdini_frames() -> None:
         '''
@@ -4199,14 +5405,14 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal dual_frames
         nonlocal live_states
         assert_invariants()
-        print(f'dual_houdini_frames: starting')
+        print(f'[{datetime.now()}] dual_houdini_frames: starting')
         # first forward_explore from the current inductive invariant
         n_inductive_invariant = len(inductive_invariant)
         n_reachable_states = len(reachable)
         forward_explore_from_predicates(inductive_invariant)
         new_inductive_invariants()
         new_reachable_states()
-        print(f'dual_houdini_frames: forward explore of inductive invariant found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates and {len(reachable) - n_reachable_states} new reachable states')
+        print(f'[{datetime.now()}] dual_houdini_frames: forward explore of inductive invariant found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates and {len(reachable) - n_reachable_states} new reachable states')
         assert_invariants()
         # TODO: should we stop here in case we found anything and go back to primal houdini?
 
@@ -4217,11 +5423,11 @@ def primal_dual_houdini(solver: Solver) -> str:
             #production# assert r == dual_close_forward(r)
             a = dual_frames[-1]
             #production# assert all(eval_in_state(None, states[i], predicates[j]) for i, j in product(a, sorted(r)))
-            print(f'dual_houdini_frames: starting iteration, r={sorted(r)}, a=reachable+{sorted(frozenset(a) - reachable)}')
+            print(f'[{datetime.now()}] dual_houdini_frames: starting iteration, r={sorted(r)}, a=reachable+{sorted(frozenset(a) - reachable)}')
             r_0 = r
             for j in sorted(live_predicates):
                 if j not in r and all(eval_in_state(None, states[i], predicates[j]) for i in a):
-                    print(f'dual_houdini_frames: adding {j} to r by abstract implication')
+                    print(f'[{datetime.now()}] dual_houdini_frames: adding {j} to r by abstract implication')
                     r |= {j}
                     r = dual_close_forward(r)
             n_reachable = len(reachable)
@@ -4233,13 +5439,13 @@ def primal_dual_houdini(solver: Solver) -> str:
             # try to add edges to existing predicates (dual-backward-transitions)
             goals = live_predicates - r
             if len(goals) > 0:
-                print(f'dual_houdini_frames: checking for dual-backward-transition from predicates{sorted(goals)}')
+                print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-backward-transition from predicates{sorted(goals)}')
                 res = find_dual_backward_transition(
                     a,
                     r_0,
                     goals,
                 )
-                print(f'dual_houdini_frames: done checking for dual-backward-transition predicates{sorted(goals)}')
+                print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-backward-transition predicates{sorted(goals)}')
                 if res is not None:
                     ps = frozenset(add_predicate(p) for p in res[0])
                     qs = frozenset(add_predicate(q) for q in res[1]) # should not add any new predicates actually
@@ -4256,7 +5462,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             # for j in sorted(live_predicates):
             #     if j in r:
             #         continue
-            #     print(f'dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
             #     res = find_dual_edge(
             #         a,
             #         r_0,
@@ -4265,7 +5471,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             #          if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))
             #         ], # TODO: change this when find_dual_edge supports greedy predicate goals
             #     )
-            #     print(f'dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
+            #     print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-backward-transition from predicates[{j}]: {predicates[j]}')
             #     if res is not None:
             #         ps = frozenset(add_predicate(p) for p in res[0])
             #         qs = frozenset(add_predicate(q) for q in res[1])
@@ -4299,7 +5505,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 )
                 if len(roots) == 0:
                     continue
-                print(f'dual_houdini_frames: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+                print(f'[{datetime.now()}] dual_houdini_frames: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
                 for i in sorted(roots):
                     #TODO# assert i not in reachable ??? see paxos_forall.pd-primal-dual-houdini.5e0ed39.seed-1234.log
                     if i in reachable:
@@ -4308,7 +5514,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         # already eliminated i
                         #production# assert changes
                         continue
-                    print(f'dual_houdini_frames: checking for dual-CTI to states[{i}]')
+                    print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-CTI to states[{i}]')
                     n_reachable = len(reachable)
                     res = find_dual_edge(
                         a,
@@ -4319,7 +5525,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         ],
                     )
                     #TODO# assert n_reachable == len(reachable), '?'
-                    print(f'dual_houdini_frames: done checking for dual-CTI to states[{i}]')
+                    print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-CTI to states[{i}]')
                     if res is not None:
                         ps = frozenset(add_predicate(p) for p in res[0])
                         qs = frozenset(add_predicate(q) for q in res[1])
@@ -4350,7 +5556,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         continue
                     assert find_dual_edge(a, r_0, states[i], []) is None, i
             b = [i for i in a if all(eval_in_state(None, states[i], predicates[j]) for j in sorted(r))]
-            print(f'dual_houdini_frames: next frame is: {sorted(b)}')
+            print(f'[{datetime.now()}] dual_houdini_frames: next frame is: {sorted(b)}')
             if a == b:
                 break
             else:
@@ -4363,7 +5569,8 @@ def primal_dual_houdini(solver: Solver) -> str:
         # TODO: this assertion is actually not true when there is a
         # cycle of unreachable states, we should think about it more
         # assert frozenset(dual_frames[-1]) <= reachable, sorted(frozenset(dual_frames[-1]) - reachable)
-        print(f'dual_houdini_frames computed {len(dual_frames)} dual frames:')
+        print(f'[{datetime.now()}] dual_houdini_frames: done')
+        print(f'[{datetime.now()}] dual_houdini_frames computed {len(dual_frames)} dual frames:')
         for f in dual_frames:
             print(f'  {sorted(f)}')
         if frozenset(dual_frames[-1]) <= reachable:
@@ -4382,7 +5589,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         from pos.
         '''
         # TODO: think about this again and run more thorough validation tests
-        print(f'compute_roots: starting with: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}')
+        print(f'[{datetime.now()}] compute_roots: starting with: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}')
         # assert a is None or reachable <= a TODO: this can be violated if a new reachable state is discovered in dual_houdini_frames, think about this
         #production# assert reachable <= pos
         # assert pos <= s TODO: think about this again, but for now I think it makes sense even of pos is not a subset of s
@@ -4406,7 +5613,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if i in dom and j in dom:
                 z3s.add(z3.Implies(v(i), v(j)))
         z3s.add(z3.Or(*(z3.Not(v(i)) for i in sorted(s))))
-        # print(f'compute_roots: z3s:\n{z3s}')
+        # print(f'[{datetime.now()}] compute_roots: z3s:\n{z3s}')
         def f(r: FrozenSet[int]) -> bool:
             res = z3s.check(*(v(i) for i in r))
             assert res in (z3.unsat, z3.sat)
@@ -4421,7 +5628,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             if f(r - {i}):
                 r -= {i}
         assert f(r)
-        print(f'compute_roots: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}, result is {sorted(r)}')
+        print(f'[{datetime.now()}] compute_roots: s={sorted(s)}, pos=reachable+{sorted(pos - reachable)}, ps={sorted(predicates.index(p) for p in ps)}, a={sorted(a) if a is not None else None}, result is {sorted(r)}')
         return r
 
     def forward_explore_from_predicates(src: FrozenSet[int],
@@ -4435,7 +5642,8 @@ def primal_dual_houdini(solver: Solver) -> str:
 
         for now, assuming k=1, i.e., to rule out a state we will only use one clause
         '''
-        print(f'forward_explore_from_predicates: starting with predicates{sorted(src)}')
+        print(f'[{datetime.now()}] forward_explore_from_predicates: starting')
+        print(f'[{datetime.now()}] forward_explore_from_predicates: starting with predicates{sorted(src)}')
         nonlocal inductive_invariant
         n_inductive_invariant = len(inductive_invariant)
         r: FrozenSet[int] = inductive_invariant | src
@@ -4465,7 +5673,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     r = dual_close_forward(r)
                     #production# assert qs <= r
                     changes = True
-                    print(f'forward_explore_from_predicates: connecting to existing predicates: predicates{sorted(qs)}')
+                    print(f'[{datetime.now()}] forward_explore_from_predicates: connecting to existing predicates: predicates{sorted(qs)}')
                     break
                 else:
                     prestate, poststate = cti
@@ -4506,15 +5714,15 @@ def primal_dual_houdini(solver: Solver) -> str:
                 a=None,
             )
             if len(roots) > 0:
-                print(f'forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
+                print(f'[{datetime.now()}] forward_explore_from_predicates: trying to eliminate the following {len(roots)} roots: {sorted(roots)}')
             # try to find a new predicate that eliminates a root and is inductive relative to r
             for i in sorted(roots):
                 #TODO# assert i not in reachable, i # TODO: see paxos_forall_choosable.pd-primal-dual-houdini.6d3c0fd.seed-5678.log
                 if i in reachable:
                     continue
-                print(f'forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
+                print(f'[{datetime.now()}] forward_explore_from_predicates: checking for edge to eliminate states[{i}]')
                 res = find_dual_edge([], r, states[i], [states[i] for i in sorted(to_eliminate)], n_ps=0)
-                print(f'forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
+                print(f'[{datetime.now()}] forward_explore_from_predicates: done checking for edge to eliminate states[{i}]')
                 if res is not None:
                     ps_i = frozenset(add_predicate(p) for p in res[0])
                     qs_i = frozenset(add_predicate(q) for q in res[1])
@@ -4523,7 +5731,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     dual_transitions.append((ps_i, qs_i))
                     r = dual_close_forward(r)
                     #production# assert qs_i <= r
-                    print(f'forward_explore_from_predicates: connecting to new predicates: predicates{sorted(qs_i)}')
+                    print(f'[{datetime.now()}] forward_explore_from_predicates: connecting to new predicates: predicates{sorted(qs_i)}')
                     changes = True
                     break # to prioritize using existing predicates (no stratification, unlike in dual_houdini_frames)
             else:
@@ -4536,7 +5744,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                         assert find_dual_edge([], r, states[i], [], n_ps=0) is None, i
         # here there are no more dual edges that can be added
         inductive_invariant = dual_close_forward(inductive_invariant)
-        print(f'forward_explore_from_predicates: finished exploring from predicates{sorted(src)}, found {len(r) - n_r} new provable predicates: predicates{sorted(r - src)}, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
+        print(f'[{datetime.now()}] forward_explore_from_predicates: finished exploring from predicates{sorted(src)}, found {len(r) - n_r} new provable predicates: predicates{sorted(r - src)}, and added {len(inductive_invariant) - n_inductive_invariant} new predicates to the inductive invariant')
+        print(f'[{datetime.now()}] forward_explore_from_predicates: done')
 
     def find_dual_edge(
             pos: Collection[int], # indices into states that ps must satisfy
@@ -4549,6 +5758,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         '''
         May add new reachable states if it finds new initial states
         '''
+        print(f'[{datetime.now()}] find_dual_edge: starting')
         # n_qs = 3 # just for testing and messing around
         n_qs = utils.args.induction_width
         worklist_budget = 100
@@ -4563,25 +5773,26 @@ def primal_dual_houdini(solver: Solver) -> str:
         stateof: Dict[Expr, int] = {}
         if isinstance(goal, PDState):
             goal_i = states.index(goal)
-            goal = maps[goal_i].to_clause(maps[goal_i].all_n)
+            goal = maps[goal_i].to_clause(0, maps[goal_i].all_n[0])
             stateof[goal] = goal_i
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=states[{goal_i}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         else:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: starting, pos={sorted(pos)}, r={sorted(r)}, goal=[{goal}], soft_goals=states{soft_goals_i}, n_qs={n_qs}')
         n_internal_ctis = len(internal_ctis)
+        n_ctis = 0
         n_reachable = len(reachable)
         ps: List[Predicate] = [predicates[j] for j in sorted(r)]
         worklist: List[Tuple[Expr,...]] = [(goal,)]
         seen_before: FrozenSet[FrozenSet[Expr]] = frozenset()
         while len(worklist) > 0 and worklist_budget > 0:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: worklist is {len(worklist)} long, budget is {worklist_budget}:')
             for goals in worklist:
                 notes = ', '.join(f'states[{stateof[g]}]' if g in stateof else str(g) for g in goals)
                 print(f'    ({notes}, )')
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: trying the top one')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: trying the top one')
             goals = worklist.pop(0)
             if frozenset(goals) in seen_before:
-                print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: already seen this one, skipping')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: already seen this one, skipping')
                 continue
             worklist_budget -= 1
             seen_before |= {frozenset(goals)}
@@ -4589,15 +5800,16 @@ def primal_dual_houdini(solver: Solver) -> str:
             mp = MultiSubclausesMapICE(
                 [g for g in goals],
                 states,
-                [],
-                True,
+                init_ps,
             )
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
                 s = frozenset(s) | reachable
                 res = mp.separate(
                     pos=sorted(reachable),
-                    imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
-                    soft_neg=soft_goals_i,
+                    # imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
+                    imp=sorted((i, j) for i, j in transitions if i in s and j in s), # ODED: I think we don't need substructures here since for them the implication must hold anyway
+                    pos_ps=[0],
+                    # soft_neg=soft_goals_i,
                 )
                 if res is None:
                     return None
@@ -4662,7 +5874,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cti_solver_add_p(p)
             def check_q(q_seed: List[FrozenSet[int]], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[PDState, PDState]]:
                 for q_indicator, transition_indicator in product(q_indicators_post, transition_indicators):
-                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): testing {q_indicator}, {transition_indicator}')
                     indicators = tuple(chain(
                         [q_indicator, transition_indicator],
                         (lit_indicators_pre[k][i] for k in range(mp.m) for i in sorted(mp.all_n[k] - q_seed[k])),
@@ -4671,7 +5883,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     ))
                     z3res = cti_solver.check(indicators)
                     assert z3res in (z3.sat, z3.unsat)
-                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): {z3res}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): {z3res}')
                     if z3res == z3.unsat:
                         continue
                     if optimize:
@@ -4685,25 +5897,34 @@ def primal_dual_houdini(solver: Solver) -> str:
                             z3res = cti_solver.check(indicators + (extra,))
                             assert z3res in (z3.sat, z3.unsat)
                             if z3res == z3.sat:
-                                print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): adding extra: {extra}')
+                                print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): adding extra: {extra}')
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
                     z3model = cti_solver.model(indicators)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
                     poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
-                    print(f'PID={os.getpid()} [{datetime.now()}] check_q (find_dual_edge): found new cti violating dual edge')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
                         if all(eval_in_state(None, state, p) for p in inits):
                             _cache_initial.append(state)
                     return prestate, poststate
                 return None
+            ctis: FrozenSet[int] = frozenset()
             while True:
                 while True: # find a Q or discover there is none and learn internal_ctis
-                    ctis = frozenset(
-                        i for i in sorted((live_states | internal_ctis) - reachable)
-                        if all(eval_in_state(None, states[i], p) for p in ps)
-                    )
+                    if False:
+                        # use all previously known internal_ctis
+                        ctis = frozenset(
+                            i for i in sorted((live_states | internal_ctis) - reachable)
+                            if all(eval_in_state(None, states[i], p) for p in ps)
+                        )
+                    else:
+                        # use only ctis discovered for this worklist item (i.e., this mp)
+                        ctis = frozenset(
+                            i for i in sorted(ctis - reachable)
+                            if all(eval_in_state(None, states[i], p) for p in ps)
+                        )
                     res = check_sep(ctis)
                     if res is None:
                         break
@@ -4712,15 +5933,16 @@ def primal_dual_houdini(solver: Solver) -> str:
                     # here, q is a predicate such that r /\ ps /\ q |= wp(r /\ ps -> q) has no CTI in live_states | internal_ctis
                     # first, check if init |= q, if not, we learn a new initial state
                     if len(q) == 1:
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: potential q is ({len(destruct_clause(q[0])[1])} literals): {q[0]}')
                     else:
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential q is:')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: potential q is:')
                         for k in range(mp.m):
                             print(f'  ({len(destruct_clause(q[k])[1])} literals): {q[k]}')
                     initial = True
                     for qq in q:
                         s = check_initial(solver, qq)
                         if s is not None:
+                            assert False # TODO: remove all this to simplify the code
                             initial = False
                             print(f'  this predicate is not initial, learned a new initial state')
                             i = add_state(s, False)
@@ -4732,16 +5954,16 @@ def primal_dual_houdini(solver: Solver) -> str:
                     # now, check if r /\ ps /\ q |= wp(r /\ ps -> q)
                     _cti: Optional[Tuple[PDState, PDState]]
                     _ps: Optional[Tuple[Predicate,...]]
-                    if True:
+                    if False:
                         # version using cti_solver
                         p_seed = frozenset(range(len(ps)))
                         _cti = check_q(q_seed, p_seed,  utils.args.optimize_ctis)
                         if _cti is None:
-                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: dual edge is valid, minimizing ps')
+                            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: dual edge is valid, minimizing ps')
                             for i in sorted(p_seed, reverse=True):
                                 if check_q(q_seed, p_seed - {i}, False) is None:
                                     p_seed -= {i}
-                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: done minimizing ps')
+                            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: done minimizing ps')
                             _ps = tuple(ps[i] for i in sorted(p_seed))
                         else:
                             _ps = None
@@ -4763,6 +5985,13 @@ def primal_dual_houdini(solver: Solver) -> str:
                                     tuple(q),
                                     msg='validation-cti'
                                 )[0] is not None
+                    elif True:
+                        # version using check_dual_edge_optimize
+                        _cti, _ps = check_dual_edge_optimize(
+                            tuple(ps),
+                            mp.top_clauses,
+                            tuple(q_seed),
+                        )
                     else:
                         # version using check_dual_edge
                         _cti, _ps = check_dual_edge(
@@ -4774,13 +6003,14 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if _cti is None:
                         assert _ps is not None
                         _qs = tuple(q)
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                         for p in _ps:
                             print(f'  {p}')
                         print('  --> ')
                         for qq in _qs:
                             print(f'  {qq}')
+                        print(f'[{datetime.now()}] find_dual_edge: done')
                         return _ps, _qs
                     else:
                         prestate, poststate = _cti
@@ -4788,6 +6018,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                         i_post = add_state(poststate, True)
                         #production# assert (i_pre, i_post) not in transitions
                         add_transition(i_pre, i_post)
+                        ctis |= {i_pre, i_post}
+                        n_ctis += 1
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new cti')
                 # here, we have enough internal_ctis to rule out all possible q's
                 #production# assert check_sep(ctis) is None
                 added_new_p = False
@@ -4800,36 +6033,38 @@ def primal_dual_houdini(solver: Solver) -> str:
                            ctis -= {i}
                     #production# assert check_sep(ctis) is None
                     to_eliminate = ctis - pos
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
                     for i in sorted(to_eliminate):
                         while True:
                             seed = maps[i].separate(
                                 pos=(pos | reachable),
                                 neg=[i],
-                                soft_neg=soft_neg, # TODO: or to_eliminate ?
+                                pos_ps=[0],
+                                # soft_neg=soft_neg, # TODO: or to_eliminate ?
                             )
                             if seed is None:
                                 break
-                            p = maps[i].to_clause(seed)
+                            p = maps[i].to_clause(0, seed[0])
                             print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: potential p is: {p}')
                             s = check_initial(solver, p)
                             if s is None:
                                 break
                             else:
+                                assert False # TODO: remove all this to simplify the code
                                 print(f'  this predicate is not initial, learned a new initial state')
                                 reachable |= {add_state(s, False)}
                                 reachable = close_forward(reachable) # just in case
                         if seed is not None:
                             add_p(p)
                             added_new_p = True
-                            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: found new p predicate: {p}')
+                            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new p predicate: {p}')
                             break
                 if added_new_p:
                     continue
-                print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: cannot find any new p predicate')
+                print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find any new p predicate')
                 # we have not added a new p
                 if len(goals) == n_qs:
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: cannot find dual edge for this worklist item')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find dual edge for this worklist item')
                     break
                 # minimize ctis (including ones in pos) and add more worklist items
                 # TODO: use unsat cores
@@ -4840,22 +6075,23 @@ def primal_dual_houdini(solver: Solver) -> str:
                 #production# assert check_sep(ctis) is None
                 #production# assert len(ctis & reachable) == 0, sorted(ctis & reachable)
                 if len(ctis) == 0:
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: seems we learned the current goals are violated by reachable states, we have no ctis')
                 else:
-                    ctis = frozenset(i for i in ctis if maps[i].to_clause(maps[i].all_n) not in goals)
-                    print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
+                    ctis = frozenset(i for i in ctis if maps[i].to_clause(0, maps[i].all_n[0]) not in goals)
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: adding more worklist items to eliminate one of: {sorted(ctis)}')
                     for i in sorted(ctis):
-                        g = maps[i].to_clause(maps[i].all_n)
+                        g = maps[i].to_clause(0, maps[i].all_n[0])
                         #production# assert g not in goals
                         stateof[g] = i
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
         if len(worklist) == 0:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: no more worklist items, so cannot find dual edge')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: no more worklist items, so cannot find dual edge')
         else:
-            print(f'PID={os.getpid()} [{datetime.now()}] find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
+            print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: ran out of worklist budget, reached induction width of {len(worklist[0]) - 1}')
+        print(f'[{datetime.now()}] find_dual_edge: done')
         return None
 
     def find_dual_backward_transition(
@@ -4868,6 +6104,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         no restriction on number of ps, the qs will be a subset of goals
         May add new reachable states if it finds new initial states
         '''
+        print(f'[{datetime.now()}] find_dual_backward_transition: starting')
         nonlocal reachable
         pos = frozenset(pos)
         n_internal_ctis = len(internal_ctis)
@@ -4875,7 +6112,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         ps: List[Predicate] = [] # will be increasing
         goals = sorted(goals)
         qs = tuple(predicates[j] for j in goals)
-        print(f'find_dual_backward_transition: starting, pos=states{sorted(pos)}, r=predicates{sorted(r)}, goals=predicates{goals}')
+        print(f'[{datetime.now()}] find_dual_backward_transition: starting, pos=states{sorted(pos)}, r=predicates{sorted(r)}, goals=predicates{goals}')
         n = len(qs)
         all_n = frozenset(range(n))
         #production# assert n > 0
@@ -4967,23 +6204,37 @@ def primal_dual_houdini(solver: Solver) -> str:
                 qs_seed = find_fixpoint(ctis)
                 if len(qs_seed) == 0:
                     break
-                print(f'find_dual_backward_transition: potential {len(qs_seed)} qs are: predicates{sorted(goals[i] for i in qs_seed)}')
+                print(f'[{datetime.now()}] find_dual_backward_transition: potential qs are ({len(qs_seed)}): predicates{sorted(goals[i] for i in qs_seed)}')
                 # now, check if r /\ ps /\ qs_seed |= wp(r /\ ps -> qs_seed)
                 _cti: Optional[Tuple[PDState, PDState]]
                 _ps: Optional[Tuple[Predicate,...]]
-                p_seed = frozenset(range(len(ps)))
-                _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
-                if _cti is None:
-                    print(f'find_dual_backward_transition: dual edge is valid, minimizing ps')
-                    for i in sorted(p_seed, reverse=True):
-                        if check_qs(qs_seed, p_seed - {i}, False) is None:
-                            p_seed -= {i}
-                    print(f'find_dual_backward_transition: done minimizing ps')
-                    _ps = tuple(ps[i] for i in sorted(p_seed))
-                else:
-                    _ps = None
                 if False:
-                    # just check cti_solver result vs. check_dual_edge
+                    # version using cti_solver
+                    p_seed = frozenset(range(len(ps)))
+                    _cti = check_qs(qs_seed, p_seed, utils.args.optimize_ctis)
+                    if _cti is None:
+                        print(f'[{datetime.now()}] find_dual_backward_transition: dual edge is valid, minimizing ps')
+                        for i in sorted(p_seed, reverse=True):
+                            if check_qs(qs_seed, p_seed - {i}, False) is None:
+                                p_seed -= {i}
+                        print(f'[{datetime.now()}] find_dual_backward_transition: done minimizing ps')
+                        _ps = tuple(ps[i] for i in sorted(p_seed))
+                    else:
+                        _ps = None
+                else:
+                    mp = MultiSubclausesMapICE(tuple(qs[i] for i in sorted(qs_seed)), [], []) # only used to compute q_seed
+                    q_seed = tuple(
+                        frozenset(range(mp.n[k]))
+                        for k in range(mp.m)
+                    )
+                    _cti, _ps = check_dual_edge_optimize(
+                        tuple(ps),
+                        mp.top_clauses,
+                        q_seed,
+                        whole_clauses=True,
+                    )
+                if False:
+                    # just check result vs. check_dual_edge
                     # TODO: run this on all examples sometime
                     if _cti is None:
                         assert _ps is not None
@@ -5003,13 +6254,14 @@ def primal_dual_houdini(solver: Solver) -> str:
                 if _cti is None:
                     assert _ps is not None
                     _qs = tuple(qs[i] for i in sorted(qs_seed))
-                    print(f'find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                    print(f'find_dual_backward_transition: found new dual edge:')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                     for p in _ps:
                         print(f'  {p}')
                     print(f'  -->')
                     for q in _qs:
                         print(f'  {q}')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: done')
                     return _ps, _qs
                 else:
                     prestate, poststate = _cti
@@ -5027,32 +6279,35 @@ def primal_dual_houdini(solver: Solver) -> str:
                    ctis -= {i}
             #production# assert len(find_fixpoint(ctis)) == 0
             to_eliminate = ctis - pos
-            print(f'find_dual_backward_transition: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
+            print(f'[{datetime.now()}] find_dual_backward_transition: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
             for i in sorted(to_eliminate):
                 while True:
                     seed = maps[i].separate(
                         pos=(pos | reachable),
                         neg=[i],
-                        soft_neg=soft_neg, # TODO: or to_eliminate ?
+                        pos_ps=[0],
+                        # soft_neg=soft_neg, # TODO: or to_eliminate ?
                     )
                     if seed is None:
                         break
-                    p = maps[i].to_clause(seed)
-                    print(f'find_dual_backward_transition: potential p is: {p}')
+                    p = maps[i].to_clause(0, seed[0])
+                    print(f'[{datetime.now()}] find_dual_backward_transition: potential p is: {p}')
                     s = check_initial(solver, p)
                     if s is None:
                         break
                     else:
+                        assert False # TODO: remove all this to simplify the code
                         print(f'  this predicate is not initial, learned a new initial state')
                         reachable |= {add_state(s, False)}
                         reachable = close_forward(reachable) # just in case
                 if seed is not None:
                     add_p(p)
-                    print(f'find_dual_backward_transition: found new p predicate: {p}')
+                    print(f'[{datetime.now()}] find_dual_backward_transition: found new p predicate: {p}')
                     break
             else:
-                print(f'find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
-                print(f'find_dual_backward_transition: cannot find any new p predicate, so cannot find dual edge')
+                print(f'[{datetime.now()}] find_dual_backward_transition: learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                print(f'[{datetime.now()}] find_dual_backward_transition: cannot find any new p predicate, so cannot find dual edge')
+                print(f'[{datetime.now()}] find_dual_backward_transition: done')
                 return None
 
     def new_reachable_states() -> None:
@@ -5117,10 +6372,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         houdini_frames()
         compute_step_frames()
         if len(reachable) > n_reachable:
-            print(f'Primal Houdini found {len(reachable) - n_reachable} new reachable states')
+            print(f'[{datetime.now()}] Primal Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
-            print(f'Primal Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            print(f'[{datetime.now()}] Primal Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             new_inductive_invariants()
 
         assert_invariants()
@@ -5140,7 +6395,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
         for i in reachable:
             if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
-                print(f'\nFound safety violation by reachable state (states[{i}]).')
+                print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
                 dump_caches()
                 return 'UNSAFE'
         print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
@@ -5178,10 +6433,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         #production# assert reachable == close_forward(reachable)
         #production# assert inductive_invariant == dual_close_forward(inductive_invariant)
         if len(reachable) > n_reachable:
-            print(f'Dual Houdini found {len(reachable) - n_reachable} new reachable states')
+            print(f'[{datetime.now()}] Dual Houdini found {len(reachable) - n_reachable} new reachable states')
             new_reachable_states()
         if len(inductive_invariant) > n_inductive_invariant:
-            print(f'Dual Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
+            print(f'[{datetime.now()}] Dual Houdini found {len(inductive_invariant) - n_inductive_invariant} new inductive predicates')
             new_inductive_invariants()
         assert_invariants()
         print(f'\n[{datetime.now()}] After Dual Houdini: learned {len(predicates) - n_predicates} new predicates,'
@@ -6587,8 +7842,6 @@ def enumerate_reachable_states(s: Solver) -> None:
             print('encountered unknown! all bets are off.')
 
 
-
-
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
 
@@ -6634,7 +7887,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=primal_dual_houdini)
     result.append(s)
 
-
     for s in result:
         s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
         s.add_argument('--cpus', type=int, help='Number of CPUs to use in parallel')
@@ -6642,5 +7894,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--induction-width', type=int, default=1, help='Upper bound on weight of dual edges to explore.')
         s.add_argument('--all-subclauses',  action=utils.YesNoAction, default=False, help='Add all subclauses of predicates.')
         s.add_argument('--optimize-ctis',  action=utils.YesNoAction, default=True, help='Optimize internal ctis')
+        s.add_argument('--domain-independence',  action=utils.YesNoAction, default=True, help='Restrict to domain independent clauses')
 
     return result

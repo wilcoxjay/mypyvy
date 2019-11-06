@@ -16,6 +16,8 @@ from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, No
                    Any, Callable, cast, Sequence
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 T = TypeVar('T')
 
 class OrderedSet(Generic[T], Iterable[T]):
@@ -86,6 +88,7 @@ class MypyvyArgs(object):
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
     smoke_test: bool
+    smoke_test_solver: bool
     assert_inductive_trace: bool
     sketch: bool
     block_may_cexs: bool
@@ -114,6 +117,8 @@ class MypyvyArgs(object):
     subcommand: str
     checkpoint_in: Optional[str]
     checkpoint_out: Optional[str]
+    domain_independence: bool
+    cvc4: bool
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
 
