@@ -1,0 +1,40 @@
+#
+# This is an elaborated verion of client_server_ae.ivy from the code examples of:
+#
+# Bounded Quantifier Instantiation for Checking Inductive Invariants
+# Yotam M. Y. Feldman, Oded Padon, Neil Immerman, Mooly Sagiv, and Sharon Shoham. TACAS 2017, LMCS 2019.
+#
+# 
+
+sort node
+sort request
+sort response
+
+immutable relation match(request, response)
+
+mutable relation request_sent(node, request)
+mutable relation response_sent(node, response)
+mutable relation response_received(node, response)	
+
+init !request_sent(N,R)
+init !response_sent(N,P)
+init !response_received(N,P)	
+
+transition new_request(n:node, r:request)
+  modifies request_sent
+  & forall N,R. request_sent(N,R) <-> (old(request_sent(N,R)) | (N = n & R = r))
+
+transition respond(n:node, r:request, p:response)
+  modifies response_sent
+  & old(request_sent(n,r))
+  & old(match(r,p))
+  & (forall N,P. response_sent(N,P) <-> (old(response_sent(N,P)) | (N = n & P = p)))
+
+transition receive_response(n:node, p:response)
+  modifies response_received
+  & old(response_sent(n,p))
+  & (forall N,P. response_received(N,P) <-> (old(response_received(N,P)) | (N = n & P = p)))
+
+
+safety forall N,P. response_received(N,P) -> exists R. request_sent(N,R) & match(R,P)
+invariant forall N,P. response_sent(N,P) -> exists R. request_sent(N,R) & match(R,P)

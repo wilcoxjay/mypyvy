@@ -73,6 +73,7 @@ class FOLSeparator(object):
                 neg=[self._state_id(i) for i in neg],
                 imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
                 max_depth=100,
+                max_clauses=100,
                 timer=timer
             )
         if f is None:
