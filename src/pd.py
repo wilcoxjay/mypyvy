@@ -2453,12 +2453,26 @@ class MultiSubclausesMapICE(object):
         self.optimize = False # optimize
         self.solver = z3.Optimize() if self.optimize else z3.Solver()  # type: ignore # TODO - fix typing
         self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)] # lit_vs[k][i] represents the i'th literal in the k'th clause
+        self.var_vs = [[z3.Bool(f'var_{k}_{i}') for i in range(len(self.variables[k]))] for k in range(self.m)] # var_vs[k][i] represents the i'th variable in the k'th clause
         self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # state_vs[k][i] represents the value of the k'th clause in self.states[i]
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # predicate_vs[k][i] represents the implication of value of the k'th clause by self.predicates[i]
         self.states_mapped: Set[int] = set() # i for which states[i] has been mapped and self.state_vs[*][i] is constrained in the solver
 
         if utils.args.domain_independence:
             self._constrain_domain_independence()
+
+        self._constrain_variables()
+
+    def _constrain_variables(self) -> None:
+        for k in range(self.m):
+            d: Dict[str, int] = {
+                v.name: i
+                for i, v in enumerate(self.variables[k])
+            }
+            for i, l in enumerate(self.literals[k]):
+                for name in sorted(set(l.free_ids())):
+                    if name in d:
+                        self.solver.add(z3.Implies(self.lit_vs[k][i], self.var_vs[k][d[name]]))
 
     def _constrain_domain_independence(self) -> None:
         '''for each equality literal between two vars, if the literal is used, then some "domain constraining" literal for each var must also be used.'''
@@ -2638,20 +2652,41 @@ class MultiSubclausesMapICE(object):
             self.solver.pop()
             print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
             return None
-        model = self.solver.model()
-        forced_to_false = [set(
-            i for i, v in enumerate(self.lit_vs[k])
-            if not z3.is_true(model[v])
-        ) for k in range(self.m)]
+        # minimize the number of quantifiers used (this was written for z3.Solver, not z3.Optimize)
+        for n in itertools.count():
+            if utils.args.max_quantifiers is not None and n > utils.args.max_quantifiers:
+                self.solver.pop()
+                print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: reached maximal number of quantifiers')
+                print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
+                return None
+            self.solver.push()
+            for k in range(self.m):
+                self.solver.add(z3.AtMost(*self.var_vs[k], n))
+            print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing quantifiers, n={n})... ')
+            res = self.solver.check()
+            print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing quantifiers, n={n})... got {res}')
+            assert res in (z3.unsat, z3.sat)
+            if res == z3.sat:
+                model = self.solver.model()
+                forced_to_false = [set(
+                    i for i, v in enumerate(self.lit_vs[k])
+                    if not z3.is_true(model[v])
+                ) for k in range(self.m)]
+                self.solver.pop()
+                for k in range(self.m):
+                    self.solver.add(z3.AtMost(*self.var_vs[k], n))
+                break
+            else:
+                self.solver.pop()
         if not self.optimize:
             # minimize for strongest possible clause (and ignore other soft constraints)
             for k in range(self.m):
                 for i in range(self.n[k]):
                     if i not in forced_to_false[k]:
                         ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
-                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... ')
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing literals)... ')
                         res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
-                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... got {res}')
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing literals)... got {res}')
                         assert res in (z3.unsat, z3.sat)
                         if res == z3.sat:
                             model = self.solver.model()
@@ -6414,6 +6449,9 @@ def primal_dual_houdini(solver: Solver) -> str:
             if i not in inductive_invariant:
                 note += f' ({max_frame + 1})'
             print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+        print(f'\n[{datetime.now()}] Current dual transitions ({len(dual_transitions)}):')
+        for ii, jj in dual_transitions:
+            print(f'  {sorted(ii)} -> {sorted(jj)}')
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
             print('Proved safety!')
             dump_caches()
@@ -7895,5 +7933,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--all-subclauses',  action=utils.YesNoAction, default=False, help='Add all subclauses of predicates.')
         s.add_argument('--optimize-ctis',  action=utils.YesNoAction, default=True, help='Optimize internal ctis')
         s.add_argument('--domain-independence',  action=utils.YesNoAction, default=True, help='Restrict to domain independent clauses')
+        s.add_argument('--max-quantifiers', type=int, help='Maximal number of quantifiers allowed in the invariant')
 
     return result
