@@ -5097,7 +5097,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         #production# assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         note = ' (internal cti)' if internal_cti else ' (live state)'
         if s not in states:
-            print(f'[{datetime.now()}] add_state{note}: checking for substructures... ', end='')
+            print(f'[{datetime.now()}] add_state{note}: checking for substructures... ')
             work = list(chain(
                 ((s, t) for t in states),
                 ((t, s) for t in states),
@@ -6402,6 +6402,8 @@ def primal_dual_houdini(solver: Solver) -> str:
         # TODO: add a little BMC
         assert_invariants()
 
+        print(f'[{datetime.now()}] New global iteration')
+
         n_inductive_invariant = len(inductive_invariant)
         n_reachable = len(reachable)
         houdini_frames()
@@ -6453,13 +6455,20 @@ def primal_dual_houdini(solver: Solver) -> str:
         for ii, jj in dual_transitions:
             print(f'  {sorted(ii)} -> {sorted(jj)}')
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
-            print('Proved safety!')
+            print(f'[{datetime.now()}] Proved safety!')
             dump_caches()
             return 'SAFE'
         print()
 
-        # try to increase bounds for some states, without discovering
-        # new CTIs, and add new predicates
+        # if we learned a new inductive invariant or reachable state, "restart"
+        if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
+            print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
+            # live_predicates = frozenset(
+            #     j for j in sorted(live_predicates)
+            #     if j in inductive_invariant or predicates[j] in safety
+            # )
+            live_states = reachable
+            continue
 
         n_predicates = len(predicates)
         n_live_predicates = len(live_predicates)
@@ -6512,20 +6521,31 @@ def primal_dual_houdini(solver: Solver) -> str:
         for i in sorted(live_predicates):
             print(f'  predicates[{i:3}]: {predicates[i]}')
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
-            print('Proved safety!')
+            print(f'[{datetime.now()}] Proved safety!')
             dump_caches()
             return 'SAFE'
         print()
 
+        # if we learned a new inductive invariant or reachable state, "restart"
+        if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
+            print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
+            # live_predicates = frozenset(
+            #     j for j in sorted(live_predicates)
+            #     if j in inductive_invariant or predicates[j] in safety
+            # )
+            live_states = reachable
+            continue
+
         if not any([
+            # TODO: think about this condition better
             n_predicates != len(predicates),
             n_live_predicates != len(live_predicates),
             n_inductive_invariant != len(inductive_invariant),
-            n_reachable != len(reachable),
-            n_live_states != len(live_states),
-            n_internal_ctis != len(internal_ctis),
+            # n_reachable != len(reachable),
+            # n_live_states != len(live_states),
+            # n_internal_ctis != len(internal_ctis),
         ]):
-            print('Fixed point of induction width reached without a safety proof!')
+            print(f'[{datetime.now()}] Fixed point of induction width reached without a safety proof!')
             dump_caches()
             return 'UNPROVABLE'
 
