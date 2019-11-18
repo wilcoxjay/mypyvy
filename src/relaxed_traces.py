@@ -5,7 +5,7 @@ from logic import Trace, Diagram, Solver
 from syntax import Expr, SortedVar
 from utils import Set
 from updr import RelaxedTrace
-from mypyvy import bmc_trace
+from trace import bmc_trace
 
 import itertools
 import networkx  # type: ignore
