@@ -14,6 +14,8 @@ from typing import List, Optional, Set, Tuple, Union, Dict, Sequence
 
 from phases import PhaseAutomaton, Phase, Frame, PhaseTransition
 
+RelaxedTrace = List[Tuple[Optional[PhaseTransition], Union[Diagram, Expr]]]
+
 class AbstractCounterexample(Exception):
     pass
 
@@ -297,7 +299,7 @@ class Frames(object):
             diag: Diagram,
             j: int,
             p: Phase,
-            trace: Optional[List[Tuple[Optional[PhaseTransition], Union[Diagram, Expr]]]] = None,
+            trace: Optional[RelaxedTrace] = None,
             safety_goal: bool = True
     ) -> Union[Blocked, CexFound]:
         if trace is None:
@@ -307,16 +309,17 @@ class Frames(object):
                 utils.logger.always_print('\n'.join(((t.pp() + ' ') if t is not None else '') +
                                                     str(diag) for t, diag in trace))
                 print('abstract counterexample: the system has no universal inductive invariant proving safety')
+                # TODO: placeholder for analyzing relaxed trace
+                # import relaxed_traces
+                # print(relaxed_traces.diagram_trace_to_explicitly_relaxed_trace(trace, phases.phase_safety(p)))
                 if utils.args.checkpoint_out:
                     self.store_frames(utils.args.checkpoint_out)
                 raise AbstractCounterexample()
             else:
                 if utils.logger.isEnabledFor(logging.DEBUG):
                     utils.logger.debug('failed to block diagram')
-                    # utils.logger.debug(str(diag))
                 return CexFound()
 
-        # print fs
         while True:
             with utils.LogTag(utils.logger, 'block-attempt'):
                 if utils.logger.isEnabledFor(logging.DEBUG):

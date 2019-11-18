@@ -583,62 +583,7 @@ def trace(s: Solver) -> None:
 
 
 def relax(s: Solver) -> None:
-    prog = syntax.the_program
-
-    new_decls: List[syntax.Decl] = [d for d in prog.sorts()]
-
-    actives: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
-    for sort in prog.sorts():
-        name = prog.scope.fresh('active_' + sort.name)
-        r = syntax.RelationDecl(None, name, arity=[syntax.UninterpretedSort(None, sort.name)],
-                                mutable=True, derived=None, annotations=[])
-        actives[sort] = r
-        new_decls.append(r)
-
-    # active relations initial conditions: always true
-    for sort in prog.sorts():
-        name = prog.scope.fresh(sort.name[0].upper())
-        expr = syntax.Forall([syntax.SortedVar(None, name, None)],
-                             syntax.Apply(actives[sort].name, [syntax.Id(None, name)]))
-        new_decls.append(syntax.InitDecl(None, name=None, expr=expr))
-
-    for d in prog.decls:
-        if isinstance(d, syntax.SortDecl):
-            pass  # already included above
-        elif isinstance(d, syntax.RelationDecl):
-            if d.derived_axiom is not None:
-                expr = syntax.relativize_quantifiers(actives, d.derived_axiom)
-                new_decls.append(syntax.RelationDecl(None, d.name, d.arity, d.mutable, expr,
-                                                     d.annotations))
-            else:
-                new_decls.append(d)
-        elif isinstance(d, syntax.ConstantDecl):
-            new_decls.append(d)
-        elif isinstance(d, syntax.FunctionDecl):
-            new_decls.append(d)
-        elif isinstance(d, syntax.AxiomDecl):
-            new_decls.append(d)
-        elif isinstance(d, syntax.InitDecl):
-            new_decls.append(d)
-        elif isinstance(d, syntax.DefinitionDecl):
-            assert not isinstance(d.body, syntax.BlockStatement), \
-                "relax does not support transitions written in imperative syntax"
-            mods, expr = d.body
-            expr = syntax.relativize_quantifiers(actives, expr, old=d.twostate)
-            if d.public:
-                guard = syntax.relativization_guard_for_binder(actives, d.binder, old=True)
-                expr = syntax.And(guard, expr)
-            new_decls.append(syntax.DefinitionDecl(None, d.public, d.twostate, d.name,
-                                                   params=d.binder.vs, body=(mods, expr)))
-        elif isinstance(d, syntax.InvariantDecl):
-            expr = syntax.relativize_quantifiers(actives, d.expr)
-            new_decls.append(syntax.InvariantDecl(None, d.name, expr=expr,
-                                                  is_safety=d.is_safety, is_sketch=d.is_sketch))
-        else:
-            assert False, d
-
-    new_decls.append(relaxed_traces.relaxation_action_def(prog, actives=actives, fresh=True))
-    print(Program(new_decls))
+    print(relaxed_traces.relaxed_program(syntax.the_program))
 
 def parse_args(args: List[str]) -> utils.MypyvyArgs:
     argparser = argparse.ArgumentParser()

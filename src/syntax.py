@@ -3,7 +3,6 @@ from __future__ import annotations
 import z3_utils
 
 from contextlib import contextmanager
-import dataclasses
 from dataclasses import dataclass
 import functools
 import itertools
@@ -436,6 +435,7 @@ def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr, old
         'EXISTS': And,
     }
 
+    # TODO: consider supporting a visitor pattern
     def go(e: Expr, old: bool) -> Expr:
         if isinstance(e, Bool):
             return e
@@ -2449,3 +2449,11 @@ def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
 
 
 the_program: Program = cast(Program, None)
+
+@contextmanager
+def prog_context(prog: Program) -> Iterator[None]:
+    global the_program
+    backup_prog = the_program
+    the_program = prog
+    yield None
+    the_program = backup_prog

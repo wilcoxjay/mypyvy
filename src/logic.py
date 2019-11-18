@@ -1006,6 +1006,9 @@ class Diagram(object):
 
         self.binder.post_resolve()
 
+    def vs(self) -> List[syntax.SortedVar]:
+        return self.binder.vs
+
     def to_z3(self, t: syntax.Z3Translator) -> z3.ExprRef:
         bs = t.bind(self.binder)
         with t.scope.in_scope(self.binder, bs):
