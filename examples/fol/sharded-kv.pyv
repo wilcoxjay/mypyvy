@@ -41,38 +41,3 @@ invariant table(N, K, V) -> owner(N, K)
 invariant !(transfer_msg(N1, K, V) & owner(N2, K))
 invariant transfer_msg(N1, K, V1) & transfer_msg(N2, K, V2) -> N1 = N2 & V1 = V2
 
-# invariant forall K. (exists N. owner(N, K)) | (exists N, V. transfer_msg(N, K, V))
-immutable constant qk: key
-
-automaton {
-  init phase owned
-
-  # Adds the given transition to every phase.
-  global
-    safety table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
-    # transition get -> self
-    transition put -> self
-    transition recv_transfer_msg -> self assume k!=qk
-    transition reshard -> self assume k!=qk
-
-  phase owned
-    transition reshard -> phase transferring assume k=qk
-
-    transition recv_transfer_msg -> self assume k!=qk
-    transition reshard -> self assume k!=qk
-
-    invariant owner(N1, qk) & owner(N2, qk) -> N1 = N2
-    invariant !(transfer_msg(DST, qk, V))
-
-    invariant table(N, qk, V) -> owner(N, qk)
-    invariant table(N1, qk, V1) & table(N2, qk, V2) -> N1 = N2 & V1 = V2
-
-
-  phase transferring
-    transition recv_transfer_msg -> phase owned assume k=qk
-
-    invariant !owner(N, qk)
-    invariant transfer_msg(DST1, qk, V1) & transfer_msg(DST2, qk, V2) -> DST1 = DST2 & V1 = V2
-
-    invariant table(N, qk, V) -> owner(N, qk)
-}
