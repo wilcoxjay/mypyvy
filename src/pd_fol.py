@@ -1,6 +1,7 @@
 '''
 This file contains code for the Primal Dual research project
 '''
+import time
 import argparse
 import itertools
 from itertools import product, chain, combinations, repeat
@@ -543,6 +544,7 @@ def fol_ic3(solver: Solver) -> None:
         predicates.append(init_decl.expr)
         frame_numbers.append(0)
 
+    start_time = time.time()
     while True:
         push()
         bad_state = check_safe(solver, frame_predicates(frame_n))
@@ -560,8 +562,13 @@ def fol_ic3(solver: Solver) -> None:
                     print(f"Found inductive invariant in frame {inv_frame}!")
                     for p in ps:
                         print(f"invariant {p}")
+                    print(f"time: {time.time() - start_time:0.3f} sec")
+                    print(f"predicates considered: {len(predicates)}")
+                    print(f"states considered: {len(states)}")
+                    print(f"frames opened: {frame_n}")
                     return
             print(f"Expanding new frame {frame_n+1}")
+            push()
             frame_n += 1
 
 def fol_ice(solver: Solver) -> None:
