@@ -1353,7 +1353,7 @@ class Trace(object):
     def read_out(self, z3model: z3.ModelRef, allow_undefined: bool = False) -> None:
         # utils.logger.debug('read_out')
         def rename(s: str) -> str:
-            return s.replace('!val!', '').replace('@uc_', '').replace('_', '')
+            return s.replace('!val!', '').replace('@uc_', '')
 
         def _eval(expr: z3.ExprRef) -> z3.ExprRef:
             ans = z3model.eval(expr, model_completion=True)

@@ -513,7 +513,9 @@ def trace(s: Solver) -> None:
     for trace in prog.traces():
         res = bmc_trace(prog, trace, s, lambda s, keys: logic.check_unsat([], s, keys), log=True)
         if (res is not None) != trace.sat:
-            utils.print_error(trace.tok, 'trace declared %s but was %s!' % ('sat' if trace.sat else 'unsat', res))
+            def bool_to_sat(b: bool) -> str:
+                return 'sat' if b else 'unsat'
+            utils.print_error(trace.tok, 'trace declared %s but was %s!' % (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
 
 
 def relax(s: Solver) -> None:
