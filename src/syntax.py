@@ -496,8 +496,9 @@ def is_quantifier_free(e: Expr) -> bool:
 
 @functools.total_ordering
 class Expr(Denotable):
-    def __init__(self) -> None:
+    def __init__(self, tok: Optional[Token]) -> None:
         super().__init__()
+        self.tok = tok
 
     def __repr__(self) -> str:
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
@@ -541,8 +542,7 @@ class Expr(Denotable):
 
 class Bool(Expr):
     def __init__(self, tok: Optional[Token], val: bool) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.val = val
 
     def __repr__(self) -> str:
@@ -609,9 +609,8 @@ def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: Infe
 
 class UnaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg: Expr) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert op in UNOPS
-        self.tok = tok
         self.op = op
         self.arg = arg
 
@@ -678,9 +677,8 @@ z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
 
 class BinaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg1: Expr, arg2: Expr) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert op in BINOPS
-        self.tok = tok
         self.op = op
         self.arg1 = arg1
         self.arg2 = arg2
@@ -756,11 +754,10 @@ z3_NOPS: Any = {
 
 class NaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, args: List[Expr]) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert op in NOPS
         assert len(args) >= 2, (args, tok)
 
-        self.tok = tok
         self.op = op
         self.args = args
 
@@ -879,10 +876,9 @@ def Apply(callee: str, args: List[Expr]) -> Expr:
 
 class AppExpr(Expr):
     def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
-        super().__init__()
+        super().__init__(tok)
         if not (len(args) > 0):
             utils.print_error(tok, "must be applied to at least one argument")
-        self.tok = tok
         self.callee = callee
         self.args = args
 
@@ -1016,10 +1012,10 @@ class Binder(Denotable):
 
 class QuantifierExpr(Expr):
     def __init__(self, tok: Optional[Token], quant: str, vs: List[SortedVar], body: Expr) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert quant in ['FORALL', 'EXISTS']
         assert len(vs) > 0
-        self.tok = tok
+
         self.quant = quant
         self.binder = Binder(vs)
         self.body = body
@@ -1068,8 +1064,7 @@ class QuantifierExpr(Expr):
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     def __init__(self, tok: Optional[Token], name: str) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.name = name
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
@@ -1126,8 +1121,7 @@ class Id(Expr):
 
 class IfThenElse(Expr):
     def __init__(self, tok: Optional[Token], branch: Expr, then: Expr, els: Expr) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.branch = branch
         self.then = then
         self.els = els
@@ -1164,8 +1158,7 @@ class IfThenElse(Expr):
 
 class Let(Expr):
     def __init__(self, tok: Optional[Token], var: SortedVar, val: Expr, body: Expr) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.binder = Binder([var])
         self.val = val
         self.body = body
