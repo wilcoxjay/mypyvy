@@ -113,8 +113,11 @@ def build_python_cmd() -> List[str]:
 
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
+        any_tests = False
         for p in sorted(Path(utils.PROJECT_ROOT / 'regression').glob('*.pyv')):
+            any_tests = True
             with self.subTest(testFile=str(p)):
+                print(f'running regression test {p}')
                 with open(p) as f:
                     line = f.readline()
                 magic_prefix = '# MYPYVY: '
@@ -129,7 +132,7 @@ class RegressionTests(unittest.TestCase):
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
-
+        self.assertTrue(any_tests, 'internal error with regression tests: it seems no regression tests exist!')
 
 class MonotoneFunctionTests(unittest.TestCase):
     def setUp(self) -> None:
