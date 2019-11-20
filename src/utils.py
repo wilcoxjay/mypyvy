@@ -134,11 +134,15 @@ def tok_to_string(tok: Optional[Token]) -> str:
 
 error_count = 0
 
+def print_located_msg(header: str, tok: Optional[Token], msg: str) -> None:
+    loc_str = ' ' + tok_to_string(tok) if tok is not None else ''
+    print('%s%s: %s' % (header, loc_str, msg))
+
 def print_error(tok: Optional[Token], msg: str) -> None:
     global error_count
     error_count += 1
     if 'json' not in args or not args.json:
-        print('error%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
+        print_located_msg('error', tok, msg)
     if args.exit_on_error:
         exit(1)
 
@@ -147,7 +151,10 @@ def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
     exit(1)
 
 def print_warning(tok: Optional[Token], msg: str) -> None:
-    print('warning%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
+    print_located_msg('warning', tok, msg)
+
+def print_info(tok: Optional[Token], msg: str) -> None:
+    print_located_msg('info', tok, msg)
 
 
 class MyLogger(object):
