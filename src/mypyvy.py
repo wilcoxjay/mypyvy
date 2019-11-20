@@ -710,6 +710,7 @@ def main() -> None:
 
         utils.logger.info('setting seed to %d' % utils.args.seed)
         z3.set_param('smt.random_seed', utils.args.seed)
+        z3.set_param('sat.random_seed', utils.args.seed)
 
         # utils.logger.info('enable z3 macro finder')
         # z3.set_param('smt.macro_finder', True)
