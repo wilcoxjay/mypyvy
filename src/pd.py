@@ -5062,8 +5062,8 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting primal_dual_houdini\n')
 
-    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for
-    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # conver to CNF
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
     init_ps = [And(*inits)] # to be used with MultiSubclausesMapICE
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
@@ -5088,6 +5088,10 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     dual_frames: List[List[int]] = [] # ints are indicites into states
     # TODO: daul_step_frames?
+
+    human_invariant = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety))) # convert to CNF
+    human_invariant_to_predicate: Dict[int,int] = dict() # dict mapping index of human_invariant to index of predicates
+    human_invariant_proved: Set[int] = set() # indices into human_invariant that are implied by the current inductive_invariant
 
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
 
@@ -5185,6 +5189,7 @@ def primal_dual_houdini(solver: Solver) -> str:
     def _add_predicate(p: Predicate) -> int:
         nonlocal predicates
         nonlocal live_predicates
+        nonlocal human_invariant_to_predicate
         # nonlocal reason_for_predicate
         if p not in predicates:
             for j, q in enumerate(predicates):
@@ -5197,6 +5202,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                 j = len(predicates)
                 print(f'[{datetime.now()}] add_predicate: adding new predicate {j}: {p}')
                 predicates.append(p)
+                for i, q in enumerate(human_invariant):
+                    if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
+                        print(f'[{datetime.now()}] add_predicate: equivalent to human invariant predicate {i}: {p} <=> {q}')
+                        assert i not in human_invariant_to_predicate
+                        human_invariant_to_predicate[i] = j
         else:
             j = predicates.index(p)
             if j in live_predicates:
@@ -6398,6 +6408,65 @@ def primal_dual_houdini(solver: Solver) -> str:
         )
         assert len(internal_ctis & reachable) == 0
 
+    def print_status_and_check_termination() -> Optional[str]:
+        nonlocal human_invariant_proved
+        # print status
+        print(f'\n[{datetime.now()}] Current states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
+        for i in sorted(live_states | internal_ctis):
+            notes: List[str] = []
+            if i in live_states:
+                notes.append('live')
+            if i in reachable:
+                notes.append('reachable')
+            if i in internal_ctis:
+                notes.append('internal_cti')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
+        print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
+        for i, j, label in sorted(chain(
+                ((i, j, 'transition') for i, j in transitions),
+                ((i, j, 'substructure') for i, j in substructure),
+        )):
+            print(f'  {i:3} -> {j:3} ({label})')
+        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
+        for i in sorted(live_predicates):
+            max_frame = max((j for j, f in enumerate(frames) if predicates[i] in f), default=-1)
+            #production# assert max_frame < len(frames) - 1 or i in inductive_invariant
+            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
+            max_frame = max((j for j, f in enumerate(step_frames) if predicates[i] in f), default=-1)
+            #production# assert max_frame < len(step_frames) - 1 or i in inductive_invariant
+            if i not in inductive_invariant:
+                note += f' ({max_frame + 1})'
+            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+        print(f'\n[{datetime.now()}] Current dual transitions ({len(dual_transitions)}):')
+        for ii, jj in dual_transitions:
+            print(f'  {sorted(ii)} -> {sorted(jj)}')
+        print()
+        for i, p in enumerate(human_invariant):
+            if i not in human_invariant_proved and len(inductive_invariant) > 0 and cheap_check_implication([predicates[j] for j in sorted(inductive_invariant)], [p]):
+                human_invariant_proved.add(i)
+        print(f'\n[{datetime.now()}] Current human invariant ({len(human_invariant)} total, {len(human_invariant_to_predicate)} learned, {len(human_invariant_proved)} proven):')
+        for i, p in enumerate(human_invariant):
+            notes = []
+            if i in human_invariant_proved:
+                notes.append('proved')
+            if i in human_invariant_to_predicate:
+                notes.append(f'learned as predicates[{human_invariant_to_predicate[i]}]')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'  human_invariant[{i:3}]{note}: {p}')
+        print()
+        # check termination condition
+        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
+            print(f'[{datetime.now()}] Proved safety!')
+            dump_caches()
+            return 'SAFE'
+        for i in reachable:
+            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
+                print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
+                dump_caches()
+                return 'UNSAFE'
+        return None
+
     while True:
         # TODO: add a little BMC
         assert_invariants()
@@ -6418,57 +6487,20 @@ def primal_dual_houdini(solver: Solver) -> str:
         assert_invariants()
 
         # print status and possibly terminate
-        # TODO: output information from dual_frames
-        print(f'\n[{datetime.now()}] Current states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
-        for i in sorted(live_states | internal_ctis):
-            notes: List[str] = []
-            if i in live_states:
-                notes.append('live')
-            if i in reachable:
-                notes.append('reachable')
-            if i in internal_ctis:
-                notes.append('internal_cti')
-            note = '(' + ', '.join(notes) + ')'
-            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
-        for i in reachable:
-            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
-                print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
-                dump_caches()
-                return 'UNSAFE'
-        print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
-        for i, j, label in sorted(chain(
-                ((i, j, 'transition') for i, j in transitions),
-                ((i, j, 'substructure') for i, j in substructure),
-        )):
-            print(f'  {i:3} -> {j:3} ({label})')
-        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
-        for i in sorted(live_predicates):
-            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
-            #production# assert max_frame < len(frames) - 1 or i in inductive_invariant
-            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
-            max_frame = max(j for j, f in enumerate(step_frames) if predicates[i] in f)
-            #production# assert max_frame < len(step_frames) - 1 or i in inductive_invariant
-            if i not in inductive_invariant:
-                note += f' ({max_frame + 1})'
-            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
-        print(f'\n[{datetime.now()}] Current dual transitions ({len(dual_transitions)}):')
-        for ii, jj in dual_transitions:
-            print(f'  {sorted(ii)} -> {sorted(jj)}')
-        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
-            print(f'[{datetime.now()}] Proved safety!')
+        result = print_status_and_check_termination()
+        if result is not None:
             dump_caches()
-            return 'SAFE'
-        print()
+            return result
 
-        # if we learned a new inductive invariant or reachable state, "restart"
-        if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
-            print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
-            # live_predicates = frozenset(
-            #     j for j in sorted(live_predicates)
-            #     if j in inductive_invariant or predicates[j] in safety
-            # )
-            live_states = reachable
-            continue
+        # # if we learned a new inductive invariant or reachable state, "restart"
+        # if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
+        #     print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
+        #     # live_predicates = frozenset(
+        #     #     j for j in sorted(live_predicates)
+        #     #     if j in inductive_invariant or predicates[j] in safety
+        #     # )
+        #     live_states = reachable
+        #     continue
 
         n_predicates = len(predicates)
         n_live_predicates = len(live_predicates)
@@ -6495,46 +6527,20 @@ def primal_dual_houdini(solver: Solver) -> str:
               f'looping\n')
 
         # print status and possibly terminate
-        print(f'\n[{datetime.now()}] After Dual Houdini states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
-        for i in sorted(live_states | internal_ctis):
-            notes = []
-            if i in live_states:
-                notes.append('live')
-            if i in reachable:
-                notes.append('reachable')
-            if i in internal_ctis:
-                notes.append('internal_cti')
-            note = '(' + ', '.join(notes) + ')'
-            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
-        for i in reachable:
-            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
-                print(f'\nFound safety violation by reachable state (states[{i}]).')
-                dump_caches()
-                return 'UNSAFE'
-        print(f'\n[{datetime.now()}] After Dual Houdini transitions ({len(transitions)}) and substructures ({len(substructure)}):')
-        for i, j, label in sorted(chain(
-                ((i, j, 'transition') for i, j in transitions),
-                ((i, j, 'substructure') for i, j in substructure),
-        )):
-            print(f'  {i:3} -> {j:3} ({label})')
-        print(f'\n[{datetime.now()}] After Dual Houdini predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
-        for i in sorted(live_predicates):
-            print(f'  predicates[{i:3}]: {predicates[i]}')
-        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
-            print(f'[{datetime.now()}] Proved safety!')
+        result = print_status_and_check_termination()
+        if result is not None:
             dump_caches()
-            return 'SAFE'
-        print()
+            return result
 
-        # if we learned a new inductive invariant or reachable state, "restart"
-        if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
-            print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
-            # live_predicates = frozenset(
-            #     j for j in sorted(live_predicates)
-            #     if j in inductive_invariant or predicates[j] in safety
-            # )
-            live_states = reachable
-            continue
+        # # if we learned a new inductive invariant or reachable state, "restart"
+        # if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
+        #     print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
+        #     # live_predicates = frozenset(
+        #     #     j for j in sorted(live_predicates)
+        #     #     if j in inductive_invariant or predicates[j] in safety
+        #     # )
+        #     live_states = reachable
+        #     continue
 
         if not any([
             # TODO: think about this condition better
