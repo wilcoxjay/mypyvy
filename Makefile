@@ -6,7 +6,7 @@ SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
 
-test: check check-imports unit typecheck verify trace updr pd-old pd
+test: check check-imports unit typecheck verify verify-pd trace updr pd-old pd
 
 unit: check
 	$(PYTHON) -m unittest discover -s src -v
@@ -14,6 +14,18 @@ unit: check
 typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv examples/*/*.pyv))
 
 verify: examples/lockserv.verify examples/consensus.verify examples/sharded-kv.verify examples/pd/paxos_epr.verify examples/pd/paxos_forall.verify
+
+verify-pd: \
+	examples/pd/cache.verify \
+	examples/pd/consensus.verify \
+	examples/pd/lockserv.verify \
+	examples/pd/paxos_forall.verify \
+	examples/pd/paxos_forall_choosable.verify \
+	examples/pd/stoppable_paxos_forall.verify \
+	examples/pd/stoppable_paxos_forall_choosable.verify \
+	examples/pd/ring.verify \
+	examples/pd/sharded-kv-retransmit.verify \
+	examples/pd/sharded-kv.verify
 
 trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
@@ -85,4 +97,4 @@ src/%.importable: src/%.py
 clear-cache:
 	rm -iv examples/*.cache examples/*/*.cache
 
-.PHONY: check run test verify updr bench typecheck trace pd pd-old unit check-imports clear-cache
+.PHONY: check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache
