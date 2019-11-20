@@ -902,6 +902,9 @@ class AppExpr(Expr):
             utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
             # note that we don't return here. typechecking can continue.
 
+        if isinstance(d, DefinitionDecl) and d.twostate and scope.in_old_context:
+            utils.print_error(self.tok, 'a twostate definition cannot be called inside an old()!')
+
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
             utils.print_error(self.tok, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(self.args, d.arity):
