@@ -6458,12 +6458,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         # check termination condition
         if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
             print(f'[{datetime.now()}] Proved safety!')
-            dump_caches()
             return 'SAFE'
         for i in reachable:
             if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
                 print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
-                dump_caches()
                 return 'UNSAFE'
         return None
 
