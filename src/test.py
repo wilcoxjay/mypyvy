@@ -113,7 +113,7 @@ def build_python_cmd() -> List[str]:
 
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
-        for p in sorted(Path(utils.PROJECT_ROOT / 'examples' / 'regression').glob('*.pyv')):
+        for p in sorted(Path(utils.PROJECT_ROOT / 'regression').glob('*.pyv')):
             with self.subTest(testFile=str(p)):
                 with open(p) as f:
                     line = f.readline()
