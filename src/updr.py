@@ -1,4 +1,5 @@
 from datetime import datetime
+import itertools
 import logging
 import z3
 
@@ -18,6 +19,10 @@ RelaxedTrace = List[Tuple[Optional[PhaseTransition], Union[Diagram, Expr]]]
 
 class AbstractCounterexample(Exception):
     pass
+
+def equiv_expr(solver: Solver, e1: Expr, e2: Expr) -> bool:
+    return (logic.check_implication(solver, [e1], [e2], minimize=False) is None and
+            logic.check_implication(solver, [e2], [e1], minimize=False) is None)
 
 class Frames(object):
     @utils.log_start_end_xml(utils.logger, logging.DEBUG, 'Frames.__init__')
@@ -49,6 +54,7 @@ class Frames(object):
         self.counter = 0
         self.predicates: List[Expr] = []
         self.state_count = 0
+        self.human_invariant = tuple(itertools.chain(*(syntax.as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety))) # convert to CNF
 
         self._first_frame()
 
@@ -411,12 +417,18 @@ class Frames(object):
 
     def record_predicate(self, e: Expr) -> None:
         for x in self.predicates:
-            if x == e or (logic.check_implication(self.solver, [x], [e], minimize=False) is None and
-                          logic.check_implication(self.solver, [e], [x], minimize=False) is None):
+            if x == e or equiv_expr(self.solver, x, e):
                 break
         else:
             self.predicates.append(e)
-            utils.logger.info(f'learned new predicate, now have {len(self.predicates)} {e}')
+            for x in self.human_invariant:
+                if equiv_expr(self.solver, x, e):
+                    msg = '(which is a clause of the human invariant)'
+                    break
+            else:
+                msg = ''
+
+            utils.logger.info(f'learned new predicate, now have {len(self.predicates)} {e} {msg}')
 
     def add(self, p: Phase, e: Expr, depth: Optional[int] = None) -> None:
         self.counter += 1
