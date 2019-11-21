@@ -117,6 +117,7 @@ class MypyvyArgs(object):
     domain_independence: bool
     max_quantifiers: Optional[int]
     cvc4: bool
+    cvc4_minimize_models: bool
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
 

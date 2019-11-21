@@ -1032,6 +1032,10 @@ def check_dual_edge_optimize_multiprocessing_helper(
         q1: CheckDualEdgeOptimizeJoinableQueue,
         q2: CheckDualEdgeOptimizeQueue,
 ) -> None:
+    if use_cvc4:
+        minimize = utils.args.cvc4_minimize_models
+    else:
+        minimize = True
     try:
         assert len(hq.q_pre) == len(top_clauses)
         def send_result(hq: HoareQuery, valid: bool, cti: Optional[Tuple[PDState, PDState]] = None) -> None:
@@ -1146,7 +1150,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             return
 
         # get model
-        z3model = s.model(minimize=True)
+        z3model = s.model(minimize=minimize)
         prestate = Trace.from_z3([KEY_OLD], z3model)
         poststate = Trace.from_z3([KEY_NEW], z3model)
         validate_cti(prestate, poststate)
@@ -1204,7 +1208,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 else:
                     # print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
                     hq = hq_try
-                    z3model = s.model(minimize=True)
+                    z3model = s.model(minimize=minimize)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
                     poststate = Trace.from_z3([KEY_NEW], z3model)
                     validate_cti(prestate, poststate)
@@ -1244,7 +1248,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 else:
                     # print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
                     hq = hq_try
-                    z3model = s.model(minimize=True)
+                    z3model = s.model(minimize=minimize)
                     prestate = Trace.from_z3([KEY_OLD], z3model)
                     poststate = Trace.from_z3([KEY_NEW], z3model)
                     validate_cti(prestate, poststate)
@@ -5089,9 +5093,10 @@ def primal_dual_houdini(solver: Solver) -> str:
     dual_frames: List[List[int]] = [] # ints are indicites into states
     # TODO: daul_step_frames?
 
-    human_invariant = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety))) # convert to CNF
+    human_invariant = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs()))) # convert to CNF
     human_invariant_to_predicate: Dict[int,int] = dict() # dict mapping index of human_invariant to index of predicates
     human_invariant_proved: Set[int] = set() # indices into human_invariant that are implied by the current inductive_invariant
+    human_invariant_implies: Set[int] = set() # indices into predicates of predicates that are implied by the human invariant
 
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
 
@@ -5190,6 +5195,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal predicates
         nonlocal live_predicates
         nonlocal human_invariant_to_predicate
+        nonlocal human_invariant_implies
         # nonlocal reason_for_predicate
         if p not in predicates:
             for j, q in enumerate(predicates):
@@ -5202,11 +5208,17 @@ def primal_dual_houdini(solver: Solver) -> str:
                 j = len(predicates)
                 print(f'[{datetime.now()}] add_predicate: adding new predicate {j}: {p}')
                 predicates.append(p)
-                for i, q in enumerate(human_invariant):
-                    if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
-                        print(f'[{datetime.now()}] add_predicate: equivalent to human invariant predicate {i}: {p} <=> {q}')
-                        assert i not in human_invariant_to_predicate
-                        human_invariant_to_predicate[i] = j
+                if cheap_check_implication(human_invariant, [p]):
+                    human_invariant_implies.add(j)
+                    for i, q in enumerate(human_invariant):
+                        if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
+                            print(f'[{datetime.now()}] add_predicate: equivalent to human invariant predicate {i}: {p} <=> {q}')
+                            assert i not in human_invariant_to_predicate
+                            human_invariant_to_predicate[i] = j
+                            break
+                    else:
+                        print(f'[{datetime.now()}] add_predicate: implied by human invariant: => {p}')
+
         else:
             j = predicates.index(p)
             if j in live_predicates:
@@ -5847,6 +5859,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 states,
                 init_ps,
             )
+            n_literals = sum(mp.n)
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
                 s = frozenset(s) | reachable
                 res = mp.separate(
@@ -6048,7 +6061,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if _cti is None:
                         assert _ps is not None
                         _qs = tuple(q)
-                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_literals={n_literals}, n_ctis={n_ctis}, found=True, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                         print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                         for p in _ps:
                             print(f'  {p}')
@@ -6131,7 +6144,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_literals={n_literals}, n_ctis={n_ctis}, found=False, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
         if len(worklist) == 0:
             print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: no more worklist items, so cannot find dual edge')
         else:
@@ -6428,7 +6441,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 ((i, j, 'substructure') for i, j in substructure),
         )):
             print(f'  {i:3} -> {j:3} ({label})')
-        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
+        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven, {len(live_predicates & human_invariant_implies)} implied by human invariant):')
         for i in sorted(live_predicates):
             max_frame = max((j for j, f in enumerate(frames) if predicates[i] in f), default=-1)
             #production# assert max_frame < len(frames) - 1 or i in inductive_invariant
@@ -6437,6 +6450,8 @@ def primal_dual_houdini(solver: Solver) -> str:
             #production# assert max_frame < len(step_frames) - 1 or i in inductive_invariant
             if i not in inductive_invariant:
                 note += f' ({max_frame + 1})'
+            if i in human_invariant_implies:
+                note += f' (implied by human invariant)'
             print(f'  predicates[{i:3}]{note}: {predicates[i]}')
         print(f'\n[{datetime.now()}] Current dual transitions ({len(dual_transitions)}):')
         for ii, jj in dual_transitions:
@@ -7958,5 +7973,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--optimize-ctis',  action=utils.YesNoAction, default=True, help='Optimize internal ctis')
         s.add_argument('--domain-independence',  action=utils.YesNoAction, default=True, help='Restrict to domain independent clauses')
         s.add_argument('--max-quantifiers', type=int, help='Maximal number of quantifiers allowed in the invariant')
+        s.add_argument('--cvc4-minimize-models',  action=utils.YesNoAction, default=True, help='Minimize models when using CVC4')
 
     return result
