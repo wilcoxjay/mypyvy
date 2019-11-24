@@ -19,11 +19,13 @@ reserved = {
     'invariant': 'INVARIANT',
     'sketch': 'SKETCH',
     'axiom': 'AXIOM',
+    'new': 'NEW',
     'old': 'OLD',
     'forall': 'FORALL',
     'exists': 'EXISTS',
     'true': 'TRUE',
     'false': 'FALSE',
+    'zerostate': 'ZEROSTATE',
     'onestate': 'ONESTATE',
     'twostate': 'TWOSTATE',
     'theorem': 'THEOREM',
@@ -369,7 +371,12 @@ def p_expr_noteq(p: Any) -> None:
 
 def p_expr_old(p: Any) -> None:
     'expr : OLD LPAREN expr RPAREN'
-    p[0] = syntax.UnaryExpr(p.slice[1], 'OLD', p[3])
+    utils.print_error(p.slice[1], 'syntax error: old() is no longer supported; use new()')
+    p[0] = None
+
+def p_expr_new(p: Any) -> None:
+    'expr : NEW LPAREN expr RPAREN'
+    p[0] = syntax.UnaryExpr(p.slice[1], 'NEW', p[3])
 
 def p_args_empty(p: Any) -> None:
     'args : empty'
@@ -425,7 +432,7 @@ def p_mods(p: Any) -> None:
 
 def p_decl_transition(p: Any) -> None:
     'decl : TRANSITION id LPAREN params RPAREN definition_body'
-    p[0] = syntax.DefinitionDecl(p[2], public=True, twostate=True, name=p[2].value, params=p[4], body=p[6])
+    p[0] = syntax.DefinitionDecl(p[2], is_public_transition=True, num_states=2, name=p[2].value, params=p[4], body=p[6])
 
 def p_decl_definition_body_mods_expr(p: Any) -> None:
     'definition_body : mods expr'
@@ -467,35 +474,43 @@ def p_stmt_assignment(p: Any) -> None:
     'stmt : id assignment_lhs COLONEQUALS expr SEMI'
     p[0] = syntax.AssignmentStatement(p[1], p[1].value, p[2], p[4])
 
-def p_onetwostate(p: Any) -> None:
-    '''onetwostate : ONESTATE
-                   | TWOSTATE
-                   | empty'''
-    p[0] = p[1]
+def kstate_int(kstate: str) -> int:
+    if kstate == 'zerostate':
+        return 0
+    elif kstate == 'onestate':
+        return 1
+    elif kstate == 'twostate':
+        return 2
+    else:
+        assert False
+
+def p_kstate(p: Any) -> None:
+    '''kstate : ZEROSTATE
+              | ONESTATE
+              | TWOSTATE
+              | empty'''
+    p[0] = kstate_int(p[1])
 
 def p_decl_theorem(p: Any) -> None:
-    'decl : onetwostate THEOREM opt_name expr'
-    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], twostate=p[1] == 'twostate')
+    'decl : kstate THEOREM opt_name expr'
+    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], num_states=kstate_int(p[1]))
 
 def p_decl_definition(p: Any) -> None:
-    'decl : onetwostate DEFINITION id LPAREN params RPAREN definition_body'
-    twostate = p[1]
+    'decl : kstate DEFINITION id LPAREN params RPAREN definition_body'
+    num_states = p[1]
     body = p[7]
     if isinstance(body, syntax.BlockStatement):
-        if twostate == 'onestate':
+        if num_states == 1:
             utils.print_error(p.slice[7], "syntax error: imperative body of definition cannot be declared 'onestate'")
             return
-        twostate_bool = True
-    else:
-        twostate_bool = twostate == 'twostate'
 
-    if not twostate_bool and isinstance(body, tuple):
+    if num_states != 2 and isinstance(body, tuple):
         mods, _ = body
         if len(mods) != 0:
-            utils.print_error(p.slice[7], "syntax error: 'onestate' definition cannot have a modifies clause")
+            utils.print_error(p.slice[7], "syntax error: modifies clause only allowed on twostate definitions or transitions")
             return
 
-    p[0] = syntax.DefinitionDecl(p[3], public=False, twostate=twostate_bool, name=p[3].value, params=p[5], body=p[7])
+    p[0] = syntax.DefinitionDecl(p[3], is_public_transition=False, num_states=num_states, name=p[3].value, params=p[5], body=p[7])
 
 def p_phase_target_self(p: Any) -> None:
     'phase_target : SELF'

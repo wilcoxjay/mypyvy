@@ -133,6 +133,7 @@ def clean_filename(filename: str) -> str:
 def tok_to_string(tok: Optional[Token]) -> str:
     return '%s:%s:%s' % (clean_filename(tok.filename), tok.lineno, tok.col) if tok is not None else 'None'
 
+# TODO: reset when syntax.the_program is reset -- even better, move to a Context with Program.
 error_count = 0
 
 def print_located_msg(header: str, tok: Optional[Token], msg: str) -> None:

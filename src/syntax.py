@@ -134,10 +134,9 @@ def no_parens(ip: int, op: int, side: str) -> bool:
     return ip < op or (ip == op and side == PREC_ASSOC[ip])
 
 class Z3Translator(object):
-    def __init__(self, scope: Scope[z3.ExprRef], key: Optional[str]=None, key_old: Optional[str]=None) -> None:
+    def __init__(self, scope: Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
         self.scope = scope
-        self.key = key
-        self.key_old = key_old
+        self.keys = keys
         self.counter = 0
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
@@ -149,48 +148,51 @@ class Z3Translator(object):
             bs.append(z3.Const(n, sv.sort.to_z3()))
         return bs
 
-    def translate_expr(self, expr: Expr, old: bool=False) -> z3.ExprRef:
+    def get_key_opt(self, index: int) -> Optional[str]:
+        if index < len(self.keys):
+            return self.keys[index]
+        else:
+            return None
+
+    def translate_expr(self, expr: Expr, index: int=0) -> z3.ExprRef:
         if isinstance(expr, Bool):
             return z3.BoolVal(expr.val)
         elif isinstance(expr, UnaryExpr):
-            if expr.op == 'OLD':
-                assert not old and self.key_old is not None
-                return self.translate_expr(expr.arg, old=True)
+            if expr.op == 'NEW':
+                assert index + 1 < len(self.keys)
+                return self.translate_expr(expr.arg, index=index + 1)
             else:
                 unop = z3_UNOPS[expr.op]
                 assert unop is not None
-                return unop(self.translate_expr(expr.arg, old))
+                return unop(self.translate_expr(expr.arg, index))
         elif isinstance(expr, BinaryExpr):
             binop = z3_BINOPS[expr.op]
-            return binop(self.translate_expr(expr.arg1, old), self.translate_expr(expr.arg2, old))
+            return binop(self.translate_expr(expr.arg1, index), self.translate_expr(expr.arg2, index))
         elif isinstance(expr, NaryExpr):
             nop = z3_NOPS[expr.op]
-            return nop([self.translate_expr(arg, old) for arg in expr.args])
+            return nop([self.translate_expr(arg, index) for arg in expr.args])
         elif isinstance(expr, AppExpr):
-            if not old:
-                k = self.key
-            else:
-                assert self.key_old is not None
-                k = self.key_old
             d = self.scope.get(expr.callee)
             assert d is not None
             if isinstance(d, DefinitionDecl):
-                assert not (old and d.twostate)  # XXX check in resolver
-                translated_args = [self.translate_expr(arg, old) for arg in expr.args]  # translate args in the scope of caller
+                assert index + d.num_states <= len(self.keys)  # checked by resolver; see NOTE(calling-stateful-definitions)
+                translated_args = [self.translate_expr(arg, index) for arg in expr.args]  # translate args in the scope of caller
                 with self.scope.fresh_stack():
                     with self.scope.in_scope(d.binder, translated_args):
-                        return self.translate_expr(d.expr, old)  # translate body of def in fresh scope
+                        return self.translate_expr(d.expr, index)  # translate body of def in fresh scope
             else:
                 assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
+                k = self.get_key_opt(index)
+                assert not d.mutable or k is not None
                 R = d.to_z3(k)
                 assert isinstance(R, z3.FuncDeclRef)
-                app_translated_args = [self.translate_expr(arg, old) for arg in expr.args]
+                app_translated_args = [self.translate_expr(arg, index) for arg in expr.args]
                 translated_app = R(*app_translated_args)
                 return translated_app
         elif isinstance(expr, QuantifierExpr):
             bs = self.bind(expr.binder)
             with self.scope.in_scope(expr.binder, bs):
-                e = self.translate_expr(expr.body, old)
+                e = self.translate_expr(expr.body, index)
             q = z3.ForAll if expr.quant == 'FORALL' else z3.Exists
             return q(bs, e)
         elif isinstance(expr, Id):
@@ -199,34 +201,31 @@ class Z3Translator(object):
             if isinstance(d, RelationDecl) or \
                isinstance(d, ConstantDecl) or \
                isinstance(d, FunctionDecl):
-                if not old:
-                    k = self.key
-                else:
-                    assert not d.mutable or self.key_old is not None
-                    k = self.key_old
+                k = self.get_key_opt(index)
+                assert not d.mutable or k is not None
                 x = d.to_z3(k)
                 assert isinstance(x, z3.ExprRef)
                 return x
             elif isinstance(d, DefinitionDecl):
-                assert not (old and d.twostate)  # XXX check in resolver
+                assert index + d.num_states <= len(self.keys)  # checked in resolver; see NOTE(calling-stateful-definitions)
                 with self.scope.fresh_stack():
-                    return self.translate_expr(d.expr, old)
+                    return self.translate_expr(d.expr, index)
             else:
                 e, = d
                 return e
         elif isinstance(expr, IfThenElse):
-            return z3.If(self.translate_expr(expr.branch, old),
-                         self.translate_expr(expr.then, old),
-                         self.translate_expr(expr.els, old))
+            return z3.If(self.translate_expr(expr.branch, index),
+                         self.translate_expr(expr.then, index),
+                         self.translate_expr(expr.els, index))
         elif isinstance(expr, Let):
-            val = self.translate_expr(expr.val, old)
+            val = self.translate_expr(expr.val, index)
             with self.scope.in_scope(expr.binder, [val]):
-                return self.translate_expr(expr.body, old)
+                return self.translate_expr(expr.body, index)
         else:
             assert False, expr
 
 
-    def frame(self, mods: Iterable[ModifiesClause]) -> List[z3.ExprRef]:
+    def frame(self, mods: Iterable[ModifiesClause], index: int = 0) -> List[z3.ExprRef]:
         frame = []
         R: Iterator[StateDecl] = iter(self.scope.relations.values())
         C: Iterator[StateDecl] = iter(self.scope.constants.values())
@@ -235,9 +234,15 @@ class Z3Translator(object):
             if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or any(mc.name == d.name for mc in mods):
                 continue
 
+            k_new = self.get_key_opt(index + 1)
+            k_old = self.get_key_opt(index)
+            assert k_new is not None
+            assert k_old is not None
+
+
             if isinstance(d, ConstantDecl) or len(d.arity) == 0:
-                lhs = d.to_z3(self.key)
-                rhs = d.to_z3(self.key_old)
+                lhs = d.to_z3(k_new)
+                rhs = d.to_z3(k_old)
                 assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
                 e = lhs == rhs
             else:
@@ -247,8 +252,8 @@ class Z3Translator(object):
                     cs.append(z3.Const('x' + str(i), s.to_z3()))
                     i += 1
 
-                lhs = d.to_z3(self.key)
-                rhs = d.to_z3(self.key_old)
+                lhs = d.to_z3(k_new)
+                rhs = d.to_z3(k_old)
                 assert isinstance(lhs, z3.FuncDeclRef) and isinstance(rhs, z3.FuncDeclRef)
 
                 e = z3.Forall(cs, lhs(*cs) == rhs(*cs))
@@ -257,24 +262,24 @@ class Z3Translator(object):
 
         return frame
 
-    def translate_transition_body(self, t: DefinitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
-        return z3.And(self.translate_expr(t.expr),
-                      *self.frame(t.mods),
-                      self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True))
+    def translate_transition_body(self, t: DefinitionDecl, precond: Optional[Expr]=None, index: int = 0) -> z3.ExprRef:
+        return z3.And(self.translate_expr(t.expr, index=index),
+                      *self.frame(t.mods, index=index),
+                      self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True))
 
-    def translate_transition(self, t: DefinitionDecl, precond: Optional[Expr]=None) -> z3.ExprRef:
+    def translate_transition(self, t: DefinitionDecl, precond: Optional[Expr]=None, index: int = 0) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
-            body = self.translate_transition_body(t, precond)
+            body = self.translate_transition_body(t, precond, index=index)
             if len(bs) > 0:
                 return z3.Exists(bs, body)
             else:
                 return body
 
-    def translate_precond_of_transition(self, precond: Optional[Expr], t: DefinitionDecl) -> z3.ExprRef:
+    def translate_precond_of_transition(self, precond: Optional[Expr], t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
-            body = self.translate_expr(precond, old=True) if (precond is not None) else z3.BoolVal(True)
+            body = self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True)
 
             if len(bs) > 0:
                 return z3.Exists(bs, body)
@@ -282,65 +287,74 @@ class Z3Translator(object):
                 return body
 
 
-def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, Tuple[Optional[Token], ...], str]]:
-    def add_caller_token(s: Set[Tuple[bool, Tuple[Optional[Token], ...], str]]) -> Set[Tuple[bool, Tuple[Optional[Token], ...], str]]:
-        return set((b, (expr.tok,) + l, sym) for (b, l, sym) in s)
+# Returns a set describing the *mutable* symbols used by an expression.
+# Immutable symbols and bound variables are *not* included.
+# In the returned set, each element is a tuple (i, ts, s), where
+#     - s is the name of the symbol used
+#     - ts is a non-empty tuple of tokens describing the sequence of definitions by which
+#       expr refers to the symbol s (useful for locating error messages). the tuple is ordered
+#       from expr to the direct reference to s. if expr directly refers to s, then the tuple
+#       has length one.
+#     - i is the "state index" of the usage. in a single-vocabulary formula, this will
+#       always be 0, but in a multi-vocabulary formula, it indicates how many new() operators
+#       the usage is under.
+def symbols_used(scope: Scope, expr: Expr, state_index: int=0) -> Set[Tuple[int, Tuple[Optional[Token], ...], str]]:
+    def add_caller_token(s: Set[Tuple[int, Tuple[Optional[Token], ...], str]]) -> Set[Tuple[int, Tuple[Optional[Token], ...], str]]:
+        return set((i, (expr.tok,) + l, sym) for (i, l, sym) in s)
 
     if isinstance(expr, Bool):
         return set()
     elif isinstance(expr, UnaryExpr):
-        if expr.op == 'OLD':
-            assert not old
-            return symbols_used(scope, expr.arg, old=True)
+        if expr.op == 'NEW':
+            return symbols_used(scope, expr.arg, state_index=state_index + 1)
         else:
-            return symbols_used(scope, expr.arg, old)
+            return symbols_used(scope, expr.arg, state_index)
     elif isinstance(expr, BinaryExpr):
-        return symbols_used(scope, expr.arg1, old) | symbols_used(scope, expr.arg2,old)
+        return symbols_used(scope, expr.arg1, state_index) | symbols_used(scope, expr.arg2, state_index)
     elif isinstance(expr, NaryExpr):
-        ans: Set[Tuple[bool, Tuple[Optional[Token], ...], str]] = set()
+        ans: Set[Tuple[int, Tuple[Optional[Token], ...], str]] = set()
         for arg in expr.args:
-            ans |= symbols_used(scope, arg, old)
+            ans |= symbols_used(scope, arg, state_index)
         return ans
     elif isinstance(expr, AppExpr):
-        args: Set[Tuple[bool, Tuple[Optional[Token], ...], str]] = set()
+        args: Set[Tuple[int, Tuple[Optional[Token], ...], str]] = set()
         for arg in expr.args:
-            args |= symbols_used(scope, arg, old)
+            args |= symbols_used(scope, arg, state_index)
 
         d = scope.get(expr.callee)
         assert d is not None and not isinstance(d, tuple)
         if isinstance(d, DefinitionDecl):
-            assert not (old and d.twostate)
             with scope.fresh_stack():
                 with scope.in_scope(d.binder, [None for i in range(len(d.binder.vs))]):
-                    callee_symbols = symbols_used(scope, d.expr, old)
+                    callee_symbols = symbols_used(scope, d.expr, state_index)
             return args | add_caller_token(callee_symbols)
         elif d.mutable:
-            return args | {(old, (expr.tok,), expr.callee)}
+            return args | {(state_index, (expr.tok,), expr.callee)}
         else:
             return args
     elif isinstance(expr, QuantifierExpr):
         with scope.in_scope(expr.binder, [None for i in range(len(expr.binder.vs))]):
-            return symbols_used(scope, expr.body, old)
+            return symbols_used(scope, expr.body, state_index)
     elif isinstance(expr, Id):
         d = scope.get(expr.name)
         assert d is not None, expr.name
         if isinstance(d, RelationDecl) or \
            isinstance(d, ConstantDecl) or \
            isinstance(d, FunctionDecl):
-            return {(old, (expr.tok,), expr.name)} if d.mutable else set()
+            return {(state_index, (expr.tok,), expr.name)} if d.mutable else set()
         elif isinstance(d, DefinitionDecl):
             with scope.fresh_stack():
-                return add_caller_token(symbols_used(scope, d.expr, old))
+                return add_caller_token(symbols_used(scope, d.expr, state_index))
         else:
             return set()
     elif isinstance(expr, IfThenElse):
-        return symbols_used(scope, expr.branch, old) | \
-               symbols_used(scope, expr.then, old) | \
-               symbols_used(scope, expr.els, old)
+        return symbols_used(scope, expr.branch, state_index) | \
+            symbols_used(scope, expr.then, state_index) | \
+            symbols_used(scope, expr.els, state_index)
     elif isinstance(expr, Let):
-        s1 = symbols_used(scope, expr.val, old)
+        s1 = symbols_used(scope, expr.val, state_index)
         with scope.in_scope(expr.binder, [None for i in range(len(expr.binder.vs))]):
-            return s1 | symbols_used(scope, expr.body, old)
+            return s1 | symbols_used(scope, expr.body, state_index)
     else:
         assert False
 
@@ -423,48 +437,59 @@ def as_clauses(expr: Expr) -> List[Expr]:
         ans.append(e)
     return ans
 
-def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder, old: bool = False) -> Expr:
+# Produce an expression that guards all the variables in the given binder to be in the
+# relation corresponding to their sort. See relativize_quantifiers.
+def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder) -> Expr:
     conjs = []
     for v in b.vs:
         guard = Apply(guards[get_decl_from_sort(v.sort)].name, [Id(None, v.name)])
-        if old:
-            guard = Old(guard)
         conjs.append(guard)
     return And(*conjs)
 
 
-def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr, old: bool = False) -> Expr:
+# 'relativize' an expression by guarding quantifiers by the given relations, which should be
+# unary relations of the given sort. The guard relations can be mutable or immutable, but
+# note that if they are mutable, then they are always referred to in the "current" state.
+#
+# For example, if sort node is to be guarded by a relation A, then this would transform the
+# expression
+#     forall x:node. !(R(x) & S(x))
+# into the relativized expression
+#     forall x:node. A(x) -> !(R(x) & S(x))
+# Universal quantifiers are guarded by implications, while existentials are guarded by
+# conjunctions.
+def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> Expr:
     QUANT_GUARD_OP: Dict[str, Callable[[Expr, Expr], Expr]] = {
         'FORALL': Implies,
         'EXISTS': And,
     }
 
     # TODO: consider supporting a visitor pattern
-    def go(e: Expr, old: bool) -> Expr:
+    def go(e: Expr) -> Expr:
         if isinstance(e, Bool):
             return e
         elif isinstance(e, UnaryExpr):
-            return UnaryExpr(None, e.op, go(e.arg, old=old and e.op != 'OLD'))
+            return UnaryExpr(None, e.op, go(e.arg))
         elif isinstance(e, BinaryExpr):
-            return BinaryExpr(None, e.op, go(e.arg1, old), go(e.arg2, old))
+            return BinaryExpr(None, e.op, go(e.arg1), go(e.arg2))
         elif isinstance(e, NaryExpr):
-            return NaryExpr(None, e.op, [go(arg, old) for arg in e.args])
+            return NaryExpr(None, e.op, [go(arg) for arg in e.args])
         elif isinstance(e, AppExpr):
-            return AppExpr(None, e.callee, [go(arg, old) for arg in e.args])
+            return AppExpr(None, e.callee, [go(arg) for arg in e.args])
         elif isinstance(e, QuantifierExpr):
-            guard = relativization_guard_for_binder(guards, e.binder, old=old)
+            guard = relativization_guard_for_binder(guards, e.binder)
             return QuantifierExpr(None, e.quant, e.binder.vs,
-                                  QUANT_GUARD_OP[e.quant](guard, go(e.body, old)))
+                                  QUANT_GUARD_OP[e.quant](guard, go(e.body)))
         elif isinstance(e, Id):
             return e
         elif isinstance(e, IfThenElse):
-            return IfThenElse(None, go(e.branch, old), go(e.then, old), go(e.els, old))
+            return IfThenElse(None, go(e.branch), go(e.then), go(e.els))
         elif isinstance(e, Let):
-            return Let(None, e.binder.vs[0], go(e.val, old), go(e.body, old))
+            return Let(None, e.binder.vs[0], go(e.val), go(e.body))
         else:
             assert False
 
-    return go(e, old=old)
+    return go(e)
 
 # checks if e is a universal formula with one quantifier out front (or is quantifier free)
 # i.e. returns false if additional universal quantifiers are buried in the body
@@ -512,9 +537,19 @@ class Expr(Denotable):
         self.pretty(buf, PREC_TOP, 'NONE')
         return ''.join(buf)
 
+    # typecheck expression and destructively infer types for bound variables.
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         raise Exception('Unexpected expression %s does not implement resolve method' %
                         repr(self))
+    # NOTE(resolving-malformed-programs)
+    # mypyvy tries to report as many useful errors as possible about the input program during
+    # resolution, by continuing after the point where the first error is detected. This
+    # introduces subtleties in the resolver where some invariants are established only assuming
+    # no errors have been detected so far. As a rule, if the resolver does not exit/return
+    # after detecting an invariant violation, then that invariant should not be relied upon
+    # elsewhere in the resolver without first asserting that the program is error free.
+    # After the resolver is run, mypyvy exits if any errors are detected, so any other parts
+    # of mypyvy can assume all invariants established by the resolver.
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Expr):
@@ -573,11 +608,11 @@ FalseExpr = Bool(None, False)
 
 UNOPS = {
     'NOT',
-    'OLD'
+    'NEW'
 }
 z3_UNOPS: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]] = {
     'NOT': z3.Not,
-    'OLD': None
+    'NEW': None
 }
 
 def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: InferenceSort) -> InferenceSort:
@@ -619,12 +654,10 @@ class UnaryExpr(Expr):
         self.arg = arg
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
-        if self.op == 'OLD':
-            if not scope.in_two_state_context:
-                utils.print_error(self.tok, 'old can only be used in a two-state context')
-            if scope.in_old_context:
-                utils.print_error(self.tok, 'old() expression cannot be nested inside another old!')
-            with scope.old_context():
+        if self.op == 'NEW':
+            if not scope.new_allowed():
+                utils.print_error(self.tok, 'new is not allowed here')
+            with scope.next_state_index():
                 return self.arg.resolve(scope, sort)
         else:
             assert self.op == 'NOT'
@@ -641,7 +674,7 @@ class UnaryExpr(Expr):
     def prec(self) -> int:
         if self.op == 'NOT':
             return PREC_NOT
-        elif self.op == 'OLD':
+        elif self.op == 'NEW':
             return PREC_BOT
         else:
             assert False
@@ -650,8 +683,8 @@ class UnaryExpr(Expr):
         if self.op == 'NOT':
             buf.append('!')
             self.arg.pretty(buf, PREC_NOT, 'NONE')
-        elif self.op == 'OLD':
-            buf.append('old(')
+        elif self.op == 'NEW':
+            buf.append('new(')
             self.arg.pretty(buf, PREC_TOP, 'NONE')
             buf.append(')')
         else:
@@ -663,8 +696,8 @@ class UnaryExpr(Expr):
 def Not(e: Expr) -> Expr:
     return UnaryExpr(None, 'NOT', e)
 
-def Old(e: Expr) -> Expr:
-    return UnaryExpr(None, 'OLD', e)
+def New(e: Expr) -> Expr:
+    return UnaryExpr(None, 'NEW', e)
 
 BINOPS = {
     'IMPLIES',
@@ -897,13 +930,14 @@ class AppExpr(Expr):
             return sort  # bogus
 
         if ((isinstance(d, RelationDecl) or isinstance(d, FunctionDecl))
-            and d.mutable and scope.in_zero_state_context):
+            and d.mutable and not scope.mutable_allowed()):
             name = 'relation' if isinstance(d, RelationDecl) else 'function'
             utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
             # note that we don't return here. typechecking can continue.
+            # see NOTE(resolving-malformed-programs)
 
-        if isinstance(d, DefinitionDecl) and d.twostate and scope.in_old_context:
-            utils.print_error(self.tok, 'a twostate definition cannot be called inside an old()!')
+        if isinstance(d, DefinitionDecl) and not scope.call_allowed(d):
+            utils.print_error(self.tok, f'a {d.num_states}-state definition cannot be called from a {scope.num_states}-state context inside {scope.current_state_index} nested new()s!')
 
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
             utils.print_error(self.tok, 'Callee applied to wrong number of arguments')
@@ -1083,7 +1117,7 @@ class Id(Expr):
             return sort  # bogus
 
         if ((isinstance(d, RelationDecl) or isinstance(d, ConstantDecl))
-            and d.mutable and scope.in_zero_state_context):
+            and d.mutable and not scope.mutable_allowed()):
             name = 'relation' if isinstance(d, RelationDecl) else 'constant'
             utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
             return sort  # bogus
@@ -1285,12 +1319,12 @@ def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
     conjuncts = []
     for stmt in block.stmts:
         if isinstance(stmt, AssumeStatement):
-            conjuncts.append(Old(stmt.expr))
+            conjuncts.append(stmt.expr)
         elif isinstance(stmt, AssignmentStatement):
-            assert stmt.assignee not in mods_str_list
+            assert stmt.assignee not in mods_str_list, 'block statements may only assign to a component once!'
             mods_str_list.append(stmt.assignee)
             if len(stmt.args) == 0:
-                conjuncts.append(Eq(Id(None, stmt.assignee), stmt.rhs))
+                conjuncts.append(Eq(New(Id(None, stmt.assignee)), stmt.rhs))
             else:
                 assert isinstance(stmt.rhs, Bool)
                 if stmt.rhs.val:
@@ -1301,8 +1335,8 @@ def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
                 c = And(*(Eq(Id(None, X), arg) for X, arg in zip(vs, stmt.args)))
 
                 conjuncts.append(Forall([SortedVar(None, v, None) for v in vs],
-                                        Iff(Apply(stmt.assignee, [Id(None, v) for v in vs]),
-                                            f(Old(Apply(stmt.assignee, [Id(None, v) for v in vs])), c))))
+                                        Iff(New(Apply(stmt.assignee, [Id(None, v) for v in vs])),
+                                            f(Apply(stmt.assignee, [Id(None, v) for v in vs]), c))))
         else:
             reveal_type(stmt)
             assert False
@@ -1545,7 +1579,8 @@ class InitDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
-        self.expr.resolve(scope, BoolSort)
+        with scope.n_states(1):
+            self.expr.resolve(scope, BoolSort)
 
         if symbols_used(scope, self.expr) == set():
             utils.print_error(self.tok, 'this initial condition mentions no mutable symbols. it should be declared `axiom` instead.')
@@ -1578,19 +1613,20 @@ class ModifiesClause(object):
         return self.name
 
 class DefinitionDecl(Decl):
-    def __init__(self, tok: Optional[Token], public: bool, twostate: bool, name: str,
-                 params: List[SortedVar],
+    def __init__(self, tok: Optional[Token], is_public_transition: bool, num_states: int,
+                 name: str, params: List[SortedVar],
                  body: Union[BlockStatement, Tuple[List[ModifiesClause], Expr]]) -> None:
         def implies(a: bool, b: bool) -> bool:
             return not a or b
         # these asserts are enforced by the parser
-        assert implies(public, twostate)
-        assert isinstance(body, BlockStatement) or len(body[0]) == 0 or twostate
+        assert num_states in (0, 1, 2)
+        assert implies(is_public_transition, num_states == 2)
+        assert isinstance(body, BlockStatement) or len(body[0]) == 0 or num_states == 2
 
         super().__init__()
         self.tok = tok
-        self.public = public
-        self.twostate = twostate
+        self.is_public_transition = is_public_transition
+        self.num_states = num_states
         self.name = name
         self.binder = Binder(params)
         self.arity = [sv.sort for sv in params]
@@ -1602,7 +1638,7 @@ class DefinitionDecl(Decl):
             self.mods, self.expr = self.body
 
     def _denote(self) -> Tuple:
-        return (self.public, self.twostate, self.name, self.binder, self.body)
+        return (self.is_public_transition, self.num_states, self.name, self.binder, self.body)
 
     def resolve(self, scope: Scope) -> None:
         assert len(scope.stack) == 0
@@ -1619,7 +1655,7 @@ class DefinitionDecl(Decl):
         self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-            with scope.two_state(self.twostate):
+            with scope.n_states(self.num_states):
                 self.expr.resolve(scope, BoolSort)
 
         self.binder.post_resolve()
@@ -1627,11 +1663,11 @@ class DefinitionDecl(Decl):
         if utils.error_count > old_error_count:
             return
 
-        if self.twostate:
+        if self.num_states == 2:
             with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
                 syms = symbols_used(scope, self.expr)
-                for is_old, toks, sym in syms:
-                    if not is_old:
+                for index, toks, sym in syms:
+                    if index == 1:
                         for mod in self.mods:
                             if mod.name == sym:
                                 break
@@ -1653,8 +1689,8 @@ class DefinitionDecl(Decl):
                     if isinstance(decl, RelationDecl) and decl.is_derived():
                         utils.print_error(mod.tok, 'derived relation %s may not be mentioned by the modifies clause, since derived relations are always modified' % (mod.name,))
                         continue
-                    for is_old, _, sym in syms:
-                        if mod.name == sym and not is_old:
+                    for index, _, sym in syms:
+                        if mod.name == sym and index == 1:
                             break
                     else:
                         utils.print_error(mod.tok, 'symbol %s is mentioned by the modifies clause, but is not referred to in the new state, so it will be havoced. supress this error by using %s in a no-op.' % (mod.name, mod.name))
@@ -1686,7 +1722,8 @@ class InvariantDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
-        self.expr.resolve(scope, BoolSort)
+        with scope.n_states(1):
+            self.expr.resolve(scope, BoolSort)
 
         if not scope.in_phase_context and symbols_used(scope, self.expr) == set():
             utils.print_error(self.tok, 'this invariant mentions no mutable symbols. it can be deleted.')
@@ -1719,8 +1756,7 @@ class AxiomDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
-        with scope.zero_state():
-            self.expr.resolve(scope, BoolSort)
+        self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
         return 'AxiomDecl(tok=None, name=%s, expr=%s)' % (
@@ -1732,30 +1768,33 @@ class AxiomDecl(Decl):
                                self.expr)
 
 class TheoremDecl(Decl):
-    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, twostate: bool) -> None:
+    def __init__(self, tok: Optional[Token], name: Optional[str], expr: Expr, num_states: int) -> None:
         super().__init__()
+        assert num_states in (0, 1, 2)  # enforced by parser
         self.tok = tok
         self.name = name
         self.expr = expr
-        self.twostate = twostate
+        self.num_states = num_states
 
     def _denote(self) -> Tuple:
-        return (self.name, self.expr, self.twostate)
+        return (self.name, self.expr, self.num_states)
 
     def resolve(self, scope: Scope) -> None:
         self.expr = close_free_vars(self.tok, self.expr)
-        self.expr.resolve(scope, BoolSort)
+        with scope.n_states(self.num_states):
+            self.expr.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        return 'TheoremDecl(tok=None, name=%s, expr=%s, twostate=%s)' % (
+        return 'TheoremDecl(tok=None, name=%s, expr=%s, num_states=%s)' % (
             repr(self.name) if self.name is not None else 'None',
             repr(self.expr),
-            self.twostate
+            self.num_states
         )
 
     def __str__(self) -> str:
         return '%stheorem %s%s' % (
-            'twostate ' if self.twostate else '',
+            'twostate ' if self.num_states == 2 else
+            'zerostate ' if self.num_states == 0 else '',
             ('[%s] ' % self.name) if self.name is not None else '',
             self.expr
         )
@@ -2030,7 +2069,8 @@ class TransitionCall(Denotable):
 
             for a, sort in zip(self.args, (v.sort for v in ition.binder.vs)):
                 if isinstance(a, Expr):
-                    a.resolve(scope, sort)
+                    with scope.n_states(1):
+                        a.resolve(scope, sort)
 
 class TransitionCalls(Denotable):
     def __init__(self, calls: List[TransitionCall]) -> None:
@@ -2080,7 +2120,8 @@ class AssertDecl(Denotable):
     def resolve(self, scope: Scope) -> None:
         if self.expr is not None:
             self.expr = close_free_vars(self.tok, self.expr)
-            self.expr.resolve(scope, BoolSort)
+            with scope.n_states(1):
+                self.expr.resolve(scope, BoolSort)
 
 
 TraceComponent = Union[TraceTransitionDecl, AssertDecl] # , AxiomDecl, ConstantDecl]
@@ -2137,10 +2178,28 @@ class Scope(Generic[B]):
         self.functions: Dict[str, FunctionDecl] = {}
         self.definitions: Dict[str, DefinitionDecl] = {}
         self.phases: Dict[str, PhaseDecl] = {}
-        self.in_two_state_context = False
-        self.in_zero_state_context = False
-        self.in_old_context = False
+
+        # invariant: num_states > 0 ==> current_state_index < num_states
+        self.num_states: int = 0
+        self.current_state_index: int = 0
+
         self.in_phase_context = False
+
+    def new_allowed(self) -> bool:
+        return self.current_state_index + 1 < self.num_states
+
+    def mutable_allowed(self) -> bool:
+        return self.num_states > 0
+
+    # NOTE(calling-stateful-definitions)
+    # A twostate definition cannot be called from a twostate context inside of a new(), since
+    # by that point we are in the "next" state. In general, when calling a k-state definition,
+    # the following must hold:
+    #     current_state_index + (k - 1) < num_states
+    # Also note that this correctly handles the case of calling a 0-state definition from a
+    # 0-state context, since then current_state_index = 0 and num_states = 0, and -1 < 0.
+    def call_allowed(self, d: DefinitionDecl) -> bool:
+        return self.current_state_index + (d.num_states - 1) < self.num_states
 
     def push(self, l: List[Tuple[str, B]]) -> None:
         self.stack.append(l)
@@ -2242,30 +2301,25 @@ class Scope(Generic[B]):
         self.stack = stack
 
     @contextmanager
-    def old_context(self) -> Iterator[None]:
-        old = self.in_old_context
-        self.in_old_context = True
-        yield None
-        self.in_old_context = old
+    def next_state_index(self) -> Iterator[None]:
+        previous = self.current_state_index
+        if self.current_state_index + 1 < self.num_states:
+            self.current_state_index += 1
+            yield None
+            self.current_state_index -= 1
+        else:
+            assert utils.error_count > 0
+            yield None
 
     @contextmanager
-    def two_state(self, twostate: bool) -> Iterator[None]:
-        if twostate:
-            assert not self.in_two_state_context
-            assert not self.in_zero_state_context
-            self.in_two_state_context = True
+    def n_states(self, n: int) -> Iterator[None]:
+        assert n >= 0
+        assert self.num_states == 0 and self.current_state_index == 0
+        self.num_states = n
+        self.current_state_index = 0
         yield None
-        if twostate:
-            self.in_two_state_context = False
-
-    @contextmanager
-    def zero_state(self) -> Iterator[None]:
-        assert not self.in_zero_state_context
-        assert not self.in_two_state_context
-        self.in_zero_state_context = True
-        yield None
-        assert self.in_zero_state_context
-        self.in_zero_state_context = False
+        self.num_states = 0
+        self.current_state_index = 0
 
     @contextmanager
     def in_phase(self) -> Iterator[None]:
@@ -2328,7 +2382,7 @@ class Program(object):
 
     def transitions(self) -> Iterator[DefinitionDecl]:
         for d in self.definitions():
-            if d.public:
+            if d.is_public_transition:
                 yield d
 
     def axioms(self) -> Iterator[AxiomDecl]:

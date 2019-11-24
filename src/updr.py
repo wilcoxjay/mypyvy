@@ -123,19 +123,19 @@ class Frames(object):
 
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Trace.from_z3([KEY_ONE], z3m)
+            mod = Trace.from_z3((KEY_ONE,), z3m)
             self.record_state(mod)
             diag = mod.as_diagram()
             return (p, diag)
 
         def edge_covering_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
-            t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+            t = self.solver.get_translator((KEY_OLD, KEY_NEW))
             f = self.fs[-1]
             prog = syntax.the_program
 
             with self.solver:
                 for c in f.summary_of(p):
-                    self.solver.add(t.translate_expr(c, old=True))
+                    self.solver.add(t.translate_expr(c, index=0))
 
                 transitions_from_phase = self.automaton.transitions_from(p)
 
@@ -165,7 +165,7 @@ class Frames(object):
                             utils.logger.debug('phase %s cex to edge covering of transition %s' %
                                                (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Trace.from_z3([KEY_OLD, KEY_NEW], z3m)
+                            mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
                             self.record_state(mod)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
@@ -228,7 +228,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Trace.from_z3([KEY_OLD, KEY_NEW], m)
+                mod = Trace.from_z3((KEY_OLD, KEY_NEW), m)
                 self.record_state(mod)
                 diag = mod.as_diagram(i=0)
 
@@ -384,7 +384,7 @@ class Frames(object):
         if core is None or not utils.args.use_z3_unsat_cores:
             return
 
-        t = self.solver.get_translator(KEY_ONE)
+        t = self.solver.get_translator((KEY_ONE,))
 
         with self.solver:
             for init in self.fs[0].summary_of(p):
@@ -469,7 +469,7 @@ class Frames(object):
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult,
                Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
-        t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+        t = self.solver.get_translator((KEY_OLD, KEY_NEW))
 
         if utils.args.use_z3_unsat_cores:
             core: Optional[MySet[int]] = MySet()
@@ -478,7 +478,7 @@ class Frames(object):
 
         with self.solver:
             with self.solver.mark_assumptions_necessary():
-                self.solver.add(diag.to_z3(t))
+                self.solver.add(diag.to_z3(t, state_index=1))
 
                 transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
                 for src in self._predecessor_precedence(current_phase,
@@ -526,7 +526,7 @@ class Frames(object):
         with solver:
 
             for f in pre_frame.summary_of(src_phase):
-                solver.add(t.translate_expr(f, old=True))
+                solver.add(t.translate_expr(f, index=0))
 
             for phase_transition in transitions:
                 delta = phase_transition.transition_decl()
@@ -544,7 +544,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
-                            m = Trace.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
+                            m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
                             self.record_state(m)

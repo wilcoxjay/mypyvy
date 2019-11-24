@@ -26,7 +26,7 @@
   (save-excursion (search-forward s (line-end-position) 't)))
 
 (defconst mypyvy-keyword-regex
-  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|definition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|onestate\\|twostate\\|theorem\\|assume\\|automaton\\|global\\|safety\\|phase\\|self\\|derived\\|sketch\\|trace\\|assert\\|any\\|if\\|then\\|else\\|let\\|in\\|sat\\|unsat\\|distinct\\)\\>")
+  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|definition\\|invariant\\|axiom\\|old\\|new\\|forall\\|exists\\|true\\|false\\|onestate\\|twostate\\|theorem\\|assume\\|automaton\\|global\\|safety\\|phase\\|self\\|derived\\|sketch\\|trace\\|assert\\|any\\|if\\|then\\|else\\|let\\|in\\|sat\\|unsat\\|distinct\\)\\>")
 
 (defconst mypyvy-font-lock-keywords
   `((,mypyvy-keyword-regex . font-lock-keyword-face)))
