@@ -671,8 +671,6 @@ class Frames(object):
 
     def print_status(self) -> None:
         '''Print information useful for comparison with primal dual houdini
-
-        TODO: convert from barbaric print() to civilized xml logging
         '''
 
         # update self.inductive_invariant
@@ -691,7 +689,7 @@ class Frames(object):
                     inv.remove(i)
         self.inductive_invariant |= inv
         # print information
-        print(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, {len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} implied by human invariant):')
+        utils.logger.info(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, {len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} implied by human invariant):')
         for i, p in enumerate(self.predicates):
             note = '({})'.format({
                 phase.name(): max((j for j, f in enumerate(self.fs) if p in f.summary_of(phase)), default=-1)
@@ -701,13 +699,13 @@ class Frames(object):
                 note += f' (invariant)'
             if i in self.human_invariant_implies:
                 note += f' (implied by human invariant)'
-            print(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
+            utils.logger.info(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
         for i, p in enumerate(self.human_invariant):
             if (i not in self.human_invariant_proved and
                 len(self.inductive_invariant) > 0 and
                 logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)], [p], minimize=False) is None):
                 self.human_invariant_proved.add(i)
-        print(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, {len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} proven):')
+        utils.logger.info(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, {len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} proven):')
         for i, p in enumerate(self.human_invariant):
             notes = []
             if i in self.human_invariant_proved:
@@ -715,8 +713,8 @@ class Frames(object):
             if i in self.human_invariant_to_predicate:
                 notes.append(f'learned as predicates[{self.human_invariant_to_predicate[i]}]')
             note = '(' + ', '.join(notes) + ')'
-            print(f'  human_invariant[{i:3}]{note}: {p}')
-        print()
+            utils.logger.info(f'  human_invariant[{i:3}]{note}: {p}')
+        utils.logger.info('')
 
 
 def load_frames(in_filename: str, s: Solver) -> Frames:
