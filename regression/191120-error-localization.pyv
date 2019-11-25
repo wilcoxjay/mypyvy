@@ -13,5 +13,5 @@ onestate definition D2(n: A) =
 
 transition baz(n: A)
   modifies S
-  D2(n) &
-  S(n)
+  new(D2(n)) &
+  new(S(n))
