@@ -656,14 +656,18 @@ class UnaryExpr(Expr):
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         if self.op == 'NEW':
             if not scope.new_allowed():
-                utils.print_error(self.tok, 'new is not allowed here')
+                utils.print_error(self.tok, f'new is not allowed here because this is a {scope.num_states}-state environment, and the current state index is {scope.current_state_index}')
             with scope.next_state_index():
                 return self.arg.resolve(scope, sort)
-        else:
-            assert self.op == 'NOT'
+        elif self.op == 'NOT':
             check_constraint(self.tok, sort, BoolSort)
             self.arg.resolve(scope, BoolSort)
             return BoolSort
+        elif self.op == 'OLD':
+            utils.print_error(self.tok, "old() is deprecated; also, it doesn't make sense here")
+            return sort  # bogus
+        else:
+            assert False
 
     def _denote(self) -> Tuple:
         return (self.op, self.arg)
@@ -932,7 +936,7 @@ class AppExpr(Expr):
         if ((isinstance(d, RelationDecl) or isinstance(d, FunctionDecl))
             and d.mutable and not scope.mutable_allowed()):
             name = 'relation' if isinstance(d, RelationDecl) else 'function'
-            utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
+            utils.print_error(self.tok, f'Only immutable {name}s can be referenced in this context')
             # note that we don't return here. typechecking can continue.
             # see NOTE(resolving-malformed-programs)
 
@@ -1119,7 +1123,7 @@ class Id(Expr):
         if ((isinstance(d, RelationDecl) or isinstance(d, ConstantDecl))
             and d.mutable and not scope.mutable_allowed()):
             name = 'relation' if isinstance(d, RelationDecl) else 'constant'
-            utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
+            utils.print_error(self.tok, f'Only immutable {name}s can be referenced in this context')
             return sort  # bogus
 
         if isinstance(d, RelationDecl):
@@ -1738,7 +1742,7 @@ class DefinitionDecl(Decl):
             mod.resolve(scope)
 
         if self.num_states == 2 and uses_old(self.expr):
-            utils.print_warning(self.tok, 'old() is no longer supported; please use new(). as a convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+            utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
 
             print(f'translating transition {self.name}')
             self.expr = translate_old_to_new(scope, self.expr)
