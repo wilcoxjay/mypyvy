@@ -36,7 +36,8 @@ def get_safety() -> List[Expr]:
             safety = [the_inv.expr]
         else:
             e = syntax.close_free_vars(None, parser.parse_expr(utils.args.safety))
-            e.resolve(prog.scope, syntax.BoolSort)
+            with prog.scope.n_states(1):
+                e.resolve(prog.scope, syntax.BoolSort)
             safety = [e]
     else:
         safety = [s.expr for s in prog.safeties()]

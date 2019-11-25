@@ -430,9 +430,11 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
         s = Solver()
 
         end_expr = syntax.Not(syntax.And(*(invd.expr for invd in safety)))
-        end_expr.resolve(syntax.the_program.scope, syntax.BoolSort)
+        with syntax.the_program.scope.n_states(1):
+            end_expr.resolve(syntax.the_program.scope, syntax.BoolSort)
         trace_decl = diagram_trace_to_explicitly_relaxed_trace_decl(trace, end_expr)
-        trace_decl.resolve(syntax.the_program.scope)
+        with syntax.the_program.scope.n_states(1):
+            trace_decl.resolve(syntax.the_program.scope)
 
         print(trace_decl)
 

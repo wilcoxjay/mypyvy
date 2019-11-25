@@ -1677,7 +1677,8 @@ class Trace(object):
                     for sort in self.univs
                 ))))
             assert prog.scope is not None
-            e.resolve(prog.scope, None)
+            with prog.scope.n_states(1):
+                e.resolve(prog.scope, None)
             self.onestate_formula_cache[i] = e
         return self.onestate_formula_cache[i]
 
