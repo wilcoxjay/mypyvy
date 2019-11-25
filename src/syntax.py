@@ -1682,7 +1682,8 @@ def translate_old_to_new(scope: Scope, e: Expr, in_old: bool=False, out_new: boo
             t_args = [translate_old_to_new(scope, arg, in_old, out_new, mutable_callee) for arg in e.args]
             return AppExpr(e.tok, e.callee, t_args)
     elif isinstance(e, QuantifierExpr):
-        return QuantifierExpr(e.tok, e.quant, e.binder.vs, translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee))
+        with scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
+            return QuantifierExpr(e.tok, e.quant, e.binder.vs, translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee))
     elif isinstance(e, Id):
         d = scope.get(e.name)
         if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not in_old:
@@ -1696,9 +1697,10 @@ def translate_old_to_new(scope: Scope, e: Expr, in_old: bool=False, out_new: boo
             translate_old_to_new(scope, e.then, in_old, out_new, mutable_callee),
             translate_old_to_new(scope, e.els, in_old, out_new, mutable_callee))
     elif isinstance(e, Let):
-        return Let(e.tok, e.binder.vs[0],
-                   translate_old_to_new(scope, e.val, in_old, out_new, mutable_callee),
-                   translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee))
+        with scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
+            return Let(e.tok, e.binder.vs[0],
+                       translate_old_to_new(scope, e.val, in_old, out_new, mutable_callee),
+                       translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee))
     else:
         assert False, e
 
@@ -1746,7 +1748,8 @@ class DefinitionDecl(Decl):
             utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
 
             print(f'translating transition {self.name}')
-            self.expr = translate_old_to_new(scope, self.expr)
+            with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
+                self.expr = translate_old_to_new(scope, self.expr)
 
         self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
