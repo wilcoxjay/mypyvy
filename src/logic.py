@@ -1000,8 +1000,9 @@ class Diagram(object):
         self.binder.pre_resolve(scope)
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-            for _, _, c in self.conjuncts():
-                c.resolve(scope, syntax.BoolSort)
+            with scope.n_states(1):
+                for _, _, c in self.conjuncts():
+                    c.resolve(scope, syntax.BoolSort)
 
         self.binder.post_resolve()
 

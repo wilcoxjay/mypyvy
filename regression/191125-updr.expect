@@ -1,0 +1,7 @@
+checking init:
+  implies invariant on line 26... ok.
+frame is safe and inductive. done!
+summary of the_phase: 
+!(exists A0:A. T(A0) & !S(A0))
+!(exists A0:A. !R(A0) & S(A0))
+mypyvy exiting with status 0
