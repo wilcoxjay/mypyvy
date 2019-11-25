@@ -1937,7 +1937,8 @@ class PhaseTransitionDecl(Denotable):
             transition_constants = transition.binder.vs
             self.precond = close_free_vars(self.tok, self.precond, in_scope=[x.name for x in transition_constants])
             with scope.in_scope(transition.binder, [v.sort for v in transition_constants]):
-                self.precond.resolve(scope, BoolSort)
+                with scope.n_states(1):
+                    self.precond.resolve(scope, BoolSort)
 
         if self.target is not None and scope.get_phase(self.target) is None:
             utils.print_error(self.tok, 'unknown phase %s' % (self.target))
