@@ -7852,8 +7852,9 @@ def enumerate_reachable_states(s: Solver) -> None:
             # beyond initial states with 2 of everything). we should
             # collect states by the sizes of their universe
 
-            # s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), index=1)))
-            s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0), index=1)))
+            index = len(t.keys) - 1
+            # s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), index=index)))
+            s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0), index=index)))
 
         print('looking for initial states')
         with s:
