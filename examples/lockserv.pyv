@@ -168,4 +168,7 @@ sat trace {
   any transition
   any transition
   assert exists N. holds_lock(N)
+  any transition
+  any transition
+  assert server_holds_lock
 }

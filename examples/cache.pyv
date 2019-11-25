@@ -263,3 +263,74 @@ invariant !(bus_upgrade(C1, A) & modified(C2, A))
 
 # invariant [bmc] !(exists C, A. modified(C, A))
 
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_read_invalid
+    do_bus_read_valid
+    complete_proc_read_invalid_shared
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_write_invalid
+    do_bus_read_for_ownership_valid
+    do_bus_read_for_ownership_invalid
+    complete_proc_write_invalid
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_read_invalid
+    do_bus_read_valid
+    complete_proc_read_invalid_shared
+
+    issue_proc_write_shared
+    do_bus_upgrade
+    complete_proc_write_shared
+
+    evict_modified
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    proc_write_exclusive
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    evict_exclusive_or_shared
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_read_invalid
+    do_bus_read_valid
+    complete_proc_read_invalid_shared
+
+    evict_exclusive_or_shared
+}
