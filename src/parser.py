@@ -371,8 +371,7 @@ def p_expr_noteq(p: Any) -> None:
 
 def p_expr_old(p: Any) -> None:
     'expr : OLD LPAREN expr RPAREN'
-    utils.print_error(p.slice[1], 'syntax error: old() is no longer supported; use new()')
-    p[0] = None
+    p[0] = syntax.UnaryExpr(p.slice[1], 'OLD', p[3])
 
 def p_expr_new(p: Any) -> None:
     'expr : NEW LPAREN expr RPAREN'
@@ -477,12 +476,12 @@ def p_stmt_assignment(p: Any) -> None:
 def kstate_int(kstate: str) -> int:
     if kstate == 'zerostate':
         return 0
-    elif kstate == 'onestate':
+    elif kstate == 'onestate' or kstate is None:
         return 1
     elif kstate == 'twostate':
         return 2
     else:
-        assert False
+        assert False, kstate
 
 def p_kstate(p: Any) -> None:
     '''kstate : ZEROSTATE
@@ -493,7 +492,7 @@ def p_kstate(p: Any) -> None:
 
 def p_decl_theorem(p: Any) -> None:
     'decl : kstate THEOREM opt_name expr'
-    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], num_states=kstate_int(p[1]))
+    p[0] = syntax.TheoremDecl(p.slice[2], p[3], p[4], num_states=p[1])
 
 def p_decl_definition(p: Any) -> None:
     'decl : kstate DEFINITION id LPAREN params RPAREN definition_body'

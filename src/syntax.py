@@ -649,7 +649,7 @@ def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: Infe
 class UnaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg: Expr) -> None:
         super().__init__(tok)
-        assert op in UNOPS
+        assert op in UNOPS or op == 'OLD'  # TODO: remove 'OLD'
         self.op = op
         self.arg = arg
 
@@ -1612,6 +1612,91 @@ class ModifiesClause(object):
     def __str__(self) -> str:
         return self.name
 
+def uses_old(e: Expr) -> bool:
+    if isinstance(e, Bool):
+        return False
+    elif isinstance(e, UnaryExpr):
+        return e.op == 'OLD' or uses_old(e.arg)
+    elif isinstance(e, BinaryExpr):
+        return uses_old(e.arg1) or uses_old(e.arg2)
+    elif isinstance(e, NaryExpr):
+        return any(uses_old(x) for x in e.args)
+    elif isinstance(e, AppExpr):
+        return any(uses_old(x) for x in e.args)
+    elif isinstance(e, QuantifierExpr):
+        return uses_old(e.body)
+    elif isinstance(e, Id):
+        return False
+    elif isinstance(e, IfThenElse):
+        return uses_old(e.branch) or uses_old(e.then) or uses_old(e.els)
+    elif isinstance(e, Let):
+        return uses_old(e.val) or uses_old(e.body)
+    else:
+        assert False, e
+
+def translate_old_to_new(scope: Scope, e: Expr, in_old: bool=False, out_new: bool=False, mutable_callee: Optional[Token]=None) -> Expr:
+    assert not (in_old and out_new)
+
+    if isinstance(e, Bool):
+        return e
+    elif isinstance(e, UnaryExpr):
+        if e.op == 'OLD':
+            if out_new:
+                utils.print_error(e.tok, 'this use of old() is nested within a reference to a mutable symbol in the new state. the old-to-new translator does not currently support this case. please lift the use of old() above the mutable reference using a let expression and try again.')
+                if mutable_callee is not None:
+                    utils.print_info(mutable_callee, 'here is the mutable symbol reference in the new state.')
+                # bogus return value, just keep going to potentially report more errors
+                # see NOTE(resolving-malformed-programs)
+                return UnaryExpr(e.tok, e.op, translate_old_to_new(scope, e.arg, in_old, out_new, mutable_callee))
+            else:
+                # just strip the old()
+                return translate_old_to_new(scope, e.arg, in_old=True, out_new=out_new, mutable_callee=mutable_callee)
+        elif e.op == 'NEW':
+            utils.print_error(e.tok, 'old-to-new translator does not support mixing calls to new and old!')
+            # bogus return value, just keep going to potentially report more errors
+            # see NOTE(resolving-malformed-programs)
+            return UnaryExpr(e.tok, e.op, translate_old_to_new(scope, e.arg, in_old, out_new, mutable_callee))
+        elif e.op == 'NOT':
+            return UnaryExpr(e.tok, e.op, translate_old_to_new(scope, e.arg, in_old, out_new, mutable_callee))
+        else:
+            assert False, (e.op, e)
+    elif isinstance(e, BinaryExpr):
+        return BinaryExpr(e.tok, e.op,
+                         translate_old_to_new(scope, e.arg1, in_old, out_new, mutable_callee),
+                         translate_old_to_new(scope, e.arg2, in_old, out_new, mutable_callee))
+    elif isinstance(e, NaryExpr):
+        return NaryExpr(e.tok, e.op,
+                        [translate_old_to_new(scope, arg, in_old, out_new, mutable_callee) for arg in e.args])
+    elif isinstance(e, AppExpr):
+        d = scope.get(e.callee)
+        assert d is not None
+        if isinstance(d, (RelationDecl, FunctionDecl)) and d.mutable and not in_old:
+            t_args = [translate_old_to_new(scope, arg, in_old, out_new=True, mutable_callee=e.tok) for arg in e.args]
+            return New(AppExpr(e.tok, e.callee, t_args))
+        else:
+            t_args = [translate_old_to_new(scope, arg, in_old, out_new, mutable_callee) for arg in e.args]
+            return AppExpr(e.tok, e.callee, t_args)
+    elif isinstance(e, QuantifierExpr):
+        return QuantifierExpr(e.tok, e.quant, e.binder.vs, translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee))
+    elif isinstance(e, Id):
+        d = scope.get(e.name)
+        if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not in_old:
+            return New(Id(e.tok, e.name))
+        else:
+            return e
+    elif isinstance(e, IfThenElse):
+        return IfThenElse(
+            e.tok,
+            translate_old_to_new(scope, e.branch, in_old, out_new, mutable_callee),
+            translate_old_to_new(scope, e.then, in_old, out_new, mutable_callee),
+            translate_old_to_new(scope, e.els, in_old, out_new, mutable_callee))
+    elif isinstance(e, Let):
+        return Let(e.tok, e.binder.vs[0],
+                   translate_old_to_new(scope, e.val, in_old, out_new, mutable_callee),
+                   translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee))
+    else:
+        assert False, e
+
 class DefinitionDecl(Decl):
     def __init__(self, tok: Optional[Token], is_public_transition: bool, num_states: int,
                  name: str, params: List[SortedVar],
@@ -1651,6 +1736,12 @@ class DefinitionDecl(Decl):
 
         for mod in self.mods:
             mod.resolve(scope)
+
+        if self.num_states == 2 and uses_old(self.expr):
+            utils.print_warning(self.tok, 'old() is no longer supported; please use new(). as a convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+
+            print(f'translating transition {self.name}')
+            self.expr = translate_old_to_new(scope, self.expr)
 
         self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
