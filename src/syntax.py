@@ -1875,6 +1875,12 @@ class TheoremDecl(Decl):
         return (self.name, self.expr, self.num_states)
 
     def resolve(self, scope: Scope) -> None:
+        if self.num_states == 2 and uses_old(self.expr):
+            utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+
+            print(f'translating theorem {self.name}')
+            self.expr = translate_old_to_new(scope, self.expr)
+
         self.expr = close_free_vars(self.tok, self.expr)
         with scope.n_states(self.num_states):
             self.expr.resolve(scope, BoolSort)
