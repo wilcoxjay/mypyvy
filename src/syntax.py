@@ -1480,7 +1480,8 @@ class RelationDecl(Decl):
 
         if self.derived_axiom:
             self.derived_axiom = close_free_vars(self.tok, self.derived_axiom)
-            self.derived_axiom.resolve(scope, BoolSort)
+            with scope.n_states(1):
+                self.derived_axiom.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
         return 'RelationDecl(tok=None, name=%s, arity=%s, mutable=%s, derived=%s)' % (repr(self.name), self.arity, self.mutable, self.derived_axiom)

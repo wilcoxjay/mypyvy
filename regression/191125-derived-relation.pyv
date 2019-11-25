@@ -1,0 +1,9 @@
+# MYPYVY: typecheck --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+sort A
+
+immutable relation R(A)
+mutable relation S(A, A)
+
+derived relation T(A):
+  T(N1) <-> (exists N0. S(N0,N1) & R(N0))
+
