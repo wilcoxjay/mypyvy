@@ -102,7 +102,7 @@ transition decrease_domain()
   (forall Q. active_quorum(Q) -> old(active_quorum(Q))) &
   (forall R. active_round(R) -> old(active_round(R))) &
   active_round(none) &
-  (forall R, V. active_round(R) & active_value(V) -> active_quorum(old(decision_quorum(R, V))))
+  (forall R, V. active_round(R) & active_value(V) -> let old_quorum = old(decision_quorum(R, V)) in active_quorum(old_quorum))
   & (forall Q1:quorum, Q2:quorum. active_quorum(Q1) & active_quorum(Q2) -> (exists N:node. active_node(N) & (member(N, Q1) & member(N, Q2))))
 
 immutable constant r1: round

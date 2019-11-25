@@ -122,7 +122,7 @@ transition decrease_domain()
   & (forall Q1, Q2. quorum_active(Q1) & quorum_active(Q2) ->
        exists N. node_active(N) & member(N, Q1) & member(N, Q2))
   & round_active(round_zero)
-  & (forall N. node_active(N) -> round_active(old(current_round(N))))
+  & (forall N. node_active(N) -> let old_round = old(current_round(N)) in round_active(old_round))
 
 safety [decisions_unique]
   round_active(R1) & round_active(R2) &

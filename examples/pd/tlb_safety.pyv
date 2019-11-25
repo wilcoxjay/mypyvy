@@ -221,7 +221,7 @@ transition initiator11(p:processor, e:pageentry)
   modifies pentry, pc
     & old(pc(p)) = i11
     & (forall P. P != old(writepmap(p)) -> pentry(P) = old(pentry(P)))
-    & pentry(old(writepmap(p))) = e
+    & (let old_pmap = old(writepmap(p)) in pentry(old_pmap) = e)
     & (forall P. P != p -> pc(P) = old(pc(P)))
     & pc(p) = i12
 
@@ -249,7 +249,7 @@ transition initiator14(p:processor)
        else
          (error <-> old(error)))
     & (forall P. P != old(writepmap(p)) -> (plock(P) <-> old(plock(P))))
-    & !plock(old(writepmap(p)))
+    & (let old_pmap = old(writepmap(p)) in !plock(old_pmap))
     & (forall P. P != p -> pc(P) = old(pc(P)))
     & pc(p) = i15
 
