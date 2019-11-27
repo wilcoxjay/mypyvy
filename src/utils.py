@@ -72,8 +72,7 @@ class MypyvyArgs(object):
     log_time: bool
     log_xml: bool
     seed: int
-    print_program_repr: bool
-    print_program: bool
+    print_program: Optional[str]
     key_prefix: str
     minimize_models: bool
     timeout: int

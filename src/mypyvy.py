@@ -574,10 +574,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--log-xml', action=utils.YesNoAction, default=False,
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
-        s.add_argument('--print-program-repr', action=utils.YesNoAction, default=False,
-                       help='print a machine-readable representation of the program after parsing')
-        s.add_argument('--print-program', action=utils.YesNoAction, default=False,
-                       help='print the program after parsing')
+        s.add_argument('--print-program', choices=['str', 'repr'],
+                       help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
         s.add_argument('--minimize-models', action=utils.YesNoAction, default=True,
@@ -735,10 +733,15 @@ def main() -> None:
             utils.logger.always_print('program has syntax errors.')
             utils.exit(1)
 
-        if utils.args.print_program_repr:
-            utils.logger.always_print(repr(prog))
-        if utils.args.print_program:
-            utils.logger.always_print(str(prog))
+        if utils.args.print_program is not None:
+            if utils.args.print_program == 'str':
+                p: Callable[[object], str] = str
+            elif utils.args.print_program == 'repr':
+                p = repr
+            else:
+                assert False
+
+            utils.logger.always_print(p(prog))
 
         pre_resolve_error_count = utils.error_count
 
