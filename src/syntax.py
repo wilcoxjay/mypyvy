@@ -664,7 +664,7 @@ class UnaryExpr(Expr):
             self.arg.resolve(scope, BoolSort)
             return BoolSort
         elif self.op == 'OLD':
-            utils.print_error(self.tok, "old() is deprecated; also, it doesn't make sense here")
+            utils.print_error(self.tok, "old() is deprecated and is not supported by the resolver; ignoring...")
             return sort  # bogus
         else:
             assert False
@@ -1745,11 +1745,14 @@ class DefinitionDecl(Decl):
             mod.resolve(scope)
 
         if self.num_states == 2 and uses_old(self.expr):
-            utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+            if utils.args.accept_old:
+                utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
 
-            print(f'translating transition {self.name}')
-            with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-                self.expr = translate_old_to_new(scope, self.expr)
+                print(f'translating transition {self.name}')
+                with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
+                    self.expr = translate_old_to_new(scope, self.expr)
+            else:
+                utils.print_error(self.tok, 'old() is disallowed by --no-accept-old')
 
         self.expr = close_free_vars(self.tok, self.expr, in_scope=[v.name for v in self.binder.vs])
 
@@ -1880,10 +1883,13 @@ class TheoremDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         if self.num_states == 2 and uses_old(self.expr):
-            utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+            if utils.args.accept_old:
+                utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
 
-            print(f'translating theorem {self.name}')
-            self.expr = translate_old_to_new(scope, self.expr)
+                print(f'translating theorem {self.name}')
+                self.expr = translate_old_to_new(scope, self.expr)
+            else:
+                utils.print_error(self.tok, 'old() is disallowed by --no-accept-old')
 
         self.expr = close_free_vars(self.tok, self.expr)
         with scope.n_states(self.num_states):
