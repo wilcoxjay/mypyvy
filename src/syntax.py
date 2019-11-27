@@ -680,6 +680,8 @@ class UnaryExpr(Expr):
             return PREC_NOT
         elif self.op == 'NEW':
             return PREC_BOT
+        elif self.op == 'OLD':  # TODO: remove old
+            return PREC_BOT
         else:
             assert False
 
@@ -689,6 +691,10 @@ class UnaryExpr(Expr):
             self.arg.pretty(buf, PREC_NOT, 'NONE')
         elif self.op == 'NEW':
             buf.append('new(')
+            self.arg.pretty(buf, PREC_TOP, 'NONE')
+            buf.append(')')
+        elif self.op == 'OLD':  # TODO: remove old
+            buf.append('old(')
             self.arg.pretty(buf, PREC_TOP, 'NONE')
             buf.append(')')
         else:
