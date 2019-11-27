@@ -1748,7 +1748,7 @@ class DefinitionDecl(Decl):
             if utils.args.accept_old:
                 utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
 
-                print(f'translating transition {self.name}')
+                utils.logger.info(f'translating transition {self.name}')
                 with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
                     self.expr = translate_old_to_new(scope, self.expr)
             else:
@@ -1886,7 +1886,7 @@ class TheoremDecl(Decl):
             if utils.args.accept_old:
                 utils.print_warning(self.tok, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
 
-                print(f'translating theorem {self.name}')
+                utils.logger.info(f'translating theorem {self.name}')
                 self.expr = translate_old_to_new(scope, self.expr)
             else:
                 utils.print_error(self.tok, 'old() is disallowed by --no-accept-old')
