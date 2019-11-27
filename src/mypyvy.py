@@ -680,9 +680,9 @@ class MyFormatter(logging.Formatter):
     def formatTime(self, record: Any, datefmt: Optional[str] = None) -> str:
         return str((datetime.now() - self.start).total_seconds())
 
-def parse_program(input: str, force_rebuild: bool = False, filename: Optional[str] = None) -> Program:
+def parse_program(input: str, forbid_rebuild: bool = False, filename: Optional[str] = None) -> Program:
     l = parser.get_lexer()
-    p = parser.get_parser(forbid_rebuild=force_rebuild)
+    p = parser.get_parser(forbid_rebuild=forbid_rebuild)
     return p.parse(input=input, lexer=l, filename=filename)
 
 def main() -> None:
@@ -729,7 +729,7 @@ def main() -> None:
         pre_parse_error_count = utils.error_count
 
         with open(utils.args.filename) as f:
-            prog = parse_program(f.read(), force_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
+            prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
 
         if utils.error_count > pre_parse_error_count:
             utils.logger.always_print('program has syntax errors.')
