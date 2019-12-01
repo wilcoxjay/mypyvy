@@ -50,7 +50,7 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
             if isinstance(c, syntax.AssertDecl):
                 if c.expr is None:
                     if i != 0:
-                        utils.print_error_and_exit(c.tok, 'assert init is only allowed in the first state')
+                        utils.print_error_and_exit(c.span, 'assert init is only allowed in the first state')
                     for init in prog.inits():
                         s.add(lator.translate_expr(init.expr, index=i))
                 else:

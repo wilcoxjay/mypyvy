@@ -57,7 +57,7 @@ def ordered_by_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> 
     assert len(args) == 1
     order_name = args[0]
     order = get_relation(order_name)
-    us = UninterpretedSort(None, s.name)
+    us = UninterpretedSort(s.name)
     assert order.arity == [us, us] and not order.mutable
 
     return '%s%s' % (s.name, get_ordinal(state, order, elt))
@@ -68,7 +68,7 @@ def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     member = get_relation(member_name)
 
     assert len(member.arity) == 2 and not member.mutable
-    set_sort = UninterpretedSort(None, s.name)
+    set_sort = UninterpretedSort(s.name)
     assert member.arity[1] == set_sort
     item_sort = member.arity[0]
     item_sort_decl = syntax.get_decl_from_sort(item_sort)
@@ -96,7 +96,7 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     is_none = get_relation(is_none_name)
     value = get_function(value_name)
 
-    option_sort = UninterpretedSort(None, s.name)
+    option_sort = UninterpretedSort(s.name)
 
     assert not is_none.mutable and not value.mutable and \
         is_none.arity == [option_sort] and value.arity == [option_sort]

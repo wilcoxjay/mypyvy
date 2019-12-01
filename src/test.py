@@ -106,8 +106,8 @@ class SyntaxTests(unittest.TestCase):
         self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
     def test_decls_eq(self) -> None:
-        s1 = syntax.SortDecl(None, 'foo', [])
-        s2 = syntax.SortDecl(None, 'foo', [])
+        s1 = syntax.SortDecl('foo', [])
+        s2 = syntax.SortDecl('foo', [])
         self.assertEqual(s1, s2)
 
     def test_translate_old_to_new(self) -> None:

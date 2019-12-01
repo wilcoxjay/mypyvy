@@ -35,7 +35,7 @@ def get_safety() -> List[Expr]:
         if the_inv is not None:
             safety = [the_inv.expr]
         else:
-            e = syntax.close_free_vars(None, parser.parse_expr(utils.args.safety))
+            e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
             with prog.scope.n_states(1):
                 e.resolve(prog.scope, syntax.BoolSort)
             safety = [e]
@@ -101,14 +101,14 @@ def check_automaton_init(s: Solver, a: AutomatonDecl) -> None:
             with s:
                 s.add(z3.Not(t.translate_expr(inv.expr)))
 
-                if inv.tok is not None:
-                    msg = ' on line %d' % inv.tok.lineno
+                if inv.span is not None:
+                    msg = ' on line %d' % inv.span[0].lineno
                 else:
                     msg = ''
                 utils.logger.always_print('  implies phase invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                logic.check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, (KEY_ONE,))
+                logic.check_unsat([(inv.span, 'phase invariant%s may not hold in initial state' % msg)], s, (KEY_ONE,))
 
 def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
     utils.logger.always_print('checking automaton edge covering:')
@@ -135,9 +135,9 @@ def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
                     s.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond, trans))
                                    for delta in phase.transitions() if trans.name == delta.transition)))
 
-                    logic.check_unsat([(phase.tok, 'transition %s is not covered by this phase' %
+                    logic.check_unsat([(phase.span, 'transition %s is not covered by this phase' %
                                         (trans.name, )),
-                                       (trans.tok, 'this transition misses transitions from phase %s' % (phase.name,))],
+                                       (trans.span, 'this transition misses transitions from phase %s' % (phase.name,))],
                                       s, (KEY_OLD, KEY_NEW))
 
 
@@ -170,16 +170,16 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
                         with s:
                             s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
 
-                            if inv.tok is not None:
-                                msg = ' on line %d' % inv.tok.lineno
+                            if inv.span is not None:
+                                msg = ' on line %d' % inv.span[0].lineno
                             else:
                                 msg = ''
                             utils.logger.always_print('      preserves invariant%s... ' % msg, end='')
                             sys.stdout.flush()
 
-                            logic.check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
+                            logic.check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s in phase %s' %
                                                 (msg, trans_pretty, phase.name)),
-                                               (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
+                                               (delta.span, 'this transition may not preserve invariant%s' % (msg,))],
                                               s, (KEY_OLD, KEY_NEW))
 
 JSON = Dict[str, Any]
@@ -204,8 +204,8 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace], Tuple[Inva
     inv_json: JSON = {}
     if inv.name is not None:
         inv_json['name'] = inv.name
-    if inv.tok is not None:
-        inv_json['line_number'] = inv.tok.lineno
+    if inv.span is not None:
+        inv_json['line_number'] = inv.span[0].lineno
     inv_json['formula'] = str(inv.expr)
     obj['invariant'] = inv_json
 
@@ -338,8 +338,8 @@ def theorem(s: Solver) -> None:
 
         if th.name is not None:
             msg = ' ' + th.name
-        elif th.tok is not None:
-            msg = ' on line %d' % th.tok.lineno
+        elif th.span is not None:
+            msg = ' on line %d' % th.span[0].lineno
         else:
             msg = ''
 
@@ -349,7 +349,7 @@ def theorem(s: Solver) -> None:
         with s:
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            logic.check_unsat([(th.tok, 'theorem%s may not hold' % msg)], s, keys)
+            logic.check_unsat([(th.span, 'theorem%s may not hold' % msg)], s, keys)
 
 def nop(s: Solver) -> None:
     pass
@@ -383,14 +383,14 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
                 seen_first = True
                 import itertools # type: ignore
                 for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort): # TODO; need to sort first
-                    free_var = syntax.SortedVar(None, syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
+                    free_var = syntax.SortedVar(syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
                     consts = list(filter(lambda c: c.sort == sort, prog.constants())) # TODO: diagram simplification omits them from the exists somewhere
                     els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
                     els = list(vars)
                     els += consts
                     restrict_domain = syntax.Forall([free_var],
-                                                    syntax.Or(*(syntax.Eq(syntax.Id(None, free_var.name),
-                                                                          syntax.Id(None, v.name))
+                                                    syntax.Or(*(syntax.Eq(syntax.Id(free_var.name),
+                                                                          syntax.Id(v.name))
                                                                 for v in els)))
                     active_clauses += [restrict_domain]
 
@@ -398,14 +398,14 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
                                            syntax.And(diagram.body, *active_clauses))
             diagram_active.resolve(prog.scope, syntax.BoolSort)
 
-            components.append(syntax.AssertDecl(tok=None, expr=diagram_active))
+            components.append(syntax.AssertDecl(expr=diagram_active))
         elif elm.tagName == 'action':
             action_name = elm.childNodes[0].data.split()[0]
-            components.append(syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(tok=None, target=action_name, args=None)])))
+            components.append(syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(target=action_name, args=None)])))
         else:
             assert False, "unknown xml tagName"
 
-    trace_decl = syntax.TraceDecl(tok=None, components=components, sat=True)
+    trace_decl = syntax.TraceDecl(components=components, sat=True)
     migrated_trace = bmc_trace(prog, trace_decl, s, lambda s, ks: logic.check_solver(s, ks, minimize=True), log=False)
 
     assert migrated_trace is not None
@@ -434,11 +434,11 @@ def sandbox(s: Solver) -> None:
     (free_vars, def_expr) = diff_conjunctions[0]
     def_axiom = syntax.Forall(free_vars,
                               syntax.Iff(syntax.Apply(derrel_name,
-                                                      [syntax.Id(None, v.name) for v in free_vars]),
+                                                      [syntax.Id(v.name) for v in free_vars]),
                                          # TODO: extract pattern
                                          def_expr))
 
-    derrel = syntax.RelationDecl(tok=None, name=derrel_name,
+    derrel = syntax.RelationDecl(name=derrel_name,
                                  arity=[syntax.safe_cast_sort(var.sort) for var in free_vars],
                                  mutable=True, derived=def_axiom, annotations=[])
 
@@ -518,7 +518,7 @@ def trace(s: Solver) -> None:
         if (res is not None) != trace.sat:
             def bool_to_sat(b: bool) -> str:
                 return 'sat' if b else 'unsat'
-            utils.print_error(trace.tok, 'trace declared %s but was %s!' % (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
+            utils.print_error(trace.span, 'trace declared %s but was %s!' % (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
 
 
 def relax(s: Solver) -> None:

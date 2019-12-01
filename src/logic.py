@@ -59,7 +59,7 @@ def check_solver(s: Solver, keys: Tuple[str, ...], minimize: Optional[bool] = No
     return m
 
 def check_unsat(
-        errmsgs: List[Tuple[Optional[syntax.Token], str]],
+        errmsgs: List[Tuple[Optional[syntax.Span], str]],
         s: Solver,
         keys: Tuple[str, ...]
 ) -> Optional[Trace]:
@@ -74,8 +74,8 @@ def check_unsat(
         if utils.args.print_counterexample:
             utils.logger.always_print(str(m))
 
-        for tok, msg in errmsgs:
-            utils.print_error(tok, msg)
+        for span, msg in errmsgs:
+            utils.print_error(span, msg)
 
         return m
     else:
@@ -106,14 +106,14 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
 
                 if inv.name is not None:
                     msg = ' ' + inv.name
-                elif inv.tok is not None:
-                    msg = ' on line %d' % inv.tok.lineno
+                elif inv.span is not None:
+                    msg = ' on line %d' % inv.span[0].lineno
                 else:
                     msg = ''
                 utils.logger.always_print('  implies invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                res = check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
+                res = check_unsat([(inv.span, 'invariant%s may not hold in initial state' % msg)],
                                   s, (KEY_ONE,))
                 if res is not None:
                     if utils.args.smoke_test_solver:
@@ -163,16 +163,16 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
 
                         if inv.name is not None:
                             msg = ' ' + inv.name
-                        elif inv.tok is not None:
-                            msg = ' on line %d' % inv.tok.lineno
+                        elif inv.span is not None:
+                            msg = ' on line %d' % inv.span[0].lineno
                         else:
                             msg = ''
                         utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
                         sys.stdout.flush()
 
-                        res = check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s'
+                        res = check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s'
                                             % (msg, trans.name)),
-                                           (trans.tok, 'this transition may not preserve invariant%s'
+                                           (trans.span, 'this transition may not preserve invariant%s'
                                             % (msg,))],
                                           s, (KEY_OLD, KEY_NEW))
                         if res is not None:
@@ -1223,7 +1223,7 @@ def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
         if custom_printer is not None:
             return custom_printer(state, s, elt, custom_printer_args)
         else:
-            utils.print_warning(custom_printer_annotation.tok,
+            utils.print_warning(custom_printer_annotation.span,
                                 'could not find printer named %s' % (printer_name,))
     return None
 
@@ -1560,13 +1560,13 @@ class Trace(object):
             consts: Dict[ConstantDecl, Expr] = OrderedDict()
             funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
             for sort in self.univs:
-                vars_by_sort[sort] = [syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
+                vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
                                       for v in self.univs[sort]]
                 if subclause_complete:
                     ufs[sort] = UnionFind(self.univs[sort])
                     ineqs[sort] = []
                 else:
-                    u = [syntax.Id(None, s) for s in self.univs[sort]]
+                    u = [syntax.Id(s) for s in self.univs[sort]]
                     ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
 
             for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
@@ -1580,25 +1580,25 @@ class Trace(object):
                             assert col_sort.decl is not None
                             if subclause_complete:
                                 nm = col_sort.name + str(len(vars_by_sort[col_sort.decl]))
-                                vars_by_sort[col_sort.decl].append(syntax.SortedVar(None, nm, col_sort))
-                                arg = syntax.Id(None, nm)
+                                vars_by_sort[col_sort.decl].append(syntax.SortedVar(nm, col_sort))
+                                arg = syntax.Id(nm)
                                 args.append(arg)
                                 ufs[col_sort.decl].union(col, nm)
                             else:
-                                args.append(syntax.Id(None, col))
-                        e = syntax.AppExpr(None, R.name, args)
+                                args.append(syntax.Id(col))
+                        e = syntax.AppExpr(R.name, args)
                     else:
-                        e = syntax.Id(None, R.name)
+                        e = syntax.Id(R.name)
                     e = e if ans else syntax.Not(e)
                     rels[R].append(e)
             for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-                e = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, c))
+                e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
                 consts[C] = e
             for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
                 funcs[F] = []
                 for tup, res in fl:
-                    e = syntax.AppExpr(None, F.name, [syntax.Id(None, col) for col in tup])
-                    e = syntax.Eq(e, syntax.Id(None, res))
+                    e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
+                    e = syntax.Eq(e, syntax.Id(res))
                     funcs[F].append(e)
 
             if subclause_complete:
@@ -1606,10 +1606,10 @@ class Trace(object):
                     sets = list(uf.to_sets())
                     for s1, s2 in itertools.combinations(sets, 2):
                         for x1, x2 in itertools.product(s1, s2):
-                            ineqs[sort].append(syntax.Neq(syntax.Id(None, x1), syntax.Id(None, x2)))
+                            ineqs[sort].append(syntax.Neq(syntax.Id(x1), syntax.Id(x2)))
                     for s in sets:
                         for x1, x2 in itertools.combinations(s, 2):
-                            ineqs[sort].append(syntax.Eq(syntax.Id(None, x1), syntax.Id(None, x2)))
+                            ineqs[sort].append(syntax.Eq(syntax.Id(x1), syntax.Id(x2)))
 
             vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
             diag = Diagram(vs, ineqs, rels, consts, funcs)
@@ -1644,24 +1644,24 @@ class Trace(object):
             consts: Dict[ConstantDecl, Expr] = OrderedDict()
             funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
             for sort in self.univs:
-                vs.extend(syntax.SortedVar(None, v, syntax.UninterpretedSort(None, sort.name))
+                vs.extend(syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
                           for v in self.univs[sort])
-                u = [syntax.Id(None, v) for v in self.univs[sort]]
+                u = [syntax.Id(v) for v in self.univs[sort]]
                 ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
             for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
                 rels[R] = []
                 for tup, ans in l:
                     e = (
-                        syntax.AppExpr(None, R.name, [syntax.Id(None, col) for col in tup])
-                        if len(tup) > 0 else syntax.Id(None, R.name)
+                        syntax.AppExpr(R.name, [syntax.Id(col) for col in tup])
+                        if len(tup) > 0 else syntax.Id(R.name)
                     )
                     rels[R].append(e if ans else syntax.Not(e))
             for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-                consts[C] = syntax.Eq(syntax.Id(None, C.name), syntax.Id(None, c))
+                consts[C] = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
             for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
                 funcs[F] = [
-                    syntax.Eq(syntax.AppExpr(None, F.name, [syntax.Id(None, col) for col in tup]),
-                              syntax.Id(None, res))
+                    syntax.Eq(syntax.AppExpr(F.name, [syntax.Id(col) for col in tup]),
+                              syntax.Id(res))
                     for tup, res in fl
                 ]
 
@@ -1670,9 +1670,9 @@ class Trace(object):
 
             e = syntax.Exists(vs, syntax.And(
                 *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
-                    syntax.Forall([syntax.SortedVar(None, fresh,
-                                                    syntax.UninterpretedSort(None, sort.name))],
-                                  syntax.Or(*(syntax.Eq(syntax.Id(None, fresh), syntax.Id(None, v))
+                    syntax.Forall([syntax.SortedVar(fresh,
+                                                    syntax.UninterpretedSort(sort.name))],
+                                  syntax.Or(*(syntax.Eq(syntax.Id(fresh), syntax.Id(v))
                                               for v in self.univs[sort])))
                     for sort in self.univs
                 ))))
