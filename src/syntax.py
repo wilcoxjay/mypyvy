@@ -524,6 +524,96 @@ def is_quantifier_free(e: Expr) -> bool:
     else:
         assert False
 
+class HasSpan(Protocol):
+    span: Optional[Span]
+
+def span_endlexpos(x: Union[Span, HasSpan]) -> int:
+    if not isinstance(x, tuple):
+        s = x.span
+        assert s is not None
+    else:
+        s = x
+
+    return s[1].lexpos + len(s[1].value)
+
+class FaithfulPrinter(object):
+    def __init__(self, prog: Program) -> None:
+        self.prog = prog
+        self.pos = 0
+        self.buf: List[str] = []
+
+    def move_to(self, new_pos: int) -> None:
+        assert self.prog.input is not None
+        assert self.pos <= new_pos
+        if self.pos < new_pos:
+            data = self.prog.input[self.pos:new_pos]
+            self.buf.append(data)
+            self.pos = new_pos
+
+    def move_to_start(self, x: HasSpan) -> None:
+        assert x.span is not None
+        self.move_to(x.span[0].lexpos)
+
+    def move_to_end(self, x: HasSpan) -> None:
+        self.move_to(span_endlexpos(x))
+
+    def process(self) -> str:
+        assert self.prog.input is not None
+        for d in self.prog.decls:
+            self.move_to_start(d)
+            self.process_decl(d)
+
+        self.move_to(len(self.prog.input))
+
+        return ''.join(self.buf)
+
+    def process_decl(self, d: Decl) -> None:
+        assert d.span is not None
+        assert self.pos == d.span[0].lexpos
+
+        if isinstance(d, DefinitionDecl) and isinstance(d.body, tuple):
+            mods, expr = d.body
+            self.move_to_start(expr)
+            self.process_expr(expr)
+        else:
+            self.move_to_end(d)
+
+    def move_and_process_expr(self, e: Expr) -> None:
+        self.move_to_start(e)
+        self.process_expr(e)
+
+    def process_expr(self, e: Expr) -> None:
+        assert e.span is not None
+        if isinstance(e, NaryExpr):
+            for arg in e.args:
+                self.move_and_process_expr(arg)
+            self.move_to_end(e)
+        elif isinstance(e, QuantifierExpr):
+            self.move_and_process_expr(e.body)
+        elif isinstance(e, UnaryExpr):
+            self.move_and_process_expr(e.arg)
+        elif isinstance(e, BinaryExpr):
+            self.process_expr(e.arg1)
+            self.move_and_process_expr(e.arg2)
+        elif isinstance(e, IfThenElse):
+            self.move_and_process_expr(e.branch)
+            self.move_and_process_expr(e.then)
+            self.move_and_process_expr(e.els)
+        elif isinstance(e, Let):
+            self.move_and_process_expr(e.val)
+            self.move_and_process_expr(e.body)
+        elif isinstance(e, AppExpr):
+            for arg in e.args:
+                self.move_and_process_expr(arg)
+            self.move_to_end(e)
+        elif isinstance(e, (Id, Bool)):
+            self.move_to_end(e)
+        else:
+            assert False, repr(e)
+
+def faithful_print_prog(prog: Program) -> str:
+    return FaithfulPrinter(prog).process()
+
 @functools.total_ordering
 class Expr(Denotable):
     def __init__(self, span: Optional[Span]) -> None:
@@ -2475,10 +2565,10 @@ class Scope(Generic[B]):
 StateDecl = Union[RelationDecl, ConstantDecl, FunctionDecl]
 
 class Program(object):
-    def __init__(self, decls: List[Decl], *, span: Optional[Span] = None) -> None:
+    def __init__(self, decls: List[Decl]) -> None:
         self.decls = decls
-        self.span = span
         self.scope: Scope[InferenceSort]
+        self.input: Optional[str] = None
 
     def sorts(self) -> Iterator[SortDecl]:
         for d in self.decls:

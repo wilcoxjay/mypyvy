@@ -155,6 +155,24 @@ class RegressionTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
         self.assertTrue(any_tests, 'internal error with regression tests: it seems no regression tests exist!')
 
+# Check that every .pyv file in examples/ can be faithfully printed to itself.
+# Commented out because it is slow, low-priority, and requires adding a sys.exit call to main().
+#
+# class FaithfulPrintTests(unittest.TestCase):
+#     def test_faithful_print(self) -> None:
+#         for p in sorted(Path(utils.PROJECT_ROOT / 'examples').glob('**/*.pyv'),
+#                         key=lambda p: p.stat().st_size):
+#             with self.subTest(testFile=str(p)):
+#                 print(f'testing faithful printing on {p}')
+#                 out_path = p.with_suffix('.output')
+#                 line = 'typecheck --print-program=faithful'
+#                 python_cmd = build_python_cmd() + shlex.split(line) + [str(p)]
+#                 with open(out_path, 'w') as f_out:
+#                     proc = subprocess.run(python_cmd, stdout=f_out, stderr=subprocess.STDOUT)
+#                 diff_cmd = ['diff', '-uw', str(p), str(out_path)]
+#                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+#                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from input.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
+
 class MonotoneFunctionTests(unittest.TestCase):
     def setUp(self) -> None:
         utils.args = mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])

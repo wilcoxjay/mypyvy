@@ -574,7 +574,7 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--log-xml', action=utils.YesNoAction, default=False,
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
-        s.add_argument('--print-program', choices=['str', 'repr'],
+        s.add_argument('--print-program', choices=['str', 'repr', 'faithful'],
                        help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -681,7 +681,9 @@ class MyFormatter(logging.Formatter):
 def parse_program(input: str, forbid_rebuild: bool = False, filename: Optional[str] = None) -> Program:
     l = parser.get_lexer()
     p = parser.get_parser(forbid_rebuild=forbid_rebuild)
-    return p.parse(input=input, lexer=l, filename=filename)
+    prog: Program = p.parse(input=input, lexer=l, filename=filename)
+    prog.input = input
+    return prog
 
 def main() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (90*10**9, 90*10**9))  # limit RAM usage to 45 GB # TODO: make this a command line argument # TODO: not sure if this is actually the right way to do this (also, what about child processes?)
@@ -735,13 +737,18 @@ def main() -> None:
 
         if utils.args.print_program is not None:
             if utils.args.print_program == 'str':
-                p: Callable[[object], str] = str
+                to_str: Callable[[Program], str] = str
+                end = '\n'
             elif utils.args.print_program == 'repr':
-                p = repr
+                to_str = repr
+                end = '\n'
+            elif utils.args.print_program == 'faithful':
+                to_str = syntax.faithful_print_prog
+                end = ''
             else:
                 assert False
 
-            utils.logger.always_print(p(prog))
+            utils.logger.always_print(to_str(prog), end=end)
 
         pre_resolve_error_count = utils.error_count
 

@@ -145,10 +145,12 @@ def loc_list(locs: Sequence[Optional[Location]]) -> Optional[Span]:
     for loc in locs:
         if loc is not None:
             l = span_from_loc(loc)[0]
+            break
     r: Optional[Token] = None
     for loc in reversed(locs):
         if loc is not None:
             r = span_from_loc(loc)[1]
+            break
     if l is not None:
         if r is not None:
             return l, r
@@ -163,7 +165,7 @@ def loc_list(locs: Sequence[Optional[Location]]) -> Optional[Span]:
 def p_program(p: Any) -> None:
     'program : decls'
     decls: List[syntax.Decl] = p[1]
-    p[0] = syntax.Program(decls, span=loc_list([d.span for d in decls]))
+    p[0] = syntax.Program(decls)
 
 def p_decls_empty(p: Any) -> None:
     'decls : empty'
@@ -490,6 +492,7 @@ def p_expr_or(p: Any) -> None:
     r: syntax.Expr = p[3]
     if isinstance(l, syntax.NaryExpr) and l.op == 'OR':
         l.args.append(p[3])
+        l.span = loc_join(l.span, r.span)
         p[0] = l
     else:
         span = loc_join(l.span, r.span)
@@ -606,7 +609,7 @@ def p_decl_transition(p: Any) -> None:
     body_span = body[1].span if isinstance(body, tuple) else body.span
     p[0] = syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=id_tok.value,
                                  params=p[4], body=p[6],
-                                 span=loc_join(id_tok, body_span))
+                                 span=loc_join(p.slice[1], body_span))
 
 def p_decl_definition_body_mods_expr(p: Any) -> None:
     'definition_body : mods expr'
