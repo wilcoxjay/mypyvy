@@ -1737,73 +1737,108 @@ def uses_old(e: Expr) -> bool:
     else:
         assert False, e
 
-def translate_old_to_new(scope: Scope, e: Expr, in_old: bool=False, out_new: bool=False, mutable_callee: Optional[Span]=None) -> Expr:
-    assert not (in_old and out_new)
+class OldToNewTranslator(object):
+    def __init__(self, scope: Scope) -> None:
+        self.scope = scope
+        self.in_old = False
+        self.out_new = False
+        self.mutable_callee: Optional[Span] = None
 
-    if isinstance(e, Bool):
-        return e
-    elif isinstance(e, UnaryExpr):
-        if e.op == 'OLD':
-            if out_new:
-                utils.print_error(e.span, 'this use of old() is nested within a reference to a mutable symbol in the new state. the old-to-new translator does not currently support this case. please lift the use of old() above the mutable reference using a let expression and try again.')
-                if mutable_callee is not None:
-                    utils.print_info(mutable_callee, 'here is the mutable symbol reference in the new state.')
+    @contextmanager
+    def set_in_old(self) -> Iterator[None]:
+        assert not self.in_old
+        self.in_old = True
+        yield None
+        self.in_old = False
+
+    @contextmanager
+    def set_out_new(self) -> Iterator[None]:
+        assert not self.out_new
+        self.out_new = True
+        yield None
+        self.out_new = False
+
+    @contextmanager
+    def set_mutable_callee(self, span: Optional[Span]) -> Iterator[None]:
+        old_val = self.mutable_callee
+        self.mutable_callee = span
+        yield None
+        self.mutable_callee = old_val
+
+    def translate(self, e: Expr) -> Expr:
+        assert not (self.in_old and self.out_new)
+
+        if isinstance(e, Bool):
+            return e
+        elif isinstance(e, UnaryExpr):
+            if e.op == 'OLD':
+                if self.out_new:
+                    err_msg = ('this use of old() is nested within a reference to a mutable '
+                               'symbol in the new state. the old-to-new translator does not '
+                               'currently support this case. please lift the use of old() above '
+                               'the mutable reference using a let expression and try again.')
+                    utils.print_error(e.span, err_msg)
+                    if self.mutable_callee is not None:
+                        info_msg = 'here is the mutable symbol reference in the new state.'
+                        utils.print_info(self.mutable_callee, info_msg)
+                    # bogus return value, just keep going to potentially report more errors
+                    # see NOTE(resolving-malformed-programs)
+                    return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
+                else:
+                    with self.set_in_old():
+                        # just strip the old()
+                        return self.translate(e.arg)
+            elif e.op == 'NEW':
+                err_msg = 'old-to-new translator does not support mixing calls to new and old!'
+                utils.print_error(e.span, err_msg)
                 # bogus return value, just keep going to potentially report more errors
                 # see NOTE(resolving-malformed-programs)
-                return UnaryExpr(e.op, translate_old_to_new(scope, e.arg, in_old, out_new, mutable_callee), span=e.span)
+                return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
+            elif e.op == 'NOT':
+                return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
             else:
-                # just strip the old()
-                return translate_old_to_new(scope, e.arg, in_old=True, out_new=out_new, mutable_callee=mutable_callee)
-        elif e.op == 'NEW':
-            utils.print_error(e.span, 'old-to-new translator does not support mixing calls to new and old!')
-            # bogus return value, just keep going to potentially report more errors
-            # see NOTE(resolving-malformed-programs)
-            return UnaryExpr(e.op, translate_old_to_new(scope, e.arg, in_old, out_new, mutable_callee), span=e.span)
-        elif e.op == 'NOT':
-            return UnaryExpr(e.op, translate_old_to_new(scope, e.arg, in_old, out_new, mutable_callee), span=e.span)
+                assert False, (e.op, e)
+        elif isinstance(e, BinaryExpr):
+            return BinaryExpr(e.op, self.translate(e.arg1), self.translate(e.arg2), span=e.span)
+        elif isinstance(e, NaryExpr):
+            return NaryExpr(e.op, [self.translate(arg) for arg in e.args], span=e.span)
+        elif isinstance(e, AppExpr):
+            d = self.scope.get(e.callee)
+            assert d is not None
+            if isinstance(d, (RelationDecl, FunctionDecl)) and d.mutable and not self.in_old:
+                with self.set_out_new():
+                    with self.set_mutable_callee(e.span):
+                        t_args = [self.translate(arg) for arg in e.args]
+                        return New(AppExpr(e.callee, t_args, span=e.span))
+            else:
+                t_args = [self.translate(arg) for arg in e.args]
+                return AppExpr(e.callee, t_args, span=e.span)
+        elif isinstance(e, QuantifierExpr):
+            with self.scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
+                return QuantifierExpr(e.quant, e.binder.vs, self.translate(e.body), span=e.span)
+        elif isinstance(e, Id):
+            d = self.scope.get(e.name)
+            if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not self.in_old:
+                return New(Id(e.name, span=e.span))
+            else:
+                return e
+        elif isinstance(e, IfThenElse):
+            return IfThenElse(
+                self.translate(e.branch),
+                self.translate(e.then),
+                self.translate(e.els),
+                span=e.span)
+        elif isinstance(e, Let):
+            with self.scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
+                return Let(e.binder.vs[0],
+                           self.translate(e.val),
+                           self.translate(e.body),
+                           span=e.span)
         else:
-            assert False, (e.op, e)
-    elif isinstance(e, BinaryExpr):
-        return BinaryExpr(e.op,
-                          translate_old_to_new(scope, e.arg1, in_old, out_new, mutable_callee),
-                          translate_old_to_new(scope, e.arg2, in_old, out_new, mutable_callee),
-                          span=e.span)
-    elif isinstance(e, NaryExpr):
-        return NaryExpr(e.op,
-                        [translate_old_to_new(scope, arg, in_old, out_new, mutable_callee) for arg in e.args],
-                        span=e.span)
-    elif isinstance(e, AppExpr):
-        d = scope.get(e.callee)
-        assert d is not None
-        if isinstance(d, (RelationDecl, FunctionDecl)) and d.mutable and not in_old:
-            t_args = [translate_old_to_new(scope, arg, in_old, out_new=True, mutable_callee=e.span) for arg in e.args]
-            return New(AppExpr(e.callee, t_args, span=e.span))
-        else:
-            t_args = [translate_old_to_new(scope, arg, in_old, out_new, mutable_callee) for arg in e.args]
-            return AppExpr(e.callee, t_args, span=e.span)
-    elif isinstance(e, QuantifierExpr):
-        with scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
-            return QuantifierExpr(e.quant, e.binder.vs, translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee), span=e.span)
-    elif isinstance(e, Id):
-        d = scope.get(e.name)
-        if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not in_old:
-            return New(Id(e.name, span=e.span))
-        else:
-            return e
-    elif isinstance(e, IfThenElse):
-        return IfThenElse(
-            translate_old_to_new(scope, e.branch, in_old, out_new, mutable_callee),
-            translate_old_to_new(scope, e.then, in_old, out_new, mutable_callee),
-            translate_old_to_new(scope, e.els, in_old, out_new, mutable_callee),
-            span=e.span)
-    elif isinstance(e, Let):
-        with scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
-            return Let(e.binder.vs[0],
-                       translate_old_to_new(scope, e.val, in_old, out_new, mutable_callee),
-                       translate_old_to_new(scope, e.body, in_old, out_new, mutable_callee),
-                       span=e.span)
-    else:
-        assert False, e
+            assert False, e
+
+def translate_old_to_new(scope: Scope, e: Expr) -> Expr:
+    return OldToNewTranslator(scope).translate(e)
 
 class DefinitionDecl(Decl):
     def __init__(self, is_public_transition: bool, num_states: int,
