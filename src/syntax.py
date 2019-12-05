@@ -568,7 +568,12 @@ class FaithfulPrinter(object):
             self.skip_to(new_pos)
 
     def move_to_start(self, x: HasSpan) -> None:
-        assert x.span is not None
+        if x.span is None:
+            assert isinstance(x, UnaryExpr)
+            assert x.op == 'NEW'
+            self.move_to_start(x.arg)
+            return
+
         self.move_to(x.span[0].lexpos)
 
     def move_to_end(self, x: HasSpan) -> None:
