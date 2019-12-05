@@ -5,7 +5,7 @@ sort a
 mutable relation foo(a)
 mutable relation bar(a)
 
-twostate definition foobar(a: a) = foo(a)
+twostate definition foobar(a: a) = new(foo(a))
 
 transition do_bar(a: a)
   modifies bar
