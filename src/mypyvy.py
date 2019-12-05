@@ -574,7 +574,7 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--log-xml', action=utils.YesNoAction, default=False,
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
-        s.add_argument('--print-program', choices=['str', 'repr', 'faithful'],
+        s.add_argument('--print-program', choices=['str', 'repr', 'faithful', 'refactor-old-to-new'],
                        help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -745,6 +745,19 @@ def main() -> None:
             elif utils.args.print_program == 'faithful':
                 to_str = syntax.faithful_print_prog
                 end = ''
+            elif utils.args.print_program == 'refactor-old-to-new':
+                pre_vocab_resolution_error_count = utils.error_count
+                prog.resolve_vocab()
+                if utils.error_count > pre_vocab_resolution_error_count:
+                    print('program has resolution errors')
+                    utils.exit(1)
+                pre_translation_error_count = utils.error_count
+                new_prog = syntax.translate_old_to_new_prog(prog, strip_old=False)
+                if utils.error_count > pre_translation_error_count:
+                    print('errors during old->new translation')
+                    utils.exit(1)
+                print(syntax.faithful_print_prog(new_prog, ignore_old=True), end='')
+                utils.exit(0)
             else:
                 assert False
 

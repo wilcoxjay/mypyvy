@@ -3,6 +3,7 @@ from __future__ import annotations
 import z3_utils
 
 from contextlib import contextmanager
+from copy import copy
 from dataclasses import dataclass
 import functools
 import itertools
@@ -527,28 +528,44 @@ def is_quantifier_free(e: Expr) -> bool:
 class HasSpan(Protocol):
     span: Optional[Span]
 
-def span_endlexpos(x: Union[Span, HasSpan]) -> int:
+def span_endlexpos(x: Union[Span, HasSpan]) -> Optional[int]:
     if not isinstance(x, tuple):
         s = x.span
-        assert s is not None
     else:
         s = x
+
+    if s is None:
+        return None
 
     return s[1].lexpos + len(s[1].value)
 
 class FaithfulPrinter(object):
-    def __init__(self, prog: Program) -> None:
+    def __init__(self, prog: Program, ignore_old: bool = False) -> None:
         self.prog = prog
+        self.ignore_old = ignore_old
         self.pos = 0
         self.buf: List[str] = []
 
-    def move_to(self, new_pos: int) -> None:
+    def skip_to(self, new_pos: Optional[int]) -> None:
+        if new_pos is not None:
+            self.pos = new_pos
+
+    def skip_to_start(self, x: HasSpan) -> None:
+        assert x.span is not None
+        self.skip_to(x.span[0].lexpos)
+
+    def skip_to_end(self, x: HasSpan) -> None:
+        self.skip_to(span_endlexpos(x))
+
+    def move_to(self, new_pos: Optional[int]) -> None:
         assert self.prog.input is not None
+        if new_pos is None:
+            return
         assert self.pos <= new_pos
         if self.pos < new_pos:
             data = self.prog.input[self.pos:new_pos]
             self.buf.append(data)
-            self.pos = new_pos
+            self.skip_to(new_pos)
 
     def move_to_start(self, x: HasSpan) -> None:
         assert x.span is not None
@@ -572,9 +589,7 @@ class FaithfulPrinter(object):
         assert self.pos == d.span[0].lexpos
 
         if isinstance(d, DefinitionDecl) and isinstance(d.body, tuple):
-            mods, expr = d.body
-            self.move_to_start(expr)
-            self.process_expr(expr)
+            self.move_and_process_expr(d.expr)
         else:
             self.move_to_end(d)
 
@@ -583,15 +598,30 @@ class FaithfulPrinter(object):
         self.process_expr(e)
 
     def process_expr(self, e: Expr) -> None:
-        assert e.span is not None
+        assert e.span is not None or (isinstance(e, UnaryExpr) and e.op == 'NEW')
+
         if isinstance(e, NaryExpr):
             for arg in e.args:
                 self.move_and_process_expr(arg)
             self.move_to_end(e)
         elif isinstance(e, QuantifierExpr):
             self.move_and_process_expr(e.body)
+            self.move_to_end(e)
         elif isinstance(e, UnaryExpr):
-            self.move_and_process_expr(e.arg)
+            if self.ignore_old and e.op == 'OLD':
+                assert e.span is not None
+                self.skip_to_start(e.arg)
+                self.process_expr(e.arg)
+                self.move_to(e.span[1].lexpos)  # include whitespace/comments inside close paren
+                self.skip_to_end(e)  # *don't* include close paren
+                # jrw: test this!
+            elif e.op == 'NEW' and e.span is None:
+                self.buf.append('new(')
+                self.move_and_process_expr(e.arg)
+                self.buf.append(')')
+            else:
+                self.move_and_process_expr(e.arg)
+                self.move_to_end(e)
         elif isinstance(e, BinaryExpr):
             self.process_expr(e.arg1)
             self.move_and_process_expr(e.arg2)
@@ -611,8 +641,13 @@ class FaithfulPrinter(object):
         else:
             assert False, repr(e)
 
-def faithful_print_prog(prog: Program) -> str:
-    return FaithfulPrinter(prog).process()
+# Use prog.input to print prog as similarly as possible to the input. In particular,
+# whitespace and comments are preserved where possible.
+#
+# If ignore_old is True, then do not print any old() expressions. This is useful
+# in conjunction with strip_old=False in translate_old_to_new_prog.
+def faithful_print_prog(prog: Program, ignore_old: bool = False) -> str:
+    return FaithfulPrinter(prog, ignore_old).process()
 
 @functools.total_ordering
 class Expr(Denotable):
@@ -1715,6 +1750,28 @@ class ModifiesClause(object):
     def __str__(self) -> str:
         return self.name
 
+def uses_new(e: Expr) -> bool:
+    if isinstance(e, Bool):
+        return False
+    elif isinstance(e, UnaryExpr):
+        return e.op == 'NEW' or uses_new(e.arg)
+    elif isinstance(e, BinaryExpr):
+        return uses_new(e.arg1) or uses_new(e.arg2)
+    elif isinstance(e, NaryExpr):
+        return any(uses_new(x) for x in e.args)
+    elif isinstance(e, AppExpr):
+        return any(uses_new(x) for x in e.args)
+    elif isinstance(e, QuantifierExpr):
+        return uses_new(e.body)
+    elif isinstance(e, Id):
+        return False
+    elif isinstance(e, IfThenElse):
+        return uses_new(e.branch) or uses_new(e.then) or uses_new(e.els)
+    elif isinstance(e, Let):
+        return uses_new(e.val) or uses_new(e.body)
+    else:
+        assert False, e
+
 def uses_old(e: Expr) -> bool:
     if isinstance(e, Bool):
         return False
@@ -1738,8 +1795,10 @@ def uses_old(e: Expr) -> bool:
         assert False, e
 
 class OldToNewTranslator(object):
-    def __init__(self, scope: Scope) -> None:
+    def __init__(self, scope: Scope, strip_old: bool = True) -> None:
         self.scope = scope
+        self.strip_old = strip_old
+
         self.in_old = False
         self.out_new = False
         self.mutable_callee: Optional[Span] = None
@@ -1786,8 +1845,10 @@ class OldToNewTranslator(object):
                     return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
                 else:
                     with self.set_in_old():
-                        # just strip the old()
-                        return self.translate(e.arg)
+                        if self.strip_old:
+                            return self.translate(e.arg)
+                        else:
+                            return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
             elif e.op == 'NEW':
                 err_msg = 'old-to-new translator does not support mixing calls to new and old!'
                 utils.print_error(e.span, err_msg)
@@ -1837,8 +1898,40 @@ class OldToNewTranslator(object):
         else:
             assert False, e
 
-def translate_old_to_new(scope: Scope, e: Expr) -> Expr:
-    return OldToNewTranslator(scope).translate(e)
+def translate_old_to_new_expr(scope: Scope, e: Expr, strip_old: bool = True) -> Expr:
+    return OldToNewTranslator(scope, strip_old=strip_old).translate(e)
+
+# Translate all double-vocabulary formulas in prog from old() syntax to new() syntax.
+# If strip_old is False, then leave the old() expressions in place, but also introduce
+# new() expressions. (This is useful if the consumer plans to manually ignore old(),
+# but wishes to retain source-level information on where old() operations used to be.)
+def translate_old_to_new_prog(prog: Program, strip_old: bool = True) -> Program:
+    scope = prog.scope
+    ds: List[Decl] = []
+    for d in prog.decls:
+        if isinstance(d, DefinitionDecl) and d.num_states == 2:
+            if not uses_old(d.expr) and not uses_new(d.expr):
+                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs refactoring')
+            if uses_old(d.expr):
+                dd = copy(d)
+                dd.expr = translate_old_to_new_expr(scope, dd.expr, strip_old=strip_old)
+                ds.append(dd)
+            else:
+                ds.append(d)
+        elif isinstance(d, TheoremDecl) and d.num_states == 2:
+            if not uses_old(d.expr) and not uses_new(d.expr):
+                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs refactoring')
+            if uses_old(d.expr):
+                t = copy(d)
+                t.expr = translate_old_to_new_expr(scope, t.expr, strip_old=strip_old)
+                ds.append(t)
+            else:
+                ds.append(d)
+        else:
+            ds.append(d)
+    new_prog = Program(ds)
+    new_prog.input = prog.input
+    return new_prog
 
 class DefinitionDecl(Decl):
     def __init__(self, is_public_transition: bool, num_states: int,
@@ -1881,15 +1974,19 @@ class DefinitionDecl(Decl):
         for mod in self.mods:
             mod.resolve(scope)
 
-        if self.num_states == 2 and uses_old(self.expr):
-            if utils.args.accept_old:
-                utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+        if self.num_states == 2:
+            if not uses_old(self.expr) and not uses_new(self.expr):
+                utils.print_error(self.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs to be translated')
 
-                utils.logger.info(f'translating transition {self.name}')
-                with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-                    self.expr = translate_old_to_new(scope, self.expr)
-            else:
-                utils.print_error(self.span, 'old() is disallowed by --no-accept-old')
+            if uses_old(self.expr):
+                if utils.args.accept_old:
+                    utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+
+                    utils.logger.info(f'translating transition {self.name}')
+                    with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
+                        self.expr = translate_old_to_new_expr(scope, self.expr)
+                else:
+                    utils.print_error(self.span, 'old() is disallowed by --no-accept-old')
 
         self.expr = close_free_vars(self.expr, in_scope=[v.name for v in self.binder.vs], span=self.span,)
 
@@ -2019,14 +2116,18 @@ class TheoremDecl(Decl):
         return (self.name, self.expr, self.num_states)
 
     def resolve(self, scope: Scope) -> None:
-        if self.num_states == 2 and uses_old(self.expr):
-            if utils.args.accept_old:
-                utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+        if self.num_states == 2:
+            if not uses_old(self.expr) and not uses_new(self.expr):
+                utils.print_error(self.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs to be translated')
 
-                utils.logger.info(f'translating theorem {self.name}')
-                self.expr = translate_old_to_new(scope, self.expr)
-            else:
-                utils.print_error(self.span, 'old() is disallowed by --no-accept-old')
+            if uses_old(self.expr):
+                if utils.args.accept_old:
+                    utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+
+                    utils.logger.info(f'translating theorem {self.name}')
+                    self.expr = translate_old_to_new_expr(scope, self.expr)
+                else:
+                    utils.print_error(self.span, 'old() is disallowed by --no-accept-old')
 
         self.expr = close_free_vars(self.expr, span=self.span)
         with scope.n_states(self.num_states):
@@ -2704,7 +2805,7 @@ class Program(object):
             if isinstance(d, TraceDecl):
                 yield d
 
-    def resolve(self) -> None:
+    def resolve_vocab(self) -> None:
         self.scope = scope = Scope[InferenceSort]()
 
         for s in self.sorts():
@@ -2713,11 +2814,14 @@ class Program(object):
         for rcf in self.relations_constants_and_functions():
             rcf.resolve(scope)
 
+    def resolve(self) -> None:
+        self.resolve_vocab()
+
         for d in self.decls_containing_exprs():
-            d.resolve(scope)
+            d.resolve(self.scope)
 
         for tr in self.traces():
-            tr.resolve(scope)
+            tr.resolve(self.scope)
 
         automata = list(self.automata())
         if len(automata) > 1:
@@ -2727,9 +2831,9 @@ class Program(object):
 
         if len(automata) > 0:
             a = automata[0]
-            a.resolve(scope)
+            a.resolve(self.scope)
 
-        assert len(scope.stack) == 0
+        assert len(self.scope.stack) == 0
 
     def __repr__(self) -> str:
         return 'Program(decls=%s)' % (self.decls,)

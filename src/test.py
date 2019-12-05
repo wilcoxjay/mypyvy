@@ -110,7 +110,7 @@ class SyntaxTests(unittest.TestCase):
         s2 = syntax.SortDecl('foo', [])
         self.assertEqual(s1, s2)
 
-    def test_translate_old_to_new(self) -> None:
+    def test_translate_old_to_new_expr(self) -> None:
         vocab = '''
             sort A
             mutable relation R(A)
@@ -124,7 +124,7 @@ class SyntaxTests(unittest.TestCase):
         ]
         for expr, expected in ios:
             with self.subTest(expr=expr):
-                expr2 = syntax.translate_old_to_new(prog.scope, parser.parse_expr(expr))
+                expr2 = syntax.translate_old_to_new_expr(prog.scope, parser.parse_expr(expr))
                 # print(clause)
                 self.assertEqual(expr2, parser.parse_expr(expected))
 
