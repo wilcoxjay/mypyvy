@@ -1972,8 +1972,6 @@ class DefinitionDecl(Decl):
 
         old_error_count = 0
 
-        scope.add_definition(self)
-
         self.binder.pre_resolve(scope)
 
         for mod in self.mods:
@@ -2818,6 +2816,9 @@ class Program(object):
 
         for rcf in self.relations_constants_and_functions():
             rcf.resolve(scope)
+
+        for d in self.definitions():
+            scope.add_definition(d)
 
     def resolve(self) -> None:
         self.resolve_vocab()

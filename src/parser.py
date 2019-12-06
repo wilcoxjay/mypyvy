@@ -685,13 +685,13 @@ def p_decl_definition(p: Any) -> None:
     body_span = body[1].span if isinstance(body, tuple) else body.span
     if isinstance(body, syntax.BlockStatement):
         if num_states == 1:
-            utils.print_error(p.slice[7], "syntax error: imperative body of definition cannot be declared 'onestate'")
+            utils.print_error(body.span, "syntax error: imperative body of definition cannot be declared 'onestate'")
             return
 
     if num_states != 2 and isinstance(body, tuple):
         mods, _ = body
         if len(mods) != 0:
-            utils.print_error(p.slice[7], "syntax error: modifies clause only allowed on twostate definitions or transitions")
+            utils.print_error(mods[0].span, "syntax error: modifies clause only allowed on twostate definitions or transitions")
             return
 
     p[0] = syntax.DefinitionDecl(is_public_transition=False, num_states=num_states,
