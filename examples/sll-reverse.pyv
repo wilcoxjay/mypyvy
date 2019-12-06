@@ -38,10 +38,10 @@ init j = null
 
 transition step()
   modifies nrtc, i, j
-  old(i) != old(null) &
-  (nrtc(U,V) <-> old(nrtc(U,V) & !(nrtc(U,i) & nrtc(i,V) & i != V) | (nrtc(U,i) & nrtc(j,V)))) &
-  (exists K. K = i & old(nrtc(i, K) & i != K & forall Z. nrtc(i, Z) & i != Z -> nrtc(K, Z))) &
-  j = old(i)
+  i != null &
+  (new(nrtc(U,V)) <-> nrtc(U,V) & !(nrtc(U,i) & nrtc(i,V) & i != V) | (nrtc(U,i) & nrtc(j,V))) &
+  (exists K. K = new(i) & nrtc(i, K) & i != K & forall Z. nrtc(i, Z) & i != Z -> nrtc(K, Z)) &
+  new(j) = i
 
 automaton {
 

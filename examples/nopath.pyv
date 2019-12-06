@@ -18,8 +18,8 @@ init cut
 
 transition follow_edge(x: node)
   modifies current
-  & old(edge(current, x))
-  & current = x
+  & edge(current, x)
+  & new(current) = x
 
 safety current != destination
 

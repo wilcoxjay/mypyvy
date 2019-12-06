@@ -36,176 +36,176 @@ init !bus_transfer(V)
 
 transition issue_proc_read_invalid(c: core, a: address)
   modifies bus_in_use, proc_read, bus_read
-  old(invalid(c, a)) &
-  old(!bus_in_use) &
-  bus_in_use &
-  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) | C = c & A = a) &
-  (forall C, A. bus_read(C, A) <-> old(bus_read(C,A)) | C != c & A = a)
+  invalid(c, a) &
+  !bus_in_use &
+  new(bus_in_use) &
+  (forall C, A. new(proc_read(C, A)) <-> proc_read(C, A) | C = c & A = a) &
+  (forall C, A. new(bus_read(C, A)) <-> bus_read(C,A) | C != c & A = a)
 
 transition do_bus_read_invalid(c: core, a: address)
   modifies bus_read
-  old(bus_read(c, a)) &
-  old(invalid(c, a)) &
-  (forall C, A. bus_read(C, A) <-> old(bus_read(C, A)) & !(C = c & A = a))
+  bus_read(c, a) &
+  invalid(c, a) &
+  (forall C, A. new(bus_read(C, A)) <-> bus_read(C, A) & !(C = c & A = a))
 
 transition do_bus_read_valid(c: core, a: address, v: value)
   modifies bus_read, modified, exclusive, shared, bus_transfer, memory
-  old(bus_read(c, a)) &
-  old(!invalid(c, a)) &
-  old(cache(c, a)) = v &
-  (forall C, A. bus_read(C, A) <-> old(bus_read(C, A)) & !(C = c & A = a)) &
-  (forall C, A. shared(C, A) <-> old(shared(C, A)) | C = c & A = a) &
-  (forall C, A. modified(C, A) <-> old(modified(C, A)) & !(C = c & A = a)) &
-  (forall C, A. exclusive(C, A) <-> old(exclusive(C, A)) & !(C = c & A = a)) &
-  (old(modified(c, a)) ->  # write back
+  bus_read(c, a) &
+  !invalid(c, a) &
+  cache(c, a) = v &
+  (forall C, A. new(bus_read(C, A)) <-> bus_read(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) | C = c & A = a) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (modified(c, a) ->  # write back
     (forall A.
        (A != a ->
-         (memory(A) = old(memory(A))))) &
-     (memory(a) = v)) &
-  (!old(modified(c, a)) ->
-    (forall A. memory(A) = old(memory(A)))) &
-  (forall V. bus_transfer(V) <-> old(bus_transfer(V)) | V = v)
+         (new(memory(A)) = memory(A)))) &
+     (new(memory(a)) = v)) &
+  (!modified(c, a) ->
+    (forall A. new(memory(A)) = memory(A))) &
+  (forall V. new(bus_transfer(V)) <-> bus_transfer(V) | V = v)
 
 transition complete_proc_read_invalid_shared(c: core, a: address, v: value)
   modifies invalid, shared, bus_transfer, cache, bus_in_use, proc_read
-  old(invalid(c, a)) &
-  old(proc_read(c, a)) &
-  old(bus_transfer(v)) &
-  (forall C, A. !old(bus_read(C, A))) &
-  (forall V. !bus_transfer(V)) &
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) & !(C = c & A = a)) &
-  (forall C, A. shared(C, A) <-> old(shared(C, A)) | C = c & A = a) &
+  invalid(c, a) &
+  proc_read(c, a) &
+  bus_transfer(v) &
+  (forall C, A. !bus_read(C, A)) &
+  (forall V. !new(bus_transfer(V))) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) | C = c & A = a) &
   (forall C, A.
      !(C = c & A = a) ->
-     (cache(C, A) = old(cache(C, A)))) &
-  cache(c, a) = v &
-  !bus_in_use &
-  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) & !(C = c & A = a))
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  !new(bus_in_use) &
+  (forall C, A. new(proc_read(C, A)) <-> proc_read(C, A) & !(C = c & A = a))
 
 transition complete_proc_read_invalid_exclusive(c: core, a: address, v: value)
   modifies invalid, exclusive, cache, bus_in_use, proc_read
-  old(invalid(c, a)) &
-  old(proc_read(c, a)) &
-  (forall V. !old(bus_transfer(V))) &
-  (forall C, A. !old(bus_read(C, A))) &
-  old(memory(a) = v) &
+  invalid(c, a) &
+  proc_read(c, a) &
+  (forall V. !bus_transfer(V)) &
+  (forall C, A. !bus_read(C, A)) &
+  memory(a) = v &
 
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) & !(C = c & A = a)) &
-  (forall C, A. exclusive(C, A) <-> old(exclusive(C, A)) | C = c & A = a) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) | C = c & A = a) &
   (forall C, A.
      !(C = c & A = a) ->
-     (cache(C, A) = old(cache(C, A)))) &
-  cache(c, a) = v &
-  !bus_in_use &
-  (forall C, A. proc_read(C, A) <-> old(proc_read(C, A)) & !(C = c & A = a))
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  !new(bus_in_use) &
+  (forall C, A. new(proc_read(C, A)) <-> proc_read(C, A) & !(C = c & A = a))
 
 transition issue_proc_write_invalid(c: core, a: address, v: value)
   modifies bus_in_use, proc_write, bus_read_for_ownership
-  old(invalid(c, a)) &
-  old(!bus_in_use) &
-  bus_in_use &
-  (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) | C = c & A = a & V = v) &
-  (forall C, A. bus_read_for_ownership(C, A) <-> old(bus_read_for_ownership(C,A)) | C != c & A = a)
+  invalid(c, a) &
+  !bus_in_use &
+  new(bus_in_use) &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) | C = c & A = a & V = v) &
+  (forall C, A. new(bus_read_for_ownership(C, A)) <-> bus_read_for_ownership(C,A) | C != c & A = a)
 
 transition do_bus_read_for_ownership_invalid(c: core, a: address)
   modifies bus_read_for_ownership
-  old(bus_read_for_ownership(c, a)) &
-  old(invalid(c, a)) &
-  (forall C, A. bus_read_for_ownership(C, A) <-> old(bus_read_for_ownership(C, A)) & !(C = c & A = a))
+  bus_read_for_ownership(c, a) &
+  invalid(c, a) &
+  (forall C, A. new(bus_read_for_ownership(C, A)) <-> bus_read_for_ownership(C, A) & !(C = c & A = a))
 
 transition do_bus_read_for_ownership_valid(c: core, a: address, v: value)
   modifies bus_read_for_ownership, modified, exclusive, shared, invalid, bus_transfer, memory
-  old(bus_read_for_ownership(c, a)) &
-  old(!invalid(c, a)) &
-  old(cache(c, a)) = v &
-  (forall C, A. bus_read_for_ownership(C, A) <-> old(bus_read_for_ownership(C, A)) & !(C = c & A = a)) &
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a) &
-  (forall C, A. shared(C, A) <-> old(shared(C, A)) & !(C = c & A = a)) &
-  (forall C, A. modified(C, A) <-> old(modified(C, A)) & !(C = c & A = a)) &
-  (forall C, A. exclusive(C, A) <-> old(exclusive(C, A)) & !(C = c & A = a)) &
-  (old(modified(c, a)) ->  # write back
+  bus_read_for_ownership(c, a) &
+  !invalid(c, a) &
+  cache(c, a) = v &
+  (forall C, A. new(bus_read_for_ownership(C, A)) <-> bus_read_for_ownership(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (modified(c, a) ->  # write back
     (forall A.
        (A != a ->
-         (memory(A) = old(memory(A))))) &
-     (memory(a) = v)) &
-  (!old(modified(c, a)) ->
-    (forall A. memory(A) = old(memory(A)))) &
-  (forall V. bus_transfer(V) <-> old(bus_transfer(V)) | V = v)
+         (new(memory(A)) = memory(A)))) &
+     (new(memory(a)) = v)) &
+  (!modified(c, a) ->
+    (forall A. new(memory(A)) = memory(A))) &
+  (forall V. new(bus_transfer(V)) <-> bus_transfer(V) | V = v)
 
 transition complete_proc_write_invalid(c: core, a: address, v: value)
   modifies invalid, modified, bus_transfer, cache, bus_in_use, proc_write
-  old(invalid(c, a)) &
-  old(proc_write(c, a, v)) &
-  (forall C, A. !old(bus_read_for_ownership(C, A))) &
-  (forall V. !bus_transfer(V)) &
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) & !(C = c & A = a)) &
-  (forall C, A. modified(C, A) <-> old(modified(C, A)) | C = c & A = a) &
+  invalid(c, a) &
+  proc_write(c, a, v) &
+  (forall C, A. !bus_read_for_ownership(C, A)) &
+  (forall V. !new(bus_transfer(V))) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) | C = c & A = a) &
   (forall C, A.
      !(C = c & A = a) ->
-     (cache(C, A) = old(cache(C, A)))) &
-  cache(c, a) = v &
-  !bus_in_use &
-  (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) & !(C = c & A = a & V = v))
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  !new(bus_in_use) &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) & !(C = c & A = a & V = v))
 
 transition proc_write_exclusive(c: core, a: address, v: value)
   modifies exclusive, modified, cache
-  old(exclusive(c, a)) &
-  !old(bus_in_use) &
-  (forall C, A. exclusive(C, A) <-> old(exclusive(C, A)) & !(C = c & A = a)) &
-  (forall C, A. modified(C, A) <-> old(modified(C, A)) | C = c & A = a) &
+  exclusive(c, a) &
+  !bus_in_use &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) | C = c & A = a) &
   (forall C, A.
      !(C = c & A = a) ->
-     (cache(C, A) = old(cache(C, A)))) &
-  cache(c, a) = v
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v
 
 transition issue_proc_write_shared(c: core, a: address, v: value)
   modifies bus_in_use, proc_write, bus_upgrade
-  old(shared(c, a)) &
-  !old(bus_in_use) &
-  bus_in_use &
-  (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) | C = c & A = a & V = v) &
-  (forall C, A. bus_upgrade(C, A) <-> old(bus_upgrade(C,A)) | C != c & A = a)
+  shared(c, a) &
+  !bus_in_use &
+  new(bus_in_use) &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) | C = c & A = a & V = v) &
+  (forall C, A. new(bus_upgrade(C, A)) <-> bus_upgrade(C,A) | C != c & A = a)
 
 transition do_bus_upgrade(c: core, a: address)
   modifies bus_upgrade, shared, invalid
-  old(bus_upgrade(c, a)) &
-  (forall C, A. bus_upgrade(C, A) <-> old(bus_upgrade(C, A)) & !(C = c & A = a)) &
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a) &
-  (forall C, A. shared(C, A) <-> old(shared(C, A)) & !(C = c & A = a))
+  bus_upgrade(c, a) &
+  (forall C, A. new(bus_upgrade(C, A)) <-> bus_upgrade(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a))
 
 transition complete_proc_write_shared(c: core, a: address, v: value)
   modifies bus_in_use, proc_write, cache, shared, modified
-  old(shared(c, a)) &
-  old(proc_write(c, a, v)) &
-  (forall C, A. !old(bus_upgrade(C, A))) &
-  (forall C, A. shared(C, A) <-> old(shared(C, A)) & !(C = c & A = a)) &
-  (forall C, A. modified(C, A) <-> old(modified(C, A)) | C = c & A = a) &
+  shared(c, a) &
+  proc_write(c, a, v) &
+  (forall C, A. !bus_upgrade(C, A)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) | C = c & A = a) &
   (forall C, A.
      !(C = c & A = a) ->
-     (cache(C, A) = old(cache(C, A)))) &
-  cache(c, a) = v &
-  (forall C, A, V. proc_write(C, A, V) <-> old(proc_write(C, A, V)) & !(C = c & A = a & V = v)) &
-  !bus_in_use
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) & !(C = c & A = a & V = v)) &
+  !new(bus_in_use)
 
 
 transition evict_modified(c: core, a: address)
   modifies memory, modified, invalid
-  !old(bus_in_use) &
-  old(modified(c, a)) &
+  !bus_in_use &
+  modified(c, a) &
   (forall A.
     (A != a ->
-     (memory(A) = old(memory(A))))) &
-  memory(a) = old(cache(c, a)) &  # write back
-  (forall C, A. modified(C, A) <-> old(modified(C, A)) & !(C = c & A = a)) &
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a)
+     (new(memory(A)) = memory(A)))) &
+  new(memory(a)) = cache(c, a) &  # write back
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a)
 
 transition evict_exclusive_or_shared(c: core, a: address)
   modifies exclusive, shared, invalid
-  !old(bus_in_use) &
-  old(exclusive(c, a) | shared(c, a)) &
-  (forall C, A. exclusive(C, A) <-> old(exclusive(C, A)) & !(C = c & A = a)) &
-  (forall C, A. shared(C, A) <-> old(shared(C, A)) & !(C = c & A = a)) &
-  (forall C, A. invalid(C, A) <-> old(invalid(C, A)) | C = c & A = a)
+  !bus_in_use &
+  exclusive(c, a) | shared(c, a) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a)
 
 safety !invalid(C, A) & !modified(C, A) -> cache(C, A) = memory(A)
 

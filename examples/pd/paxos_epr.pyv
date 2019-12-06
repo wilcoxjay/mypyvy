@@ -38,43 +38,43 @@ init !decision(R, V)
 transition send_1a(r: round)
   modifies one_a
   r != none &
-  (forall R. one_a(R) <-> old(one_a(R)) | R = r)
+  (forall R. new(one_a(R)) <-> one_a(R) | R = r)
 
 
 transition join_round(n: node, r: round)
   modifies one_b, left_round
   r != none &
-  old(one_a(r)) &
-  !old(left_round(n, r)) &
-  (forall N, R. one_b(N, R) <-> old(one_b(N,R)) | N = n & R = r) &
-  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
+  one_a(r) &
+  !left_round(n, r) &
+  (forall N, R. new(one_b(N, R)) <-> one_b(N,R) | N = n & R = r) &
+  (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(r, R))
 
 
 transition propose(r: round, q: quorum, maxr: round, v: value)
   modifies proposal
   r != none &
-  (forall V. !old(proposal(r, V))) &
-  (forall N. member(N, q) -> old(one_b(N, r))) &
-  ((maxr = none & forall N,MAXR,V. !(member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V)))) |
+  (forall V. !proposal(r, V)) &
+  (forall N. member(N, q) -> one_b(N, r)) &
+  ((maxr = none & forall N,MAXR,V. !(member(N, q) & !le(r,MAXR) & vote(N,MAXR,V))) |
    (maxr != none &
-    (exists N. member(N, q) & !le(r,maxr) & old(vote(N,maxr,v))) &
-    (forall N,MAXR,V. (member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V))) -> le(MAXR,maxr)))) &
-  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+    (exists N. member(N, q) & !le(r,maxr) & vote(N,maxr,v)) &
+    (forall N,MAXR,V. (member(N, q) & !le(r,MAXR) & vote(N,MAXR,V)) -> le(MAXR,maxr)))) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
 
 
 transition cast_vote(n: node, v: value, r: round)
   modifies vote
   r != none &
-  !old(left_round(n, r)) &
-  old(proposal(r, v)) &
-  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
+  !left_round(n, r) &
+  proposal(r, v) &
+  (forall N, R, V. new(vote(N, R, V)) <-> vote(N, R, V) | N = n & R = r & V = v)
 
 
 transition decide(r: round, v: value, q: quorum)
   modifies decision
   r != none &
-  (forall N. member(N, q) -> old(vote(N, r, v))) &
-  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v)
+  (forall N. member(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = r & V = v)
 
 
 # safety property

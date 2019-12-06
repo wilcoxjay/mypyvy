@@ -18,38 +18,38 @@ init !witness_notif(I, E)
 
 transition send_from_internal(src: node, dst: node)
   modifies sent, allowed_in, witness_notif
-  & old(active(src))
-  & old(active(dst))
+  & active(src)
+  & active(dst)
 
-  & old(internal(src))
-  & !old(internal(dst))
-  & (forall S,D. sent(S,D) <-> old(sent(S,D)) | S = src & D = dst)
-  & (forall N. allowed_in(N) <-> old(allowed_in(N)) | N = dst)
-  & (forall I,E. witness_notif(I,E) <-> old(witness_notif(I,E)) | I = src & E = dst)
+  & internal(src)
+  & !internal(dst)
+  & (forall S,D. new(sent(S,D)) <-> sent(S,D) | S = src & D = dst)
+  & (forall N. new(allowed_in(N)) <-> allowed_in(N) | N = dst)
+  & (forall I,E. new(witness_notif(I,E)) <-> witness_notif(I,E) | I = src & E = dst)
 
 transition send_to_internal(src: node, dst: node)
   modifies sent
-  & old(active(src))
-  & old(active(dst))
+  & active(src)
+  & active(dst)
 
-  & !old(internal(src))
-  & old(internal(dst))
-  & old(allowed_in(src))
-  & (forall S,D. sent(S,D) <-> old(sent(S,D)) | S = src & D = dst)
+  & !internal(src)
+  & internal(dst)
+  & allowed_in(src)
+  & (forall S,D. new(sent(S,D)) <-> sent(S,D) | S = src & D = dst)
 
 transition discover_violation(s: node, d: node)
   modifies aborted
-  & old(active(s))
-  & old(active(d))
+  & active(s)
+  & active(d)
 
-  & old(sent(s, d))
-  & old(internal(d))
-  & (forall I. old(active(I)) -> !old(witness_notif(I, s)))
-  & aborted
+  & sent(s, d)
+  & internal(d)
+  & (forall I. active(I) -> !witness_notif(I, s))
+  & new(aborted)
 
 transition decrease_domain()
   modifies active
-  active(N) -> old(active(N))
+  new(active(N)) -> active(N)
 
 # safety sent(S,D) & internal(D) -> exists I. internal(I) & sent(I,S)
 

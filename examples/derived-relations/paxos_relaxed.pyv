@@ -44,67 +44,67 @@ init !decision(R, V)
 
 transition send_1a(r: round)
   modifies one_a
-  old(round_active(r)) & 
-  r != none &
-  (forall R. one_a(R) <-> old(one_a(R)) | R = r)
+  round_active(r) & 
+  new(r) != none &
+  (forall R. new(one_a(R)) <-> one_a(R) | R = new(r))
 
 transition join_round(n: node, r: round)
   modifies one_b, left_round
-  old(node_active(n)) & 
-  old(round_active(r)) & 
-  r != none &
-  old(one_a(r)) &
-  !old(left_round(n, r)) &
-  (forall N, R. one_b(N, R) <-> old(one_b(N,R)) | N = n & R = r) &
-  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
+  node_active(n) & 
+  round_active(r) & 
+  new(r) != none &
+  one_a(r) &
+  !left_round(n, r) &
+  (forall N, R. new(one_b(N, R)) <-> one_b(N,R) | N = n & R = new(r)) &
+  (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(new(r), R))
 
 transition propose(r: round, q: quorum, maxr: round, v: value)
   modifies proposal
-  old(round_active(r)) &
-  old(quorum_active(q)) &
-  old(round_active(maxr)) &
-  old(value_active(v)) & 
-  r != none &
-  (forall V. old(value_active(V)) -> !old(proposal(r, V))) &
-  (forall N. old(node_active(N)) & member(N, q) -> old(one_b(N, r))) &
-  ((maxr = none & forall N,MAXR,V. old(node_active(N)) & old(round_active(MAXR)) & old(value_active(V)) -> !(member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V)))) |
+  round_active(r) &
+  quorum_active(q) &
+  round_active(maxr) &
+  value_active(v) & 
+  new(r) != none &
+  (forall V. value_active(V) -> !proposal(r, V)) &
+  (forall N. node_active(N) & member(N, q) -> one_b(N, r)) &
+  ((maxr = none & forall N,MAXR,V. node_active(N) & round_active(MAXR) & value_active(V) -> !(member(N, q) & !le(new(r),MAXR) & vote(N,MAXR,V))) |
    (maxr != none &
-    (exists N. old(node_active(N)) & member(N, q) & !le(r,maxr) & old(vote(N,maxr,v))) &
-    (forall N,MAXR,V. old(node_active(N)) & old(round_active(MAXR)) & old(value_active(V)) & (member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V))) -> le(MAXR,maxr)))) &
-  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+    (exists N. node_active(N) & member(N, q) & !le(new(r),maxr) & vote(N,maxr,v)) &
+    (forall N,MAXR,V. node_active(N) & round_active(MAXR) & value_active(V) & (member(N, q) & !le(new(r),MAXR) & vote(N,MAXR,V)) -> le(MAXR,maxr)))) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = new(r) & V = v))
 
 transition cast_vote(n: node, v: value, r: round)
   modifies vote
-  old(node_active(n)) &
-  old(value_active(v)) &
-  old(round_active(r)) & 
-  r != none &
-  !old(left_round(n, r)) &
-  old(proposal(r, v)) &
-  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
+  node_active(n) &
+  value_active(v) &
+  round_active(r) & 
+  new(r) != none &
+  !left_round(n, r) &
+  proposal(r, v) &
+  (forall N, R, V. new(vote(N, R, V)) <-> vote(N, R, V) | N = n & R = new(r) & V = v)
 
 transition decide(r: round, v: value, q: quorum)
   modifies decision, decision_quorum
-  old(round_active(r)) & 
-  old(value_active(v)) &
-  old(quorum_active(q)) &
-  r != none &
-  (forall N. old(node_active(N)) & member(N, q) -> old(vote(N, r, v))) &
-  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v)
+  round_active(r) & 
+  value_active(v) &
+  quorum_active(q) &
+  new(r) != none &
+  (forall N. node_active(N) & member(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = new(r) & V = v)
 
-  & (forall R,V. !(R = r & V = v) -> decision_quorum(R, V) = old(decision_quorum(R, V)))
-  & decision_quorum(r, v) = q
+  & (forall R,V. !(R = new(r) & V = v) -> new(decision_quorum(R, V)) = decision_quorum(R, V))
+  & new(decision_quorum(new(r), v)) = q
 
 transition decrease_domain()
   modifies node_active, value_active, quorum_active, round_active
-  (forall N. node_active(N) -> old(node_active(N))) &
-  (forall V. value_active(V) -> old(value_active(V))) &
-  (forall Q. quorum_active(Q) -> old(quorum_active(Q))) &
-  (forall R. round_active(R) -> old(round_active(R)))
+  (forall N. new(node_active(N)) -> node_active(N)) &
+  (forall V. new(value_active(V)) -> value_active(V)) &
+  (forall Q. new(quorum_active(Q)) -> quorum_active(Q)) &
+  (forall R. new(round_active(R)) -> round_active(R))
 
-  & (forall R, V. round_active(R) & value_active(V) -> let old_quorum = old(decision_quorum(R,V)) in quorum_active(old_quorum))
-  & (forall R, V, N. round_active(R) & value_active(V) & node_active(N) -> old(decision(R,V)) & member(N, old(decision_quorum(R, V))) -> old(vote(N, R, V)))
-  & (forall Q, R. quorum_active(Q) & round_active(R) -> (old(r(Q,R)) -> r(Q,R)))
+  & (forall R, V. new(round_active(R)) & new(value_active(V)) -> let old_quorum = decision_quorum(R,V) in new(quorum_active(old_quorum)))
+  & (forall R, V, N. new(round_active(R)) & new(value_active(V)) & new(node_active(N)) -> decision(R,V) & member(N, decision_quorum(R, V)) -> vote(N, R, V))
+  & (forall Q, R. new(quorum_active(Q)) & new(round_active(R)) -> (r(Q,R) -> new(r(Q,R))))
 
 # derived relation r(quorum, round, round, value):
 #   quorum_active(Q0) & round_active(R1) & round_active(R2) & value_active(V0) -> 
