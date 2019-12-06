@@ -39,8 +39,8 @@ transition send_lock(n: node)
   modifies lock_msg
 
   # After the modifies clause comes the two-state formula. The 
-  # pre-state is referred to by old(...), while the post-state 
-  # is referred to directly.
+  # pre-state is referred to directly, while the post-state
+  # is referred to by new(...).
   # This line is a verbose and ugly way of saying "insert `n` 
   # into the lock_msg relation". Someday we'll have nice syntax.
   # (Remember that capital variables like `N` are implicitly 

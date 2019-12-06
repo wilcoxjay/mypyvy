@@ -33,7 +33,7 @@ transition recv_vote(n: node, sender: node)
   modifies votes
   vote_msg(sender, n) &
   (new(votes(N1, N2)) <-> votes(N1, N2) | N1 = n & N2 = sender)
-  # & ((!(N1=sender & N2=n)) -> (vote_msg(N1, N2) <-> old(vote_msg(N1, N2))))
+  # & ((!(N1=sender & N2=n)) -> (new(vote_msg(N1, N2)) <-> vote_msg(N1, N2)))
 
 transition choose_voting_quorum(q, sn)
   modifies voting_quorum
