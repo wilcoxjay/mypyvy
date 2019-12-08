@@ -436,7 +436,12 @@ def diagram_trace_to_explicitly_relaxed_trace(prog: syntax.Program,
 
         print(trace_decl)
 
+        from datetime import datetime
+        start = datetime.now()
         res = bmc_trace(relaxed_prog, trace_decl, s, lambda slvr, ks: logic.check_solver(slvr, ks, minimize=True))
+        end = datetime.now()
         print(res)
+        print("elapsed:", end - start)
+        assert res is not None
         assert False
         return res
