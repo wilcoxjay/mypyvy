@@ -420,7 +420,9 @@ def diagram_trace_to_explicitly_relaxed_trace_decl(trace: RelaxedTrace, ending_p
 
     return syntax.TraceDecl(None, components, True)
 
-def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Sequence[syntax.InvariantDecl]) -> None:
+def diagram_trace_to_explicitly_relaxed_trace(prog: syntax.Program,
+                                              trace: RelaxedTrace,
+                                              safety: Sequence[syntax.InvariantDecl]) -> logic.Trace:
     relaxed_prog = relaxed_program(syntax.the_program)
 
     end_expr = syntax.Not(syntax.And(*(invd.expr for invd in safety)))
@@ -437,3 +439,4 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
         res = bmc_trace(relaxed_prog, trace_decl, s, lambda slvr, ks: logic.check_solver(slvr, ks, minimize=True))
         print(res)
         assert False
+        return res
