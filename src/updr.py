@@ -311,7 +311,9 @@ class Frames(object):
                 print('abstract counterexample: the system has no universal inductive invariant proving safety')
                 # TODO: placeholder for analyzing relaxed trace
                 # import relaxed_traces
-                # print(relaxed_traces.diagram_trace_to_explicitly_relaxed_trace(trace, phases.phase_safety(p)))
+                # prog = syntax.the_program
+                # print(relaxed_traces.diagram_trace_to_explicitly_relaxed_trace(prog, trace, phases.phase_safety(p)))
+                # assert False
                 if utils.args.checkpoint_out:
                     self.store_frames(utils.args.checkpoint_out)
                 raise AbstractCounterexample()

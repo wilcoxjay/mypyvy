@@ -392,13 +392,44 @@ def active_rels_mapping() -> Mapping[syntax.SortDecl, syntax.RelationDecl]:
 
     return actives
 
-def diagram_trace_to_explicitly_relaxed_trace_decl(trace: RelaxedTrace, ending_property: Expr) -> syntax.TraceDecl:
+def exact_state_expr(prog: syntax.Program, diag: Diagram) -> Expr:
+    restrictors: List[Expr] = []
+
+    diag_expr = diag.to_ast()
+    assert isinstance(diag_expr, syntax.QuantifierExpr) and diag_expr.quant == 'EXISTS'
+
+    import itertools  # type: ignore # TODO: stub
+    for sort, vars in itertools.groupby(diag_expr.vs(), lambda v: v.sort):  # TODO; need to sort first
+        free_var = syntax.SortedVar(None, syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
+        consts = list(filter(lambda c: c.sort == sort,
+                             prog.constants()))  # TODO: diagram simplification omits them from the exists somewhere
+        els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
+        els = list(vars)
+        els += consts
+        restrict_domain = syntax.Forall([free_var],
+                                        syntax.Or(*(syntax.Eq(syntax.Id(None, free_var.name),
+                                                              syntax.Id(None, v.name))
+                                                    for v in els)))
+        restrictors += [restrict_domain]
+
+    res = syntax.Exists(diag_expr.vs(),
+                        syntax.And(diag_expr.body, *restrictors))
+    res.resolve(prog.scope, syntax.BoolSort)
+    return res
+
+
+def diagram_trace_to_explicitly_relaxed_trace_decl(prog: syntax.Program,
+                                                   trace: RelaxedTrace,
+                                                   ending_property: Expr) -> syntax.TraceDecl:
     trace = list(reversed(trace))
 
     components: List[syntax.TraceComponent] = []
+
     assert len(trace) > 1
     _, first_diag = trace[0]
-    components.append(relativized_assert_decl(first_diag))
+    assert isinstance(first_diag, Diagram)
+    components.append(relativized_assert_decl(syntax.And(*(init.expr for init in syntax.the_program.inits()),
+                                                         exact_state_expr(prog, first_diag))))
 
     for pre, post in zip(trace, trace[1:]):
         t, pre_diag = pre
