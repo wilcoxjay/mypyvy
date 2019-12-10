@@ -191,16 +191,6 @@ invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum. (
 # property of stop values for the same round
 invariant proposal(I1,R,stop) & !inst_le(I2,I1) -> !proposal(I2,R,V)
 
-# properties of choosable and stop:
-# if anything is proposed, then stop cannot be choosable at lower instances and lower rounds
-invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & !inst_le(I2,I1) & proposal(I2,R2,V) -> !choosable(I1,R1,stop,Q)
-)
-# if stop is proposed, then nothing can be choosable at lower rounds and higher instances
-invariant forall I1:inst, I2:inst, R1:round, R2:round, V:value, Q:quorum. (
-    !le(R2,R1) & !inst_le(I2,I1) & proposal(I1,R2,stop) -> !choosable(I2,R1,V,Q)
-)
-
 # properties of joined_round, left_round
 invariant joined_round(N,R2) & !le(R2,R1) -> left_round(N,R1)
 invariant one_b_msg(N,R,M) -> joined_round(N,R)

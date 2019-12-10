@@ -752,14 +752,7 @@ class Solver(object):
 
         assert False
 
-    def model(
-            self,
-            assumptions: Optional[Sequence[z3.ExprRef]] = None,
-            minimize: Optional[bool] = None,
-            sorts_to_minimize: Optional[Iterable[z3.SortRef]] = None,
-            relations_to_minimize: Optional[Iterable[z3.FuncDeclRef]] = None,
-    ) -> z3.ModelRef:
-
+    def _solver_model(self) -> z3.ModelRef:
         if self.use_cvc4:
             proc = self.get_cvc4_proc()
             print('(get-model)', file=proc.stdin)
@@ -783,15 +776,26 @@ class Solver(object):
                     # for sub in s:
                     #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
                     return cast(z3.ModelRef, CVC4Model(s))
+            else:
+                assert False
+        else:
+            return self.z3solver.model()
 
+    def model(
+            self,
+            assumptions: Optional[Sequence[z3.ExprRef]] = None,
+            minimize: Optional[bool] = None,
+            sorts_to_minimize: Optional[Iterable[z3.SortRef]] = None,
+            relations_to_minimize: Optional[Iterable[z3.FuncDeclRef]] = None,
+    ) -> z3.ModelRef:
         if minimize is None:
             minimize = utils.args.minimize_models
         if minimize:
             if sorts_to_minimize is None:
                 sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values() if not syntax.has_annotation(s, 'no_minimize')]
             if relations_to_minimize is None:
-                m = self.z3solver.model()
-                ds = m.decls()
+                m = self._solver_model()
+                ds = {str(d) for d in m.decls()}
                 rels_to_minimize = []
                 for r in self.scope.relations.values():
                     if r.is_derived() or syntax.has_annotation(r, 'no_minimize'):
@@ -807,12 +811,12 @@ class Solver(object):
                             z3r = r.to_z3(k)
                             if isinstance(z3r, z3.ExprRef):
                                 z3r = z3r.decl()
-                            if z3r in ds:
+                            if str(z3r) in ds:
                                 rels_to_minimize.append(z3r)
 
             return self._minimal_model(assumptions, sorts_to_minimize, rels_to_minimize)
         else:
-            return self.z3solver.model()
+            return self._solver_model()
 
     def _cardinality_constraint(self, x: Union[z3.SortRef, z3.FuncDeclRef], n: int) -> z3.ExprRef:
         if isinstance(x, z3.SortRef):
@@ -871,7 +875,7 @@ class Solver(object):
                         self.add(self._cardinality_constraint(x, n))
 
             assert self.check(assumptions) == z3.sat
-            return self.z3solver.model()
+            return self._solver_model()
 
     def assertions(self) -> Sequence[z3.ExprRef]:
         asserts = self.z3solver.assertions()
@@ -1349,7 +1353,7 @@ class Trace(object):
     def read_out(self, z3model: z3.ModelRef, allow_undefined: bool = False) -> None:
         # utils.logger.debug('read_out')
         def rename(s: str) -> str:
-            return s.replace('!val!', '').replace('@uc_', '').replace('_', '')
+            return s.replace('!val!', '').replace('@uc_', '')
 
         def _eval(expr: z3.ExprRef) -> z3.ExprRef:
             ans = z3model.eval(expr, model_completion=True)

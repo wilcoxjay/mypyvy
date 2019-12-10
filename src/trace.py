@@ -37,7 +37,7 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
     if log:
         print('%s states' % (n_states,))
 
-    keys = ['state%2d' % i for i in range(n_states)]
+    keys = ['state%02d' % i for i in range(n_states)]
 
     for k in keys:
         s.get_translator(k)  # initialize all the keys before pushing a solver stack frame

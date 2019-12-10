@@ -1,0 +1,12 @@
+# MYPYVY: typecheck --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+sort a
+
+mutable relation foo(a)
+mutable relation bar(a)
+
+twostate definition foobar(a: a) = old(foo(a))
+
+transition do_bar(a: a)
+  modifies bar
+  forall A. bar(A) <-> old(foobar(A))

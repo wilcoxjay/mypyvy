@@ -1,4 +1,5 @@
 from datetime import datetime
+import itertools
 import logging
 import z3
 
@@ -18,6 +19,10 @@ RelaxedTrace = List[Tuple[Optional[PhaseTransition], Union[Diagram, Expr]]]
 
 class AbstractCounterexample(Exception):
     pass
+
+def equiv_expr(solver: Solver, e1: Expr, e2: Expr) -> bool:
+    return (logic.check_implication(solver, [e1], [e2], minimize=False) is None and
+            logic.check_implication(solver, [e2], [e1], minimize=False) is None)
 
 class Frames(object):
     @utils.log_start_end_xml(utils.logger, logging.DEBUG, 'Frames.__init__')
@@ -49,6 +54,12 @@ class Frames(object):
         self.counter = 0
         self.predicates: List[Expr] = []
         self.state_count = 0
+
+        self.inductive_invariant: Set[int] = set() # indices into predicates of currently inductive predicates
+        self.human_invariant = tuple(itertools.chain(*(syntax.as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety))) # convert to CNF
+        self.human_invariant_to_predicate: Dict[int,int] = dict() # dict mapping index of human_invariant to index of predicates
+        self.human_invariant_proved: Set[int] = set() # indices into human_invariant that are implied by the current inductive_invariant
+        self.human_invariant_implies: Set[int] = set() # indices into predicates of predicates that are implied by the human invariant
 
         self._first_frame()
 
@@ -413,12 +424,25 @@ class Frames(object):
 
     def record_predicate(self, e: Expr) -> None:
         for x in self.predicates:
-            if x == e or (logic.check_implication(self.solver, [x], [e], minimize=False) is None and
-                          logic.check_implication(self.solver, [e], [x], minimize=False) is None):
+            if x == e or equiv_expr(self.solver, x, e):
                 break
         else:
+            j = len(self.predicates)
             self.predicates.append(e)
-            utils.logger.info(f'learned new predicate, now have {len(self.predicates)} {e}')
+            if logic.check_implication(self.solver, self.human_invariant, [e], minimize=False) is None:
+                self.human_invariant_implies.add(j)
+                for i, q in enumerate(self.human_invariant):
+                    if equiv_expr(self.solver, e, q):
+                        msg = '(which is a clause of the human invariant)'
+                        assert i not in self.human_invariant_to_predicate
+                        self.human_invariant_to_predicate[i] = j
+                        break
+                else:
+                    msg = '(which is implied by the human invariant)'
+            else:
+                msg = ''
+
+            utils.logger.info(f'learned new predicate, now have {len(self.predicates)} {e} {msg}')
 
     def add(self, p: Phase, e: Expr, depth: Optional[int] = None) -> None:
         self.counter += 1
@@ -616,6 +640,8 @@ class Frames(object):
             with utils.LogTag(utils.logger, 'current-frames-after-simplify', lvl=logging.DEBUG):
                 self.print_frames(lvl=logging.DEBUG)
 
+            self.print_status()
+
             n = len(self) - 1
             with utils.LogTag(utils.logger, 'check-frame', lvl=logging.INFO, n=str(n)):
                 with utils.LogTag(utils.logger, 'current-frames', lvl=logging.INFO):
@@ -633,6 +659,7 @@ class Frames(object):
                     return f
 
                 utils.logger.info('frame is safe but not inductive. starting new frame')
+
             self.new_frame()
 
     def store_frames(self, out_filename: str) -> None:
@@ -643,6 +670,55 @@ class Frames(object):
                 pickle.dump(self, f)
         finally:
             self.solver = s
+
+    def print_status(self) -> None:
+        '''Print information useful for comparison with primal dual houdini
+
+        TODO: convert from barbaric print() to civilized xml logging
+        '''
+
+        # update self.inductive_invariant
+        inv = set(range(len(self.predicates)))
+        changes = True
+        while changes:
+            changes = False
+            for i in sorted(inv - self.inductive_invariant):
+                if logic.check_two_state_implication_all_transitions(
+                        self.solver,
+                        [self.predicates[j] for j in sorted(inv)],
+                        self.predicates[i],
+                        minimize=False
+                ) is not None:
+                    changes = True
+                    inv.remove(i)
+        self.inductive_invariant |= inv
+        # print information
+        print(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, {len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} implied by human invariant):')
+        for i, p in enumerate(self.predicates):
+            note = '({})'.format({
+                phase.name(): max((j for j, f in enumerate(self.fs) if p in f.summary_of(phase)), default=-1)
+                for phase in self.automaton.phases()
+            })
+            if i in self.inductive_invariant:
+                note += f' (invariant)'
+            if i in self.human_invariant_implies:
+                note += f' (implied by human invariant)'
+            print(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
+        for i, p in enumerate(self.human_invariant):
+            if (i not in self.human_invariant_proved and
+                len(self.inductive_invariant) > 0 and
+                logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)], [p], minimize=False) is None):
+                self.human_invariant_proved.add(i)
+        print(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, {len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} proven):')
+        for i, p in enumerate(self.human_invariant):
+            notes = []
+            if i in self.human_invariant_proved:
+                notes.append('proved')
+            if i in self.human_invariant_to_predicate:
+                notes.append(f'learned as predicates[{self.human_invariant_to_predicate[i]}]')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'  human_invariant[{i:3}]{note}: {p}')
+        print()
 
 
 def load_frames(in_filename: str, s: Solver) -> Frames:

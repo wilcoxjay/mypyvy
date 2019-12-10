@@ -282,7 +282,10 @@ class Z3Translator(object):
                 return body
 
 
-def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, Optional[Token], str]]:
+def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, Tuple[Optional[Token], ...], str]]:
+    def add_caller_token(s: Set[Tuple[bool, Tuple[Optional[Token], ...], str]]) -> Set[Tuple[bool, Tuple[Optional[Token], ...], str]]:
+        return set((b, (expr.tok,) + l, sym) for (b, l, sym) in s)
+
     if isinstance(expr, Bool):
         return set()
     elif isinstance(expr, UnaryExpr):
@@ -294,12 +297,12 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
     elif isinstance(expr, BinaryExpr):
         return symbols_used(scope, expr.arg1, old) | symbols_used(scope, expr.arg2,old)
     elif isinstance(expr, NaryExpr):
-        ans: Set[Tuple[bool, Optional[Token], str]] = set()
+        ans: Set[Tuple[bool, Tuple[Optional[Token], ...], str]] = set()
         for arg in expr.args:
             ans |= symbols_used(scope, arg, old)
         return ans
     elif isinstance(expr, AppExpr):
-        args: Set[Tuple[bool, Optional[Token], str]] = set()
+        args: Set[Tuple[bool, Tuple[Optional[Token], ...], str]] = set()
         for arg in expr.args:
             args |= symbols_used(scope, arg, old)
 
@@ -309,9 +312,10 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
             assert not (old and d.twostate)
             with scope.fresh_stack():
                 with scope.in_scope(d.binder, [None for i in range(len(d.binder.vs))]):
-                    return args | symbols_used(scope, d.expr, old)
+                    callee_symbols = symbols_used(scope, d.expr, old)
+            return args | add_caller_token(callee_symbols)
         elif d.mutable:
-            return args | {(old, expr.tok, expr.callee)}
+            return args | {(old, (expr.tok,), expr.callee)}
         else:
             return args
     elif isinstance(expr, QuantifierExpr):
@@ -323,10 +327,10 @@ def symbols_used(scope: Scope, expr: Expr, old: bool=False) -> Set[Tuple[bool, O
         if isinstance(d, RelationDecl) or \
            isinstance(d, ConstantDecl) or \
            isinstance(d, FunctionDecl):
-            return {(old, expr.tok, expr.name)} if d.mutable else set()
+            return {(old, (expr.tok,), expr.name)} if d.mutable else set()
         elif isinstance(d, DefinitionDecl):
             with scope.fresh_stack():
-                return symbols_used(scope, d.expr, old)
+                return add_caller_token(symbols_used(scope, d.expr, old))
         else:
             return set()
     elif isinstance(expr, IfThenElse):
@@ -496,8 +500,9 @@ def is_quantifier_free(e: Expr) -> bool:
 
 @functools.total_ordering
 class Expr(Denotable):
-    def __init__(self) -> None:
+    def __init__(self, tok: Optional[Token]) -> None:
         super().__init__()
+        self.tok = tok
 
     def __repr__(self) -> str:
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
@@ -541,8 +546,7 @@ class Expr(Denotable):
 
 class Bool(Expr):
     def __init__(self, tok: Optional[Token], val: bool) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.val = val
 
     def __repr__(self) -> str:
@@ -609,9 +613,8 @@ def check_constraint(tok: Optional[Token], expected: InferenceSort, actual: Infe
 
 class UnaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg: Expr) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert op in UNOPS
-        self.tok = tok
         self.op = op
         self.arg = arg
 
@@ -678,9 +681,8 @@ z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
 
 class BinaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, arg1: Expr, arg2: Expr) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert op in BINOPS
-        self.tok = tok
         self.op = op
         self.arg1 = arg1
         self.arg2 = arg2
@@ -756,11 +758,10 @@ z3_NOPS: Any = {
 
 class NaryExpr(Expr):
     def __init__(self, tok: Optional[Token], op: str, args: List[Expr]) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert op in NOPS
         assert len(args) >= 2, (args, tok)
 
-        self.tok = tok
         self.op = op
         self.args = args
 
@@ -879,10 +880,9 @@ def Apply(callee: str, args: List[Expr]) -> Expr:
 
 class AppExpr(Expr):
     def __init__(self, tok: Optional[Token], callee: str, args: List[Expr]) -> None:
-        super().__init__()
+        super().__init__(tok)
         if not (len(args) > 0):
             utils.print_error(tok, "must be applied to at least one argument")
-        self.tok = tok
         self.callee = callee
         self.args = args
 
@@ -901,6 +901,9 @@ class AppExpr(Expr):
             name = 'relation' if isinstance(d, RelationDecl) else 'function'
             utils.print_error(self.tok, f'Only immutable {name}s can be referenced inside an axiom')
             # note that we don't return here. typechecking can continue.
+
+        if isinstance(d, DefinitionDecl) and d.twostate and scope.in_old_context:
+            utils.print_error(self.tok, 'a twostate definition cannot be called inside an old()!')
 
         if len(d.arity) == 0 or len(self.args) != len(d.arity):
             utils.print_error(self.tok, 'Callee applied to wrong number of arguments')
@@ -1013,10 +1016,10 @@ class Binder(Denotable):
 
 class QuantifierExpr(Expr):
     def __init__(self, tok: Optional[Token], quant: str, vs: List[SortedVar], body: Expr) -> None:
-        super().__init__()
+        super().__init__(tok)
         assert quant in ['FORALL', 'EXISTS']
         assert len(vs) > 0
-        self.tok = tok
+
         self.quant = quant
         self.binder = Binder(vs)
         self.body = body
@@ -1065,8 +1068,7 @@ class QuantifierExpr(Expr):
 class Id(Expr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     def __init__(self, tok: Optional[Token], name: str) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.name = name
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
@@ -1123,8 +1125,7 @@ class Id(Expr):
 
 class IfThenElse(Expr):
     def __init__(self, tok: Optional[Token], branch: Expr, then: Expr, els: Expr) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.branch = branch
         self.then = then
         self.els = els
@@ -1161,8 +1162,7 @@ class IfThenElse(Expr):
 
 class Let(Expr):
     def __init__(self, tok: Optional[Token], var: SortedVar, val: Expr, body: Expr) -> None:
-        super().__init__()
-        self.tok = tok
+        super().__init__(tok)
         self.binder = Binder([var])
         self.val = val
         self.body = body
@@ -1630,7 +1630,7 @@ class DefinitionDecl(Decl):
         if self.twostate:
             with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
                 syms = symbols_used(scope, self.expr)
-                for is_old, tok, sym in syms:
+                for is_old, toks, sym in syms:
                     if not is_old:
                         for mod in self.mods:
                             if mod.name == sym:
@@ -1639,7 +1639,13 @@ class DefinitionDecl(Decl):
                             decl = scope.get(sym)
                             assert decl is not None
                             if not (isinstance(decl, RelationDecl) and decl.is_derived()):
-                                utils.print_error(tok, 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % sym)
+                                if len(toks) == 1:
+                                    utils.print_error(toks[0], 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % (sym,))
+                                else:
+                                    utils.print_error(toks[0], 'this call indirectly refers to symbol %s in the new state, but is not mentioned in the modifies clause' % (sym,))
+                                    for tok in toks[1:-1]:
+                                        utils.print_info(tok, 'symbol %s is referred to via a call-chain passing through this point' % (sym,))
+                                    utils.print_info(toks[-1], 'symbol %s is referred to here' % (sym,))
 
                 for mod in self.mods:
                     decl = scope.get(mod.name)
@@ -1647,7 +1653,7 @@ class DefinitionDecl(Decl):
                     if isinstance(decl, RelationDecl) and decl.is_derived():
                         utils.print_error(mod.tok, 'derived relation %s may not be mentioned by the modifies clause, since derived relations are always modified' % (mod.name,))
                         continue
-                    for is_old, tok, sym in syms:
+                    for is_old, _, sym in syms:
                         if mod.name == sym and not is_old:
                             break
                     else:

@@ -1,0 +1,5 @@
+error 191120-error-localization.pyv:16:3: this call indirectly refers to symbol R in the new state, but is not mentioned in the modifies clause
+info 191120-error-localization.pyv:12:3: symbol R is referred to via a call-chain passing through this point
+info 191120-error-localization.pyv:9:3: symbol R is referred to here
+program has resolution errors.
+mypyvy exiting with status 1
