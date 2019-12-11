@@ -24,6 +24,7 @@ class ResultsLogger(object):
 
 
 def run(r: Any, logger: ResultsLogger) -> None:
+    start = time.monotonic()
     try:
         outfile = open(r['log'], "w")
         proc = subprocess.Popen(r['args'], stdout = outfile, stderr=subprocess.STDOUT,
@@ -41,6 +42,7 @@ def run(r: Any, logger: ResultsLogger) -> None:
         r['success'] = False
     except Exception as e:
         print(e)
+    r['elapsed'] = time.monotonic() - start
     logger.add_result(r)
 
 def main() -> None:
@@ -48,6 +50,7 @@ def main() -> None:
     parser.add_argument("--output", "-o", metavar="OUT", required=True, help="output file to write")
     parser.add_argument("--timeout", metavar='T', type=float, default = 10*60, help="timeout for inference")
     parser.add_argument("--count", metavar='N', type=int, default = 1, help="number of times run each example")
+    parser.add_argument("--cpus", type=int, default=os.cpu_count(), help="number of concurrent processes to run")
     parser.add_argument("--log-dir", metavar="D", required=True, help="where to write output logs (must be existing directory)")
     parser.add_argument("--single", metavar="E", required=False, help="only run this example")
     parser.add_argument("args", nargs=argparse.REMAINDER, help="arguments to fol-ic3")
@@ -58,21 +61,26 @@ def main() -> None:
     logger = ResultsLogger(args.output)
     extra_args =  args.args if len(args.args) == 0 or args.args[0] != '--' else args.args[1:]
     descs = [
+        # work reliably
         ('client_server_ae', False, True),
-        ('client_server_db_ae', False, True),
-        ('consensus_epr', False, True),
         ('consensus_forall', True, False),
         ('consensus_forall_without_decide', True, False),
         ('firewall', False, True),
-        ('learning_switch', True, True),
         ('lockserv', True, False),
         ('ring-not-dead', False, True),
         ('ring', True, False),
         ('sharded-kv-no-lost-keys', False, True),
-        ('sharded-kv', True, False)
+        ('sharded-kv', True, False),
+        ('toy_consensus_forall', True, False),
+        ('toy_consensus_epr', False, True),
+        
+        # don't work reliably
+        ('client_server_db_ae', False, True),
+        ('consensus_epr', False, True),
+        ('learning_switch', True, True),
     ]
 
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+    with ThreadPoolExecutor(max_workers=args.cpus) as executor:
         for i in range(args.count):
             random.shuffle(descs)
             for (name, is_universal, use_cvc4) in descs:
