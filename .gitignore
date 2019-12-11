@@ -8,3 +8,6 @@ lextab.py
 regression/*.output
 lockserv*.log
 examples/*.cache
+/*.out
+/cvc4-1.7-x86_64-linux-opt
+out/
