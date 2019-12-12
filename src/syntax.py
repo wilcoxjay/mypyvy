@@ -1871,7 +1871,7 @@ class OldToNewTranslator(object):
         elif isinstance(e, AppExpr):
             d = self.scope.get(e.callee)
             assert d is not None
-            if isinstance(d, (RelationDecl, FunctionDecl)) and d.mutable and not self.in_old:
+            if isinstance(d, (RelationDecl, FunctionDecl)) and d.mutable and not self.in_old and not self.out_new:
                 with self.set_out_new():
                     with self.set_mutable_callee(e.span):
                         t_args = [self.translate(arg) for arg in e.args]
@@ -1884,7 +1884,7 @@ class OldToNewTranslator(object):
                 return QuantifierExpr(e.quant, e.binder.vs, self.translate(e.body), span=e.span)
         elif isinstance(e, Id):
             d = self.scope.get(e.name)
-            if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not self.in_old:
+            if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not self.in_old and not self.out_new:
                 return New(Id(e.name, span=e.span))
             else:
                 return e
@@ -1919,7 +1919,8 @@ def translate_old_to_new_prog(prog: Program, strip_old: bool = True) -> Program:
                 utils.print_error(d.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs refactoring')
             if uses_old(d.expr):
                 dd = copy(d)
-                dd.expr = translate_old_to_new_expr(scope, dd.expr, strip_old=strip_old)
+                with scope.in_scope(d.binder, [v.sort for v in d.binder.vs]):
+                    dd.expr = translate_old_to_new_expr(scope, dd.expr, strip_old=strip_old)
                 ds.append(dd)
             else:
                 ds.append(d)
