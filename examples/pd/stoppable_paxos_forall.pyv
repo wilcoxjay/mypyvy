@@ -130,8 +130,8 @@ transition propose(r:round, i:inst, v:value)
     & r != none
     & active(r)
     & !proposal(i, r, V)
-    & !!inst_le(i,I) & proposal(I, r, stop)
-    & !!inst_le(I,i) & proposal(I,r,V) & v = stop)
+    & !(!inst_le(i,I) & proposal(I, r, stop))
+    & !((!inst_le(I,i) & proposal(I,r,V) & v = stop))
     & (forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | I = i & R = r & V = v)
 
 

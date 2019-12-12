@@ -202,7 +202,7 @@ transition evict_modified(c: core, a: address)
 transition evict_exclusive_or_shared(c: core, a: address)
   modifies exclusive, shared, invalid
   !bus_in_use &
-  exclusive(c, a) | shared(c, a) &
+  (exclusive(c, a) | shared(c, a)) &
   (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
   (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
   (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a)

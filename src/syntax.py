@@ -557,6 +557,13 @@ class FaithfulPrinter(object):
     def skip_to_end(self, x: HasSpan) -> None:
         self.skip_to(span_endlexpos(x))
 
+    def skip_expect(self, expected: str) -> None:
+        assert self.prog.input is not None
+        end = self.pos + len(expected)
+        assert end <= len(self.prog.input)
+        assert self.prog.input[self.pos:end] == expected
+        self.skip_to(end)
+
     def move_to(self, new_pos: Optional[int]) -> None:
         assert self.prog.input is not None
         if new_pos is None:
@@ -615,11 +622,16 @@ class FaithfulPrinter(object):
         elif isinstance(e, UnaryExpr):
             if self.ignore_old and e.op == 'OLD':
                 assert e.span is not None
-                self.skip_to_start(e.arg)
+                needs_parens = not (isinstance(e.arg, (AppExpr, Id, UnaryExpr)) or (isinstance(e.arg, BinaryExpr) and e.arg.op in ('EQUAL', 'NOTEQ')))
+                self.skip_expect('old(')
+                if needs_parens:
+                    self.buf.append('(')
+                self.move_to_start(e.arg)
                 self.process_expr(e.arg)
                 self.move_to(e.span[1].lexpos)  # include whitespace/comments inside close paren
-                self.skip_to_end(e)  # *don't* include close paren
-                # jrw: test this!
+                self.skip_expect(')')
+                if needs_parens:
+                    self.buf.append(')')
             elif e.op == 'NEW' and e.span is None:
                 self.buf.append('new(')
                 self.move_and_process_expr(e.arg)
