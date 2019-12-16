@@ -5,8 +5,8 @@ sort a
 mutable relation foo(a)
 mutable relation bar(a)
 
-twostate definition foobar(a: a) = old(foo(a))
+twostate definition foobar(a: a) = foo(a)
 
 transition do_bar(a: a)
   modifies bar
-  forall A. bar(A) <-> old(foobar(A))
+  forall A. new(bar(A)) <-> new(foobar(A))

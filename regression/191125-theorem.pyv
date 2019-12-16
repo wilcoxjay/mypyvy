@@ -1,0 +1,38 @@
+# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+sort A
+immutable relation lt(A,A)
+axiom lt(X,Y) & lt (Y,Z) -> lt(X,Z)
+
+mutable constant a: A
+
+transition foo(x: A)
+  modifies a
+  lt(a, x) &
+  new(a) = x
+
+twostate theorem [MyTrueTheorem]
+  forall X.
+    foo(X) ->
+    lt(a, new(a))
+
+twostate theorem [MyFalseTheorem]
+  forall X.
+    foo(X) ->
+    lt(new(a), a)
+
+twostate theorem [MyTrueTheoremOld]
+  forall X.
+    foo(X) ->
+    lt(old(a), a)
+
+twostate theorem [MyFalseTheoremOld]
+  forall X.
+    foo(X) ->
+    lt(a, old(a))
+
+zerostate definition le(x: A, y: A) =
+  lt(x, y) | x = y
+
+zerostate theorem [MyZerostateTrueTheorem]
+  le(X,Y) & le(Y,Z) -> le(X,Z)

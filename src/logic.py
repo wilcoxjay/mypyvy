@@ -42,7 +42,7 @@ def verbose_print_z3_model(m: z3.ModelRef) -> None:
     utils.logger.always_print(out.getvalue())
     assert False
 
-def check_solver(s: Solver, keys: List[str], minimize: Optional[bool] = None) -> Optional[Trace]:
+def check_solver(s: Solver, keys: Tuple[str, ...], minimize: Optional[bool] = None) -> Optional[Trace]:
     res = s.check()
     m = None
 
@@ -61,7 +61,7 @@ def check_solver(s: Solver, keys: List[str], minimize: Optional[bool] = None) ->
 def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Token], str]],
         s: Solver,
-        keys: List[str]
+        keys: Tuple[str, ...]
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
@@ -94,7 +94,7 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
     utils.logger.always_print('checking init:')
 
     prog = syntax.the_program
-    t = s.get_translator(KEY_ONE)
+    t = s.get_translator((KEY_ONE,))
 
     with s:
         for init in prog.inits():
@@ -114,7 +114,7 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                 sys.stdout.flush()
 
                 res = check_unsat([(inv.tok, 'invariant%s may not hold in initial state' % msg)],
-                                  s, [KEY_ONE])
+                                  s, (KEY_ONE,))
                 if res is not None:
                     if utils.args.smoke_test_solver:
                         state = res.as_state(i=0)
@@ -137,12 +137,12 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
     return None
 
 def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
     with s:
         for inv in prog.invs():
-            s.add(t.translate_expr(inv.expr, old=True))
+            s.add(t.translate_expr(inv.expr))
 
         for trans in prog.transitions():
             if utils.args.check_transition is not None and \
@@ -159,7 +159,7 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                         continue
 
                     with s:
-                        s.add(z3.Not(t.translate_expr(inv.expr)))
+                        s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
 
                         if inv.name is not None:
                             msg = ' ' + inv.name
@@ -174,7 +174,7 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                                             % (msg, trans.name)),
                                            (trans.tok, 'this transition may not preserve invariant%s'
                                             % (msg,))],
-                                          s, [KEY_OLD, KEY_NEW])
+                                          s, (KEY_OLD, KEY_NEW))
                         if res is not None:
                             if utils.args.smoke_test_solver:
                                 pre_state = res.as_state(i=0)
@@ -204,7 +204,7 @@ def check_implication(
         concs: Iterable[Expr],
         minimize: Optional[bool] = None
 ) -> Optional[z3.ModelRef]:
-    t = s.get_translator(KEY_ONE)
+    t = s.get_translator((KEY_ONE,))
     with s:
         for e in hyps:
             s.add(t.translate_expr(e))
@@ -226,13 +226,13 @@ def check_two_state_implication_all_transitions(
         new_conc: Expr,
         minimize: Optional[bool] = None,
 ) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
     with s:
         for h in old_hyps:
-            s.add(t.translate_expr(h, old=True))
+            s.add(t.translate_expr(h))
 
-        s.add(z3.Not(t.translate_expr(new_conc)))
+        s.add(z3.Not(t.translate_expr(new_conc, index=1)))
 
         for trans in prog.transitions():
             with s:
@@ -241,10 +241,10 @@ def check_two_state_implication_all_transitions(
                 # if utils.logger.isEnabledFor(logging.DEBUG):
                 #     utils.logger.debug('assertions')
                 #     utils.logger.debug(str(s.assertions()))
-                print(f'check_two_state_implication_all_transitions: checking {trans.name}... ', end='')
+                utils.logger.info(f'check_two_state_implication_all_transitions: checking {trans.name}... ')
                 res = s.check()
                 assert res in (z3.sat, z3.unsat), res
-                print(res)
+                utils.logger.info(str(res))
                 if res != z3.unsat:
                     return s.model(minimize=minimize), trans
 
@@ -254,26 +254,26 @@ def check_two_state_implication_all_transitions(
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
-def assert_any_transition(s: Solver, uid: str,
-                          key: str, key_old: str, allow_stutter: bool = False) -> None:
-    t = s.get_translator(key, key_old)
+def assert_any_transition(s: Solver, t: syntax.Z3Translator,
+                          key_index: int, allow_stutter: bool = False) -> None:
     prog = syntax.the_program
+    uid = str(key_index)
 
     tids = []
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
         tids.append(tid)
-        s.add(z3.Implies(tid, t.translate_transition(transition)))
+        s.add(z3.Implies(tid, t.translate_transition(transition, index=key_index)))
 
     if allow_stutter:
         tid = z3.Bool(get_transition_indicator(uid, '$stutter'))
         tids.append(tid)
-        s.add(z3.Implies(tid, z3.And(*t.frame([]))))
+        s.add(z3.Implies(tid, z3.And(*t.frame([], index=key_index))))
 
     s.add(z3.Or(*tids))
 
 def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
-    keys = ['state%02d' % i for i in range(depth + 1)]
+    keys = tuple('state%02d' % i for i in range(depth + 1))
     prog = syntax.the_program
 
     if preconds is None:
@@ -283,26 +283,22 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
         utils.logger.debug('check_bmc property: %s' % safety)
         utils.logger.debug('check_bmc depth: %s' % depth)
 
-    for k in keys:
-        s.get_translator(k)  # initialize all the keys before pushing a solver stack frame
+    t = s.get_translator(keys)
 
     with s:
-        t = s.get_translator(keys[0])
         for precond in preconds:
-            s.add(t.translate_expr(precond))
+            s.add(t.translate_expr(precond, index=0))
 
-        t = s.get_translator(keys[-1])
-        s.add(t.translate_expr(syntax.Not(safety)))
+        s.add(t.translate_expr(syntax.Not(safety), index=len(keys) - 1))
 
         for i in range(depth):
             if i != len(keys) - 1:
-                t = s.get_translator(keys[i])
-                s.add(t.translate_expr(safety))
-            assert_any_transition(s, str(i), keys[i + 1], keys[i], allow_stutter=False)
+                s.add(t.translate_expr(safety, index=i))
+            assert_any_transition(s, t, i, allow_stutter=False)
 
         res = s.check()
         if res == z3.sat:
-            m = Trace.from_z3(list(reversed(keys)), s.model())
+            m = Trace.from_z3(tuple(reversed(keys)), s.model())
             return m
         elif res == z3.unknown:
             print('unknown!')
@@ -316,13 +312,13 @@ def check_two_state_implication_along_transitions(
         new_conc: Expr,
         minimize: Optional[bool] = None
 ) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
     with s:
         for h in old_hyps:
-            s.add(t.translate_expr(h, old=True))
+            s.add(t.translate_expr(h))
 
-        s.add(z3.Not(t.translate_expr(new_conc)))
+        s.add(z3.Not(t.translate_expr(new_conc, index=1)))
 
         for phase_transition in transitions:
             delta = phase_transition.transition_decl()
@@ -552,7 +548,7 @@ class Solver(object):
         assert prog.scope is not None
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
-        self.translators: Dict[Tuple[Optional[str], Optional[str]], syntax.Z3Translator] = {}
+        self.translators: Dict[Tuple[str, ...], syntax.Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
         self.known_keys: Set[str] = set()
@@ -603,18 +599,17 @@ class Solver(object):
                 "the first time get_translator is called with a particular key, " + \
                 "there must be no scopes pushed on the Z3 stack!"
 
-            t = self.get_translator(key)
+            t = self.get_translator((key,))
             for a in self.mutable_axioms:
                 self.add(t.translate_expr(a))
 
-    def get_translator(self, key: Optional[str] = None, key_old: Optional[str] = None) \
-            -> syntax.Z3Translator:
+    def get_translator(self, keys: Tuple[str, ...] = ()) -> syntax.Z3Translator:
         assert self.include_program
-        t = (key, key_old)
+        t = tuple(keys)
         if t not in self.translators:
-            self._initialize_key(key)
-            self._initialize_key(key_old)
-            self.translators[t] = syntax.Z3Translator(self.scope, key, key_old)
+            for k in keys:
+                self._initialize_key(k)
+            self.translators[t] = syntax.Z3Translator(self.scope, keys)
         return self.translators[t]
 
     @contextmanager
@@ -1005,15 +1000,16 @@ class Diagram(object):
         self.binder.pre_resolve(scope)
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
-            for _, _, c in self.conjuncts():
-                c.resolve(scope, syntax.BoolSort)
+            with scope.n_states(1):
+                for _, _, c in self.conjuncts():
+                    c.resolve(scope, syntax.BoolSort)
 
         self.binder.post_resolve()
 
     def vs(self) -> List[syntax.SortedVar]:
         return self.binder.vs
 
-    def to_z3(self, t: syntax.Z3Translator) -> z3.ExprRef:
+    def to_z3(self, t: syntax.Z3Translator, state_index: int = 0) -> z3.ExprRef:
         bs = t.bind(self.binder)
         with t.scope.in_scope(self.binder, bs):
             z3conjs = []
@@ -1025,7 +1021,7 @@ class Diagram(object):
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
                 self.reverse_map.append((d, j))
-                z3conjs.append(p == t.translate_expr(c))
+                z3conjs.append(p == t.translate_expr(c, index=state_index))
                 i += 1
 
         if len(bs) > 0:
@@ -1296,7 +1292,7 @@ def _state_str(
 class Trace(object):
     def __init__(
             self,
-            keys: List[str],
+            keys: Tuple[str, ...],
     ) -> None:
         self.keys = keys
 
@@ -1319,7 +1315,7 @@ class Trace(object):
         self.diagram_cache: Dict[int, Diagram] = {}
 
     @staticmethod
-    def from_z3(keys: List[str], z3m: z3.ModelRef, allow_undefined: bool = False) -> Trace:
+    def from_z3(keys: Tuple[str, ...], z3m: z3.ModelRef, allow_undefined: bool = False) -> Trace:
         m = Trace(keys)
         m.read_out(z3m, allow_undefined=allow_undefined)
         return m
@@ -1681,7 +1677,8 @@ class Trace(object):
                     for sort in self.univs
                 ))))
             assert prog.scope is not None
-            e.resolve(prog.scope, None)
+            with prog.scope.n_states(1):
+                e.resolve(prog.scope, None)
             self.onestate_formula_cache[i] = e
         return self.onestate_formula_cache[i]
 

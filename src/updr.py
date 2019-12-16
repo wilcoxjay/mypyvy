@@ -123,19 +123,19 @@ class Frames(object):
 
             utils.logger.debug("Frontier frame phase %s cex to safety" % p.name())
             z3m: z3.ModelRef = res
-            mod = Trace.from_z3([KEY_ONE], z3m)
+            mod = Trace.from_z3((KEY_ONE,), z3m)
             self.record_state(mod)
             diag = mod.as_diagram()
             return (p, diag)
 
         def edge_covering_checker(p: Phase) -> Optional[Tuple[Phase, Diagram]]:
-            t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+            t = self.solver.get_translator((KEY_OLD, KEY_NEW))
             f = self.fs[-1]
             prog = syntax.the_program
 
             with self.solver:
                 for c in f.summary_of(p):
-                    self.solver.add(t.translate_expr(c, old=True))
+                    self.solver.add(t.translate_expr(c, index=0))
 
                 transitions_from_phase = self.automaton.transitions_from(p)
 
@@ -165,7 +165,7 @@ class Frames(object):
                             utils.logger.debug('phase %s cex to edge covering of transition %s' %
                                                (p.name(), trans.name))
                             z3m: z3.ModelRef = self.solver.model()
-                            mod = Trace.from_z3([KEY_OLD, KEY_NEW], z3m)
+                            mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
                             self.record_state(mod)
                             diag = mod.as_diagram(i=0)
                             return (p, diag)
@@ -228,7 +228,7 @@ class Frames(object):
                     break
 
                 pre_phase, (m, t) = res
-                mod = Trace.from_z3([KEY_OLD, KEY_NEW], m)
+                mod = Trace.from_z3((KEY_OLD, KEY_NEW), m)
                 self.record_state(mod)
                 diag = mod.as_diagram(i=0)
 
@@ -384,7 +384,7 @@ class Frames(object):
         if core is None or not utils.args.use_z3_unsat_cores:
             return
 
-        t = self.solver.get_translator(KEY_ONE)
+        t = self.solver.get_translator((KEY_ONE,))
 
         with self.solver:
             for init in self.fs[0].summary_of(p):
@@ -469,7 +469,7 @@ class Frames(object):
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult,
                Union[Optional[MySet[int]], Tuple[PhaseTransition, Tuple[Phase, Diagram]]]]:
-        t = self.solver.get_translator(KEY_NEW, KEY_OLD)
+        t = self.solver.get_translator((KEY_OLD, KEY_NEW))
 
         if utils.args.use_z3_unsat_cores:
             core: Optional[MySet[int]] = MySet()
@@ -478,7 +478,7 @@ class Frames(object):
 
         with self.solver:
             with self.solver.mark_assumptions_necessary():
-                self.solver.add(diag.to_z3(t))
+                self.solver.add(diag.to_z3(t, state_index=1))
 
                 transitions_into = self.automaton.transitions_to_grouped_by_src(current_phase)
                 for src in self._predecessor_precedence(current_phase,
@@ -526,7 +526,7 @@ class Frames(object):
         with solver:
 
             for f in pre_frame.summary_of(src_phase):
-                solver.add(t.translate_expr(f, old=True))
+                solver.add(t.translate_expr(f, index=0))
 
             for phase_transition in transitions:
                 delta = phase_transition.transition_decl()
@@ -544,7 +544,7 @@ class Frames(object):
 
                         if res != z3.unsat:
                             utils.logger.debug('found predecessor via %s' % trans.name)
-                            m = Trace.from_z3([KEY_OLD, KEY_NEW], solver.model(diag.trackers))
+                            m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
                             # if utils.logger.isEnabledFor(logging.DEBUG):
                             #     utils.logger.debug(str(m))
                             self.record_state(m)
@@ -671,8 +671,6 @@ class Frames(object):
 
     def print_status(self) -> None:
         '''Print information useful for comparison with primal dual houdini
-
-        TODO: convert from barbaric print() to civilized xml logging
         '''
 
         # update self.inductive_invariant
@@ -691,7 +689,7 @@ class Frames(object):
                     inv.remove(i)
         self.inductive_invariant |= inv
         # print information
-        print(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, {len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} implied by human invariant):')
+        utils.logger.info(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, {len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} implied by human invariant):')
         for i, p in enumerate(self.predicates):
             note = '({})'.format({
                 phase.name(): max((j for j, f in enumerate(self.fs) if p in f.summary_of(phase)), default=-1)
@@ -701,13 +699,13 @@ class Frames(object):
                 note += f' (invariant)'
             if i in self.human_invariant_implies:
                 note += f' (implied by human invariant)'
-            print(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
+            utils.logger.info(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
         for i, p in enumerate(self.human_invariant):
             if (i not in self.human_invariant_proved and
                 len(self.inductive_invariant) > 0 and
                 logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)], [p], minimize=False) is None):
                 self.human_invariant_proved.add(i)
-        print(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, {len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} proven):')
+        utils.logger.info(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, {len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} proven):')
         for i, p in enumerate(self.human_invariant):
             notes = []
             if i in self.human_invariant_proved:
@@ -715,8 +713,8 @@ class Frames(object):
             if i in self.human_invariant_to_predicate:
                 notes.append(f'learned as predicates[{self.human_invariant_to_predicate[i]}]')
             note = '(' + ', '.join(notes) + ')'
-            print(f'  human_invariant[{i:3}]{note}: {p}')
-        print()
+            utils.logger.info(f'  human_invariant[{i:3}]{note}: {p}')
+        utils.logger.info('')
 
 
 def load_frames(in_filename: str, s: Solver) -> Frames:

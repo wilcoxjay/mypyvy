@@ -12,6 +12,8 @@ import subprocess
 
 from typing import List
 
+lockserv_path = utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv'
+
 class SyntaxTests(unittest.TestCase):
     def setUp(self) -> None:
         utils.args = mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
@@ -51,7 +53,7 @@ class SyntaxTests(unittest.TestCase):
                     print(syntax.as_clauses(parser.parse_expr(expr)))
 
     def test_as_clauses_lockserv(self) -> None:
-        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(lockserv_path) as f:
             prog = mypyvy.parse_program(f.read())
         prog.resolve()
         for inv in prog.invs():
@@ -60,9 +62,9 @@ class SyntaxTests(unittest.TestCase):
                 syntax.as_clauses(expr)
 
     def test_consistent_hashing(self) -> None:
-        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(lockserv_path) as f:
             prog1 = mypyvy.parse_program(f.read())
-        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(lockserv_path) as f:
             prog2 = mypyvy.parse_program(f.read())
 
         prog1.resolve()
@@ -98,7 +100,8 @@ class SyntaxTests(unittest.TestCase):
         e.resolve(prog.scope, None)
 
         expected = parser.parse_expr('forall Q1, Q2. active_quorum(Q1) & active_quorum(Q2) -> exists N. active_node(N) & (member(N, Q1) & member(N, Q2))')
-        expected.resolve(prog.scope, None)
+        with prog.scope.n_states(1):
+            expected.resolve(prog.scope, None)
 
         self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
@@ -106,6 +109,24 @@ class SyntaxTests(unittest.TestCase):
         s1 = syntax.SortDecl(None, 'foo', [])
         s2 = syntax.SortDecl(None, 'foo', [])
         self.assertEqual(s1, s2)
+
+    def test_translate_old_to_new(self) -> None:
+        vocab = '''
+            sort A
+            mutable relation R(A)
+        '''
+        prog = mypyvy.parse_program(vocab)
+        prog.resolve()
+
+        ios = [
+            ('forall X. R(X) <-> old(R(X))',
+             'forall X. new(R(X)) <-> R(X)')
+        ]
+        for expr, expected in ios:
+            with self.subTest(expr=expr):
+                expr2 = syntax.translate_old_to_new(prog.scope, parser.parse_expr(expr))
+                # print(clause)
+                self.assertEqual(expr2, parser.parse_expr(expected))
 
 def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3.7'

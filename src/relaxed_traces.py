@@ -53,11 +53,11 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
             assert not isinstance(d.body, syntax.BlockStatement), \
                 "relax does not support transitions written in imperative syntax"
             mods, expr = d.body
-            expr = syntax.relativize_quantifiers(actives, expr, old=d.twostate)
-            if d.public:
-                guard = syntax.relativization_guard_for_binder(actives, d.binder, old=True)
+            expr = syntax.relativize_quantifiers(actives, expr)
+            if d.is_public_transition:
+                guard = syntax.relativization_guard_for_binder(actives, d.binder)
                 expr = syntax.And(guard, expr)
-            new_decls.append(syntax.DefinitionDecl(None, d.public, d.twostate, d.name,
+            new_decls.append(syntax.DefinitionDecl(None, d.is_public_transition, d.num_states, d.name,
                                                    params=d.binder.vs, body=(mods, expr)))
         elif isinstance(d, syntax.InvariantDecl):
             expr = syntax.relativize_quantifiers(actives, d.expr)
@@ -88,14 +88,14 @@ def relaxation_action_def(prog: syntax.Program,
         name = prog.scope.fresh(sort.name[0].upper())
         ap = syntax.Apply(actives[sort].name, [syntax.Id(None, name)])
         expr = syntax.Forall([syntax.SortedVar(None, name, None)],
-                             syntax.Implies(ap, syntax.Old(ap)))
+                             syntax.Implies(syntax.New(ap), ap))
         conjs.append(expr)
         mods.append(syntax.ModifiesClause(None, actives[sort].name))
 
     # constants are active
     for const in prog.constants():
-        conjs.append(syntax.Apply(actives[syntax.get_decl_from_sort(const.sort)].name,
-                                  [syntax.Id(None, const.name)]))
+        conjs.append(syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(const.sort)].name,
+                                             [syntax.Id(None, const.name)])))
 
     # functions map active to active
     for func in prog.functions():
@@ -106,9 +106,11 @@ def relaxation_action_def(prog: syntax.Program,
             name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
                                     also_avoid=names)
             names.append(name)
-            func_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)]))
-        ap_func = syntax.Old(syntax.Apply(func.name, [syntax.Id(None, name) for name in names]))
-        active_func = syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [ap_func])
+            func_conjs.append(syntax.New(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(None, name)])))
+        ap_func = syntax.Apply(func.name, [syntax.Id(None, name) for name in names])
+        name = prog.scope.fresh('y', also_avoid=names)
+        active_func = syntax.Let(None, syntax.SortedVar(None, name, func.sort), ap_func,
+                                 syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [syntax.Id(None, name)])))
         conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
                                    syntax.Implies(syntax.And(*func_conjs), active_func)))
 
@@ -130,10 +132,10 @@ def relaxation_action_def(prog: syntax.Program,
         ap_rel = syntax.Apply(rel.name, [syntax.Id(None, name) for name in names])
         conjs.append(syntax.Forall([syntax.SortedVar(None, name, None) for name in names],
                                    syntax.Implies(syntax.And(*rel_conjs),
-                                                  syntax.Iff(ap_rel, syntax.Old(ap_rel)))))
+                                                  syntax.Iff(syntax.New(ap_rel), ap_rel))))
 
-    return syntax.DefinitionDecl(None, public=True, twostate=True, name=decrease_name,
-                                           params=[], body=(mods, syntax.And(*conjs)))
+    return syntax.DefinitionDecl(None, is_public_transition=True, num_states=2, name=decrease_name,
+                                 params=[], body=(mods, syntax.And(*conjs)))
 
 
 
@@ -254,13 +256,14 @@ def is_rel_blocking_relax_step(trns: Trace, idx: int,
     free_vars_active_clause = syntax.And(*(active_var(v.name, sort_name) for (v, sort_name) in free_vars))
 
     diffing_formula = syntax.Exists([v for (v, _) in free_vars],
-                                    syntax.And(syntax.Old(syntax.And(free_vars_active_clause,
-                                                                     derived_relation_formula)),
-                                               syntax.And(free_vars_active_clause,
-                                                          syntax.Not(derived_relation_formula))))
+                                    syntax.And(syntax.And(free_vars_active_clause,
+                                                          derived_relation_formula),
+                                               syntax.New(syntax.And(free_vars_active_clause,
+                                                                     syntax.Not(derived_relation_formula)))))
 
-    with syntax.the_program.scope.two_state(twostate=True):  # TODO: what is this doing? probably misusing
-        diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+    with syntax.the_program.scope.fresh_stack():
+        with syntax.the_program.scope.n_states(2):
+            diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
 
     res = trns.eval_double_vocab(diffing_formula, idx)
     assert isinstance(res, bool)
@@ -427,9 +430,11 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
         s = Solver()
 
         end_expr = syntax.Not(syntax.And(*(invd.expr for invd in safety)))
-        end_expr.resolve(syntax.the_program.scope, syntax.BoolSort)
+        with syntax.the_program.scope.n_states(1):
+            end_expr.resolve(syntax.the_program.scope, syntax.BoolSort)
         trace_decl = diagram_trace_to_explicitly_relaxed_trace_decl(trace, end_expr)
-        trace_decl.resolve(syntax.the_program.scope)
+        with syntax.the_program.scope.n_states(1):
+            trace_decl.resolve(syntax.the_program.scope)
 
         print(trace_decl)
 

@@ -36,7 +36,8 @@ def get_safety() -> List[Expr]:
             safety = [the_inv.expr]
         else:
             e = syntax.close_free_vars(None, parser.parse_expr(utils.args.safety))
-            e.resolve(prog.scope, syntax.BoolSort)
+            with prog.scope.n_states(1):
+                e.resolve(prog.scope, syntax.BoolSort)
             safety = [e]
     else:
         safety = [s.expr for s in prog.safeties()]
@@ -85,7 +86,7 @@ def check_automaton_init(s: Solver, a: AutomatonDecl) -> None:
 
     prog = syntax.the_program
 
-    t = s.get_translator(KEY_ONE)
+    t = s.get_translator((KEY_ONE,))
 
     init_decl = a.the_init()
     assert init_decl is not None  # checked by resolver
@@ -107,20 +108,20 @@ def check_automaton_init(s: Solver, a: AutomatonDecl) -> None:
                 utils.logger.always_print('  implies phase invariant%s... ' % msg, end='')
                 sys.stdout.flush()
 
-                logic.check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, [KEY_ONE])
+                logic.check_unsat([(inv.tok, 'phase invariant%s may not hold in initial state' % msg)], s, (KEY_ONE,))
 
 def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
     utils.logger.always_print('checking automaton edge covering:')
 
     prog = syntax.the_program
 
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator((KEY_OLD, KEY_NEW))
 
     for phase in a.phases():
         utils.logger.always_print('  checking phase %s:' % phase.name)
         with s:
             for inv in phase.invs():
-                s.add(t.translate_expr(inv.expr, old=True))
+                s.add(t.translate_expr(inv.expr))
 
             for trans in prog.transitions():
                 if any(delta.transition == trans.name and delta.precond is None for delta in phase.transitions()):
@@ -137,21 +138,21 @@ def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
                     logic.check_unsat([(phase.tok, 'transition %s is not covered by this phase' %
                                         (trans.name, )),
                                        (trans.tok, 'this transition misses transitions from phase %s' % (phase.name,))],
-                                      s, [KEY_OLD, KEY_NEW])
+                                      s, (KEY_OLD, KEY_NEW))
 
 
 def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
     utils.logger.always_print('checking automaton inductiveness:')
 
     prog = syntax.the_program
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator((KEY_OLD, KEY_NEW))
 
     for phase in a.phases():
         utils.logger.always_print('  checking phase %s:' % phase.name)
 
         with s:
             for inv in phase.invs():
-                s.add(t.translate_expr(inv.expr, old=True))
+                s.add(t.translate_expr(inv.expr))
 
             for delta in phase.transitions():
                 trans = prog.scope.get_definition(delta.transition)
@@ -167,7 +168,7 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
                     s.add(t.translate_transition(trans, precond=precond))
                     for inv in target.invs():
                         with s:
-                            s.add(z3.Not(t.translate_expr(inv.expr)))
+                            s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
 
                             if inv.tok is not None:
                                 msg = ' on line %d' % inv.tok.lineno
@@ -179,7 +180,7 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
                             logic.check_unsat([(inv.tok, 'invariant%s may not be preserved by transition %s in phase %s' %
                                                 (msg, trans_pretty, phase.name)),
                                                (delta.tok, 'this transition may not preserve invariant%s' % (msg,))],
-                                              s, [KEY_OLD, KEY_NEW])
+                                              s, (KEY_OLD, KEY_NEW))
 
 JSON = Dict[str, Any]
 def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace], Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> JSON:
@@ -326,12 +327,14 @@ def theorem(s: Solver) -> None:
 
     prog = syntax.the_program
     for th in prog.theorems():
-        if th.twostate:
-            keys = [KEY_OLD, KEY_NEW]
+        if th.num_states == 2:
+            keys: Tuple[str, ...] = (KEY_OLD, KEY_NEW)
+        elif th.num_states == 1:
+            keys = (KEY_ONE,)
         else:
-            keys = [KEY_ONE]
+            keys = ()
 
-        t = s.get_translator(*keys)
+        t = s.get_translator(keys)
 
         if th.name is not None:
             msg = ' ' + th.name
@@ -603,6 +606,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
                        help='print the exit code before exiting (good for regression testing)')
+        s.add_argument('--accept-old', action=utils.YesNoAction, default=True,
+                       help='allow deprecated syntax using old()')
 
         s.add_argument('--cvc4', action='store_true',
                        help='use CVC4 as the backend solver. this is not very well supported.')
@@ -675,9 +680,9 @@ class MyFormatter(logging.Formatter):
     def formatTime(self, record: Any, datefmt: Optional[str] = None) -> str:
         return str((datetime.now() - self.start).total_seconds())
 
-def parse_program(input: str, force_rebuild: bool = False, filename: Optional[str] = None) -> Program:
+def parse_program(input: str, forbid_rebuild: bool = False, filename: Optional[str] = None) -> Program:
     l = parser.get_lexer()
-    p = parser.get_parser(forbid_rebuild=force_rebuild)
+    p = parser.get_parser(forbid_rebuild=forbid_rebuild)
     return p.parse(input=input, lexer=l, filename=filename)
 
 def main() -> None:
@@ -724,7 +729,7 @@ def main() -> None:
         pre_parse_error_count = utils.error_count
 
         with open(utils.args.filename) as f:
-            prog = parse_program(f.read(), force_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
+            prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
 
         if utils.error_count > pre_parse_error_count:
             utils.logger.always_print('program has syntax errors.')
@@ -747,9 +752,9 @@ def main() -> None:
         s = Solver(use_cvc4=utils.args.cvc4)
 
         # initialize common keys
-        s.get_translator(KEY_ONE)
-        s.get_translator(KEY_NEW)
-        s.get_translator(KEY_OLD)
+        s.get_translator((KEY_ONE,))
+        s.get_translator((KEY_NEW,))
+        s.get_translator((KEY_OLD,))
 
         utils.args.main(s)
 
