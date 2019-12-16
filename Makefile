@@ -88,6 +88,8 @@ pd:
 	# primal-dual-houdini
 	# time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_clear_cache.log
 	# time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --cache-only $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_cache_only.log # TODO: this currently fails, should debug
+	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/ring.pyv > ring.primal_dual_houdini_1_clear_cache.log
+	grep "Proved safety!" ring.primal_dual_houdini_1_clear_cache.log
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
