@@ -19,19 +19,19 @@ init !msg(X)
 
 transition send(x: data)
   modifies msg
-  old(primary(x)) &
-  (forall X. msg(X) <-> old(msg(X)) | X = x)
+  primary(x) &
+  (forall X. new(msg(X)) <-> msg(X) | X = x)
 
 transition recv(x: data)
   modifies backup, msg
-  old(msg(x)) &
-  (forall X. backup(X) <-> X = x) &
-  (forall X. msg(X) <-> old(msg(X)) & X != x)
+  msg(x) &
+  (forall X. new(backup(X)) <-> X = x) &
+  (forall X. new(msg(X)) <-> msg(X) & X != x)
 
 transition increment(current: data, next: data)
   modifies primary
-  old(primary(current)) &
+  primary(current) &
   le(current, next) &
-  (forall X. primary(X) <-> X = next)
+  (forall X. new(primary(X)) <-> X = next)
 
 safety exists X, Y. primary(X) & backup(Y) & le(Y, X)

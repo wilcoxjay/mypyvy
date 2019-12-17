@@ -1,0 +1,10 @@
+# MYPYVY: typecheck --print-exit-code --print-program=refactor-old-to-new
+
+sort A
+
+mutable relation R(A)
+
+transition t(x: A)
+  modifies R
+  old(R(x)) &
+  !R(x)

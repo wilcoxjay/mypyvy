@@ -1,0 +1,16 @@
+# MYPYVY: typecheck --print-exit-code --error-filename-basename
+
+sort A
+
+mutable relation R(A)
+
+transition t(x: A)
+  modifies R
+  old(R(x)) &
+  !R(x) &
+  s(x)
+
+twostate definition s(x: A)
+  modifies R
+  old(R(x)) &
+  !R(x)

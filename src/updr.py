@@ -39,12 +39,12 @@ class Frames(object):
             the_phase = 'the_phase'
             pcs: List[syntax.PhaseComponent] = []
             for t in prog.transitions():
-                pcs.append(syntax.PhaseTransitionDecl(None, t.name, None, the_phase))
+                pcs.append(syntax.PhaseTransitionDecl(t.name, None, the_phase))
             for inv in prog.safeties():
                 pcs.append(inv)
 
-            automaton = AutomatonDecl(None, [syntax.InitPhaseDecl(None, the_phase),
-                                             syntax.PhaseDecl(None, the_phase, pcs)])
+            automaton = AutomatonDecl([syntax.InitPhaseDecl(the_phase),
+                                       syntax.PhaseDecl(the_phase, pcs)])
 
             automaton.resolve(prog.scope)
 

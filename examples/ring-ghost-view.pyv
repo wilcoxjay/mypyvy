@@ -59,34 +59,34 @@ transition send(n: node, next: node)
   modifies pending
   # succ(n, next) &
   (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
-  (forall N1, N2. pending(N1, N2) <-> old(pending(N1, N2)) | N1 = n & N2 = next)
+  (forall N1, N2. new(pending(N1, N2)) <-> pending(N1, N2) | N1 = n & N2 = next)
 
 transition recv(sender: node, n: node, next: node)
   modifies leader, pending, wander, trump
   # succ(n, next) &
   (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
-  old(pending(sender, n)) &
+  pending(sender, n) &
   (sender = n ->
-    (forall N. leader(N) <-> old(leader(N)) | N = n) &
+    (forall N. new(leader(N)) <-> leader(N) | N = n) &
     (forall N1, N2.
       !(N1 = sender & N2 = n) ->  # message may or may not be removed
-      (pending(N1, N2) <-> old(pending(N1, N2))))
-      & (forall N1,N2. wander(N1, N2) <-> old(wander(N1, N2)))
-      & (forall N1,N2. trump(N1, N2) <-> old(trump(N1, N2)))) &
+      (new(pending(N1, N2)) <-> pending(N1, N2)))
+      & (forall N1,N2. new(wander(N1, N2)) <-> wander(N1, N2))
+      & (forall N1,N2. new(trump(N1, N2)) <-> trump(N1, N2))) &
   (sender != n ->
-    (forall N. leader(N) <-> old(leader(N))) &
+    (forall N. new(leader(N)) <-> leader(N)) &
     (le(n, sender) ->
       (forall N1, N2.
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
-        (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next)) &
-        (trump(N1, N2) <-> (old(trump(N1, N2)) | (N1 = sender & N2 = n))) &
-        (wander(N1, N2) <-> (old(wander(N1, N2)) & !(N1 = sender & N2 = n)))) & 
+        (new(pending(N1, N2)) <-> pending(N1, N2) | N1 = sender & N2 = next)) &
+        (new(trump(N1, N2)) <-> (trump(N1, N2) | (N1 = sender & N2 = n))) &
+        (new(wander(N1, N2)) <-> (wander(N1, N2) & !(N1 = sender & N2 = n)))) & 
     (!le(n, sender) ->
       (forall N1, N2.
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
-        (pending(N1, N2) <-> old(pending(N1, N2)))) &
-        (forall N1, N2. trump(N1, N2) <-> old(trump(N1, N2))) &
-        (forall N1, N2. wander(N1, N2) <-> old(wander(N1, N2)))))
+        (new(pending(N1, N2)) <-> pending(N1, N2))) &
+        (forall N1, N2. new(trump(N1, N2)) <-> trump(N1, N2)) &
+        (forall N1, N2. new(wander(N1, N2)) <-> wander(N1, N2))))
 
 
 safety [leader_max] leader(qn1) -> le(qn2, qn1)

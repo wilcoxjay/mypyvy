@@ -16,29 +16,29 @@ definition unused(x: node) =
 
 transition inc(a: node, b: node)
   modifies head, n, even
-  & old(unused(a))
-  & old(unused(b))
+  & unused(a)
+  & unused(b)
   & a != b
-  & head = a
+  & new(head) = a
   & (forall X,Y.
-       n(X,Y) <->
-         | old(n(X,Y))
+       new(n(X,Y)) <->
+         | n(X,Y)
          | X = a & Y = b
-         | X = b & Y = old(head))
+         | X = b & Y = head)
   & (forall X.
-       even(X) <->
-         | old(even(X)) & X != a & X != b
+       new(even(X)) <->
+         | even(X) & X != a & X != b
          | X = a)
 
 transition dec(a: node, b: node)
   modifies head, n
-  & old(n(head, a))
-  & old(n(a, b))
-  & head = b
+  & n(head, a)
+  & n(a, b)
+  & new(head) = b
   & (forall X,Y.
-       n(X,Y) <->
-         & old(n(X,Y))
-         & X != old(head)
+       new(n(X,Y)) <->
+         & n(X,Y)
+         & X != head
          & X != a)
 
 safety !n(head,tail)

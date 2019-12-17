@@ -34,53 +34,53 @@ init !decision(R, V)
 
 transition send_1a(r: round)
   modifies one_a
-  (forall R. one_a(R) <-> old(one_a(R)) | R = r)
+  (forall R. new(one_a(R)) <-> one_a(R) | R = r)
 
 transition join_round_never_voted(n: node, r: round)
   modifies one_b_never_voted, current_round
-  old(one_a(r)) &
-  old(!le(r, current_round(n))) &
-  (forall R. !le(r, R) -> !old(vote(n, R, V))) &
-  (forall N, R. one_b_never_voted(N, R) <-> old(one_b_never_voted(N,R)) | N = n & R = r) &
-  (forall N. N != n -> current_round(N) = old(current_round(N))) &
-  current_round(n) = r
+  one_a(r) &
+  !le(r, current_round(n)) &
+  (forall R. !le(r, R) -> !vote(n, R, V)) &
+  (forall N, R. new(one_b_never_voted(N, R)) <-> one_b_never_voted(N,R) | N = n & R = r) &
+  (forall N. N != n -> new(current_round(N)) = current_round(N)) &
+  new(current_round(n)) = r
 
 transition join_round_with_max_vote(n: node, r: round, maxr: round, v: value)
   modifies one_b_with_max_vote, current_round
-  old(one_a(r)) &
-  old(!le(r, current_round(n))) &
+  one_a(r) &
+  !le(r, current_round(n)) &
   !le(r, maxr) &
-  old(vote(n, maxr, v)) &
-  (forall R, V. !le(r, R) & old(vote(n, R, V)) -> le(R, maxr)) &
+  vote(n, maxr, v) &
+  (forall R, V. !le(r, R) & vote(n, R, V) -> le(R, maxr)) &
   (forall N, R, MAXR, V.
-    one_b_with_max_vote(N, R, MAXR, V) <-> old(one_b_with_max_vote(N,R,MAXR,V)) | N = n & R = r & MAXR = maxr & V = v) &
-  (forall N. N != n -> current_round(N) = old(current_round(N))) &
-  current_round(n) = r
+    new(one_b_with_max_vote(N, R, MAXR, V)) <-> one_b_with_max_vote(N,R,MAXR,V) | N = n & R = r & MAXR = maxr & V = v) &
+  (forall N. N != n -> new(current_round(N)) = current_round(N)) &
+  new(current_round(n)) = r
 
 transition propose_without_votes(r: round, q: quorum, v: value)
   modifies proposal
-  (forall V. !old(proposal(r, V))) &
-  (forall N. member(N, q) -> old(one_b_never_voted(N, r))) &
-  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+  (forall V. !proposal(r, V)) &
+  (forall N. member(N, q) -> one_b_never_voted(N, r)) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
 
 transition propose_with_votes(r: round, q: quorum, maxr: round, v: value)
   modifies proposal
-  (forall V. !old(proposal(r, V))) &
-  (forall N. member(N, q) -> old(one_b_never_voted(N, r)) | exists R,V. old(one_b_with_max_vote(N, r, R, V))) &
-  (exists N. member(N, q) & old(one_b_with_max_vote(N, r, maxr, v))) &
-  (forall N,MAXR,V. member(N, q) & old(one_b_with_max_vote(N, r, MAXR, V)) -> le(MAXR, maxr)) &
-  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+  (forall V. !proposal(r, V)) &
+  (forall N. member(N, q) -> one_b_never_voted(N, r) | exists R,V. one_b_with_max_vote(N, r, R, V)) &
+  (exists N. member(N, q) & one_b_with_max_vote(N, r, maxr, v)) &
+  (forall N,MAXR,V. member(N, q) & one_b_with_max_vote(N, r, MAXR, V) -> le(MAXR, maxr)) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
 
 transition cast_vote(n: node, v: value, r: round)
   modifies vote
-  le(old(current_round(n)), r) &
-  old(proposal(r, v)) &
-  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
+  le(current_round(n), r) &
+  proposal(r, v) &
+  (forall N, R, V. new(vote(N, R, V)) <-> vote(N, R, V) | N = n & R = r & V = v)
 
 transition decide(r: round, v: value, q: quorum)
   modifies decision
-  (forall N. member(N, q) -> old(vote(N, r, v))) &
-  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v)
+  (forall N. member(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = r & V = v)
 
 safety [decisions_unique]
   decision(R1, V1) & decision(R2, V2) -> V1 = V2

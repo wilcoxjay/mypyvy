@@ -1,0 +1,26 @@
+# MYPYVY: typecheck --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code --print-program=refactor-old-to-new
+
+sort A
+
+immutable relation lt(A,A)
+immutable constant zero: A
+immutable constant one: A
+
+axiom lt(X,Y) & lt(Y,Z) -> lt(X,Z)
+axiom lt(X,Y) | lt(Y,X) | X = Y
+axiom !lt(X,X)
+axiom lt(zero, X) | X = zero
+axiom lt(zero, one)
+axiom lt(zero, X) -> lt(one, X) | one = X
+
+mutable relation R(A)
+
+init R(X) <-> X = one
+
+transition t(x: A, y: A)
+  modifies R
+  lt(x, y) &
+  old(R(x)) &
+  (forall Z. R(Z) <-> Z = y)
+
+safety R(X) -> lt(zero, X)

@@ -106,11 +106,11 @@ class SyntaxTests(unittest.TestCase):
         self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
     def test_decls_eq(self) -> None:
-        s1 = syntax.SortDecl(None, 'foo', [])
-        s2 = syntax.SortDecl(None, 'foo', [])
+        s1 = syntax.SortDecl('foo', [])
+        s2 = syntax.SortDecl('foo', [])
         self.assertEqual(s1, s2)
 
-    def test_translate_old_to_new(self) -> None:
+    def test_translate_old_to_new_expr(self) -> None:
         vocab = '''
             sort A
             mutable relation R(A)
@@ -124,7 +124,7 @@ class SyntaxTests(unittest.TestCase):
         ]
         for expr, expected in ios:
             with self.subTest(expr=expr):
-                expr2 = syntax.translate_old_to_new(prog.scope, parser.parse_expr(expr))
+                expr2 = syntax.translate_old_to_new_expr(prog.scope, parser.parse_expr(expr))
                 # print(clause)
                 self.assertEqual(expr2, parser.parse_expr(expected))
 
@@ -154,6 +154,24 @@ class RegressionTests(unittest.TestCase):
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
         self.assertTrue(any_tests, 'internal error with regression tests: it seems no regression tests exist!')
+
+# Check that every .pyv file in examples/ can be faithfully printed to itself.
+# Commented out because it is slow, low-priority, and requires adding a sys.exit call to main().
+#
+# class FaithfulPrintTests(unittest.TestCase):
+#     def test_faithful_print(self) -> None:
+#         for p in sorted(Path(utils.PROJECT_ROOT / 'examples').glob('**/*.pyv'),
+#                         key=lambda p: p.stat().st_size):
+#             with self.subTest(testFile=str(p)):
+#                 print(f'testing faithful printing on {p}')
+#                 out_path = p.with_suffix('.output')
+#                 line = 'typecheck --print-program=faithful'
+#                 python_cmd = build_python_cmd() + shlex.split(line) + [str(p)]
+#                 with open(out_path, 'w') as f_out:
+#                     proc = subprocess.run(python_cmd, stdout=f_out, stderr=subprocess.STDOUT)
+#                 diff_cmd = ['diff', '-uw', str(p), str(out_path)]
+#                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+#                 self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from input.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
 
 class MonotoneFunctionTests(unittest.TestCase):
     def setUp(self) -> None:

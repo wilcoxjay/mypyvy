@@ -1,0 +1,3 @@
+error 191204-refactor-old-to-new-fail.pyv:20:1: twostate expression uses neither old() nor new(); cannot automatically detect whether it needs refactoring
+errors during old->new translation
+mypyvy exiting with status 1

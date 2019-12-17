@@ -21,35 +21,35 @@ init forall K. exists N. owner(N, K)
 
 transition reshard(k: key, v: value, n_old: node, n_new: node)
   modifies table, owner, transfer_msg
-  old(table(n_old, k, v)) &
-  old(active_key(k) & active_value(v) & active_node(n_old) & active_node(n_new)) &
-  (table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
-  (owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
-  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) | (N = n_new & K = k & V = v))
+  table(n_old, k, v) &
+  active_key(k) & active_value(v) & active_node(n_old) & active_node(n_new) &
+  (new(table(N, K, V)) <-> table(N, K, V) & !(N = n_old & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) & !(N = n_old & K = k)) &
+  (new(transfer_msg(N, K, V)) <-> transfer_msg(N, K, V) | (N = n_new & K = k & V = v))
 
 
 transition recv_transfer_msg(n: node, k: key, v: value)
   modifies table, owner, transfer_msg
-  old(transfer_msg(n, k, v)) &
-  old(active_key(k) & active_value(v) & active_node(n)) &
-  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) & !(N = n & K = k & V = v)) &
-  (table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
-  (owner(N, K) <-> old(owner(N, K)) | (N = n & K = k))
+  transfer_msg(n, k, v) &
+  active_key(k) & active_value(v) & active_node(n) &
+  (new(transfer_msg(N, K, V)) <-> transfer_msg(N, K, V) & !(N = n & K = k & V = v)) &
+  (new(table(N, K, V)) <-> table(N, K, V) | (N = n & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) | (N = n & K = k))
 
 
 transition put(n: node, k: key, v: value)
   modifies table
-  old(owner(n, k)) &
-  old(active_key(k) & active_value(v) & active_node(n)) &
-  (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) &
-  (table(n, k, V) <-> V = v)
+  owner(n, k) &
+  active_key(k) & active_value(v) & active_node(n) &
+  (!(N = n & K = k) -> (new(table(N, K, V)) <-> table(N, K, V))) &
+  (new(table(n, k, V)) <-> V = v)
 
 
 transition decrease_domain()
   modifies active_node, active_key, active_value
-  (forall N. active_node(N) -> old(active_node(N))) &
-  (forall K. active_key(K) -> old(active_key(K))) &
-  (forall V. active_value(V) -> old(active_value(V)))
+  (forall N. new(active_node(N)) -> active_node(N)) &
+  (forall K. new(active_key(K)) -> active_key(K)) &
+  (forall V. new(active_value(V)) -> active_value(V))
 
 sat trace {
   decrease_domain

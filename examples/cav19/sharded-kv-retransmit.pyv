@@ -23,54 +23,54 @@ init !seqnum_recvd(N, SENDER, S)
 
 transition reshard(n_old: node, n_new: node, k: key, v: value, s: seqnum)
   modifies table, owner, seqnum_sent, transfer_msg, unacked
-  old(table(n_old, k, v)) &
-  !old(seqnum_sent(n_old, s)) &
-  (seqnum_sent(N, S) <-> old(seqnum_sent(N, S)) | N = n_old & S = s) &
-  (table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
-  (owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
-  (transfer_msg(N1, N2, K, V, S) <-> old(transfer_msg(N1, N2, K, V, S)) | N1 = n_old & N2 = n_new & K = k & V = v & S = s) &
-  (unacked(N1, N2, K, V, S) <-> old(unacked(N1, N2, K, V, S)) | N1 = n_old & N2 = n_new & K = k & V = v & S = s)
+  table(n_old, k, v) &
+  !seqnum_sent(n_old, s) &
+  (new(seqnum_sent(N, S)) <-> seqnum_sent(N, S) | N = n_old & S = s) &
+  (new(table(N, K, V)) <-> table(N, K, V) & !(N = n_old & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) & !(N = n_old & K = k)) &
+  (new(transfer_msg(N1, N2, K, V, S)) <-> transfer_msg(N1, N2, K, V, S) | N1 = n_old & N2 = n_new & K = k & V = v & S = s) &
+  (new(unacked(N1, N2, K, V, S)) <-> unacked(N1, N2, K, V, S) | N1 = n_old & N2 = n_new & K = k & V = v & S = s)
 
 transition drop_transfer_msg(src: node, dst: node, k: key, v: value, s: seqnum)
   modifies transfer_msg
-  old(transfer_msg(src, dst, k, v, s)) &
-  (transfer_msg(N1, N2, K, V, S) <-> old(transfer_msg(N1, N2, K, V, S)) & !(N1 = src & N2 = dst & K = k & V = v & S = s))
+  transfer_msg(src, dst, k, v, s) &
+  (new(transfer_msg(N1, N2, K, V, S)) <-> transfer_msg(N1, N2, K, V, S) & !(N1 = src & N2 = dst & K = k & V = v & S = s))
 
 transition retransmit(src: node, dst: node, k: key, v: value, s: seqnum)
   modifies transfer_msg
-  old(unacked(src, dst, k, v, s)) &
-  (transfer_msg(N1, N2, K, V, S) <-> old(transfer_msg(N1, N2, K, V, S)) | N1 = src & N2 = dst & K = k & V = v & S = s)
+  unacked(src, dst, k, v, s) &
+  (new(transfer_msg(N1, N2, K, V, S)) <-> transfer_msg(N1, N2, K, V, S) | N1 = src & N2 = dst & K = k & V = v & S = s)
 
 transition recv_transfer_msg(src: node, n: node, k: key, v: value, s: seqnum)
   modifies seqnum_recvd, table, owner
-  old(transfer_msg(src, n, k, v, s)) &
-  !old(seqnum_recvd(n, src, s)) &
-  (seqnum_recvd(N1, N2, S) <-> old(seqnum_recvd(N1, N2, S)) | N1 = n & N2 = src & S = s) &
-  (table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
-  (owner(N, K) <-> old(owner(N, K)) | N = n & K = k)
+  transfer_msg(src, n, k, v, s) &
+  !seqnum_recvd(n, src, s) &
+  (new(seqnum_recvd(N1, N2, S)) <-> seqnum_recvd(N1, N2, S) | N1 = n & N2 = src & S = s) &
+  (new(table(N, K, V)) <-> table(N, K, V) | (N = n & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) | N = n & K = k)
 
 transition send_ack(src: node, n: node, k: key, v: value, s: seqnum)
   modifies ack_msg
-  old(transfer_msg(src, n, k, v, s)) &
-  old(seqnum_recvd(n, src, s)) &
-  (ack_msg(N1, N2, S) <-> old(ack_msg(N1, N2, S)) | N1 = src & N2 = n & S = s)
+  transfer_msg(src, n, k, v, s) &
+  seqnum_recvd(n, src, s) &
+  (new(ack_msg(N1, N2, S)) <-> ack_msg(N1, N2, S) | N1 = src & N2 = n & S = s)
 
 transition drop_ack_msg(src: node, dst:node, s: seqnum)
   modifies ack_msg
-  old(ack_msg(src, dst, s)) &
-  (ack_msg(N1, N2, S) <-> old(ack_msg(N1, N2, S)) & !(N1 = src & N2 = dst & S = s))
+  ack_msg(src, dst, s) &
+  (new(ack_msg(N1, N2, S)) <-> ack_msg(N1, N2, S) & !(N1 = src & N2 = dst & S = s))
 
 transition recv_ack_msg(src: node, dst: node, s: seqnum)
   modifies unacked
-  old(ack_msg(src, dst, s)) &
-  (!(N1 = src & N2 = dst & S = s) -> (unacked(N1, N2, K, V, S) <-> old(unacked(N1, N2, K, V, S)))) &
-  (!unacked(src, dst, K, V, s))
+  ack_msg(src, dst, s) &
+  (!(N1 = src & N2 = dst & S = s) -> (new(unacked(N1, N2, K, V, S)) <-> unacked(N1, N2, K, V, S))) &
+  (!new(unacked(src, dst, K, V, s)))
 
 transition put(n: node, k: key, v: value)
   modifies table
-  old(owner(n, k)) &
-  (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) & 
-  (table(n, k, V) <-> V = v)
+  owner(n, k) &
+  (!(N = n & K = k) -> (new(table(N, K, V)) <-> table(N, K, V))) & 
+  (new(table(n, k, V)) <-> V = v)
 
 safety [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
 

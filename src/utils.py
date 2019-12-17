@@ -13,7 +13,7 @@ import xml.sax
 import xml.sax.saxutils
 
 from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
-                   Any, Callable, cast, Sequence
+                   Any, Callable, cast, Sequence, Tuple, Union
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -72,8 +72,7 @@ class MypyvyArgs(object):
     log_time: bool
     log_xml: bool
     seed: int
-    print_program_repr: bool
-    print_program: bool
+    print_program: Optional[str]
     key_prefix: str
     minimize_models: bool
     timeout: int
@@ -125,39 +124,42 @@ class MypyvyArgs(object):
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
 
 Token = ply.lex.LexToken
+Span = Tuple[Token, Token]
+Location = Union[Token, Span]
 def clean_filename(filename: str) -> str:
     if args.error_filename_basename:
         return Path(filename).name
     else:
         return filename
 
-def tok_to_string(tok: Optional[Token]) -> str:
+def loc_to_string(loc: Optional[Location]) -> str:
+    tok = loc[0] if isinstance(loc, tuple) else loc
     return '%s:%s:%s' % (clean_filename(tok.filename), tok.lineno, tok.col) if tok is not None else 'None'
 
 # TODO: reset when syntax.the_program is reset -- even better, move to a Context with Program.
 error_count = 0
 
-def print_located_msg(header: str, tok: Optional[Token], msg: str) -> None:
-    loc_str = ' ' + tok_to_string(tok) if tok is not None else ''
+def print_located_msg(header: str, loc: Optional[Location], msg: str) -> None:
+    loc_str = ' ' + loc_to_string(loc) if loc is not None else ''
     print('%s%s: %s' % (header, loc_str, msg))
 
-def print_error(tok: Optional[Token], msg: str) -> None:
+def print_error(loc: Optional[Location], msg: str) -> None:
     global error_count
     error_count += 1
     if 'json' not in args or not args.json:
-        print_located_msg('error', tok, msg)
+        print_located_msg('error', loc, msg)
     if args.exit_on_error:
         exit(1)
 
-def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
-    print_error(tok, msg)
+def print_error_and_exit(loc: Optional[Location], msg: str) -> NoReturn:
+    print_error(loc, msg)
     exit(1)
 
-def print_warning(tok: Optional[Token], msg: str) -> None:
-    print_located_msg('warning', tok, msg)
+def print_warning(loc: Optional[Location], msg: str) -> None:
+    print_located_msg('warning', loc, msg)
 
-def print_info(tok: Optional[Token], msg: str) -> None:
-    print_located_msg('info', tok, msg)
+def print_info(loc: Optional[Location], msg: str) -> None:
+    print_located_msg('info', loc, msg)
 
 
 class MyLogger(object):

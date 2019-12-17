@@ -23,29 +23,29 @@ init !pending(N1, N2)
 transition send(n: node, next: node)
   modifies pending
   (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
-  (forall N1, N2. pending(N1, N2) <-> old(pending(N1, N2)) | N1 = n & N2 = next)
+  (forall N1, N2. new(pending(N1, N2)) <-> pending(N1, N2) | N1 = n & N2 = next)
 
 transition recv(sender: node, n: node, next: node)
   modifies leader, pending
   (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
-  old(pending(sender, n)) &
+  pending(sender, n) &
   if sender = n
   then
-    (forall N. leader(N) <-> old(leader(N)) | N = n) &
+    (forall N. new(leader(N)) <-> leader(N) | N = n) &
     (forall N1, N2.
       !(N1 = sender & N2 = n) ->  # message may or may not be removed
-      (pending(N1, N2) <-> old(pending(N1, N2))))
+      (new(pending(N1, N2)) <-> pending(N1, N2)))
   else 
-    (forall N. leader(N) <-> old(leader(N))) &
+    (forall N. new(leader(N)) <-> leader(N)) &
     if le(n, sender)
     then
       forall N1, N2.
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
-        (pending(N1, N2) <-> old(pending(N1, N2)) | N1 = sender & N2 = next)
+        (new(pending(N1, N2)) <-> pending(N1, N2) | N1 = sender & N2 = next)
     else 
       forall N1, N2.
         !(N1 = sender & N2 = n) ->  # message may or may not be removed
-        (pending(N1, N2) <-> old(pending(N1, N2)))
+        (new(pending(N1, N2)) <-> pending(N1, N2))
 
 safety [leader_max] leader(L) -> le(N, L)
 invariant pending(S, D) & btw(S, N, D) -> le(N, S)
