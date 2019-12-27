@@ -573,7 +573,7 @@ class Solver(object):
 
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
-            self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         return self.cvc4_proc
 
     def debug_recent(self) -> Tuple[str, Optional[str], Optional[str]]:
