@@ -4,12 +4,13 @@ This file contains code for the Primal Dual research project
 import time
 import argparse
 import itertools
+import re
 from itertools import product, chain, combinations, repeat
 from collections import defaultdict
 
 from syntax import *
 from logic import *
-from pd import check_two_state_implication, check_initial
+from pd import check_two_state_implication
 
 try:
     import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
@@ -59,9 +60,10 @@ class FOLSeparator(object):
         return self.ids[i]
 
     def separate(self,
-                 pos: Collection[int] = (),
-                 neg: Collection[int] = (),
-                 imp: Collection[Tuple[int, int]] = (),
+                 pos: Collection[int],
+                 neg: Collection[int],
+                 imp: Collection[Tuple[int, int]],
+                 complexity: int
     ) -> Optional[Expr]:
         mtimer = separators.timer.UnlimitedTimer()
         timer = separators.timer.UnlimitedTimer()
@@ -70,9 +72,9 @@ class FOLSeparator(object):
                 pos=[self._state_id(i) for i in pos],
                 neg=[self._state_id(i) for i in neg],
                 imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
-                max_depth=100,
-                max_clauses=100,
-                max_complexity=3,
+                max_depth=utils.args.max_depth,
+                max_clauses=utils.args.max_clauses,
+                max_complexity=complexity,
                 timer=timer
             )
         if f is None:
@@ -136,6 +138,8 @@ class FOLSeparator(object):
             elif isinstance(f, separators.logic.Or):
                 return Or(*(formula_to_expr(a) for a in f.c))
             elif isinstance(f, separators.logic.Not):
+                if isinstance(f.f, separators.logic.Equal): # special case !=
+                    return Neq(term_to_expr(f.f.args[0]), term_to_expr(f.f.args[1]))
                 return Not(formula_to_expr(f.f))
             elif isinstance(f, separators.logic.Equal):
                 return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
@@ -166,164 +170,13 @@ class FOLSeparator(object):
         return e
 
 
-
-def fol_pd_houdini(solver: Solver) -> None:
-    induction_width = 1
+def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
     prog = syntax.the_program
-
-    # algorithm state
-    states: List[PDState] = []
-    abstractly_reachable_states: Set[int] = set() # indices into state which are known to be reachable
-    transitions: Set[Tuple[int, int]] = set() # known transitions between states
-
-    # all predicates should be true in the initial states
-    predicates: List[Expr] = []
-    inductive_predicates: Set[int] = set()
-    DualTransition = Tuple[FrozenSet[int], FrozenSet[int]]
-    dual_transitions: Set[DualTransition] = set()
-
-    def add_state(s: PDState) -> int:
-        for i, (t, index) in enumerate(states):
-            if t is s[0] and index == s[1]:
-                return i
-        k = len(states)
-        states.append(s)
-        return k
-
-    def add_predicate(p: Expr) -> int:
-        for i, pred in enumerate(predicates):
-            if pred == p:
-                return i
-        k = len(predicates)
-        predicates.append(p)
-        return k
-
-    def check_dual_edge(p: List[Expr], q: List[Expr]) -> Optional[Tuple[PDState, PDState]]:
-        r = check_two_state_implication(solver, p+q, Implies(And(*p), And(*q)))
-        if r is None: return None
-        return (r[0],0), (r[1],0)
-
-    def dual_edge(live: Set[int], a: int, induction_width: int) -> Optional[Tuple[List[Expr], List[Expr]]]:
-        # find conjunctions p,q such that:
-        # - forall l in live. states[l] |= p
-        # - p ^ q -> wp(p -> q)
-        # - !(states[a] |= q)
-        # or return None if no such p,q exist where |q| <= induction_width
-        p: List[Expr] = [predicates[i] for i in sorted(inductive_predicates)]
-        internal_ctis: Set[Tuple[int, int]] = set() # W, could
-        separator = FOLSeparator(states)
-        while True:
-            q = separator.separate(pos=list(sorted(abstractly_reachable_states)),
-                                   neg=[a],
-                                   imp=list(sorted(internal_ctis)))
-            if q is not None:
-                # check for inductiveness
-                res = check_initial(solver, q)
-                if res is not None:
-                    i = add_state((res,0))
-                    abstractly_reachable_states.add(i)
-                    continue
-                res1 = check_dual_edge(p, [q])
-                if res1 is not None:
-                    (pre, post) = res1
-                    a_i, b_i = add_state(pre), add_state(post)
-                    internal_ctis.add((a_i, b_i))
-                    continue
-                # q is inductive relative to p
-                return (p,[q])
-            else:
-                for t in chain(*sorted(internal_ctis)):
-                    while True:
-                        p_new_conj = separator.separate(
-                            pos=list(sorted(abstractly_reachable_states.union(live))),
-                            neg=[t]
-                        )
-                        if p_new_conj is None:
-                            # couldn't strengthen p
-                            break
-                        # check if it satisfied initially
-                        res2 = check_initial(solver, p_new_conj)
-                        if res2 is not None:
-                            i = add_state((res2,0))
-                            abstractly_reachable_states.add(i)
-                        else:
-                            break
-                    if p_new_conj is None:
-                        continue
-                    # strengthen p
-                    p.append(p_new_conj)
-                    # make sure all CTIs satisfy p in both initial and post state
-                    internal_ctis = set(c for c in internal_ctis if eval_predicate(states[c[0]], p_new_conj)\
-                                                                    and eval_predicate(states[c[1]], p_new_conj))
-                    break
-                else:
-                    return None
-
-    def primal_houdini(live_predicates: Set[int]) -> Tuple[Set[Tuple[int, int]], Set[int]]:
-        # returns ctis, inductive subset of live
-        live = set(live_predicates)
-        ctis: Set[Tuple[int,int]] = set()
-        while True:
-            # check if conjunction is inductive.
-            assumptions = [predicates[i] for i in sorted(live)]
-            for a in sorted(live):
-                res = check_two_state_implication(solver, assumptions, predicates[a])
-                if res is not None:
-                    pre, post = (res[0], 0), (res[1], 0)
-                    pre_i = add_state(pre)
-                    post_i = add_state(post)
-                    ctis.add((pre_i, post_i))
-                    live = set(l for l in live if eval_predicate(post, predicates[l]))
-                    break
-            else:
-                # live is inductive
-                return (ctis, live)
-
-    def dual_houdini(live_states: Set[int], induction_width: int) -> Tuple[Set[DualTransition], Set[int]]:
-        # returns dual cits, subset of "abstractly" reachable states
-        live = set(live_states)
-        dual_ctis: Set[DualTransition] = set()
-        while True:
-            for a in sorted(live):
-                res = dual_edge(live, a, induction_width)
-                if res is not None:
-                    (p, q) = res
-                    p_i = frozenset(add_predicate(p_conj) for p_conj in p)
-                    q_i = frozenset(add_predicate(q_conj) for q_conj in q)
-                    dual_ctis.add((p_i, q_i))
-                    live = set(l for l in live if all(eval_predicate(states[l], q_conj) for q_conj in q))
-                    break
-            else:
-                # there is no dual edge, so live is all abstractly reachable in the current induction width
-                return (dual_ctis, live)
-
-    safety: Set[int] = set()
-    for inv in prog.invs():
-        if inv.is_safety:
-            # Here, could call as_clauses to split apart inv.expr so that we have more fine grained predicates
-            safety.add(add_predicate(inv.expr))
-
-    live_predicates: Set[int] = set(safety)
-    live_states: Set[int] = set() # states that are "live"
-    print([str(predicates[x]) for x in safety])
-    while True:
-        (ctis, inductive) = primal_houdini(live_predicates)
-        inductive_predicates.update(inductive)
-        live_states.update(x for cti in ctis for x in cti)
-        # filter live_states
-        if safety <= inductive_predicates:
-            print("safety is inductive!")
-            for i in inductive_predicates:
-                print(str(predicates[i]))
-            break
-
-        (dual_ctis, abstractly_reachable) = dual_houdini(live_states, induction_width)
-        abstractly_reachable_states.update(abstractly_reachable)
-        live_predicates.update(x for cti in dual_ctis for y in cti for x in y)
-        # filter live_predicates
-        if not safety <= live_predicates:
-            print("found abstractly reachable state(s) violating safety!")
-            break
+    inits = tuple(init.expr for init in prog.inits())
+    m = check_implication(solver, inits, [p])
+    if m is None:
+        return None
+    return Trace.from_z3([KEY_ONE], m)
 
 def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
     '''Used only in fol_ice, not cached'''
@@ -336,6 +189,14 @@ def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
         print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
         return s
     return None
+
+def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr) -> Optional[Tuple[Trace, Trace,]]:
+    edge = check_two_state_implication_all_transitions(solver, old_hyps = ps, new_conc = c, minimize=True)
+    if edge is None:
+        return None
+    old = Trace.from_z3([KEY_OLD], edge[0])
+    new = Trace.from_z3([KEY_NEW, KEY_OLD], edge[0])
+    return (old, new)
 
 class BlockTask(object):
     def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask']):
@@ -378,7 +239,9 @@ def fol_ic3(solver: Solver) -> None:
         return i
 
     initial_states: List[int] = []
-    reachable_states: Set[int] = set()
+    reachability: Dict[int, Optional[int]] = {} # none means truly reachable
+    K_bound = 0
+    K_limit = 0
     states: List[PDState] = []
     transitions: List[Tuple[int,int]] = []
     eval_cache: Dict[Tuple[int,int], bool] = {}
@@ -387,7 +250,7 @@ def fol_ic3(solver: Solver) -> None:
         i = len(states)
         states.append(s)
         initial_states.append(i)
-        reachable_states.add(i)
+        reachability[i] = None
         return i
     def add_state(s: PDState) -> int:
         i = len(states)
@@ -412,11 +275,16 @@ def fol_ic3(solver: Solver) -> None:
         return [(a, b) for a, b in transitions if all(eval_pred_state(p, a) for p in pred_indices)]
     def frame_transitions(frame:int) -> Sequence[Tuple[PDState, PDState]]:
         return [(states[a], states[b]) for a, b in frame_transitions_indices(frame)]
-    
+    def abstractly_reachable() -> Sequence[int]:
+        return tuple(x for x, k in reachability.items() if k is None or k >= K_bound)
+    def lower_bound_reachability(state: int, bound: Optional[int]) -> None:
+        c = reachability.get(state, 0)
+        reachability[state] = (None if c is None or bound is None else max(bound, c))
+        print(f"State {state} is reachable at {reachability[state]}")
 
     tasks: List[BlockTask] = []
     def process_task() -> None:
-        nonlocal tasks, system_unsafe
+        nonlocal tasks, system_unsafe, K_bound
         
         t = next((tt for tt in tasks if tt.child_count == 0), None)
         if t is None:
@@ -430,17 +298,25 @@ def fol_ic3(solver: Solver) -> None:
             t.destroy()
             return
         
-        if t.frame == 0 or (t.state in reachable_states):
+        if t.frame == 0 or (t.state in abstractly_reachable()):
             # because of the previous if check, we know t.state is an initial state if frame == 0 and reachable otherwise
             if t.is_must:
-                print("[IC3] Transition system is UNSAFE!")
-                system_unsafe = True
-                return
+                if K_bound < K_limit:
+                    K_bound += 1
+                    for t in tasks:
+                        t.is_unsep = False # Need to reset this flag, which is cached state depending on K_bound
+                    print(f"[IC3] Increasing K_bound to {K_bound}")
+                    return
+                else:
+                    print("[IC3] Transition system is UNSAFE!")
+                    system_unsafe = True
+                    return
             else:
-                reachable_states.add(t.state)
+                if t.frame == 0:
+                    lower_bound_reachability(t.state, None) # we've discovered a new initial state
                 if t.parent is not None and (t.state, t.parent.state) in transitions:
-                    reachable_states.add(t.parent.state)
-                print(f"[IC3] Found reachable state {t.state} in F_{t.frame} (now have {len(reachable_states)} reachable states)")
+                    lower_bound_reachability(t.parent.state, reachability[t.state])
+                print(f"[IC3] Found reachable state {t.state} in F_{t.frame} (now have {len(reachability)} reachable states)")
                 tasks = [x for x in tasks if x is not t]
                 t.destroy()
                 return
@@ -450,7 +326,7 @@ def fol_ic3(solver: Solver) -> None:
             formula_to_block = Not(s[0].as_onestate_formula(s[1])) \
                            if utils.args.logic != "universal" else \
                            Not(s[0].as_diagram(s[1]).to_ast())
-            edge = check_two_state_implication(solver, frame_predicates(t.frame-1), formula_to_block)
+            edge = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1), formula_to_block)
             if edge is None:
                 t.predecessors_eliminated = True
                 return
@@ -467,33 +343,28 @@ def fol_ic3(solver: Solver) -> None:
             while pt is not None:
                 path.append(f"[{'!' if pt.is_must else '?'} F_{pt.frame} s={pt.state}]")
                 pt = pt.parent
-            remaining = len([i for (i,j) in t.imp_constraints if i not in reachable_states])
+            abs_reach = abstractly_reachable()
+            remaining = len([i for (i,j) in t.imp_constraints if i not in abs_reach])
             print(f"[IC3] UNSEP {' -> '.join(reversed(path))} remaining={remaining}")
+
             for (i,j) in t.imp_constraints:
-                if i in reachable_states:
-                    continue
                 if not all(eval_pred_state(p_i, i) for p_i in frame_predicates_indices(t.frame-1)):
                     # one of the constraints has been blocked by a new learned formula. The whole
                     # separation problem could now be satisfiable. Reset the flag on this task
+                    print("Constraint blocked, computing new separability")
                     t.is_unsep = False
-                    t.imp_constraints = []
                     return
-
-                # try to block i
+            for (i,j) in t.imp_constraints:
+                if i in abs_reach:
+                    continue
                 print(f"Trying to block {i} in F_{t.frame-1}")
                 tasks.append(BlockTask(False, i, t.frame-1, t))
                 return
             
-            # couldn't block any, so this state is reachable
-            if t.is_must:
-                print("[IC3] Protocol is abstractly UNSAFE!")
-                system_unsafe = True
-                return
-            else:
-                # t.state is abstractly reachable. mark it as such
-                print("[IC3] Found new (abstractly) reachable state")
-                reachable_states.add(t.state)
-                return
+            # couldn't block any, so this state is abstractly reachable
+            print("[IC3] Found new (abstractly) reachable state")
+            lower_bound_reachability(t.state, K_bound)
+            return
 
         if utils.args.inductive_generalize:
             inductive_generalize(t)
@@ -520,7 +391,7 @@ def fol_ic3(solver: Solver) -> None:
         while True:
             print("Separating")
             pos = list(frame_states_indices(i-1)) + [x for y in frame_transitions_indices(i-1) for x in y]
-            p = sep.separate(pos=pos, neg=[s], imp=[])
+            p = sep.separate(pos=pos, neg=[s], imp=[], complexity = K_bound)
             if p is None: raise RuntimeError("couldn't separate in generalize()")
             print(f"Candidate predicate is: {p}")
 
@@ -538,7 +409,7 @@ def fol_ic3(solver: Solver) -> None:
                 add_state((t,0))
                 continue
             # F_i-1 => wp(p)?
-            tr = check_two_state_implication(solver, frame_predicates(i-1), p)
+            tr = check_two_state_implication_uncached(solver, frame_predicates(i-1), p)
             if tr is not None:
                 print("Adding new edge")
                 s_i, s_j = add_state((tr[0],0)), add_state((tr[1],0))
@@ -555,23 +426,44 @@ def fol_ic3(solver: Solver) -> None:
         if t.sep is None:
             print("Inductive generalizing")
             t.sep = FOLSeparator(states)
+            # Note, we may want to seed this set with some subset of the known frame transitions
+            # which are most likely to constrain the solution, while avoiding adding all constraints
+            # if there are very many of them.
+            t.imp_constraints = []
 
-        print(f"Separating in inductive_generalize")
-        transitions = list(frame_transitions_indices(t.frame-1))
-        p = t.sep.separate(pos=reachable_states, neg=[t.state], imp = transitions)
+        all_transitions = list(frame_transitions_indices(t.frame-1))
+        # First, filter out elements of t.imp_constraints that are no longer active.
+        t.imp_constraints = [x for x in t.imp_constraints if x in all_transitions]
+
+        abs_reach = abstractly_reachable()
+
+        print(f"Separating in inductive_generalize |pos|={len(abs_reach)}, |imp|={len(t.imp_constraints)}")
+        p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
         if p is None:
             t.is_unsep = True
             # compute unsep core
-            remaining, core = transitions[:-1], transitions[-1:]
+            remaining = list(t.imp_constraints)
+            core: List[Tuple[int,int]] = []
             while len(remaining) > 0:
-                print(f"Checking unsep core {len(remaining)}/{len(transitions)-1}")
-                if t.sep.separate(pos=reachable_states, neg=[t.state], imp = core + remaining[:-1]) is not None:
+                print(f"Checking unsep core {len(core)}/{len(remaining)}/{len(t.imp_constraints)}")
+                if t.sep.separate(pos=abs_reach, neg=[t.state], imp = core + remaining[:-1], complexity=K_bound) is not None:
                     core.append(remaining[-1])
                 remaining.pop()
+            print (f"[IC3] Unsep core is size {len(core)} out of {len(t.imp_constraints)}")
             t.imp_constraints = core
-            print (f"[IC3] Unsep core is size {len(core)} out of {len(transitions)}")
             return
-            
+        
+        p_respects_all_transitions = True
+        for (s_i, s_j) in all_transitions:
+            if (s_i, s_j) in t.imp_constraints:
+                continue
+            if eval_predicate(states[s_i], p) and not eval_predicate(states[s_j], p):
+                p_respects_all_transitions = False
+                t.imp_constraints.append((s_i, s_j))
+        if not p_respects_all_transitions:
+            # exit and go back up to the top of this function, but with new constraints
+            print("Added cached transition to constraints")
+            return
         
         print(f"Candidate predicate is: {p}")
         # init => p?
@@ -581,11 +473,12 @@ def fol_ic3(solver: Solver) -> None:
             add_initial((state, 0))
             return
         # F_i-1 ^ p => wp(p)?
-        tr = check_two_state_implication(solver, frame_predicates(t.frame-1) + [p], p)
+        tr = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1) + [p], p)
         if tr is not None:
             print("Adding new edge")
             s_i, s_j = add_state((tr[0],0)), add_state((tr[1],0))
             add_transition(s_i, s_j)
+            t.imp_constraints.append((s_i, s_j))
             return
         
         print_learn_predicate(p)
@@ -624,9 +517,12 @@ def fol_ic3(solver: Solver) -> None:
     for init_decl in prog.inits():
         predicates.append(init_decl.expr)
         frame_numbers.append(0)
-    
+    K_limit = utils.args.max_complexity
+    K_bound = 1 if utils.args.dynamic else K_limit
+    print(f"[IC3] Inferring with K_bound = {K_bound} up to {K_limit} ({'dynamic' if utils.args.dynamic else 'static'}), with max clauses={utils.args.max_clauses}, depth={utils.args.max_depth}")
     start_time = time.time()
     while not system_unsafe:
+        print(f"[time] Elapsed: {time.time()-start_time}")
         # Try to block things, if there are things to block
         if len(tasks) > 0:
             process_task()
@@ -653,7 +549,7 @@ def fol_ic3(solver: Solver) -> None:
                     ps = frame_predicates(inv_frame)
                     print(f"[IC3] Found inductive invariant in frame {inv_frame}!")
                     for p in ps:
-                        print(f"[IC3] invariant {p}")
+                        print(f"[IC3] invariant: {p}")
                     print_summary()
                     return
             print(f"[IC3] Expanding new frame {frame_n+1}")
@@ -676,12 +572,12 @@ def fol_ice(solver: Solver) -> None:
     neg: List[int] = []
     imp: List[Tuple[int, int]] = []
     while True:
-        q = mp.separate(pos=pos, neg=neg, imp=imp)
+        q = mp.separate(pos=pos, neg=neg, imp=imp, complexity=utils.args.max_complexity)
         if q is None:
             print(f'FOLSeparator returned none')
             return
         print(f'FOLSeparator returned the following formula:\n{q}')
-        res_imp = check_two_state_implication(solver, [q], q)
+        res_imp = check_two_state_implication_uncached(solver, [q], q)
         if res_imp is not None:
             s1, s2 = res_imp
             imp.append((add_state((s1, 0)), add_state((s2, 0))))
@@ -701,10 +597,6 @@ def fol_ice(solver: Solver) -> None:
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
 
     result : List[argparse.ArgumentParser] = []
-
-    s = subparsers.add_parser('fol-pd-houdini', help='Run PD inference with folseparators')
-    s.set_defaults(main=fol_pd_houdini)
-    result.append(s)
 
     s = subparsers.add_parser('fol-ic3', help='Run IC3 inference with folseparators')
     s.set_defaults(main=fol_ic3)
@@ -727,5 +619,10 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         # FOL specific options
         s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
         s.add_argument("--separator", choices=('naive', 'generalized', 'hybrid'), default="hybrid", help="Use the specified separator algorithm")
+        s.add_argument("--max-complexity", type=int, default=100, help="Maximum formula complexity")
+        s.add_argument("--max-clauses", type=int, default=100, help="Maximum formula matrix clauses")
+        s.add_argument("--max-depth", type=int, default=100, help="Maximum formula quantifier depth")
+        s.add_argument("--no-dynamic", dest="dynamic", action="store_false", help="Dynamically adjust complexity")
+        s.set_defaults(dynamic=True)
 
     return result

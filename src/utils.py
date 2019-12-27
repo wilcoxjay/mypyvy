@@ -110,6 +110,10 @@ class MypyvyArgs(object):
     induction_width: int
     logic: str
     inductive_generalize: bool
+    max_complexity: int
+    max_clauses: int
+    max_depth: int
+    dynamic: bool
     separator: str
     all_subclauses: bool
     optimize_ctis: bool
