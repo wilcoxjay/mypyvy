@@ -298,7 +298,7 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
         res = s.check()
         if res == z3.sat:
-            m = Trace.from_z3(tuple(reversed(keys)), s.model())
+            m = Trace.from_z3(tuple(keys), s.model())
             return m
         elif res == z3.unknown:
             print('unknown!')

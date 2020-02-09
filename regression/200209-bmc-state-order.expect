@@ -1,0 +1,26 @@
+bmc checking the following property up to depth 3
+  forall N:node. !holds_lock(N)
+found violation
+sort node
+  node0
+
+
+state 0:
+server_holds_lock()
+
+transition send_lock
+
+state 1:
+lock_msg(node0)
+server_holds_lock()
+
+transition recv_lock
+
+state 2:
+grant_msg(node0)
+
+transition recv_grant
+
+state 3:
+holds_lock(node0)
+mypyvy exiting with status 0
