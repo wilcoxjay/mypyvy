@@ -127,7 +127,7 @@ class SexpParser(object):
                     ans: Union[str, Comment] = tok.name
                 else:
                     ans = tok
-                assert len(self.stack) > 0
+
                 if len(self.stack) == 0:
                     yield ans
                 else:
@@ -155,3 +155,8 @@ def parse(input: str) -> Iterable[Sexp]:
             return
         else:
             yield sexp
+
+def parse_one(input: str) -> Sexp:
+    l = list(parse(input))
+    assert len(l) == 1
+    return l[0]
