@@ -250,6 +250,36 @@ def check_two_state_implication_all_transitions(
 
     return None
 
+def check_two_state_implication_all_transitions_unknown_is_unsat(
+        s: Solver,
+        old_hyps: Iterable[Expr],
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
+        timeout: int = 0,
+) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+    prog = syntax.the_program
+    with s:
+        for h in old_hyps:
+            s.add(t.translate_expr(h, old=True))
+
+        s.add(z3.Not(t.translate_expr(new_conc)))
+
+        for trans in prog.transitions():
+            with s:
+                s.add(t.translate_transition(trans))
+
+                # if utils.logger.isEnabledFor(logging.DEBUG):
+                #     utils.logger.debug('assertions')
+                #     utils.logger.debug(str(s.assertions()))
+                print(f'check_two_state_implication_all_transitions: checking {trans.name}... ', end='')
+                res = s.check(timeout=timeout)
+                assert res in (z3.sat, z3.unsat, z3.unknown), res
+                print(res)
+                if res == z3.sat:
+                    return s.model(minimize=minimize), trans
+
+    return None
 
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
@@ -571,6 +601,11 @@ class Solver(object):
             for a in prog.axioms():
                 self.add(t.translate_expr(a.expr))
 
+    def reset_cvc4_proc(self) -> None:
+        # Force reset cvc4 for each
+        if self.cvc4_proc is not None:
+            self.cvc4_proc.terminate()
+            self.cvc4_proc = None
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
             self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -645,7 +680,7 @@ class Solver(object):
         self.stack[-1].append(e)
         self.z3solver.add(e)
 
-    def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.CheckSatResult:
+    def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None, timeout: int = 0) -> z3.CheckSatResult:
         # logger.debug('solver.check')
         if assumptions is None:
             assert not self.assumptions_necessary
@@ -653,26 +688,29 @@ class Solver(object):
         self.nqueries += 1
 
         if self.use_cvc4:
+            self.reset_cvc4_proc()
             cvc4script = cvc4_preprocess(self.z3solver.to_smt2())
             self.cvc4_last_query = cvc4script
             proc = self.get_cvc4_proc()
             print('(reset)', file=proc.stdin)
+            if timeout > 0:
+                print(f'(set-option :rlimit {timeout})', file=proc.stdin)
             print(cvc4script, file=proc.stdin)
             # print(cvc4script)
-            ans = proc.stdout.readline()
-            if len(ans) == 0:
+            ans = proc.stdout.readline().strip()
+            ans_map = {
+                'sat': z3.sat,
+                'unsat': z3.unsat,
+                'unknown': z3.unknown
+            }
+            if len(ans) == 0 or ans not in ans_map:
                 print(cvc4script)
                 out, err = proc.communicate()
+                print(ans)
                 print(out)
                 print(err)
                 assert False, 'cvc4 closed its stdout before we could get an answer'
-            assert ans[-1] == '\n', repr(ans)
-            ans = ans.strip()
-            ans_map = {
-                'sat': z3.sat,
-                'unsat': z3.unsat
-            }
-            assert ans in ans_map, repr(ans)
+            
             return ans_map[ans]
 
         def luby() -> Iterable[int]:

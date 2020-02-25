@@ -1,10 +1,10 @@
-'''
-This file contains code for the Primal Dual research project
-'''
+
 import time
 import argparse
 import itertools
 import re
+import random
+import math
 from itertools import product, chain, combinations, repeat
 from collections import defaultdict
 
@@ -14,6 +14,7 @@ from pd import check_two_state_implication
 
 try:
     import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
+    import separators.timer
 except ModuleNotFoundError:
     pass
 
@@ -190,31 +191,128 @@ def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
         return s
     return None
 
-def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr) -> Optional[Tuple[Trace, Trace,]]:
-    edge = check_two_state_implication_all_transitions(solver, old_hyps = ps, new_conc = c, minimize=True)
-    if edge is None:
-        return None
-    old = Trace.from_z3([KEY_OLD], edge[0])
-    new = Trace.from_z3([KEY_NEW, KEY_OLD], edge[0])
+def trace_pair_from_model(m: z3.ModelRef) -> Tuple[Trace, Trace]:
+    old = Trace.from_z3([KEY_OLD], m)
+    new = Trace.from_z3([KEY_NEW, KEY_OLD], m)
     return (old, new)
 
+def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr, minimize: Optional[bool] = None, timeout: int = 0) -> Optional[Tuple[Trace, Trace]]:
+    edge = check_two_state_implication_all_transitions_unknown_is_unsat(solver, old_hyps = ps, new_conc = c, minimize=minimize, timeout=timeout)
+    return trace_pair_from_model(edge[0]) if edge is not None else None
+
+def check_two_state_implication_generalized(
+        s: Solver,
+        trans: DefinitionDecl,
+        old_hyps: Iterable[Expr],
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
+        timeout: int = 0,
+) -> Tuple[z3.CheckSatResult, Optional[z3.ModelRef]]:
+    with s:
+        t = s.get_translator(KEY_NEW, KEY_OLD)
+        for h in old_hyps:
+            s.add(t.translate_expr(h, old=True))
+        s.add(z3.Not(t.translate_expr(new_conc)))
+        s.add(t.translate_transition(trans))
+
+        print(f'check_two_state_implication_generalized: checking {trans.name}... ', end='')
+        res = s.check(timeout=timeout)
+        print(res)
+        if res == z3.sat:
+            return (z3.sat, s.model(minimize=minimize))
+        return (res, None)
+
+
+
+def cover(s: Sequence[Set[int]]) -> Sequence[int]:
+    if len(s) == 0: return []
+    m = len(set(y for ss in s for y in ss))
+    covered: Set[int] = set()
+    sets = list(s)
+    indices = list(range(len(s)))
+    covering = []
+    while len(covered) != m:
+        best = max(range(len(sets)), key = lambda t: len(sets[t].difference(covered)))
+        covering.append(indices[best])
+        covered.update(sets[best])
+        del sets[best]
+        del indices[best]
+    return covering
+
 class BlockTask(object):
-    def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask']):
+    def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask'], heuristic: bool = False):
         self.is_must = is_must
         self.state = state
         self.frame = frame
         self.predecessors_eliminated = False
         self.child_count = 0
+        self.heuristic_child_count = 0
         self.parent = parent
         if parent is not None:
             parent.child_count += 1
+            if heuristic:
+                parent.heuristic_child_count += 1
         self.sep: Optional[FOLSeparator] = None
         self.is_unsep = False
         self.imp_constraints: List[Tuple[int, int]] = []
+        self.prior_predicates: List[Expr] = []
+        self.prior_eval_cache: List[Tuple[Set[int], Set[int]]] = []
+        self.ci_cache: Dict[Tuple[int, int], bool] = {}
+        self.generalize_bound = -1
+        self.heuristic = heuristic
         
     def destroy(self) -> None:
         if self.parent is not None:
             self.parent.child_count -= 1
+            if self.heuristic:
+                self.parent.heuristic_child_count -= 1
+    def reset_prior(self) -> None:
+        self.prior_predicates = []
+        self.prior_eval_cache = []
+        self.ci_cache = {}
+    def __str__(self) -> str:
+        t = f"[{'!' if self.is_must else '*' if not self.heuristic else '?'} F_{self.frame} s={self.state}]"
+        if self.parent is not None:
+            return f"{str(self.parent)} -> {t}"
+        return t
+
+class TaskScheduler(object):
+    def __init__(self) -> None:
+        self.tasks: List[BlockTask] = []
+        self.states: Dict[int, int] = {}
+    def destroy(self, task: BlockTask) -> None:
+        destroyed = set([task])
+        changed = True
+        while changed:
+            changed = False
+            for t in self.tasks:
+                if t.parent is not None and t.parent in destroyed and t not in destroyed:
+                    destroyed.add(t)
+                    changed = True
+        self.tasks = [t for t in self.tasks if t not in destroyed]
+        for t in destroyed:
+            t.destroy()
+            self.states[t.state] = self.states[t.state] - 1
+    def add(self, task: BlockTask) -> None:
+        self.tasks.append(task)
+        self.states[task.state] = self.states.get(task.state, 0) + 1
+    def state_has_task(self, state: int) -> bool:
+        return state in self.states and self.states[state] > 0
+    def __iter__(self) -> Iterator[BlockTask]:
+        return iter(self.tasks)
+    def get_next(self) -> Optional[BlockTask]:
+        def heuristic(t: BlockTask) -> bool:
+            if t.heuristic: return True
+            if t.parent is not None: return heuristic(t.parent)
+            return False
+        should_be_heuristic = random.choice([True, False])
+        active_tasks = [tt for tt in self.tasks if tt.child_count - tt.heuristic_child_count == 0 and (heuristic(tt) == should_be_heuristic)]
+        if len(active_tasks) == 0:
+            should_be_heuristic = not should_be_heuristic
+            active_tasks = [tt for tt in self.tasks if tt.child_count - tt.heuristic_child_count == 0 and (heuristic(tt) == should_be_heuristic)]
+        random.shuffle(active_tasks)
+        return active_tasks[0] if len(active_tasks) > 0 else None
+
 
 def fol_ic3(solver: Solver) -> None:
     prog = syntax.the_program
@@ -282,22 +380,25 @@ def fol_ic3(solver: Solver) -> None:
         reachability[state] = (None if c is None or bound is None else max(bound, c))
         print(f"State {state} is reachable at {reachability[state]}")
 
-    tasks: List[BlockTask] = []
-    def process_task() -> None:
+    tasks = TaskScheduler()
+    def process_task() -> bool:
         nonlocal tasks, system_unsafe, K_bound
         
-        t = next((tt for tt in tasks if tt.child_count == 0), None)
+        t = tasks.get_next()
         if t is None:
             print("Couldn't find leaf task")
-            return
-        
-        print(f"Working on {t.state} in frame {t.frame}")
+            return False
+            
+        print(f"Working on {t.state} in frame {t.frame}; {t}")
         if not all(eval_pred_state(p_i, t.state) for p_i in frame_predicates_indices(t.frame)):
             print(f"State {t.state} blocked in F_{t.frame}")
-            tasks = [x for x in tasks if x is not t]
-            t.destroy()
-            return
+            tasks.destroy(t)
+            return True
         
+        for inv in prog.invs():
+            if inv.name is not None:
+                print(f" - {'T' if eval_predicate(states[t.state], inv.expr) else 'F'} [{inv.name}]")
+
         if t.frame == 0 or (t.state in abstractly_reachable()):
             # because of the previous if check, we know t.state is an initial state if frame == 0 and reachable otherwise
             if t.is_must:
@@ -306,70 +407,66 @@ def fol_ic3(solver: Solver) -> None:
                     for t in tasks:
                         t.is_unsep = False # Need to reset this flag, which is cached state depending on K_bound
                     print(f"[IC3] Increasing K_bound to {K_bound}")
-                    return
+                    return True
                 else:
                     print("[IC3] Transition system is UNSAFE!")
                     system_unsafe = True
-                    return
+                    return True
             else:
                 if t.frame == 0:
                     lower_bound_reachability(t.state, None) # we've discovered a new initial state
                 if t.parent is not None and (t.state, t.parent.state) in transitions:
                     lower_bound_reachability(t.parent.state, reachability[t.state])
                 print(f"[IC3] Found reachable state {t.state} in F_{t.frame} (now have {len(reachability)} reachable states)")
-                tasks = [x for x in tasks if x is not t]
-                t.destroy()
-                return
+                tasks.destroy(t)
+                return True
         
         if not t.predecessors_eliminated:
             s = states[t.state]
             formula_to_block = Not(s[0].as_onestate_formula(s[1])) \
                            if utils.args.logic != "universal" else \
                            Not(s[0].as_diagram(s[1]).to_ast())
-            edge = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1), formula_to_block)
+            edge = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1), formula_to_block, minimize=False)
             if edge is None:
                 t.predecessors_eliminated = True
-                return
+                return True
             s_i = add_state((edge[0], 0))
             add_transition(s_i, t.state)
             assert t.frame > 0
             print(f"Eliminating predecessor {s_i} from F_{t.frame - 1}")
-            tasks.append(BlockTask(t.is_must, s_i, t.frame - 1, t))
-            return
+            tasks.add(BlockTask(t.is_must, s_i, t.frame - 1, t))
+            return True
         
         if t.is_unsep:
-            path = []
-            pt: Optional[BlockTask] = t
-            while pt is not None:
-                path.append(f"[{'!' if pt.is_must else '?'} F_{pt.frame} s={pt.state}]")
-                pt = pt.parent
             abs_reach = abstractly_reachable()
             remaining = len([i for (i,j) in t.imp_constraints if i not in abs_reach])
-            print(f"[IC3] UNSEP {' -> '.join(reversed(path))} remaining={remaining}")
+            print(f"[IC3] UNSEP {t} remaining={remaining}")
 
             for (i,j) in t.imp_constraints:
                 if not all(eval_pred_state(p_i, i) for p_i in frame_predicates_indices(t.frame-1)):
                     # one of the constraints has been blocked by a new learned formula. The whole
                     # separation problem could now be satisfiable. Reset the flag on this task
                     print("Constraint blocked, computing new separability")
+                    t.reset_prior()
                     t.is_unsep = False
-                    return
+                    return True
             for (i,j) in t.imp_constraints:
                 if i in abs_reach:
                     continue
                 print(f"Trying to block {i} in F_{t.frame-1}")
-                tasks.append(BlockTask(False, i, t.frame-1, t))
-                return
+                tasks.add(BlockTask(False, i, t.frame-1, t))
+                return True
             
             # couldn't block any, so this state is abstractly reachable
             print("[IC3] Found new (abstractly) reachable state")
             lower_bound_reachability(t.state, K_bound)
-            return
+            return True
 
         if utils.args.inductive_generalize:
             inductive_generalize(t)
         else:
             generalize(t.state, t.frame)
+        return True
 
     def print_learn_predicate(p: Expr) -> None:
         I_imp_p = "."
@@ -437,8 +534,19 @@ def fol_ic3(solver: Solver) -> None:
 
         abs_reach = abstractly_reachable()
 
-        print(f"Separating in inductive_generalize |pos|={len(abs_reach)}, |imp|={len(t.imp_constraints)}")
-        p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
+        oracle = next(i.expr for i in prog.invs() if i.name == 'hard')
+        oracle_solves = all(eval_predicate(states[p], oracle) for p in abs_reach)\
+            and all(not eval_predicate(states[n], oracle) for n in [t.state])\
+            and all((not eval_predicate(states[a], oracle) or eval_predicate(states[b], oracle)) for (a,b) in t.imp_constraints)
+        print(f"Oracle: {oracle}, works: {oracle_solves}")
+        if not oracle_solves or K_bound < 3 or True:
+            print(f"Separating in inductive_generalize |pos|={len(abs_reach)}, |imp|={len(t.imp_constraints)}")
+            p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
+        else:
+            print(f"Using oracle predicate")
+            p = oracle
+
+        #p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
         if p is None:
             t.is_unsep = True
             # compute unsep core
@@ -460,12 +568,19 @@ def fol_ic3(solver: Solver) -> None:
             if eval_predicate(states[s_i], p) and not eval_predicate(states[s_j], p):
                 p_respects_all_transitions = False
                 t.imp_constraints.append((s_i, s_j))
+                print_constraint_matrix(t)
+                simplify_constraints(t, all_transitions, set(abs_reach))
+                break # only add up to one transition at a time
         if not p_respects_all_transitions:
             # exit and go back up to the top of this function, but with new constraints
             print("Added cached transition to constraints")
             return
         
         print(f"Candidate predicate is: {p}")
+        p_ind = len(t.prior_predicates)
+        t.prior_predicates.append(p)
+        t.prior_eval_cache.append((set(), set()))
+
         # init => p?
         state = check_initial(solver, p)
         if state is not None:
@@ -473,12 +588,16 @@ def fol_ic3(solver: Solver) -> None:
             add_initial((state, 0))
             return
         # F_i-1 ^ p => wp(p)?
-        tr = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1) + [p], p)
+        tr = find_generalized_implication(solver, t, frame_predicates(t.frame-1), p_ind)
         if tr is not None:
             print("Adding new edge")
             s_i, s_j = add_state((tr[0],0)), add_state((tr[1],0))
             add_transition(s_i, s_j)
+            print(f"constriants = {len(t.imp_constraints)}")
             t.imp_constraints.append((s_i, s_j))
+            print_constraint_matrix(t)
+            simplify_constraints(t, all_transitions, set(abs_reach))
+            print(f"constriants = {len(t.imp_constraints)}")
             return
         
         print_learn_predicate(p)
@@ -486,6 +605,104 @@ def fol_ic3(solver: Solver) -> None:
         push()
         return
 
+
+
+    from set_cover import cover
+    def imp_constraints_covering(t:BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
+        # Find a set cover of implication constraints that can erase 
+        possiblities = [set(i for i,p in enumerate(t.prior_predicates) if task_prior_eval(t, i, a) and not task_prior_eval(t, i, b))
+                        for tr_ind, (a,b) in enumerate(all_transitions)]
+        possiblities.append(set(i for i,p in enumerate(t.prior_predicates) if any(not task_prior_eval(t, i, a) for a in all_reachable)))
+        covering = cover(possiblities)
+        t.imp_constraints = [all_transitions[i] for i in covering if i < len(all_transitions)]
+
+    def simplify_constraints(t: BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
+        #imp_constraints_covering(t, all_transitions, all_reachable)
+        def sortfunc(transition: Tuple[int, int]) -> Tuple[int, int]:
+            return (sum(1 if not task_prior_eval(t, i, transition[0]) else 0 for i in range(len(t.prior_predicates))),
+                    sum(1 if not task_prior_eval(t, i, transition[1]) else 0 for i in range(len(t.prior_predicates))))
+        B = 1 # 1 + math.floor(len(t.imp_constraints) / 15)
+        if len(t.prior_predicates) >= 10 and len(t.imp_constraints) > 5 and t.heuristic_child_count < B:
+            trs = list(sorted(filter(lambda tr: tr[0] not in all_reachable and not tasks.state_has_task(tr[0]), t.imp_constraints), key = sortfunc, reverse=True))
+            if len(trs) > 0 and sortfunc(trs[0])[0] > 0:
+                tasks.add(BlockTask(False, trs[0][0], t.frame-1, t, heuristic=True))
+                print(f"Generating heuristic may-block constraint for {trs[0][0]} in frame {t.frame-1}")
+        if t.generalize_bound < 0:
+            t.generalize_bound = 1000000
+        if len(t.prior_predicates) >= t.generalize_bound:
+            t.generalize_bound = int(1 + t.generalize_bound * 2.0)
+            print(f"Old length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
+            force_generalize(t)
+            # imp_constraints_covering(t, all_transitions, all_reachable)
+            print(f"New length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
+            imp_constraints_covering(t, list(frame_transitions_indices(t.frame-1)), all_reachable)
+            print(f"After min imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
+
+    def force_generalize(t: BlockTask) -> None:
+        print("Force generalizing")
+        timer = separators.timer.UnlimitedTimer()
+        with timer:
+            not_reachable_preds = set(i for i,p in enumerate(t.prior_predicates) if all(task_prior_eval(t, i, a) for a in abstractly_reachable()))
+            remaining_preds = set(not_reachable_preds)
+            more = []
+            while len(remaining_preds) > 0:
+                tr, eliminated = max(((tr, set(i for i in remaining_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1]))) for tr in t.imp_constraints), key = lambda x: len(x[1]))
+                initial_eliminated = len(eliminated)
+                remaining_preds.difference_update(eliminated)
+                for pi in remaining_preds:
+                    if pi in eliminated: continue
+                    ps = [t.prior_predicates[ei] for ei in eliminated] + [t.prior_predicates[pi]]
+                    new_tr = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1) + ps, Or(*ps), minimize=False, timeout=10000)
+                    if new_tr is not None:
+                        eliminated.add(pi)
+                        s_i, s_j = add_state((new_tr[0],0)), add_state((new_tr[1],0))
+                        add_transition(s_i, s_j)
+                        tr = (s_i, s_j)
+                        # add other predicates that are also blocked by this edge
+                        for pj in remaining_preds:
+                            if task_prior_eval(t, pj, s_i) and not task_prior_eval(t, pj, s_j):
+                                eliminated.add(pj)
+                more.append(tr)
+                remaining_preds.difference_update(eliminated)
+                true_eliminated = len(set(i for i in not_reachable_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1])))
+                print(f"Found new edge eliminating {len(eliminated)}/{true_eliminated} predicates out of {initial_eliminated}")
+            t.imp_constraints.extend(more)
+        
+        print(f"Force generalized in {timer.elapsed():0.2f} sec")
+        pass
+    def task_prior_eval(t: BlockTask, ind: int, state: int) -> bool:
+        """ Returns whether states[state] satisfies t.prior_predicates[ind], and caches the result"""
+        (cache_true, cache_false) = t.prior_eval_cache[ind]
+        if state in cache_true:
+            return True
+        if state in cache_false:
+            return False
+        value = eval_predicate(states[state], t.prior_predicates[ind])
+        if value:
+            cache_true.add(state)
+        else:
+            cache_false.add(state)
+        return value
+
+    def print_constraint_matrix(t: BlockTask) -> None:
+        pass
+        for (i,j) in t.imp_constraints:
+            if all(eval_predicate(states[i], p.expr) for p in prog.invs()):
+                print("I", end='')
+            else:
+                print(".", end='')
+        print("")
+        print("--- begin matrix ---")
+        for ind, p in enumerate(t.prior_predicates):
+            l = []
+            for (i,j) in t.imp_constraints:
+                a = task_prior_eval(t, ind, i)
+                if a and not task_prior_eval(t, ind, j):
+                    l.append('#')
+                else:
+                    l.append('+' if a else '-')
+            print(''.join(l))
+        print("--- end matrix ---")
     def push() -> None:
         made_changes = False
         for frame in range(frame_n):
@@ -524,8 +741,7 @@ def fol_ic3(solver: Solver) -> None:
     while not system_unsafe:
         print(f"[time] Elapsed: {time.time()-start_time}")
         # Try to block things, if there are things to block
-        if len(tasks) > 0:
-            process_task()
+        if process_task():
             continue
     
         # Push any predicates that may have just been discovered
@@ -535,7 +751,7 @@ def fol_ic3(solver: Solver) -> None:
         bad_state = check_safe(solver, frame_predicates(frame_n))
         if bad_state is not None:
             s_i = add_state((bad_state, 0))
-            tasks.append(BlockTask(True, s_i, frame_n, None))
+            tasks.add(BlockTask(True, s_i, frame_n, None))
         else:
             print_predicates()
             print("Checking for an inductive frame")
@@ -558,6 +774,214 @@ def fol_ic3(solver: Solver) -> None:
     # Loops exits if the protocol is unsafe. Still print statistics
     print_summary()
 
+
+
+class EdgeGeneralizer(object):
+    def __init__(self) -> None:
+        self._prior_predicates : List[Expr] = []
+        self._prop_solver: z3.Solver = z3.Solver()
+        
+        all_transitions = list(syntax.the_program.transitions())
+        self._trans_id = dict(zip([t.name for t in all_transitions], range(len(all_transitions))))
+        assert len(self._trans_id) == len(all_transitions) # ensure name is unique id
+        
+        self._prior_edges: List[Tuple[DefinitionDecl, List[int], List[int]]] = []
+
+    def _to_exprs(self, l: List[int]) -> List[Expr]: return [self._prior_predicates[i] for i in l]
+    def _pred_var(self, i: int, is_pre: bool) -> z3.ExprRef:
+        return z3.Bool(f"P_{i}_{1 if is_pre else 0}")
+    def _trans_var(self, trans: DefinitionDecl) -> z3.ExprRef:
+        return z3.Bool(f"T_{self._trans_id[trans.name]}")
+
+    def _vars_for_edge(self, trans: DefinitionDecl, pre: List[int], post: List[int]) -> List[z3.ExprRef]:
+        return [self._trans_var(trans)] + [self._pred_var(i, True) for i in pre] + [self._pred_var(i, False) for i in post]
+    
+    def find_generalized_implication(self, solver: Solver, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, Trace]]:
+        p_ind = len(self._prior_predicates)
+        self._prior_predicates.append(p)
+        tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
+        if tr is None: return None # early out if UNSAT
+        all_transitions = list(syntax.the_program.transitions())
+        tr_trans = all_transitions[0] # dummy
+
+        def min_unsat_core(trans: DefinitionDecl, pre: List[int], post: List[int]) -> Tuple[List[int], List[int]]:
+            pre, post = list(pre), list(post)
+            min_core : Tuple[List[int], List[int]] = ([],[])
+            print(f"Minimizing unsat core ({pre} => {post})...")
+            while True:
+                
+                if len(pre) > 0:
+                    c = pre.pop()
+                    c = post.pop() # FOR UNIFORM PRE/POST
+                    from_pre = True
+                elif len(post) > 0:
+                    c = post.pop()
+                    from_pre = False
+                else:
+                    break
+
+                candidate_pre, candidate_post = min_core[0] + pre, min_core[1] + post
+                if len(candidate_pre) == 0 or len(candidate_post) == 0:
+                    res = z3.sat # don't run empty queries. Helpful when |pre| = |post| = 1
+                elif self._prop_solver.check(*self._vars_for_edge(trans, candidate_pre, candidate_post)) == z3.unsat:
+                    res = z3.unsat
+                else:
+                    res, unused = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(candidate_pre), Or(*self._to_exprs(min_core[1] + post)), minimize=False, timeout=10000)
+                    if res == z3.unsat:
+                        self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, candidate_pre, candidate_post))))
+                if res == z3.sat:
+                    if from_pre:
+                        min_core[0].append(c)
+                        min_core[1].append(c) # FOR UNIFORM PRE/POST
+                    else:
+                        min_core[1].append(c)
+            print(f"Core is ({min_core[0]} => {min_core[1]})...")
+            return min_core
+        def check_sat(pre: List[int], post: List[int], skip: bool = True) -> bool: # returns true if satisfiable, and stores transition in `tr`
+            nonlocal tr, tr_trans
+            success = False
+            for trans in all_transitions:
+                if self._prop_solver.check(*self._vars_for_edge(trans, pre, post)) == z3.unsat:
+                    print(f"Skipping known unsat for {trans.name}")
+                    # skip the rest of the checks. We know that its unsat so don't need to add it again
+                    continue
+                res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), Or(*self._to_exprs(post)), minimize=False, timeout=10000)
+                if tr_prime is not None:
+                    tr = trace_pair_from_model(tr_prime)
+                    tr_trans = trans
+                    success = True
+                    if skip: break
+                elif res is z3.unknown:
+                    if False:
+                        # "normal way"
+                        if skip: break
+                    else:
+                        # treat unknown like unsat. may block future possible edges but be faster
+                        # probably should not try to minimize unsat (unknown?) core in this case
+                        #pre_p, post_p = min_unsat_core(trans, pre, post)
+                        pre_p, post_p = pre, post
+                        print(f"Adding unknown UNSAT block for {trans.name}, [{' ^ '.join(map(str,pre_p))}] => [{' | '.join(map(str,post_p))}]")
+                        self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, pre_p, post_p))))
+                elif res is z3.unsat:
+                    pre_p, post_p = min_unsat_core(trans, pre, post)
+                    print(f"Adding UNSAT for {trans.name}, [{' ^ '.join(map(str,pre_p))}] => [{' | '.join(map(str,post_p))}]")
+                    self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, pre_p, post_p))))
+            return success
+        
+        # this call sets tr_trans correctly and also generates UNSATs for all transitions it can (due to skip=False).
+        if not check_sat([p_ind], [p_ind], skip=False):
+            # if we get timeouts, return what we already have from check_two_state_implication_uncached
+            # we need to do this because if this function fails we won't have set tr_trans correctlys
+            return tr
+        
+        pre, post = [p_ind],[p_ind]
+        
+        print("Trying to augment existing edges")
+        for edge_i in reversed(range(max(0, len(self._prior_edges) - 3), len(self._prior_edges))):
+            (trans_edge, pre_edge, post_edge) = self._prior_edges[edge_i]
+            if check_sat(pre_edge + [p_ind], post_edge + [p_ind]):
+                print("Augmented edge")
+                pre, post = pre_edge, post_edge
+                # remove the edge from prior; it will be added back at the end after it's expanded
+                del self._prior_edges[edge_i]
+                break
+        
+        # print("Optimizing post-state")
+        # remaining_priors = list(range(p_ind))
+        # while len(remaining_priors) > 0:
+        #     c = remaining_priors.pop()
+        #     if c in post: continue
+        #     if check_sat(pre, post+[c]):
+        #         post = post + [c]
+        
+        print("Optimizing edge")  # FOR UNIFORM PRE/POST
+        remaining_priors = list(range(p_ind))
+        while len(remaining_priors) > 0:
+            c = remaining_priors.pop()
+            if c in post: continue
+            if check_sat(pre + [c], post+[c]):
+                post = post + [c]
+                pre = pre + [c]
+        
+        # print("Optimizing pre-state")
+        # remaining_priors = list(range(p_ind))
+        # while len(remaining_priors) > 0:
+        #     c = remaining_priors.pop()
+        #     if c in pre: continue
+        #     if check_sat(pre + [c], post):
+        #         pre = pre + [c]
+        assert tr is not None
+        pre_size = len(tr[0].as_diagram(0).binder.vs)
+        post_size = len(tr[1].as_diagram(0).binder.vs)
+
+        print(f"Done optimizing edge |pre|={len(pre)}, |post|={len(post)}, size pre = {pre_size}, size post = {post_size}")
+        self._prior_edges.append((tr_trans, pre, post))
+        return tr
+
+def find_generalized_implication(solver: Solver, t: BlockTask, fp: List[Expr], p_ind: int) -> Optional[Tuple[Trace, Trace]]:
+    def CI(i: int, j: int) -> bool:
+        if (i,j) not in t.ci_cache:
+            t.ci_cache[(i,j)] = check_implication(solver, [t.prior_predicates[i]], [t.prior_predicates[j]]) is None
+        return t.ci_cache[(i,j)]
+    
+    p = t.prior_predicates[p_ind]
+    tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
+    if tr is None: return None # early out if UNSAT
+    # Now try to optimize the edge.
+    # predecessor_ps = [i for i in range(len(t.prior_predicates)) if i == p_ind or CI(i, p_ind)]
+
+    # print(f"Toposorting implication predecessors {predecessor_ps}, p_ind={p_ind}")
+    # for i in predecessor_ps:
+    #     print(f"i={i} {t.prior_predicates[i]}")
+    # toposort: List[int] = []
+    # while len(predecessor_ps) != 0:
+    #     # pick a node with no predecessors
+    #     for n in predecessor_ps:
+    #         print(f"n={n} {[(j, j == n, CI(j, n)) for j in predecessor_ps]}")
+    #         if all(j == n or not CI(j, n) for j in predecessor_ps):
+    #             toposort.append(n)
+    #             break
+    #     else:
+    #         print("couldn't find implication-predecessor free state")
+    #         toposort.append(predecessor_ps[0])
+    #     print(f"Removing {toposort[-1]}")
+    #     predecessor_ps = [x for x in predecessor_ps if x != toposort[-1]]
+    # assert toposort[-1] == p_ind
+    # print("Finding first edge")
+    # for prior in toposort:
+    #     print(f"Checking for edge {prior} -> ~{p_ind}")
+    #     tr = check_two_state_implication_uncached(solver, fp + [t.prior_predicates[prior]], p, minimize=False)
+    #     if tr is not None:
+    #         return tr
+    # assert False
+
+    def check_sat(pre: List[Expr], post: List[Expr]) -> bool: # returns true if satisfiable, and stores transition in `tr`
+        nonlocal tr
+        tr_prime = check_two_state_implication_uncached(solver, fp + pre, Or(*post), minimize=False, timeout=10000)
+        if tr_prime is None:
+            return False
+        tr = tr_prime
+        return True
+    
+    print("Optimizing post-state")
+    pre = [p]
+    post = [p]
+    remaining_priors = list(t.prior_predicates)
+    while len(remaining_priors) > 0:
+        c = remaining_priors.pop()
+        if check_sat(pre, post+[c]):
+            post = post + [c]
+    
+    print("Optimizing pre-state")
+    remaining_priors = list(t.prior_predicates)
+    while len(remaining_priors) > 0:
+        c = remaining_priors.pop()
+        if check_sat(pre + [c], post):
+            pre = pre + [c]
+
+    print(f"Done optimizing edge |pre|={len(pre)}, |post|={len(post)}")
+    return tr
+
 def fol_ice(solver: Solver) -> None:
     prog = syntax.the_program
 
@@ -567,31 +991,91 @@ def fol_ice(solver: Solver) -> None:
         states.append(s)
         return i
 
-    mp = FOLSeparator(states)
-    pos: List[int] = []
-    neg: List[int] = []
+
+    rest = [inv.expr for inv in prog.invs() if inv.name != 'hard']
+    hard = next(inv for inv in prog.invs() if inv.name == 'hard').expr
+    pos: List[int] = [] # keep reachable states
     imp: List[Tuple[int, int]] = []
+
+    from set_cover import cover
+    start_time = time.time()
+    separation_timer = separators.timer.UnlimitedTimer()
+    generalization_timer = separators.timer.UnlimitedTimer()
+    def print_time() -> None:
+        print(f"[time] Elapsed: {time.time()-start_time}, sep: {separation_timer.elapsed()}, gen: {generalization_timer.elapsed()}")
     while True:
-        q = mp.separate(pos=pos, neg=neg, imp=imp, complexity=utils.args.max_complexity)
-        if q is None:
-            print(f'FOLSeparator returned none')
+        m = check_implication(solver, rest, [hard])
+        if m is None:
+            print_time()
+            print("Eliminated all bad states")
             return
-        print(f'FOLSeparator returned the following formula:\n{q}')
-        res_imp = check_two_state_implication_uncached(solver, [q], q)
-        if res_imp is not None:
-            s1, s2 = res_imp
-            imp.append((add_state((s1, 0)), add_state((s2, 0))))
-            continue
-        res_init = check_initial(solver, q)
-        if res_init is not None:
-            pos.append(add_state((res_init,0)))
-            continue
-        res_safe = check_safe(solver, [q])
-        if res_safe is not None:
-            neg.append(add_state((res_safe, 0)))
-            continue
-        print(f'Inductive invariant found!')
-        break
+        trace = Trace.from_z3([KEY_ONE], m)
+        print(f"The size of the diagram is {len(list(trace.as_diagram().conjuncts()))}, {len(trace.as_diagram().binder.vs)} existentials")
+        neg = [add_state((trace, 0))]
+        
+        # imp = [] # Try resetting edges on each solution
+        t = BlockTask(True, neg[0], 0, None, False)
+
+        mp = FOLSeparator(states)
+        generalizer = EdgeGeneralizer()
+        B = 25
+        def CI(i: int, j: int) -> bool:
+            if (i,j) not in t.ci_cache:
+                t.ci_cache[(i,j)] = check_implication(solver, [t.prior_predicates[i]], [t.prior_predicates[j]]) is None
+            return t.ci_cache[(i,j)]
+
+        while True:
+            print_time()
+            print(f'Separating with |pos|={len(pos)}, |neg|={len(neg)}, |imp|={len(imp)}')
+            with separation_timer:
+                q = mp.separate(pos=pos, neg=neg, imp=imp, complexity=utils.args.max_complexity)
+            if q is None:
+                print(f'FOLSeparator returned none')
+                return
+            print(f'FOLSeparator returned {q}')
+            
+            p_ind = len(t.prior_predicates)
+            t.prior_predicates.append(q)
+            res_init = check_initial(solver, q)
+            if res_init is not None:
+                pos.append(add_state((res_init,0)))
+                continue
+            
+            with generalization_timer:
+                res_imp = generalizer.find_generalized_implication(solver, rest, q)
+            #res_imp = find_generalized_implication(solver, t, rest, p_ind)
+            if res_imp is not None:
+                s1, s2 = res_imp
+                imp.append((add_state((s1, 0)), add_state((s2, 0))))
+                if len(imp) >= B:
+                    # Find a set cover of implication constraints that can erase 
+                    possiblities = [set(i for i,p in enumerate(t.prior_predicates) if eval_predicate(states[a], p) and not eval_predicate(states[b], p))
+                                    for tr_ind, (a,b) in enumerate(imp)]
+                    possiblities.append(set(i for i,p in enumerate(t.prior_predicates) if any(not eval_predicate(states[a], p) for a in pos)))
+                    covering = cover(possiblities)
+                    pre_covering = len(imp)
+                    #imp = [imp[i] for i in covering if i < len(imp)]
+                    #print(f"Performed set covering bringing implications from {pre_covering} -> {len(imp)}")
+                    B = max(B, len(imp) + 5)
+                    # for i in range(len(t.prior_predicates)):
+                    #     l = []
+                    #     for j in range(len(t.prior_predicates)):
+                    #         if i < j:
+                    #             if CI(i,j):
+                    #                 l.append(">")
+                    #             elif CI(j,i):
+                    #                 l.append("<")
+                    #             else:
+                    #                 l.append(" ")
+                    #         else:
+                    #             l.append('.')
+                    #     print("".join(l))
+
+                continue
+
+            print(f'Eliminated state with {q}')
+            rest.append(q)
+            break
 
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
