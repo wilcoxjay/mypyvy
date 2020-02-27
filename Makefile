@@ -4,7 +4,8 @@ MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
 style:
-	$(PYTHON) -m flake8 $(SRC_FILES)
+	$(PYTHON) -m flake8 $(SRC_FILES) || true
+	grep the_program $(SRC_FILES) || true
 
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
