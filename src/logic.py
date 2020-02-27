@@ -187,13 +187,16 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                                     if pre_state.eval(pre_inv.expr) is not True:
                                         print('\n\n'.join(str(x) for x in s.debug_recent()))
                                         print(res)
-                                        assert False, f'bad transition counterexample for invariant {pre_inv.expr} in pre state'
-                                # res.eval_double_vocabulary(transition, start_location=0)  # need to implement mypyvy-level transition->expression translation
+                                        msg = f'bad transition counterexample for invariant {pre_inv.expr} in pre state'
+                                        assert False, msg
+                                # need to implement mypyvy-level transition->expression translation
+                                # res.eval_double_vocabulary(transition, start_location=0)
                                 post_state = res.as_state(i=1)
                                 if post_state.eval(inv.expr) is not False:
                                     print('\n\n'.join(str(x) for x in s.debug_recent()))
                                     print(res)
-                                    assert False, f'bad transition counterexample for invariant {inv.expr} in post state'
+                                    msg = f'bad transition counterexample for invariant {inv.expr} in post state'
+                                    assert False, msg
 
                             return inv, res, trans
     return None
@@ -488,7 +491,7 @@ class CVC4Model(object):
         else:
             assert False, e
 
-    def eval(self, e: z3.ExprRef, model_completion: bool=False) -> z3.ExprRef:
+    def eval(self, e: z3.ExprRef, model_completion: bool = False) -> z3.ExprRef:
         cvc4e = cast(Union[CVC4AppExpr], e)
         if isinstance(cvc4e, CVC4AppExpr):
             f = cvc4e.func
@@ -569,7 +572,8 @@ class Solver(object):
 
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
-            self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, text=True)
         return self.cvc4_proc
 
     def debug_recent(self) -> Tuple[str, Optional[str], Optional[str]]:
@@ -718,7 +722,8 @@ class Solver(object):
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
 
-                print(f'[{datetime.now()}] Solver.check: s3.check()', s3.check(*(e.translate(ctx) for e in assumptions)))
+                print(f'[{datetime.now()}] Solver.check: s3.check()',
+                      s3.check(*(e.translate(ctx) for e in assumptions)))
                 print(f'[{datetime.now()}] Solver.check: s3 stats:')
                 print(s3.statistics())
                 print(s3.to_smt2())
@@ -741,7 +746,8 @@ class Solver(object):
                 if num_restarts > 0:
                     print(f'z3solver successful after {1000*(time.time() - t_start):.1f}ms: {ans}')
                 return ans
-            print(f'z3solver returned {ans} after {1000*(time.time() - t_start):.1f}ms (timeout was {tmt}ms), trying again')
+            print(f'z3solver returned {ans} after {1000*(time.time() - t_start):.1f}ms '
+                  f'(timeout was {tmt}ms), trying again')
             num_restarts += 1
             self.restart()
 
@@ -787,7 +793,8 @@ class Solver(object):
             minimize = utils.args.minimize_models
         if minimize:
             if sorts_to_minimize is None:
-                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values() if not syntax.has_annotation(s, 'no_minimize')]
+                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values()
+                                     if not syntax.has_annotation(s, 'no_minimize')]
             if relations_to_minimize is None:
                 m = self._solver_model()
                 ds = {str(d) for d in m.decls()}
@@ -1700,12 +1707,18 @@ class Trace(object):
         def eval(expr: Expr, old: bool) -> Union[str, bool]:
             def current_index() -> int:
                 return start_location + (1 if not old else 0)
+
             def current_rels() -> Dict[RelationDecl, List[Tuple[List[str], bool]]]:
-                return dict(itertools.chain(self.immut_rel_interps.items(), self.rel_interps[current_index()].items()))
+                return dict(itertools.chain(self.immut_rel_interps.items(),
+                                            self.rel_interps[current_index()].items()))
+
             def current_consts() -> Dict[ConstantDecl, str]:
-                return dict(itertools.chain(self.immut_const_interps.items(), self.const_interps[current_index()].items()))
+                return dict(itertools.chain(self.immut_const_interps.items(),
+                                            self.const_interps[current_index()].items()))
+
             def current_funcs() -> Dict[FunctionDecl, List[Tuple[List[str], str]]]:
-                return dict(itertools.chain(self.immut_func_interps.items(), self.func_interps[current_index()].items()))
+                return dict(itertools.chain(self.immut_func_interps.items(),
+                                            self.func_interps[current_index()].items()))
             scope: syntax.Scope[Union[str, bool]] = \
                 cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
             if isinstance(expr, syntax.Bool):
@@ -1770,7 +1783,8 @@ class Trace(object):
             elif isinstance(expr, syntax.Id):
                 a = scope.get(expr.name)
                 # definitions are not supported
-                assert not isinstance(a, syntax.DefinitionDecl) and not isinstance(a, syntax.FunctionDecl) and a is not None
+                assert not isinstance(a, syntax.DefinitionDecl) and \
+                    not isinstance(a, syntax.FunctionDecl) and a is not None
                 if isinstance(a, syntax.RelationDecl):
                     return _lookup_assoc(current_rels()[a], [])
                 elif isinstance(a, syntax.ConstantDecl):

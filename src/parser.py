@@ -691,7 +691,8 @@ def p_decl_definition(p: Any) -> None:
     if num_states != 2 and isinstance(body, tuple):
         mods, _ = body
         if len(mods) != 0:
-            utils.print_error(mods[0].span, "syntax error: modifies clause only allowed on twostate definitions or transitions")
+            utils.print_error(mods[0].span,
+                              "syntax error: modifies clause only allowed on twostate definitions or transitions")
             return
 
     p[0] = syntax.DefinitionDecl(is_public_transition=False, num_states=num_states,
@@ -708,7 +709,6 @@ def p_phase_target_phase(p: Any) -> None:
 
 def p_phase_transition_decl(p: Any) -> None:
     'phase_component : TRANSITION id IMPLIES phase_target option_guard'
-    id_tok = p[2]
     target_tok: Token = p[4]
     target = target_tok.value if target_tok.type == 'ID' else None
     precond: Optional[syntax.Expr] = p[5]
@@ -864,7 +864,7 @@ def p_error(t: Any) -> None:
         utils.print_error(t, 'syntax error near EOF')
 
 program_parser = None
-def get_parser(forbid_rebuild: bool=False) -> ply.yacc.LRParser:
+def get_parser(forbid_rebuild: bool = False) -> ply.yacc.LRParser:
     global program_parser
     if not program_parser:
         # intentionally don's pass optimize=True here, because that disables the signature check
@@ -885,4 +885,3 @@ def parse_expr(input: str) -> syntax.Expr:
     l = get_lexer()
     p = get_expr_parser()
     return p.parse(input=input, lexer=l, filename='<none>')
-

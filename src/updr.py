@@ -55,11 +55,16 @@ class Frames(object):
         self.predicates: List[Expr] = []
         self.state_count = 0
 
-        self.inductive_invariant: Set[int] = set() # indices into predicates of currently inductive predicates
-        self.human_invariant = tuple(itertools.chain(*(syntax.as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety))) # convert to CNF
-        self.human_invariant_to_predicate: Dict[int,int] = dict() # dict mapping index of human_invariant to index of predicates
-        self.human_invariant_proved: Set[int] = set() # indices into human_invariant that are implied by the current inductive_invariant
-        self.human_invariant_implies: Set[int] = set() # indices into predicates of predicates that are implied by the human invariant
+        # indices into predicates of currently inductive predicates
+        self.inductive_invariant: Set[int] = set()
+        self.human_invariant = \
+            tuple(itertools.chain(*(syntax.as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety)))  # CNF
+        # dict mapping index of human_invariant to index of predicates
+        self.human_invariant_to_predicate: Dict[int, int] = dict()
+        # indices into human_invariant that are implied by the current inductive_invariant
+        self.human_invariant_proved: Set[int] = set()
+        # indices into predicates of predicates that are implied by the human invariant
+        self.human_invariant_implies: Set[int] = set()
 
         self._first_frame()
 
@@ -75,8 +80,8 @@ class Frames(object):
     def _first_frame(self) -> None:
         init_conjuncts = [init.expr for init in syntax.the_program.inits()]
         self.new_frame({p: init_conjuncts if p == self.automaton.init_phase()
-                                          else [syntax.FalseExpr]
-                         for p in self.automaton.phases()})
+                        else [syntax.FalseExpr]
+                        for p in self.automaton.phases()})
 
     @utils.log_start_end_xml(utils.logger, logging.DEBUG)
     def new_frame(self, contents: Optional[Dict[Phase, Sequence[Expr]]] = None) -> None:
@@ -212,7 +217,8 @@ class Frames(object):
                 utils.logger.debug('frame %s phase %s attempting to push %s' %
                                    (frame_no, p.name(), c))
 
-                res = self.clause_implied_by_transitions_from_frame(f, p, c, minimize=is_safety or utils.args.block_may_cexs)
+                res = self.clause_implied_by_transitions_from_frame(
+                    f, p, c, minimize=is_safety or utils.args.block_may_cexs)
                 if res is None:
                     utils.logger.debug('frame %s phase %s managed to push %s' %
                                        (frame_no, p.name(), c))
@@ -534,7 +540,8 @@ class Frames(object):
                 assert trans is not None
                 precond = delta.precond
 
-                with utils.LogTag(utils.logger, 'find-pred', transition=delta.transition, weight=str(phase_transition.avg_time_traversing())):
+                with utils.LogTag(utils.logger, 'find-pred', transition=delta.transition,
+                                  weight=str(phase_transition.avg_time_traversing())):
                     with solver:
                         solver.add(t.translate_transition(trans, precond=precond))
                         before_check = datetime.now()
@@ -663,7 +670,7 @@ class Frames(object):
     def store_frames(self, out_filename: str) -> None:
         s = self.solver
         try:
-            self.solver = None # type: ignore
+            self.solver = None  # type: ignore
             with open(out_filename, "wb") as f:
                 pickle.dump(self, f)
         finally:
@@ -689,7 +696,9 @@ class Frames(object):
                     inv.remove(i)
         self.inductive_invariant |= inv
         # print information
-        utils.logger.info(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, {len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} implied by human invariant):')
+        utils.logger.info(f'\n[{datetime.now()}] Current predicates ({len(self.predicates)} total, '
+                          f'{len(self.inductive_invariant)} proven, {len(self.human_invariant_implies)} '
+                          'implied by human invariant):')
         for i, p in enumerate(self.predicates):
             note = '({})'.format({
                 phase.name(): max((j for j, f in enumerate(self.fs) if p in f.summary_of(phase)), default=-1)
@@ -703,9 +712,12 @@ class Frames(object):
         for i, p in enumerate(self.human_invariant):
             if (i not in self.human_invariant_proved and
                 len(self.inductive_invariant) > 0 and
-                logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)], [p], minimize=False) is None):
+                logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)],
+                                        [p], minimize=False) is None):
                 self.human_invariant_proved.add(i)
-        utils.logger.info(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, {len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} proven):')
+        utils.logger.info(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, '
+                          f'{len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} '
+                          'proven):')
         for i, p in enumerate(self.human_invariant):
             notes = []
             if i in self.human_invariant_proved:

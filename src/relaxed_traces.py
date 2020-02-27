@@ -2,7 +2,7 @@ import syntax
 import utils
 import logic
 from logic import Trace, Diagram, Solver
-from syntax import Expr, SortedVar
+from syntax import Expr
 from utils import Set
 from updr import RelaxedTrace
 from trace import bmc_trace
@@ -69,14 +69,15 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
     new_decls.append(relaxation_action_def(prog, actives=actives, fresh=True))
 
     res = syntax.Program(new_decls)
-    res.resolve() # #sorrynotsorry
+    res.resolve()  # #sorrynotsorry
     return res
 
 
-def relaxation_action_def(prog: syntax.Program,
-                          actives: Optional[Dict[syntax.SortDecl, syntax.RelationDecl]]=None,
-                          fresh: bool=True)  \
-                            -> syntax.DefinitionDecl:
+def relaxation_action_def(
+        prog: syntax.Program,
+        actives: Optional[Dict[syntax.SortDecl, syntax.RelationDecl]] = None,
+        fresh: bool = True
+) -> syntax.DefinitionDecl:
     decrease_name = (prog.scope.fresh('decrease_domain') if fresh else 'decrease_domain')
     mods = []
     conjs: List[Expr] = []
@@ -109,8 +110,9 @@ def relaxation_action_def(prog: syntax.Program,
             func_conjs.append(syntax.New(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(name)])))
         ap_func = syntax.Apply(func.name, [syntax.Id(name) for name in names])
         name = prog.scope.fresh('y', also_avoid=names)
-        active_func = syntax.Let(syntax.SortedVar(name, func.sort), ap_func,
-                                 syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [syntax.Id(name)])))
+        active_func = syntax.Let(
+            syntax.SortedVar(name, func.sort), ap_func,
+            syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [syntax.Id(name)])))
         conjs.append(syntax.Forall([syntax.SortedVar(name, None) for name in names],
                                    syntax.Implies(syntax.And(*func_conjs), active_func)))
 
@@ -138,15 +140,13 @@ def relaxation_action_def(prog: syntax.Program,
                                  params=[], body=(mods, syntax.And(*conjs)))
 
 
-
-
 class RelationFact(object):
     def __init__(self, rel: syntax.RelationDecl, els: List[str], polarity: bool):
         self._rel = rel
         self._els = els
         self._polarity = polarity
 
-    def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
+    def as_expr(self, els_trans: Callable[[str], str]) -> Expr:
         fact_free_vars = syntax.Apply(self._rel.name, [syntax.Id(els_trans(e)) for e in self._els])
         if not self._is_positive():
             fact_free_vars = syntax.Not(fact_free_vars)
@@ -170,7 +170,7 @@ class FunctionFact(object):
         self._params_els = param_els
         self._res_elm = res_elm
 
-    def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
+    def as_expr(self, els_trans: Callable[[str], str]) -> Expr:
         e = syntax.AppExpr(self._func.name, [syntax.Id(els_trans(e)) for e in self._params_els])
         return syntax.Eq(e, syntax.Id(els_trans(self._res_elm)))
 
@@ -188,7 +188,7 @@ class InequalityFact(object):
         self._lhs = lhs
         self._rhs = rhs
 
-    def as_expr(self, els_trans: Callable[[str],str]) -> Expr:
+    def as_expr(self, els_trans: Callable[[str], str]) -> Expr:
         return syntax.Neq(syntax.Id(els_trans(self._lhs)),
                           syntax.Id(els_trans(self._rhs)))
 
@@ -201,8 +201,8 @@ class InequalityFact(object):
     def __str__(self) -> str:
         return "%s ! %s" % (self._lhs, self._rhs)
 
-def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl,T]) -> T:
-    for r,v in m.items():
+def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl, T]) -> T:
+    for r, v in m.items():
         if r.name != name:
             continue
         return v
@@ -215,7 +215,7 @@ def first_relax_step_idx(trns: Trace) -> int:
     return first_relax_idx
 
 def all_relax_step_idx(trns: Trace) -> List[int]:
-    res = [i for (i,x) in enumerate(trns.transitions) if x == 'decrease_domain']
+    res = [i for (i, x) in enumerate(trns.transitions) if x == 'decrease_domain']
     assert len(res) > 0
     assert all(i + 1 < len(trns.keys) for i in res)
     return res
@@ -231,8 +231,10 @@ def active_rel_by_sort(prog: syntax.Program) -> Dict[syntax.SortDecl, syntax.Rel
 def active_var(name: str, sort_name: str) -> syntax.Expr:
     return syntax.Apply('active_%s' % sort_name, [syntax.Id(name)])
 
-def closing_qa_cycle(prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl],
-                                           existentially_quantified_sorts: List[syntax.SortDecl]) -> bool:
+def closing_qa_cycle(
+        prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl],
+        existentially_quantified_sorts: List[syntax.SortDecl]
+) -> bool:
     qa_graph = prog.decls_quantifier_alternation_graph([])
     assert networkx.is_directed_acyclic_graph(qa_graph)
 
@@ -249,8 +251,10 @@ def is_rel_blocking_relax(trns: Trace,
     return any(is_rel_blocking_relax_step(trns, idx, derived_rel)
                for idx in relax_idxs)
 
-def is_rel_blocking_relax_step(trns: Trace, idx: int,
-                          derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]) -> bool:
+def is_rel_blocking_relax_step(
+        trns: Trace, idx: int,
+        derived_rel: Tuple[List[Tuple[syntax.SortedVar, str]], Expr]
+) -> bool:
     # TODO: probably can obtain the sort from the sortedvar when not using pickle
     free_vars, derived_relation_formula = derived_rel
     free_vars_active_clause = syntax.And(*(active_var(v.name, sort_name) for (v, sort_name) in free_vars))
@@ -269,13 +273,14 @@ def is_rel_blocking_relax_step(trns: Trace, idx: int,
     assert isinstance(res, bool)
     return cast(bool, res)
 
-def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
-                                       max_conj_size: int, max_free_vars: int) -> List[Tuple[List[syntax.SortedVar],Expr]]:
+def derived_rels_candidates_from_trace(
+        trns: Trace, more_traces: List[Trace],
+        max_conj_size: int, max_free_vars: int
+) -> List[Tuple[List[syntax.SortedVar], Expr]]:
     first_relax_idx = first_relax_step_idx(trns)
     pre_relax_state = trns.as_state(first_relax_idx)
     post_relax_state = trns.as_state(first_relax_idx + 1)
     assert pre_relax_state.univs == post_relax_state.univs
-
 
     # relaxed elements
     relaxed_elements = []
@@ -291,7 +296,7 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             relaxed_elements.append((sort, relaxed_elem))
 
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
-    relevant_facts: List[Union[RelationFact,FunctionFact,InequalityFact]] = []
+    relevant_facts: List[Union[RelationFact, FunctionFact, InequalityFact]] = []
 
     for rel, rintp in pre_relax_state.rel_interp.items():
         for rfact in rintp:
@@ -307,7 +312,7 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             if set(function_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append(function_fact)
 
-    for sort, elm in relaxed_elements: # other inequalities presumably handled by UPDR
+    for sort, elm in relaxed_elements:  # other inequalities presumably handled by UPDR
         for other_elm in pre_relax_state.univs[sort]:
             if other_elm == elm:
                 continue
@@ -320,7 +325,7 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
         elements = utils.OrderedSet(itertools.chain.from_iterable(fact.involved_elms() for fact in fact_lst))
         relaxed_elements_relevant = [elm for (_, elm) in relaxed_elements if elm in elements]
         vars_from_elm = dict((elm, syntax.SortedVar(syntax.the_program.scope.fresh("v%d" % i), None))
-                                for (i, elm) in enumerate(elements))
+                             for (i, elm) in enumerate(elements))
         parameter_elements = elements - set(relaxed_elements_relevant)
         if len(parameter_elements) > max_free_vars:
             continue
@@ -345,18 +350,20 @@ def derived_rels_candidates_from_trace(trns: Trace, more_traces: List[Trace],
             continue
         candidates_cache.add(str(derived_relation_formula))
 
-        if closing_qa_cycle(syntax.the_program, [pre_relax_state.element_sort(elm) for elm in parameter_elements],
-                                                [pre_relax_state.element_sort(elm) for elm in relaxed_elements_relevant]):
+        if closing_qa_cycle(syntax.the_program,
+                            [pre_relax_state.element_sort(elm) for elm in parameter_elements],
+                            [pre_relax_state.element_sort(elm) for elm in relaxed_elements_relevant]):
             # adding the derived relation would close a quantifier alternation cycle, discard the candidate
             continue
 
         # if trns.eval_double_vocab(diffing_formula, first_relax_idx):
-        if is_rel_blocking_relax_step(trns, first_relax_idx,
-                                 ([(vars_from_elm[elm], pre_relax_state.element_sort(elm).name) for elm in parameter_elements],
-                                  derived_relation_formula)):
+        if is_rel_blocking_relax_step(
+                trns, first_relax_idx,
+                ([(vars_from_elm[elm], pre_relax_state.element_sort(elm).name) for elm in parameter_elements],
+                 derived_relation_formula)):
             # if all(trs.eval_double_vocab(diffing_formula, first_relax_step_idx(trs)) for trs in more_traces):
-                diff_conjunctions.append(([vars_from_elm[elm] for elm in parameter_elements],
-                                           derived_relation_formula))
+            diff_conjunctions.append(([vars_from_elm[elm] for elm in parameter_elements],
+                                      derived_relation_formula))
 
     return diff_conjunctions
 
@@ -387,7 +394,7 @@ def active_rels_mapping() -> Mapping[syntax.SortDecl, syntax.RelationDecl]:
     prog = syntax.the_program
 
     for sort in prog.sorts():
-        name = 'active_' + sort.name # prog.scope.fresh('active_' + sort.name)
+        name = 'active_' + sort.name  # prog.scope.fresh('active_' + sort.name)
         r = syntax.RelationDecl(name, arity=[syntax.UninterpretedSort(sort.name)],
                                 mutable=True, derived=None, annotations=[])
         actives[sort] = r

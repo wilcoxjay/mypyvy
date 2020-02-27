@@ -6,7 +6,9 @@ import z3
 
 from typing import Callable, List, Optional, Tuple
 
-def translate_transition_call(s: Solver, lator: syntax.Z3Translator, key_index: int, c: syntax.TransitionCall) -> z3.ExprRef:
+def translate_transition_call(
+        s: Solver, lator: syntax.Z3Translator, key_index: int, c: syntax.TransitionCall
+) -> z3.ExprRef:
     prog = syntax.the_program
     ition = prog.scope.get_definition(c.target)
     assert ition is not None
@@ -28,9 +30,10 @@ def translate_transition_call(s: Solver, lator: syntax.Z3Translator, key_index: 
         return body
 
 
-def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
-              s: Solver, sat_checker: Callable[[Solver, Tuple[str, ...]], Optional[logic.Trace]],
-              log: bool=False
+def bmc_trace(
+        prog: syntax.Program, trace: syntax.TraceDecl,
+        s: Solver, sat_checker: Callable[[Solver, Tuple[str, ...]], Optional[logic.Trace]],
+        log: bool = False
 ) -> Optional[logic.Trace]:
     n_states = len(list(trace.transitions())) + 1
     if log:

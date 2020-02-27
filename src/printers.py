@@ -152,7 +152,8 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     index_sort = syntax.get_decl_from_sort(index_le.arity[0])
     index_used = get_relation(args[1])
 
-    def default_values() -> List[List[str]]: return [[] for x in range(n_values)]
+    def default_values() -> List[List[str]]:
+        return [[] for x in range(n_values)]
 
     def assert_valid_rel_or_func(rel_or_func: Union[RelationDecl, FunctionDecl]) -> None:
         assert len(rel_or_func.arity) >= 2

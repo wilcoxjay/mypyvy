@@ -74,8 +74,8 @@ class PhaseAutomaton(object):
         self._transitions = [PhaseTransition(self._phases[p.name],
                                              self._phases[(delta.target if delta.target is not None else p.name)],
                                              delta)
-                                for p in self.automaton_decl.phases()
-                                for delta in p.transitions()]
+                             for p in self.automaton_decl.phases()
+                             for delta in p.transitions()]
 
         init_decl = automaton_decl.the_init()
         assert init_decl is not None
@@ -96,17 +96,18 @@ class PhaseAutomaton(object):
         return [t.src() for t in self._transitions if t.target() == trg]
 
     def transitions_between(self, src: Phase, target: Phase) -> List[PhaseTransition]:
-        return list(sorted(filter(lambda t: (t.src() == src) & (t.target() == target), self._transitions), key=lambda t: t.avg_time_traversing()))
+        return list(sorted(filter(lambda t: (t.src() == src) & (t.target() == target), self._transitions),
+                           key=lambda t: t.avg_time_traversing()))
 
     def transitions_to_grouped_by_src(self, target: Phase) -> Dict[Phase, Sequence[PhaseTransition]]:
         return {p: self.transitions_between(p, target) for p in self.predecessors(target)}
 
     def transitions_from(self, p: Phase) -> Sequence[PhaseTransition]:
-        return [t for t in self._transitions if t.src() == p ]
+        return [t for t in self._transitions if t.src() == p]
 
 
 class Frame(object):
-    def __init__(self, phases: Sequence[Phase], summaries: Optional[Dict[Phase, Sequence[Expr]]]=None) -> None:
+    def __init__(self, phases: Sequence[Phase], summaries: Optional[Dict[Phase, Sequence[Expr]]] = None) -> None:
         self._summary_by_pred: Dict[Phase, MySet[Expr]] = OrderedDict()
         if summaries is None:
             summaries = {}
