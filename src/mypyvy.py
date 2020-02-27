@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Set, Union, Sequence
+from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Union, Sequence
 import z3
 import resource
 
@@ -135,9 +135,9 @@ def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
                     s.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond, trans))
                                    for delta in phase.transitions() if trans.name == delta.transition)))
 
-                    logic.check_unsat([(phase.span, 'transition %s is not covered by this phase' %
-                                        (trans.name, )),
-                                       (trans.span, 'this transition misses transitions from phase %s' % (phase.name,))],
+                    logic.check_unsat([(phase.span, 'transition %s is not covered by this phase' % (trans.name, )),
+                                       (trans.span, 'this transition misses transitions from phase %s' %
+                                        (phase.name,))],
                                       s, (KEY_OLD, KEY_NEW))
 
 
@@ -177,13 +177,15 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
                             utils.logger.always_print('      preserves invariant%s... ' % msg, end='')
                             sys.stdout.flush()
 
-                            logic.check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s in phase %s' %
+                            logic.check_unsat([(inv.span,
+                                                'invariant%s may not be preserved by transition %s in phase %s' %
                                                 (msg, trans_pretty, phase.name)),
                                                (delta.span, 'this transition may not preserve invariant%s' % (msg,))],
                                               s, (KEY_OLD, KEY_NEW))
 
 JSON = Dict[str, Any]
-def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace], Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> JSON:
+def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
+                                   Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> JSON:
     RT = Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]
     CT = Dict[syntax.ConstantDecl, str]
     FT = Dict[syntax.FunctionDecl, List[Tuple[List[str], str]]]
@@ -361,7 +363,7 @@ def ipython(s: Solver) -> None:
 
 
 def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
-    import xml.dom.minidom # type: ignore
+    import xml.dom.minidom  # type: ignore
     collection = xml.dom.minidom.parse("paxos_derived_trace.xml").documentElement
 
     components: List[syntax.TraceComponent] = []
@@ -381,10 +383,12 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             if not seen_first:
                 # restrict the domain to be subdomain of the diagram's existentials
                 seen_first = True
-                import itertools # type: ignore
-                for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort): # TODO; need to sort first
+                import itertools  # type: ignore
+                for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort):  # TODO; need to sort first
                     free_var = syntax.SortedVar(syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
-                    consts = list(filter(lambda c: c.sort == sort, prog.constants())) # TODO: diagram simplification omits them from the exists somewhere
+
+                    # TODO: diagram simplification omits them from the exists somewhere
+                    consts = list(filter(lambda c: c.sort == sort, prog.constants()))
                     els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
                     els = list(vars)
                     els += consts
@@ -401,7 +405,8 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             components.append(syntax.AssertDecl(expr=diagram_active))
         elif elm.tagName == 'action':
             action_name = elm.childNodes[0].data.split()[0]
-            components.append(syntax.TraceTransitionDecl(transition=syntax.TransitionCalls(calls=[syntax.TransitionCall(target=action_name, args=None)])))
+            tcall = syntax.TransitionCalls(calls=[syntax.TransitionCall(target=action_name, args=None)])
+            components.append(syntax.TraceTransitionDecl(transition=tcall))
         else:
             assert False, "unknown xml tagName"
 
@@ -428,7 +433,6 @@ def sandbox(s: Solver) -> None:
         # for conj in diffing_conjunction:
         #     print("\t %s" % str(conj))
         print(diffing_conjunction[1])
-
 
     derrel_name = syntax.the_program.scope.fresh("nder")
     (free_vars, def_expr) = diff_conjunctions[0]
@@ -469,18 +473,21 @@ def sandbox(s: Solver) -> None:
     trns2 = cast(logic.Trace, trns2_o)
     print(trns2)
     print()
-    assert not relaxed_traces.is_rel_blocking_relax(trns2,
-                                                    ([(v, str(syntax.safe_cast_sort(v.sort))) for v in free_vars], def_expr))
+    assert not relaxed_traces.is_rel_blocking_relax(
+        trns2,
+        ([(v, str(syntax.safe_cast_sort(v.sort))) for v in free_vars], def_expr))
 
     # for candidate in diff_conjunctions:
     #     print("start checking")
     #     print()
-    #     if str(candidate[1]) == 'exists v0:node. member(v0, v1) & left_round(v0, v2) & !vote(v0, v2, v3) & active_node(v0)':
+    #     if str(candidate[1]) == ('exists v0:node. member(v0, v1) & left_round(v0, v2) '
+    #                              '& !vote(v0, v2, v3) & active_node(v0)'):
     #         print(candidate)
     #         assert False
-    #         resush = relaxed_traces.is_rel_blocking_relax_step(trns2, 11,
-    #                                                       ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
-    #                                                        candidate[1]))
+    #         resush = relaxed_traces.is_rel_blocking_relax_step(
+    #             trns2, 11,
+    #             ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
+    #              candidate[1]))
     #         # res2 = trns2.as_state(0).eval(syntax.And(*[i.expr for i in syntax.the_program.inits()]))
     #
     #         # resush = trns2.as_state(7).eval(syntax.And(*[i.expr for i in syntax.the_program.inits()]))
@@ -489,9 +496,10 @@ def sandbox(s: Solver) -> None:
     # assert False
 
     diff_conjunctions = list(
-        filter(lambda candidate: relaxed_traces.is_rel_blocking_relax(trns2,
-                                                                      ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]],
-                                                                       candidate[1])),
+        filter(lambda candidate:
+               relaxed_traces.is_rel_blocking_relax(
+                   trns2,
+                   ([(v, str(syntax.safe_cast_sort(v.sort))) for v in candidate[0]], candidate[1])),
                diff_conjunctions))
     print("num candidate relations:", len(diff_conjunctions))
     for diffing_conjunction in diff_conjunctions:
@@ -518,7 +526,8 @@ def trace(s: Solver) -> None:
         if (res is not None) != trace.sat:
             def bool_to_sat(b: bool) -> str:
                 return 'sat' if b else 'unsat'
-            utils.print_error(trace.span, 'trace declared %s but was %s!' % (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
+            utils.print_error(trace.span, 'trace declared %s but was %s!' %
+                              (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
 
 
 def relax(s: Solver) -> None:
@@ -534,31 +543,46 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     verify_subparser.set_defaults(main=verify)
     all_subparsers.append(verify_subparser)
 
-    updr_subparser = subparsers.add_parser('updr', help='search for a strengthening that proves the invariant named by the --safety=NAME flag')
+    updr_subparser = subparsers.add_parser(
+        'updr',
+        help='search for a strengthening that proves the invariant named by the --safety=NAME flag')
     updr_subparser.set_defaults(main=do_updr)
     all_subparsers.append(updr_subparser)
 
-    bmc_subparser = subparsers.add_parser('bmc', help='bounded model check to depth given by the --depth=DEPTH flag for property given by the --safety=NAME flag')
+    bmc_subparser = subparsers.add_parser(
+        'bmc',
+        help='bounded model check to depth given by the --depth=DEPTH flag '
+             'for property given by the --safety=NAME flag')
     bmc_subparser.set_defaults(main=bmc)
     all_subparsers.append(bmc_subparser)
 
-    theorem_subparser = subparsers.add_parser('theorem', help='check state-independent theorems about the background axioms of a model')
+    theorem_subparser = subparsers.add_parser(
+        'theorem',
+        help='check state-independent theorems about the background axioms of a model')
     theorem_subparser.set_defaults(main=theorem)
     all_subparsers.append(theorem_subparser)
 
-    trace_subparser = subparsers.add_parser('trace', help='search for concrete executions that satisfy query described by the file\'s trace declaration')
+    trace_subparser = subparsers.add_parser(
+        'trace',
+        help='search for concrete executions that satisfy query described by the file\'s trace declaration')
     trace_subparser.set_defaults(main=trace)
     all_subparsers.append(trace_subparser)
 
-    generate_parser_subparser = subparsers.add_parser('generate-parser', help='internal command used by benchmarking infrastructure to avoid certain race conditions')
-    generate_parser_subparser.set_defaults(main=nop)  # parser is generated implicitly by main when it parses the program
+    generate_parser_subparser = subparsers.add_parser(
+        'generate-parser',
+        help='internal command used by benchmarking infrastructure to avoid certain race conditions')
+    # parser is generated implicitly by main when it parses the program, so we can just nop here
+    generate_parser_subparser.set_defaults(main=nop)
     all_subparsers.append(generate_parser_subparser)
 
     typecheck_subparser = subparsers.add_parser('typecheck', help='typecheck the file, report any errors, and exit')
     typecheck_subparser.set_defaults(main=nop)  # program is always typechecked; no further action required
     all_subparsers.append(typecheck_subparser)
 
-    relax_subparser = subparsers.add_parser('relax', help='produce a version of the file that is "relaxed", in a way that is indistinguishable for universal invariants')
+    relax_subparser = subparsers.add_parser(
+        'relax',
+        help='produce a version of the file that is "relaxed", '
+             'in a way that is indistinguishable for universal invariants')
     relax_subparser.set_defaults(main=relax)
     all_subparsers.append(relax_subparser)
 
@@ -595,9 +619,12 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--print-cmdline', action=utils.YesNoAction, default=True,
                        help='print the command line passed to mypyvy')
         s.add_argument('--clear-cache', action=utils.YesNoAction, default=False,
-                       help='do not load from cache, but dump to cache as usual (effectively clearing the cache before starting)')
+                       help='do not load from cache, but dump to cache as usual '
+                            '(effectively clearing the cache before starting)')
         s.add_argument('--clear-cache-memo', action=utils.YesNoAction, default=False,
-                       help='load only discovered states from the cache, but dump to cache as usual (effectively clearing the memoization cache before starting, while keeping discovered states and transitions)')
+                       help='load only discovered states from the cache, but dump to cache as usual '
+                            '(effectively clearing the memoization cache before starting, '
+                            'while keeping discovered states and transitions)')
         s.add_argument('--cache-only', action=utils.YesNoAction, default=False,
                        help='assert that the caches already contain all the answers')
         s.add_argument('--cache-only-discovered', action=utils.YesNoAction, default=False,
@@ -614,7 +641,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
                        default=(s is updr_subparser),
                        default_description='yes for updr, else no',
-                       help='in diagram generation, substitute existentially quantified variables that are equal to constants')
+                       help='in diagram generation, substitute existentially quantified variables '
+                            'that are equal to constants')
         s.add_argument('--diagrams-subclause-complete', action=utils.YesNoAction, default=False,
                        help='in diagram generation, "complete" the diagram so that every stronger '
                             'clause is a subclause')
@@ -634,10 +662,12 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     updr_subparser.add_argument('--block-may-cexs', action=utils.YesNoAction, default=False,
                                 help="treat failures to push as additional proof obligations")
     updr_subparser.add_argument('--push-frame-zero', default='if_trivial', choices=['if_trivial', 'always', 'never'],
-                                help="push lemmas from the initial frame: always/never/if_trivial, the latter is when there is more than one phase")
+                                help="push lemmas from the initial frame: always/never/if_trivial, "
+                                     "the latter is when there is more than one phase")
 
     verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],
-                                  help="whether to use phase automata during verification. by default ('yes'), both non-automaton "
+                                  help="whether to use phase automata during verification. "
+                                       "by default ('yes'), both non-automaton "
                                   "and automaton proofs are checked. 'no' means ignore automaton proofs. "
                                   "'only' means ignore non-automaton proofs.")
     verify_subparser.add_argument('--check-transition', default=None, nargs='+',
@@ -647,13 +677,12 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     verify_subparser.add_argument('--json', action='store_true',
                                   help="output machine-parseable verification results in JSON format")
     verify_subparser.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
-                                help='(for debugging mypyvy itself) double check countermodels by evaluation')
+                                  help='(for debugging mypyvy itself) double check countermodels by evaluation')
 
     updr_subparser.add_argument('--checkpoint-in',
                                 help='start from internal state as stored in given file')
     updr_subparser.add_argument('--checkpoint-out',
-                                help='store internal state to given file') # TODO: say when
-
+                                help='store internal state to given file')  # TODO: say when
 
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
@@ -686,7 +715,10 @@ def parse_program(input: str, forbid_rebuild: bool = False, filename: Optional[s
     return prog
 
 def main() -> None:
-    resource.setrlimit(resource.RLIMIT_AS, (90*10**9, 90*10**9))  # limit RAM usage to 45 GB # TODO: make this a command line argument # TODO: not sure if this is actually the right way to do this (also, what about child processes?)
+    # limit RAM usage to 45 GB
+    # TODO: make this a command line argument
+    # TODO: not sure if this is actually the right way to do this (also, what about child processes?)
+    resource.setrlimit(resource.RLIMIT_AS, (90 * 10**9, 90 * 10**9))
 
     utils.args = parse_args(sys.argv[1:])
 
@@ -729,7 +761,8 @@ def main() -> None:
         pre_parse_error_count = utils.error_count
 
         with open(utils.args.filename) as f:
-            prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild, filename=utils.args.filename)
+            prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild,
+                                 filename=utils.args.filename)
 
         if utils.error_count > pre_parse_error_count:
             utils.logger.always_print('program has syntax errors.')

@@ -3,6 +3,9 @@ MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
+style:
+	$(PYTHON) -m flake8 $(SRC_FILES)
+
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
 
@@ -99,4 +102,4 @@ src/%.importable: src/%.py
 clear-cache:
 	rm -iv examples/*.cache examples/*/*.cache
 
-.PHONY: check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache
+.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache
