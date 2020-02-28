@@ -1,5 +1,6 @@
 
 import subprocess, os, signal, sys, json, threading, time, argparse, random
+from os import path
 from concurrent.futures import ThreadPoolExecutor
 from typing import *
 
@@ -48,7 +49,7 @@ def run(r: Any, logger: ResultsLogger) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", "-o", metavar="OUT", required=True, help="output file to write")
-    parser.add_argument("--timeout", metavar='T', type=float, default = 10*60, help="timeout for inference")
+    parser.add_argument("--timeout", metavar='T', type=float, default = 60*60, help="timeout for inference")
     parser.add_argument("--count", metavar='N', type=int, default = 1, help="number of times run each example")
     parser.add_argument("--cpus", type=int, default=os.cpu_count(), help="number of concurrent processes to run")
     parser.add_argument("--log-dir", metavar="D", required=True, help="where to write output logs (must be existing directory)")
@@ -57,17 +58,17 @@ def main() -> None:
     
     args = parser.parse_args()
     
-    
+    os.makedirs(path.abspath(args.log_dir), exist_ok=True)
     logger = ResultsLogger(args.output)
     extra_args =  args.args if len(args.args) == 0 or args.args[0] != '--' else args.args[1:]
     descs = [
         # work reliably
         ('client_server_ae', False, True),
+        ('client_server_db_ae', False, True),
         ('consensus_forall', True, False),
         ('consensus_forall_without_decide', True, False),
         ('firewall', False, True),
         ('lockserv', True, False),
-        ('ring-not-dead', False, True),
         ('ring', True, False),
         ('sharded-kv-no-lost-keys', False, True),
         ('sharded-kv', True, False),
@@ -75,11 +76,12 @@ def main() -> None:
         ('toy_consensus_epr', False, True),
         
         # don't work reliably
-        ('client_server_db_ae', False, True),
+        ('ring-not-dead', False, True),
         ('consensus_epr', False, True),
         ('learning_switch', True, True),
     ]
 
+    common_name = path.splitext(path.basename(args.output))[0]
     with ThreadPoolExecutor(max_workers=args.cpus) as executor:
         for i in range(args.count):
             random.shuffle(descs)
@@ -90,8 +92,8 @@ def main() -> None:
                 r = {"name": name,
                      "index": i,
                      "timeout": args.timeout,
-                     "log": f"{args.log_dir}/log_{name}_{i}.out",
-                     "args": ['python3.7', 'src/mypyvy.py', 'fol-ic3'] + a}
+                     "log": path.join(args.log_dir, f"{common_name}-log-{name}-{i}.out"),
+                     "args": ['python3.7', '-u', 'src/mypyvy.py', 'fol-ic3'] + a}
             
                 executor.submit(run, r, logger)
     logger.close()
