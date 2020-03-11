@@ -1,8 +1,0 @@
-python3 benchmark.py -n 100 -j 4 --timeout 300 --pin-cores --keep-logs logs/181028-002120-cache --benchmark test/cache.pyv
-Benchmark('test/cache.pyv',safety=safety)
-[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
-avg_time: 0.0
-stdev_time: 0.0
-avg_nqueries: 0.0
-stdev_nqueries: 0.0
-# timeouts: 100
