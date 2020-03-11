@@ -658,6 +658,7 @@ class Solver(object):
             print('(reset)', file=proc.stdin)
             print(cvc4script, file=proc.stdin)
             # print(cvc4script)
+            assert proc.stdout is not None
             ans = proc.stdout.readline()
             if len(ans) == 0:
                 print(cvc4script)
@@ -756,6 +757,7 @@ class Solver(object):
     def _solver_model(self) -> z3.ModelRef:
         if self.use_cvc4:
             proc = self.get_cvc4_proc()
+            assert proc.stdout is not None
             print('(get-model)', file=proc.stdin)
             parser = sexp.get_parser('')
             lines = []
