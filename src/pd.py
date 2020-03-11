@@ -190,11 +190,11 @@ def cheap_check_implication(
 ) -> bool:
     s = get_solver()
     t = s.get_translator((KEY_ONE,))
-    with s:
+    with s.new_frame():
         for e in hyps:
             s.add(t.translate_expr(e))
         for e in concs:
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(e)))
                 if s.check() != z3.unsat:
                     return False
@@ -7833,7 +7833,7 @@ def enumerate_reachable_states(s: Solver) -> None:
     # TODO: this does not use caches at all
     prog = syntax.the_program
     states: List[Trace] = []
-    with s:
+    with s.new_frame():
         for sort in prog.sorts():
             b = 2
             # an old hack for paxos that is commented out below
@@ -7857,7 +7857,7 @@ def enumerate_reachable_states(s: Solver) -> None:
             s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0), index=index)))
 
         print('looking for initial states')
-        with s:
+        with s.new_frame():
             t = s.get_translator((KEY_ONE,))
             for init in prog.inits():
                 s.add(t.translate_expr(init.expr))
@@ -7876,7 +7876,7 @@ def enumerate_reachable_states(s: Solver) -> None:
         print(f'done finding initial states! found {len(states)} states')
 
         print('looking for transitions to new states')
-        with s:
+        with s.new_frame():
             t = s.get_translator((KEY_OLD, KEY_NEW))
             for state in states:
                 block_state(t, m)
@@ -7886,7 +7886,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                 print(f'worklist has length {len(worklist)}')
                 state, ition = worklist.pop()
                 new_states = []
-                with s:
+                with s.new_frame():
                     s.add(t.translate_expr(state.as_onestate_formula(0), index=0))
                     s.add(t.translate_transition(ition))
 

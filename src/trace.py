@@ -43,7 +43,7 @@ def bmc_trace(
 
     lator = s.get_translator(keys)
 
-    with s:
+    with s.new_frame():
         if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
             for init in prog.inits():
                 s.add(lator.translate_expr(init.expr, index=0))

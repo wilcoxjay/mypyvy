@@ -95,12 +95,12 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
     prog = syntax.the_program
     t = s.get_translator((KEY_ONE,))
 
-    with s:
+    with s.new_frame():
         for init in prog.inits():
             s.add(t.translate_expr(init.expr))
 
         for inv in (prog.invs() if not safety_only else prog.safeties()):
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(inv.expr)))
 
                 if inv.name is not None:
@@ -139,7 +139,7 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
-    with s:
+    with s.new_frame():
         for inv in prog.invs():
             s.add(t.translate_expr(inv.expr))
 
@@ -150,14 +150,14 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
 
             utils.logger.always_print('checking transation %s:' % (trans.name,))
 
-            with s:
+            with s.new_frame():
                 s.add(t.translate_transition(trans))
                 for inv in prog.invs():
                     if utils.args.check_invariant is not None and \
                        inv.name not in utils.args.check_invariant:
                         continue
 
-                    with s:
+                    with s.new_frame():
                         s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
 
                         if inv.name is not None:
@@ -207,11 +207,11 @@ def check_implication(
         minimize: Optional[bool] = None
 ) -> Optional[z3.ModelRef]:
     t = s.get_translator((KEY_ONE,))
-    with s:
+    with s.new_frame():
         for e in hyps:
             s.add(t.translate_expr(e))
         for e in concs:
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(e)))
                 # if utils.logger.isEnabledFor(logging.DEBUG):
                 #     utils.logger.debug('assertions')
@@ -230,14 +230,14 @@ def check_two_state_implication_all_transitions(
 ) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
-    with s:
+    with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
 
         s.add(z3.Not(t.translate_expr(new_conc, index=1)))
 
         for trans in prog.transitions():
-            with s:
+            with s.new_frame():
                 s.add(t.translate_transition(trans))
 
                 # if utils.logger.isEnabledFor(logging.DEBUG):
@@ -287,7 +287,7 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
     t = s.get_translator(keys)
 
-    with s:
+    with s.new_frame():
         for precond in preconds:
             s.add(t.translate_expr(precond, index=0))
 
@@ -316,7 +316,7 @@ def check_two_state_implication_along_transitions(
 ) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
-    with s:
+    with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
 
@@ -328,7 +328,7 @@ def check_two_state_implication_along_transitions(
             assert trans is not None
             precond = delta.precond
 
-            with s:
+            with s.new_frame():
                 s.add(t.translate_transition(trans, precond=precond))
                 if s.check() != z3.unsat:
                     return s.model(minimize=minimize), phase_transition
@@ -630,10 +630,10 @@ class Solver(object):
         self.stack.pop()
         self.z3solver.pop()
 
-    def __enter__(self) -> None:
+    @contextmanager
+    def new_frame(self) -> Iterator[None]:
         self.push()
-
-    def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
+        yield None
         self.pop()
 
     def add(self, e: z3.ExprRef) -> None:
@@ -862,14 +862,14 @@ class Solver(object):
             sorts_to_minimize: Iterable[z3.SortRef],
             relations_to_minimize: Iterable[z3.FuncDeclRef],
     ) -> z3.ModelRef:
-        with self:
+        with self.new_frame():
             for x in itertools.chain(
                     cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
                     relations_to_minimize):
                 with utils.LogTag(utils.logger, 'sort-or-rel', obj=str(x)):
                     for n in itertools.count(1):
                         with utils.LogTag(utils.logger, 'card', n=str(n)):
-                            with self:
+                            with self.new_frame():
                                 self.add(self._cardinality_constraint(x, n))
                                 res = self.check(assumptions)
                                 if res == z3.sat:

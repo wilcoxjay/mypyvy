@@ -93,12 +93,12 @@ def check_automaton_init(s: Solver, a: AutomatonDecl) -> None:
     init_phase = prog.scope.get_phase(init_decl.phase)
     assert init_phase is not None  # checked by resolver
 
-    with s:
+    with s.new_frame():
         for init in prog.inits():
             s.add(t.translate_expr(init.expr))
 
         for inv in init_phase.invs():
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(inv.expr)))
 
                 if inv.span is not None:
@@ -119,7 +119,7 @@ def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
 
     for phase in a.phases():
         utils.logger.always_print('  checking phase %s:' % phase.name)
-        with s:
+        with s.new_frame():
             for inv in phase.invs():
                 s.add(t.translate_expr(inv.expr))
 
@@ -130,7 +130,7 @@ def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
 
                 utils.logger.always_print('    checking transition %s is covered... ' % trans.name, end='')
 
-                with s:
+                with s.new_frame():
                     s.add(t.translate_transition(trans))
                     s.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond, trans))
                                    for delta in phase.transitions() if trans.name == delta.transition)))
@@ -150,7 +150,7 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
     for phase in a.phases():
         utils.logger.always_print('  checking phase %s:' % phase.name)
 
-        with s:
+        with s.new_frame():
             for inv in phase.invs():
                 s.add(t.translate_expr(inv.expr))
 
@@ -164,10 +164,10 @@ def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
                 trans_pretty = '(%s, %s)' % (trans.name, str(precond) if (precond is not None) else 'true')
                 utils.logger.always_print('    checking transition: %s' % trans_pretty)
 
-                with s:
+                with s.new_frame():
                     s.add(t.translate_transition(trans, precond=precond))
                     for inv in target.invs():
-                        with s:
+                        with s.new_frame():
                             s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
 
                             if inv.span is not None:
@@ -347,7 +347,7 @@ def theorem(s: Solver) -> None:
         utils.logger.always_print(' theorem%s... ' % msg, end='')
         sys.stdout.flush()
 
-        with s:
+        with s.new_frame():
             s.add(z3.Not(t.translate_expr(th.expr)))
 
             logic.check_unsat([(th.span, 'theorem%s may not hold' % msg)], s, keys)
