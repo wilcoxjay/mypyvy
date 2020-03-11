@@ -68,8 +68,7 @@ def check_unsat(
     #     logger.debug('assertions')
     #     logger.debug(str(s.assertions()))
 
-    m = check_solver(s, keys)
-    if m is not None:
+    if (m := check_solver(s, keys)) is not None:
         utils.logger.always_print('')
         if utils.args.print_counterexample:
             utils.logger.always_print(str(m))
@@ -1259,8 +1258,7 @@ def univ_str(state: State) -> List[str]:
 
         def key(x: str) -> Tuple[str, int]:
             ans = print_element(state, s, x)
-            m = _digits_re.match(ans)
-            if m is not None:
+            if (m := _digits_re.match(ans)) is not None:
                 return (m['prefix'], int(m['suffix']))
             else:
                 return (ans, 0)

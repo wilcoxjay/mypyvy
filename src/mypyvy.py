@@ -313,8 +313,7 @@ def bmc(s: Solver) -> None:
     utils.logger.always_print('  ' + str(safety))
 
     for k in range(0, n + 1):
-        m = logic.check_bmc(s, safety, k)
-        if m is not None:
+        if (m := logic.check_bmc(s, safety, k)) is not None:
             if utils.args.print_counterexample:
                 print('found violation')
                 print(str(m))
