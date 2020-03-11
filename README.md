@@ -2,59 +2,29 @@
 
 A language for symbolic transition systems, inspired by Ivy.
 
-## Using the VM
-
-Download from https://tinyurl.com/mypyvy-vm and import into Virtual Box.
-
-The username and password are both `mypyvy`.
-
-Emacs is installed with `mypyvy` support. Open emacs from the dock on the left
-and open (`Ctrl-x Ctrl-f`) the path `~/build/mypyvy/examples/lockserv_clean.pyv`.
-Flycheck automatically runs mypyvy in the background and highlights errors.
-Since the file is correct, there are no errors to report. To see an error,
-try commenting out one of the invariants at the bottom of the file. You will
-see some red squiggles under other invariants and transitions. To see the one-line
-error messages, press `Ctrl-c ! l`.
-
-To see the counterexamples themselves, go back to the `lockserv_clean.pyv` window
-and press `Ctrl-c Ctrl-c` and then press Enter. This will open a new buffer with
-the output of `mypyvy`, and if you commented out an invariant, you will see a
-counterexample.
-
-You can also run manually from the terminal. Open Terminal from the dock and
-`cd` to `~/build/mypyvy`, then you can run
-
-    python3.7 src/mypyvy.py verify examples/lockserv_clean.pyv
-
-And see the same results.
-
-
 ## Dependencies
 
-You need python version 3.7. Any version of the form 3.7.X should work.
+You need python version 3.8. Any version of the form 3.8.X should work.
 
 ```
-python3.7
-Python 3.7.3 (default, Mar 27 2019, 09:23:15)
-...
+python3.8 --version
+Python 3.8.2
 ```
 
 Make sure z3 is installed and on your `PYTHONPATH`. Basic functionality should
 work with any version from the past few years, but for best results, use a recent
-release, such as 4.8.5.
+release, such as 4.8.7.
 
 ```
 z3 --version
-Z3 version 4.8.5 - 64 bit
+Z3 version 4.8.7 - 64 bit
 ```
 
 Importing z3 should work (not report any errors) as follows.
 
 ```
-python3.7
-Python 3.7.3 (default, Mar 27 2019, 09:23:15)
-[Clang 10.0.1 (clang-1001.0.46.3)] on darwin
-Type "help", "copyright", "credits" or "license" for more information.
+python3.8
+...
 >>> import z3
 >>>
 ```
@@ -63,7 +33,7 @@ You need all the python packages given in `requirements.txt`, which you can
 do by running the following:
 
 ```
-python3.7 -m pip install -r requirements.txt
+python3.8 -m pip install -r requirements.txt
 ```
 
 You may wish to set up a virtual environment if you're into that.
@@ -86,7 +56,7 @@ a description of all command line options to a particular mode.
 - `verify`: verifies that the invariants given in the file are inductive.
   For example, we can verify the lock service:
 ```
-python3.7 src/mypyvy.py verify --automaton no examples/lockserv.pyv
+python3.8 src/mypyvy.py verify --automaton no examples/lockserv.pyv
 checking init:
   implies invariant mutex... ok. (0:00:00.000176)
   ...
@@ -105,7 +75,7 @@ all ok!
   example, we can ask it to strengthen the mutex property of the lock service:
 
 ```
-python3.7 src/mypyvy.py updr examples/lockserv.pyv
+python3.8 src/mypyvy.py updr examples/lockserv.pyv
 checking init:
   implies invariant mutex... ok. (0:00:00.000234)
 frame is safe and inductive. done!
@@ -132,7 +102,7 @@ summary of the_phase:
   flag for a property given by the `--safety=NAME` flag. For example, we can check
   that `mutex` property is true for 5 steps as follows:
 ```
-python3.7 src/mypyvy.py bmc --depth=5 --safety=mutex examples/lockserv.pyv
+python3.8 src/mypyvy.py bmc --depth=5 --safety=mutex examples/lockserv.pyv
 bmc checking the following property to depth 5
   forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
 ok. (0:00:00.062531)
@@ -149,7 +119,7 @@ invariant [bad] !holds_lock(N)
   `--minimize-models` to find the trace with the fewest client nodes.)
 
 ```
-python3.7 src/mypyvy.py bmc --depth=5 --safety=bad --minimize-models examples/lockserv.pyv
+python3.8 src/mypyvy.py bmc --depth=5 --safety=bad --minimize-models examples/lockserv.pyv
 bmc checking the following property to depth 5
   forall N:node. !holds_lock(N)
 
