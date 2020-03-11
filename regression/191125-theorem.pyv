@@ -1,4 +1,4 @@
-# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code --accept-old
 
 sort A
 immutable relation lt(A,A)

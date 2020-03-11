@@ -631,7 +631,7 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
                        help='print the exit code before exiting (good for regression testing)')
-        s.add_argument('--accept-old', action=utils.YesNoAction, default=True,
+        s.add_argument('--accept-old', action=utils.YesNoAction, default=False,
                        help='allow deprecated syntax using old()')
 
         s.add_argument('--cvc4', action='store_true',

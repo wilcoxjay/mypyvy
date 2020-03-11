@@ -2018,7 +2018,7 @@ class DefinitionDecl(Decl):
             mod.resolve(scope)
 
         if self.num_states == 2:
-            if not uses_old(self.expr) and not uses_new(self.expr):
+            if utils.args.accept_old and not uses_old(self.expr) and not uses_new(self.expr):
                 utils.print_error(self.span, 'twostate expression uses neither old() nor new(); '
                                   'cannot automatically detect whether it needs to be translated')
 
@@ -2170,7 +2170,7 @@ class TheoremDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         if self.num_states == 2:
-            if not uses_old(self.expr) and not uses_new(self.expr):
+            if utils.args.accept_old and not uses_old(self.expr) and not uses_new(self.expr):
                 utils.print_error(self.span, 'twostate expression uses neither old() nor new(); '
                                   'cannot automatically detect whether it needs to be translated')
 
