@@ -35,9 +35,6 @@ trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
 updr: examples/lockserv.updr examples/sharded-kv.updr
 
-bench:
-	$(PYTHON) script/benchmark.py
-
 %.typecheck: %.pyv
 	$(PYTHON) src/mypyvy.py typecheck $(MYPYVY_OPTS) $<
 
