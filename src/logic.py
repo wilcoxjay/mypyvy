@@ -659,7 +659,7 @@ class Solver(object):
             # print(cvc4script)
             assert proc.stdout is not None
             ans = proc.stdout.readline()
-            if len(ans) == 0:
+            if not ans:
                 print(cvc4script)
                 out, err = proc.communicate()
                 print(out)
@@ -1032,7 +1032,7 @@ class Diagram(object):
                 z3conjs.append(p == t.translate_expr(c, index=state_index))
                 i += 1
 
-        if len(bs) > 0:
+        if bs:
             return z3.Exists(bs, z3.And(*z3conjs))
         else:
             return z3.And(*z3conjs)
@@ -1397,7 +1397,7 @@ class Trace(object):
                 not isinstance(decl, syntax.SortInferencePlaceholder)
             if decl is not None:
                 if isinstance(decl, RelationDecl):
-                    if len(decl.arity) > 0:
+                    if decl.arity:
                         rl = []
                         domains = [z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
@@ -1580,7 +1580,7 @@ class Trace(object):
                 rels[R] = []
                 for tup, ans in l:
                     e: Expr
-                    if len(tup) > 0:
+                    if tup:
                         args: List[Expr] = []
                         for (col, col_sort) in zip(tup, R.arity):
                             assert isinstance(col_sort, syntax.UninterpretedSort)
@@ -1660,7 +1660,7 @@ class Trace(object):
                 for tup, ans in l:
                     e = (
                         syntax.AppExpr(R.name, [syntax.Id(col) for col in tup])
-                        if len(tup) > 0 else syntax.Id(R.name)
+                        if tup else syntax.Id(R.name)
                     )
                     rels[R].append(e if ans else syntax.Not(e))
             for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):

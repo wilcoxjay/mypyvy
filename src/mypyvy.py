@@ -517,10 +517,11 @@ def trace(s: Solver) -> None:
     # sandbox(s)
 
     prog = syntax.the_program
-    if len(list(prog.traces())) > 0:
+    traces = list(prog.traces())
+    if traces:
         utils.logger.always_print('finding traces:')
 
-    for trace in prog.traces():
+    for trace in traces:
         res = bmc_trace(prog, trace, s, lambda s, keys: logic.check_unsat([], s, keys), log=True)
         if (res is not None) != trace.sat:
             def bool_to_sat(b: bool) -> str:

@@ -24,7 +24,7 @@ def translate_transition_call(
     qs1 = [q for q in qs if q is not None]
     with lator.scope.in_scope(ition.binder, bs):
         body = lator.translate_transition_body(ition, index=key_index)
-    if len(qs1) > 0:
+    if qs1:
         return z3.Exists(qs1, body)
     else:
         return body

@@ -278,7 +278,7 @@ class Z3Translator(object):
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
             body = self.translate_transition_body(t, precond, index=index)
-            if len(bs) > 0:
+            if bs:
                 return z3.Exists(bs, body)
             else:
                 return body
@@ -288,7 +288,7 @@ class Z3Translator(object):
         with self.scope.in_scope(t.binder, bs):
             body = self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True)
 
-            if len(bs) > 0:
+            if bs:
                 return z3.Exists(bs, body)
             else:
                 return body
@@ -1033,17 +1033,17 @@ class NaryExpr(Expr):
         return l
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
-    if len(vs) == 0:
+    if not vs:
         return body
     return QuantifierExpr('FORALL', vs, body)
 
 def Exists(vs: List[SortedVar], body: Expr) -> Expr:
-    if len(vs) == 0:
+    if not vs:
         return body
     return QuantifierExpr('EXISTS', vs, body)
 
 def And(*args: Expr) -> Expr:
-    if len(args) == 0:
+    if not args:
         return TrueExpr
     elif len(args) == 1:
         return args[0]
@@ -1051,7 +1051,7 @@ def And(*args: Expr) -> Expr:
         return NaryExpr('AND', list(args))
 
 def Or(*args: Expr) -> Expr:
-    if len(args) == 0:
+    if not args:
         return FalseExpr
     elif len(args) == 1:
         return args[0]
@@ -1104,7 +1104,7 @@ class AppExpr(Expr):
                               f'a {d.num_states}-state definition cannot be called from a '
                               f'{scope.num_states}-state context inside {scope.current_state_index} nested new()s!')
 
-        if len(d.arity) == 0 or len(self.args) != len(d.arity):
+        if not d.arity or len(self.args) != len(d.arity):
             utils.print_error(self.span, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(self.args, d.arity):
             arg.resolve(scope, s)
@@ -1289,7 +1289,7 @@ class Id(Expr):
             return sort  # bogus
 
         if isinstance(d, RelationDecl):
-            if len(d.arity) > 0:
+            if d.arity:
                 utils.print_error(self.span, 'Relation %s must be applied to arguments' % (self.name,))
                 return sort  # bogus
             check_constraint(self.span, sort, BoolSort)
@@ -1298,7 +1298,7 @@ class Id(Expr):
             sort = check_constraint(self.span, sort, d.sort)
             return sort
         elif isinstance(d, DefinitionDecl):
-            if len(d.arity) > 0:
+            if d.arity:
                 utils.print_error(self.span, 'Definition %s must be applied to arguments' % (self.name,))
                 return sort  # bogus
             check_constraint(self.span, sort, d.sort)
@@ -1489,7 +1489,7 @@ def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
         elif isinstance(stmt, AssignmentStatement):
             assert stmt.assignee not in mods_str_list, 'block statements may only assign to a component once!'
             mods_str_list.append(stmt.assignee)
-            if len(stmt.args) == 0:
+            if not stmt.args:
                 conjuncts.append(Eq(New(Id(stmt.assignee)), stmt.rhs))
             else:
                 assert isinstance(stmt.rhs, Bool)
@@ -1671,7 +1671,7 @@ class RelationDecl(Decl):
         if self.mutable:
             assert key is not None
             if key not in self.mut_z3:
-                if len(self.arity) > 0:
+                if self.arity:
                     a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
                     self.mut_z3[key] = z3.Function(key + '_' + self.name, *a)
                 else:
@@ -1680,7 +1680,7 @@ class RelationDecl(Decl):
             return self.mut_z3[key]
         else:
             if self.immut_z3 is None:
-                if len(self.arity) > 0:
+                if self.arity:
                     a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
                     self.immut_z3 = z3.Function(self.name, *a)
                 else:
@@ -2370,7 +2370,7 @@ class AutomatonDecl(Decl):
 
     def the_init(self) -> Optional[InitPhaseDecl]:
         i = list(self.inits())
-        if len(i) == 0:
+        if not i:
             utils.print_error(self.span, 'automaton must declare an initial phase')
             return None
         elif len(i) > 1:
@@ -2890,7 +2890,7 @@ class Program(object):
                 utils.loc_to_string(automata[0].span)
             ))
 
-        if len(automata) > 0:
+        if automata:
             a = automata[0]
             a.resolve(self.scope)
 
