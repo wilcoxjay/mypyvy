@@ -13,7 +13,7 @@ import sexp
 import subprocess
 import sys
 from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
-    cast, TypeVar
+    cast, TypeVar, Callable
 import z3
 
 import utils
@@ -274,6 +274,40 @@ def assert_any_transition(s: Solver, t: syntax.Z3Translator,
         s.add(z3.Implies(tid, z3.And(*t.frame([], index=key_index))))
 
     s.add(z3.Or(*tids))
+
+def my_temp_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
+    keys = tuple('state%02d' % i for i in range(depth + 1))
+    prog = syntax.the_program
+
+    if preconds is None:
+        preconds = (init.expr for init in prog.inits())
+
+    if utils.logger.isEnabledFor(logging.DEBUG):
+        utils.logger.debug('check_bmc property: %s' % safety)
+        utils.logger.debug('check_bmc depth: %s' % depth)
+
+    t = s.get_translator(keys)
+
+    with s:
+        for precond in preconds:
+            s.add(t.translate_expr(precond, index=0))
+
+        s.add(t.translate_expr(syntax.Not(safety), index=len(keys) - 1))
+
+        for i in range(depth):
+            # if i != len(keys) - 1:
+                # s.add(t.translate_expr(safety, index=i))
+            assert_any_transition(s, t, i, allow_stutter=True)
+
+        res = s.check()
+        if res == z3.sat:
+            m = Trace.from_z3(tuple(keys), s.model())
+            return m
+        elif res == z3.unknown:
+            utils.logger.always_print('unknown!')
+            utils.logger.always_print('reason unknown: ' + s.reason_unknown())
+            assert False, 'unexpected unknown from z3!'
+        return None
 
 def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
     keys = tuple('state%02d' % i for i in range(depth + 1))
@@ -1146,20 +1180,7 @@ class Diagram(object):
             return self.valid_in_init(s, minimize=minimize)
         return True
 
-    @utils.log_start_end_xml(utils.logger)
-    @utils.log_start_end_time(utils.logger)
-    def generalize(self, s: Solver, f: Frame,
-                   transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
-                   propagate_init: bool,
-                   depth: Optional[int] = None) -> None:
-        if utils.logger.isEnabledFor(logging.DEBUG):
-            utils.logger.debug('generalizing diagram')
-            utils.logger.debug(str(self))
-            with utils.LogTag(utils.logger, 'previous-frame', lvl=logging.DEBUG):
-                for p in f.phases():
-                    utils.logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
-                                          [str(x) for x in f.summary_of(p)])
-
+    def _generalize(self, s: Solver, omission_checker: Callable[[Diagram], bool], depth: Optional[int]) -> None:
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
         R: Iterable[_RelevantDecl] = self.rels
@@ -1173,8 +1194,7 @@ class Diagram(object):
                 if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                     continue
                 with self.without(d):
-                    res = self.check_valid_in_phase_from_frame(
-                        s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+                    res = omission_checker(self)
                 if res:
                     if utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
@@ -1190,8 +1210,7 @@ class Diagram(object):
                         if j not in S and isinstance(x, syntax.UnaryExpr):
                             cs.add(j)
                     with self.without(d, cs):
-                        res = self.check_valid_in_phase_from_frame(
-                            s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+                        res = omission_checker(self)
                     if res:
                         if utils.logger.isEnabledFor(logging.DEBUG):
                             utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
@@ -1200,8 +1219,7 @@ class Diagram(object):
 
             for d, j, c in self.conjuncts():
                 with self.without(d, j):
-                    res = self.check_valid_in_phase_from_frame(
-                        s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+                    res = omission_checker(self)
                 if res:
                     if utils.logger.isEnabledFor(logging.DEBUG):
                         utils.logger.debug('eliminated clause %s' % c)
@@ -1213,6 +1231,31 @@ class Diagram(object):
         if utils.logger.isEnabledFor(logging.DEBUG):
             utils.logger.debug('generalized diag')
             utils.logger.debug(str(self))
+
+    @utils.log_start_end_xml(utils.logger)
+    @utils.log_start_end_time(utils.logger)
+    def generalize_general(self, s: Solver, omission_checker: Callable[[Diagram], bool], depth: Optional[int]) -> None:
+        return self._generalize(s, omission_checker, depth)
+
+
+    @utils.log_start_end_xml(utils.logger)
+    @utils.log_start_end_time(utils.logger)
+    def generalize(self, s: Solver, f: Frame,
+                   transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
+                   propagate_init: bool,
+                   depth: Optional[int] = None) -> None:
+        if utils.logger.isEnabledFor(logging.DEBUG):
+            utils.logger.debug('generalizing diagram')
+            utils.logger.debug(str(self))
+            with utils.LogTag(utils.logger, 'previous-frame', lvl=logging.DEBUG):
+                for p in f.phases():
+                    utils.logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
+                                          [str(x) for x in f.summary_of(p)])
+
+        def prev_frame_omission_checker(diag: Diagram) -> bool:
+            return diag.check_valid_in_phase_from_frame(
+                            s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
+        self._generalize(s, prev_frame_omission_checker, depth)
 
 _digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
 
