@@ -68,8 +68,7 @@ def check_unsat(
     #     logger.debug('assertions')
     #     logger.debug(str(s.assertions()))
 
-    m = check_solver(s, keys)
-    if m is not None:
+    if (m := check_solver(s, keys)) is not None:
         utils.logger.always_print('')
         if utils.args.print_counterexample:
             utils.logger.always_print(str(m))
@@ -96,12 +95,12 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
     prog = syntax.the_program
     t = s.get_translator((KEY_ONE,))
 
-    with s:
+    with s.new_frame():
         for init in prog.inits():
             s.add(t.translate_expr(init.expr))
 
         for inv in (prog.invs() if not safety_only else prog.safeties()):
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(inv.expr)))
 
                 if inv.name is not None:
@@ -140,7 +139,7 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
-    with s:
+    with s.new_frame():
         for inv in prog.invs():
             s.add(t.translate_expr(inv.expr))
 
@@ -151,14 +150,14 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
 
             utils.logger.always_print('checking transation %s:' % (trans.name,))
 
-            with s:
+            with s.new_frame():
                 s.add(t.translate_transition(trans))
                 for inv in prog.invs():
                     if utils.args.check_invariant is not None and \
                        inv.name not in utils.args.check_invariant:
                         continue
 
-                    with s:
+                    with s.new_frame():
                         s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
 
                         if inv.name is not None:
@@ -208,11 +207,11 @@ def check_implication(
         minimize: Optional[bool] = None
 ) -> Optional[z3.ModelRef]:
     t = s.get_translator((KEY_ONE,))
-    with s:
+    with s.new_frame():
         for e in hyps:
             s.add(t.translate_expr(e))
         for e in concs:
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(e)))
                 # if utils.logger.isEnabledFor(logging.DEBUG):
                 #     utils.logger.debug('assertions')
@@ -231,14 +230,14 @@ def check_two_state_implication_all_transitions(
 ) -> Optional[Tuple[z3.ModelRef, DefinitionDecl]]:
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
-    with s:
+    with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
 
         s.add(z3.Not(t.translate_expr(new_conc, index=1)))
 
         for trans in prog.transitions():
-            with s:
+            with s.new_frame():
                 s.add(t.translate_transition(trans))
 
                 # if utils.logger.isEnabledFor(logging.DEBUG):
@@ -322,7 +321,7 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
     t = s.get_translator(keys)
 
-    with s:
+    with s.new_frame():
         for precond in preconds:
             s.add(t.translate_expr(precond, index=0))
 
@@ -351,7 +350,7 @@ def check_two_state_implication_along_transitions(
 ) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
-    with s:
+    with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
 
@@ -363,7 +362,7 @@ def check_two_state_implication_along_transitions(
             assert trans is not None
             precond = delta.precond
 
-            with s:
+            with s.new_frame():
                 s.add(t.translate_transition(trans, precond=precond))
                 if s.check() != z3.unsat:
                     return s.model(minimize=minimize), phase_transition
@@ -665,10 +664,10 @@ class Solver(object):
         self.stack.pop()
         self.z3solver.pop()
 
-    def __enter__(self) -> None:
+    @contextmanager
+    def new_frame(self) -> Iterator[None]:
         self.push()
-
-    def __exit__(self, exn_type: Any, exn_value: Any, traceback: Any) -> None:
+        yield None
         self.pop()
 
     def add(self, e: z3.ExprRef) -> None:
@@ -692,8 +691,9 @@ class Solver(object):
             print('(reset)', file=proc.stdin)
             print(cvc4script, file=proc.stdin)
             # print(cvc4script)
+            assert proc.stdout is not None
             ans = proc.stdout.readline()
-            if len(ans) == 0:
+            if not ans:
                 print(cvc4script)
                 out, err = proc.communicate()
                 print(out)
@@ -790,6 +790,7 @@ class Solver(object):
     def _solver_model(self) -> z3.ModelRef:
         if self.use_cvc4:
             proc = self.get_cvc4_proc()
+            assert proc.stdout is not None
             print('(get-model)', file=proc.stdin)
             parser = sexp.get_parser('')
             lines = []
@@ -895,14 +896,14 @@ class Solver(object):
             sorts_to_minimize: Iterable[z3.SortRef],
             relations_to_minimize: Iterable[z3.FuncDeclRef],
     ) -> z3.ModelRef:
-        with self:
+        with self.new_frame():
             for x in itertools.chain(
                     cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
                     relations_to_minimize):
                 with utils.LogTag(utils.logger, 'sort-or-rel', obj=str(x)):
                     for n in itertools.count(1):
                         with utils.LogTag(utils.logger, 'card', n=str(n)):
-                            with self:
+                            with self.new_frame():
                                 self.add(self._cardinality_constraint(x, n))
                                 res = self.check(assumptions)
                                 if res == z3.sat:
@@ -1065,7 +1066,7 @@ class Diagram(object):
                 z3conjs.append(p == t.translate_expr(c, index=state_index))
                 i += 1
 
-        if len(bs) > 0:
+        if bs:
             return z3.Exists(bs, z3.And(*z3conjs))
         else:
             return z3.And(*z3conjs)
@@ -1300,8 +1301,7 @@ def univ_str(state: State) -> List[str]:
 
         def key(x: str) -> Tuple[str, int]:
             ans = print_element(state, s, x)
-            m = _digits_re.match(ans)
-            if m is not None:
+            if (m := _digits_re.match(ans)) is not None:
                 return (m['prefix'], int(m['suffix']))
             else:
                 return (ans, 0)
@@ -1440,7 +1440,7 @@ class Trace(object):
                 not isinstance(decl, syntax.SortInferencePlaceholder)
             if decl is not None:
                 if isinstance(decl, RelationDecl):
-                    if len(decl.arity) > 0:
+                    if decl.arity:
                         rl = []
                         domains = [z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
@@ -1623,7 +1623,7 @@ class Trace(object):
                 rels[R] = []
                 for tup, ans in l:
                     e: Expr
-                    if len(tup) > 0:
+                    if tup:
                         args: List[Expr] = []
                         for (col, col_sort) in zip(tup, R.arity):
                             assert isinstance(col_sort, syntax.UninterpretedSort)
@@ -1703,7 +1703,7 @@ class Trace(object):
                 for tup, ans in l:
                     e = (
                         syntax.AppExpr(R.name, [syntax.Id(col) for col in tup])
-                        if len(tup) > 0 else syntax.Id(R.name)
+                        if tup else syntax.Id(R.name)
                     )
                     rels[R].append(e if ans else syntax.Not(e))
             for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):

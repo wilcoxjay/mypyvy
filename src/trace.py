@@ -24,7 +24,7 @@ def translate_transition_call(
     qs1 = [q for q in qs if q is not None]
     with lator.scope.in_scope(ition.binder, bs):
         body = lator.translate_transition_body(ition, index=key_index)
-    if len(qs1) > 0:
+    if qs1:
         return z3.Exists(qs1, body)
     else:
         return body
@@ -43,7 +43,7 @@ def bmc_trace(
 
     lator = s.get_translator(keys)
 
-    with s:
+    with s.new_frame():
         if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
             for init in prog.inits():
                 s.add(lator.translate_expr(init.expr, index=0))

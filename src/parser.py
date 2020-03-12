@@ -690,7 +690,7 @@ def p_decl_definition(p: Any) -> None:
 
     if num_states != 2 and isinstance(body, tuple):
         mods, _ = body
-        if len(mods) != 0:
+        if mods:
             utils.print_error(mods[0].span,
                               "syntax error: modifies clause only allowed on twostate definitions or transitions")
             return

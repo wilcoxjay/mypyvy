@@ -138,7 +138,7 @@ class Frames(object):
             f = self.fs[-1]
             prog = syntax.the_program
 
-            with self.solver:
+            with self.solver.new_frame():
                 for c in f.summary_of(p):
                     self.solver.add(t.translate_expr(c, index=0))
 
@@ -158,7 +158,7 @@ class Frames(object):
                     utils.logger.debug('checking transition %s is covered by %s' %
                                        (trans.name, p.name()))
 
-                    with self.solver:
+                    with self.solver.new_frame():
                         self.solver.add(t.translate_transition(trans))
                         preconds = (
                             z3.Not(t.translate_precond_of_transition(delta.precond(), trans))
@@ -392,7 +392,7 @@ class Frames(object):
 
         t = self.solver.get_translator((KEY_ONE,))
 
-        with self.solver:
+        with self.solver.new_frame():
             for init in self.fs[0].summary_of(p):
                 self.solver.add(t.translate_expr(init))
 
@@ -482,7 +482,7 @@ class Frames(object):
         else:
             core = None
 
-        with self.solver:
+        with self.solver.new_frame():
             with self.solver.mark_assumptions_necessary():
                 self.solver.add(diag.to_z3(t, state_index=1))
 
@@ -529,8 +529,7 @@ class Frames(object):
 
         prog = syntax.the_program
         solver = self.solver
-        with solver:
-
+        with solver.new_frame():
             for f in pre_frame.summary_of(src_phase):
                 solver.add(t.translate_expr(f, index=0))
 
@@ -542,7 +541,7 @@ class Frames(object):
 
                 with utils.LogTag(utils.logger, 'find-pred', transition=delta.transition,
                                   weight=str(phase_transition.avg_time_traversing())):
-                    with solver:
+                    with solver.new_frame():
                         solver.add(t.translate_transition(trans, precond=precond))
                         before_check = datetime.now()
                         res = solver.check(diag.trackers)
@@ -705,9 +704,9 @@ class Frames(object):
                 for phase in self.automaton.phases()
             })
             if i in self.inductive_invariant:
-                note += f' (invariant)'
+                note += ' (invariant)'
             if i in self.human_invariant_implies:
-                note += f' (implied by human invariant)'
+                note += ' (implied by human invariant)'
             utils.logger.info(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
         for i, p in enumerate(self.human_invariant):
             if (i not in self.human_invariant_proved and

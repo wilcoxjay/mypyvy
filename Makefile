@@ -1,4 +1,4 @@
-PYTHON := python3.7 -u
+PYTHON := python3.8 -u
 MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
@@ -34,9 +34,6 @@ verify-pd: \
 trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
 updr: examples/lockserv.updr examples/sharded-kv.updr
-
-bench:
-	$(PYTHON) script/benchmark.py
 
 %.typecheck: %.pyv
 	$(PYTHON) src/mypyvy.py typecheck $(MYPYVY_OPTS) $<
