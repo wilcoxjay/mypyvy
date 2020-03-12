@@ -12,15 +12,18 @@ import re
 import sexp
 import subprocess
 import sys
+import typing
 from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
     cast, TypeVar, Callable
+from types import TracebackType
 import z3
 
 import utils
+from utils import MySet
 from phases import Phase, Frame, PhaseTransition
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, DefinitionDecl
+    FunctionDecl, DefinitionDecl, Program
 
 z3.Forall = z3.ForAll
 
@@ -274,39 +277,70 @@ def assert_any_transition(s: Solver, t: syntax.Z3Translator,
 
     s.add(z3.Or(*tids))
 
-def my_temp_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
-    keys = tuple('state%02d' % i for i in range(depth + 1))
-    prog = syntax.the_program
+class BoundedReachabilityCheck(object):
+    def __init__(self, s: Solver, prog: Program,
+                 depth: int,
+                 preconds: Optional[Iterable[Expr]] = None) -> None:
+        self._s = s
+        self._prog = prog
+        self._depth = depth
+        self._preconds = preconds
 
-    if preconds is None:
-        preconds = (init.expr for init in prog.inits())
+        self._keys = tuple('state%02d' % i for i in range(depth + 1))
+        self._t = self._s.get_translator(self._keys)
 
-    if utils.logger.isEnabledFor(logging.DEBUG):
-        utils.logger.debug('check_bmc property: %s' % safety)
-        utils.logger.debug('check_bmc depth: %s' % depth)
+    def __enter__(self) -> BoundedReachabilityCheck:
+        self._s.push()
 
-    t = s.get_translator(keys)
+        self._add_unrolling_to_solver(self._prog, self._depth, self._preconds)
 
-    with s:
+        return self
+
+    def __exit__(self,
+                 exc_type: Optional[typing.Type[BaseException]],
+                 exc_value: Optional[BaseException],
+                 traceback: Optional[TracebackType]) -> Optional[bool]:
+        self._s.pop()
+        return None
+
+    def _add_unrolling_to_solver(self, prog: Program,
+                             depth: int,
+                             preconds: Optional[Iterable[Expr]] = None) -> None:
+        if preconds is None:
+            preconds = (init.expr for init in prog.inits())
+
         for precond in preconds:
-            s.add(t.translate_expr(precond, index=0))
-
-        s.add(t.translate_expr(syntax.Not(safety), index=len(keys) - 1))
+            self._s.add(self._t.translate_expr(precond, index=0))
 
         for i in range(depth):
-            # if i != len(keys) - 1:
-                # s.add(t.translate_expr(safety, index=i))
-            assert_any_transition(s, t, i, allow_stutter=True)
+            assert_any_transition(self._s, self._t, i, allow_stutter=True)
 
-        res = s.check()
+    def check(self, target: Diagram) -> Optional[Trace]:
+        res = self._s.check([self._t.translate_expr(target.to_ast(), index=len(self._keys) - 1)]) # TODO: important not to use target.to_z3() here (tracking API)
         if res == z3.sat:
-            m = Trace.from_z3(tuple(keys), s.model())
+            m = Trace.from_z3(tuple(self._keys), self._s.model())
             return m
         elif res == z3.unknown:
             utils.logger.always_print('unknown!')
-            utils.logger.always_print('reason unknown: ' + s.reason_unknown())
+            utils.logger.always_print('reason unknown: ' + self._s.reason_unknown())
             assert False, 'unexpected unknown from z3!'
         return None
+
+    def check_and_core(self, target: Diagram) -> MySet[int]:
+        core: MySet[int] = MySet()
+
+        with self._s.new_frame():
+            self._s.add(target.to_z3(self._t, state_index=len(self._keys) - 1))
+            res = self._s.check(target.trackers)
+            assert res == z3.unsat
+            uc = self._s.unsat_core()
+            assert uc
+        for x in sorted(uc, key=lambda y: y.decl().name()):
+            assert isinstance(x, z3.ExprRef)
+            core.add(int(x.decl().name()[1:]))
+
+        return core
+
 
 def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
     keys = tuple('state%02d' % i for i in range(depth + 1))

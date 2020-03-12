@@ -20,9 +20,11 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     return (mod.as_diagram(i=0), mod.as_diagram(i=1))
 
 def generalize_cex_omission_checker(s: Solver, diag_to_exclude: Diagram, depth: int) -> bool:
-    res = logic.my_temp_bmc(s, syntax.Not(diag_to_exclude.to_ast()), depth)
+    with logic.BoundedReachabilityCheck(s, syntax.the_program, depth) as bmc_checker:
+        res = bmc_checker.check(diag_to_exclude)
+
     utils.logger.info("bmc res for %s: %s" % (diag_to_exclude, res))
-    excludes_bounded_reachable_states = (res != None)
+    excludes_bounded_reachable_states = (res is not None)
     return not excludes_bounded_reachable_states
 
 def itp_gen(s: Solver) -> None:
@@ -45,7 +47,9 @@ def itp_gen(s: Solver) -> None:
 
         pre_diag = cti[0]
 
-        uc = s.unsat_core()
+        with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
+            core = bmc_checker.check_and_core(pre_diag)
+        pre_diag.minimize_from_core(core)
 
         pre_diag.generalize_general(s,
                                     lambda diag: generalize_cex_omission_checker(s, diag, k),
@@ -62,7 +66,7 @@ def itp_gen(s: Solver) -> None:
 
     res = logic.check_implication(s, inits, candidate)
     if res is not None:
-        utils.logger.always_print("Failure: candidate %s excludes initial states" % str(candidate))
+        utils.logger.always_print("Failure: candidate %s excludes initial states" % ' & '.join(str(clause) for clause in candidate))
     else:
         utils.logger.always_print("Success! Inductive invariant:")
         for clause in candidate:
