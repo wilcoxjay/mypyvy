@@ -33,3 +33,7 @@ transition increment(next: data)
   new(primary) = next
 
 safety le(backup, primary)
+
+invariant msg(D) -> le(D, primary)
+invariant le(backup, primary)
+
