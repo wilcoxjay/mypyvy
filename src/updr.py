@@ -57,8 +57,13 @@ class Frames(object):
 
         # indices into predicates of currently inductive predicates
         self.inductive_invariant: Set[int] = set()
-        self.human_invariant = \
-            tuple(itertools.chain(*(syntax.as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety)))  # CNF
+        try:
+            cnf_inv: Optional[Tuple[Expr, ...]] = \
+                tuple(itertools.chain(*(syntax.as_clauses(inv.expr) for inv in prog.invs() if not inv.is_safety)))
+        except AssertionError:
+            cnf_inv = None
+
+        self.human_invariant = cnf_inv
         # dict mapping index of human_invariant to index of predicates
         self.human_invariant_to_predicate: Dict[int, int] = dict()
         # indices into human_invariant that are implied by the current inductive_invariant
@@ -433,7 +438,8 @@ class Frames(object):
         else:
             j = len(self.predicates)
             self.predicates.append(e)
-            if logic.check_implication(self.solver, self.human_invariant, [e], minimize=False) is None:
+            if self.human_invariant is not None and \
+               logic.check_implication(self.solver, self.human_invariant, [e], minimize=False) is None:
                 self.human_invariant_implies.add(j)
                 for i, q in enumerate(self.human_invariant):
                     if equiv_expr(self.solver, e, q):
@@ -708,24 +714,25 @@ class Frames(object):
             if i in self.human_invariant_implies:
                 note += ' (implied by human invariant)'
             utils.logger.info(f'  predicates[{i:3}]{note}: {self.predicates[i]}')
-        for i, p in enumerate(self.human_invariant):
-            if (i not in self.human_invariant_proved and
-                len(self.inductive_invariant) > 0 and
-                logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)],
-                                        [p], minimize=False) is None):
-                self.human_invariant_proved.add(i)
-        utils.logger.info(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, '
-                          f'{len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} '
-                          'proven):')
-        for i, p in enumerate(self.human_invariant):
-            notes = []
-            if i in self.human_invariant_proved:
-                notes.append('proved')
-            if i in self.human_invariant_to_predicate:
-                notes.append(f'learned as predicates[{self.human_invariant_to_predicate[i]}]')
-            note = '(' + ', '.join(notes) + ')'
-            utils.logger.info(f'  human_invariant[{i:3}]{note}: {p}')
-        utils.logger.info('')
+        if self.human_invariant is not None:
+            for i, p in enumerate(self.human_invariant):
+                if (i not in self.human_invariant_proved and
+                    len(self.inductive_invariant) > 0 and
+                    logic.check_implication(self.solver, [self.predicates[j] for j in sorted(self.inductive_invariant)],
+                                            [p], minimize=False) is None):
+                    self.human_invariant_proved.add(i)
+            utils.logger.info(f'\n[{datetime.now()}] Current human invariant ({len(self.human_invariant)} total, '
+                              f'{len(self.human_invariant_to_predicate)} learned, {len(self.human_invariant_proved)} '
+                              'proven):')
+            for i, p in enumerate(self.human_invariant):
+                notes = []
+                if i in self.human_invariant_proved:
+                    notes.append('proved')
+                if i in self.human_invariant_to_predicate:
+                    notes.append(f'learned as predicates[{self.human_invariant_to_predicate[i]}]')
+                note = '(' + ', '.join(notes) + ')'
+                utils.logger.info(f'  human_invariant[{i:3}]{note}: {p}')
+            utils.logger.info('')
 
 
 def load_frames(in_filename: str, s: Solver) -> Frames:
