@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 from pathlib import Path
+import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -19,6 +21,7 @@ class NightlyArgs:
     mypyvy_path: Path
     no_run: bool
     no_analyze: bool
+    no_publish: bool
 
 args: NightlyArgs = cast(NightlyArgs, None)
 
@@ -33,9 +36,11 @@ def parse_args() -> None:
     argparser.add_argument('--mypyvy-path', type=Path,
                            help='path to mypyvy repository (default: /path/to/nightly.py/../..)')
     argparser.add_argument('--no-run', action='store_true',
-                           help='do not run jobs, just analyze results in existing directory')
+                           help='do not run jobs, just analyze and/or publish results in existing directory')
     argparser.add_argument('--no-analyze', action='store_true',
-                           help='do not analyze the results of, just run them')
+                           help='do not analyze the results')
+    argparser.add_argument('--no-publish', action='store_true',
+                           help='do not copy the results to the published directory')
 
     args = cast(NightlyArgs, argparser.parse_args(sys.argv[1:]))
 
@@ -191,6 +196,11 @@ def analyze_results(output_dir: str) -> None:
         for line in output:
             print(line, file=analysis_log)
 
+def publish_results(output_dir: str) -> None:
+    PUBLISH_PATH = '/var/www/dologale.jamesrwilcox.com/reports'
+    if socket.gethostname() == 'dologale' and os.getcwd() != PUBLISH_PATH:
+        shutil.move(output_dir, PUBLISH_PATH)
+
 def main() -> None:
     parse_args()
     print(args)
@@ -209,6 +219,9 @@ def main() -> None:
 
     if not args.no_analyze:
         analyze_results(out_dir)
+
+    if not args.no_publish:
+        publish_results(out_dir)
 
 if __name__ == '__main__':
     main()

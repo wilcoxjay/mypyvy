@@ -99,7 +99,6 @@ src/%.importable: src/%.py
 
 nightly:
 	python3 script/nightly.py
-	[[ $(shell hostname) == dologale ]] && mv mypyvy-nightly-output-* /var/www/dologale.jamesrwilcox.com/reports/
 
 clear-cache:
 	rm -iv examples/*.cache examples/*/*.cache
