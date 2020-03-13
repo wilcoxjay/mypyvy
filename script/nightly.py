@@ -132,15 +132,8 @@ class JobRunner:
                 self.log_global(f'completed {job}')
         self.log_global('done running mypyvy jobs')
 
-def update_mypyvy() -> None:
-    print('not updating mypyvy during development')
-
-    # subprocess.run(['git', 'fetch'], check=True, cwd=args.mypyvy_path)
-    # subprocess.run(['git', 'checkout', 'master'], check=True, cwd=args.mypyvy_path)
-    # subprocess.run(['git', 'reset', '--hard', 'origin/master'], check=True, cwd=args.mypyvy_path)
-
 def get_mypyvy_sha() -> str:
-    return subprocess.run(['git', 'show-ref', '-s', 'refs/heads/master'],
+    return subprocess.run(['git', 'show-ref', '-s', 'HEAD'],
                           check=True, cwd=args.mypyvy_path, capture_output=True, text=True).stdout
 
 @dataclass
@@ -151,7 +144,7 @@ class Result:
     out_msg: Optional[str] = dataclasses.field(default=None, init=False)
 
     def __str__(self) -> str:
-        return f'{self.exit_msg} {self.time_msg}{" " + self.out_msg if self.out_msg is not None else ""}'
+        return f'{self.exit_msg} {self.time_msg}{(" " + self.out_msg) if self.out_msg is not None else ""}'
 
 def analyze_results(output_dir: str) -> None:
     files: Dict[str, Dict[str, Path]] = collections.defaultdict(dict)
@@ -203,8 +196,6 @@ def main() -> None:
     print(args)
 
     if not args.no_run:
-        update_mypyvy()
-
         runner: Optional[JobRunner] = JobRunner(output_dir_name=args.output_directory)
         assert runner is not None
         runner.run_jobs()

@@ -97,7 +97,11 @@ check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 src/%.importable: src/%.py
 	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" || { echo "file $< is not importable"; exit 1; }
 
+nightly:
+	python3 script/nightly.py
+	[[ $(shell hostname) == dologale ]] && mv mypyvy-nightly-output-* /var/www/dologale.jamesrwilcox.com/reports/
+
 clear-cache:
 	rm -iv examples/*.cache examples/*/*.cache
 
-.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache
+.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache nightly
