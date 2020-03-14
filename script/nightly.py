@@ -22,6 +22,7 @@ class NightlyArgs:
     no_run: bool
     no_analyze: bool
     no_publish: bool
+    num_seeds: int
 
 args: NightlyArgs = cast(NightlyArgs, None)
 
@@ -41,6 +42,8 @@ def parse_args() -> None:
                            help='do not analyze the results')
     argparser.add_argument('--no-publish', action='store_true',
                            help='do not copy the results to the published directory')
+    argparser.add_argument('--num-seeds', type=int, default='1',
+                           help='how many different random seeds to run for each job')
 
     args = cast(NightlyArgs, argparser.parse_args(sys.argv[1:]))
 
@@ -58,7 +61,8 @@ def parse_args() -> None:
 
 @dataclass
 class Job:
-    name: str
+    example_name: str
+    key: Optional[str]
     mypyvy_cmdline_args: List[str]
 
 def format_datetime(d: datetime) -> str:
@@ -71,13 +75,10 @@ class JobRunner:
         self.start_time = datetime.now()
         if output_dir_name is None:
             output_dir_name = f"mypyvy-nightly-output-{format_datetime(self.start_time)}"
-            self.output_dir = Path(output_dir_name)
-            self.output_dir.mkdir()
-            self.log_dir = self.output_dir / JOB_LOG_DIR
-            self.log_dir.mkdir()
-        else:
-            self.output_dir = Path(output_dir_name)
-            assert self.output_dir.is_dir()
+        self.output_dir = Path(output_dir_name)
+        self.output_dir.mkdir(exist_ok=True)
+        self.log_dir = self.output_dir / JOB_LOG_DIR
+        self.log_dir.mkdir()
 
         self.global_logfile = open(self.output_dir / 'run-jobs.log', 'w')
         print(f'output in {self.output_dir}')
@@ -93,10 +94,15 @@ class JobRunner:
     def collect_jobs(self) -> None:
         self.log_global('jobs:')
         self.jobs = []
-        for example_file in (args.mypyvy_path / 'examples').glob('*.pyv'):
-            job = Job(example_file.stem, ['updr', '--log=info', '--log-time', str(example_file)])
-            self.log_global(f'  {job}')
-            self.jobs.append(job)
+        for example_file in (args.mypyvy_path / 'examples').glob('lockserv_multi.pyv'):
+            for seed in range(args.num_seeds):
+                key = f'{seed:0{len(str(args.num_seeds - 1))}}' if args.num_seeds > 1 else None
+                job = Job(example_file.stem, key,
+                          ['updr', '--log=info', '--log-time'] +
+                          ([f'--seed={seed}'] if args.num_seeds > 1 else []) +
+                          [str(example_file)])
+                self.log_global(f'  {job}')
+                self.jobs.append(job)
         self.log_global('')
 
     def log(self, msg: str, logfile: IO[str]) -> None:
@@ -106,9 +112,14 @@ class JobRunner:
         self.log(msg, logfile=self.global_logfile)
 
     def run_job(self, job: Job) -> None:
-        with open(self.log_dir / (job.name + '.out'), 'w') as f_out, \
-             open(self.log_dir / (job.name + '.err'), 'w') as f_err, \
-             open(self.log_dir / (job.name + '.log'), 'w') as f_log:
+        job_dir = self.log_dir if job.key is None else (self.log_dir / job.example_name)
+        logfile_basename = job.example_name if job.key is None else (job.example_name + '-' + job.key)
+
+        job_dir.mkdir(exist_ok=True)
+
+        with open(job_dir / (logfile_basename + '.out'), 'w') as f_out, \
+             open(job_dir / (logfile_basename + '.err'), 'w') as f_err, \
+             open(job_dir / (logfile_basename + '.log'), 'w') as f_log:
 
             self.log(f'worker thread {threading.current_thread().name}', f_log)
             cmd = ['python3.8', '-u', str(args.mypyvy_path / 'src' / 'mypyvy.py')] + job.mypyvy_cmdline_args
@@ -152,45 +163,62 @@ class Result:
         return f'{self.exit_msg} {self.time_msg}{(" " + self.out_msg) if self.out_msg is not None else ""}'
 
 def analyze_results(output_dir: str) -> None:
-    files: Dict[str, Dict[str, Path]] = collections.defaultdict(dict)
+    # example name -> key -> {log/out/err} -> Path
+    files: Dict[str, Dict[str, Dict[str, Path]]] = collections.defaultdict(dict)
     for filename in (Path(output_dir) / JOB_LOG_DIR).iterdir():
-        files[filename.stem][filename.suffix] = filename
+        print(filename, filename.is_dir())
+
+        if filename.is_dir():
+            runs: Dict[str, Dict[str, Path]] = {}
+            for f2 in filename.iterdir():
+                key = f2.stem.rsplit('-', 1)[1]
+                if key not in runs:
+                    runs[key] = {}
+                runs[key][f2.suffix] = f2
+            files[filename.name] = runs
+        else:
+            if not files[filename.stem]:
+                files[filename.stem] = {'0': {}}
+            files[filename.stem]['0'][filename.suffix] = filename
 
     results = collections.defaultdict(list)
     output = []
-    max_stem_length = max(len(file) for file in files)
+    # max_stem_length = max(len(file) for file in files)
     for stem in sorted(files):
-        fs = files[stem]
+        rs = files[stem]
         output.append(f'{stem}:')
-        for suff in sorted(fs):
-            output.append(f'  {suff}')
-            with open(fs[suff]) as f:
-                lines = f.readlines()
-                for line in lines[-min(len(lines), 10):]:
-                    output.append(f'    {line.strip()}')
-                if suff == '.log':
-                    exit_msg = ' '.join(lines[-2].strip().split(' ')[1:])
+        for key in sorted(rs):
+            output.append(f'  {key}:')
+            r = rs[key]
+            for suff in sorted(r):
+                output.append(f'    {suff}')
+                with open(r[suff]) as f:
+                    lines = f.readlines()
+                    for line in lines[-min(len(lines), 10):]:
+                        output.append(f'      {line.strip()}')
+                    if suff == '.log':
+                        exit_msg = ' '.join(lines[-2].strip().split(' ')[1:])
 
-                    time_msg = ' '.join(lines[-1].strip().split(' ')[1:])
-                    result = Result(stem, exit_msg, time_msg)
-                    results[exit_msg].append(result)
-                elif suff == '.out':
-                    assert result.name == stem
-                    for line in lines:
-                        l = line.strip()
-                        if l == 'frame is safe and inductive. done!':
-                            result.out_msg = 'safe'
-                            break
-                        elif l == 'abstract counterexample: the system has no ' \
-                             'universal inductive invariant proving safety':
-                            result.out_msg = 'abstractly unsafe'
+                        time_msg = ' '.join(lines[-1].strip().split(' ')[1:])
+                        result = Result(stem, exit_msg, time_msg)
+                        results[stem].append(result)
+                    elif suff == '.out':
+                        assert result.name == stem
+                        for line in lines:
+                            l = line.strip()
+                            if l == 'frame is safe and inductive. done!':
+                                result.out_msg = 'safe'
+                                break
+                            elif l == 'abstract counterexample: the system has no ' \
+                                 'universal inductive invariant proving safety':
+                                result.out_msg = 'abstractly unsafe'
 
     with (Path(output_dir) / 'analysis.log').open('w') as analysis_log:
-        for exit_msg in sorted(results):
-            rs = results[exit_msg]
-            print(f'{exit_msg}:', file=analysis_log)
-            for r in rs:
-                print(f'  {r.name.ljust(max_stem_length)} {r}', file=analysis_log)
+        for stem in sorted(results):
+            res_list = results[stem]
+            print(f'{stem}:', file=analysis_log)
+            for res in res_list:
+                print(f'  {res}', file=analysis_log)
 
         print('', file=analysis_log)
         for line in output:
