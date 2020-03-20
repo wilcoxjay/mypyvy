@@ -1722,10 +1722,11 @@ class State:
     index: Optional[int]
 
     def __repr__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(self, print_negative_tuples=True)])
+        return '\n'.join(_univ_str(self) + [_state_str(State(self.trace, None), print_negative_tuples=True)] +
+                         [_state_str(self, print_negative_tuples=True)])
 
     def __str__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(self)])
+        return '\n'.join(_univ_str(self) + [_state_str(State(self.trace, None))] + [_state_str(self)])
 
     def eval(self, e: Expr) -> Union[str, bool]:
         return self.trace.eval(e, starting_index=self.index)
