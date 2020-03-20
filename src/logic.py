@@ -20,7 +20,6 @@ import z3
 
 import utils
 from utils import MySet
-from phases import Phase, Frame, PhaseTransition
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl, \
     FunctionDecl, DefinitionDecl, Program
@@ -91,7 +90,6 @@ def check_unsat(
         return None
 
 
-@utils.log_start_end_xml(utils.logger, logging.INFO)
 def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
     utils.logger.always_print('checking init:')
 
@@ -216,10 +214,6 @@ def check_implication(
         for e in concs:
             with s.new_frame():
                 s.add(z3.Not(t.translate_expr(e)))
-                # if utils.logger.isEnabledFor(logging.DEBUG):
-                #     utils.logger.debug('assertions')
-                #     utils.logger.debug(str(s.assertions()))
-
                 if s.check() != z3.unsat:
                     return s.model(minimize=minimize)
 
@@ -236,25 +230,15 @@ def check_two_state_implication_all_transitions(
     with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
-
         s.add(z3.Not(t.translate_expr(new_conc, index=1)))
-
         for trans in prog.transitions():
             with s.new_frame():
                 s.add(t.translate_transition(trans))
-
-                # if utils.logger.isEnabledFor(logging.DEBUG):
-                #     utils.logger.debug('assertions')
-                #     utils.logger.debug(str(s.assertions()))
-                utils.logger.info(f'check_two_state_implication_all_transitions: checking {trans.name}... ')
                 res = s.check()
                 assert res in (z3.sat, z3.unsat), res
-                utils.logger.info(str(res))
                 if res != z3.unsat:
                     return s.model(minimize=minimize), trans
-
-    return None
-
+        return None
 
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
@@ -316,7 +300,8 @@ class BoundedReachabilityCheck(object):
             assert_any_transition(self._s, self._t, i, allow_stutter=True)
 
     def check(self, target: Diagram) -> Optional[Trace]:
-        res = self._s.check([self._t.translate_expr(target.to_ast(), index=len(self._keys) - 1)]) # TODO: important not to use target.to_z3() here (tracking API)
+        # TODO: important not to use target.to_z3() here (tracking API)
+        res = self._s.check([self._t.translate_expr(target.to_ast(), index=len(self._keys) - 1)])
         if res == z3.sat:
             m = Trace.from_z3(tuple(self._keys), self._s.model())
             return m
@@ -349,10 +334,6 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
     if preconds is None:
         preconds = (init.expr for init in prog.inits())
 
-    if utils.logger.isEnabledFor(logging.DEBUG):
-        utils.logger.debug('check_bmc property: %s' % safety)
-        utils.logger.debug('check_bmc depth: %s' % depth)
-
     t = s.get_translator(keys)
 
     with s.new_frame():
@@ -373,35 +354,6 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
         elif res == z3.unknown:
             print('unknown!')
         return None
-
-
-def check_two_state_implication_along_transitions(
-        s: Solver,
-        old_hyps: Iterable[Expr],
-        transitions: Sequence[PhaseTransition],
-        new_conc: Expr,
-        minimize: Optional[bool] = None
-) -> Optional[Tuple[z3.ModelRef, PhaseTransition]]:
-    t = s.get_translator((KEY_OLD, KEY_NEW))
-    prog = syntax.the_program
-    with s.new_frame():
-        for h in old_hyps:
-            s.add(t.translate_expr(h))
-
-        s.add(z3.Not(t.translate_expr(new_conc, index=1)))
-
-        for phase_transition in transitions:
-            delta = phase_transition.transition_decl()
-            trans = prog.scope.get_definition(delta.transition)
-            assert trans is not None
-            precond = delta.precond
-
-            with s.new_frame():
-                s.add(t.translate_transition(trans, precond=precond))
-                if s.check() != z3.unsat:
-                    return s.model(minimize=minimize), phase_transition
-
-    return None
 
 
 CVC4EXEC = str(utils.PROJECT_ROOT / 'script' / 'run_cvc4.sh')
@@ -922,8 +874,6 @@ class Solver(object):
         ))))
         return result
 
-    @utils.log_start_end_xml(utils.logger)
-    @utils.log_start_end_time(utils.logger)
     def _minimal_model(
             self,
             assumptions: Optional[Sequence[z3.ExprRef]],
@@ -934,16 +884,13 @@ class Solver(object):
             for x in itertools.chain(
                     cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
                     relations_to_minimize):
-                with utils.LogTag(utils.logger, 'sort-or-rel', obj=str(x)):
-                    for n in itertools.count(1):
-                        with utils.LogTag(utils.logger, 'card', n=str(n)):
-                            with self.new_frame():
-                                self.add(self._cardinality_constraint(x, n))
-                                res = self.check(assumptions)
-                                if res == z3.sat:
-                                    break
-                    with utils.LogTag(utils.logger, 'answer', obj=str(x), n=str(n)):
+                for n in itertools.count(1):
+                    with self.new_frame():
                         self.add(self._cardinality_constraint(x, n))
+                        res = self.check(assumptions)
+                        if res == z3.sat:
+                            break
+                self.add(self._cardinality_constraint(x, n))
 
             assert self.check(assumptions) == z3.sat
             return self._solver_model()
@@ -1191,106 +1138,54 @@ class Diagram(object):
             yield
             S -= j
 
-    def smoke(self, s: Solver, depth: Optional[int]) -> None:
-        if utils.args.smoke_test and depth is not None:
-            utils.logger.debug('smoke testing at depth %s...' % (depth,))
-            utils.logger.debug(str(self))
-            check_bmc(s, syntax.Not(self.to_ast()), depth)
-
-    # TODO: merge similarities with clause_implied_by_transitions_from_frame...
-    def check_valid_in_phase_from_frame(
-            self, s: Solver, f: Frame,
-            transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
-            propagate_init: bool,
-            minimize: Optional[bool] = None
-    ) -> bool:
-        for src, transitions in transitions_to_grouped_by_src.items():
-            ans = check_two_state_implication_along_transitions(
-                s, f.summary_of(src), transitions, syntax.Not(self.to_ast()),
-                minimize=minimize)
-            if ans is not None:
-                return False
-
-        if propagate_init:
-            return self.valid_in_init(s, minimize=minimize)
-        return True
-
-    def _generalize(self, s: Solver, omission_checker: Callable[[Diagram], bool], depth: Optional[int]) -> None:
+    def _generalize(self, s: Solver, omission_checker: Callable[[Diagram], bool]) -> None:
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
         R: Iterable[_RelevantDecl] = self.rels
         C: Iterable[_RelevantDecl] = self.consts
         F: Iterable[_RelevantDecl] = self.funcs
 
-        self.smoke(s, depth)
-
-        with utils.LogTag(utils.logger, 'eliminating-conjuncts', lvl=logging.DEBUG):
-            for d in itertools.chain(I, R, C, F):
-                if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
-                    continue
-                with self.without(d):
+        for d in itertools.chain(I, R, C, F):
+            if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
+                continue
+            with self.without(d):
+                res = omission_checker(self)
+            if res:
+                self.remove_clause(d)
+                continue
+            if isinstance(d, RelationDecl):
+                l = self.rels[d]
+                cs = set()
+                S = self.tombstones[d]
+                assert S is not None
+                for j, x in enumerate(l):
+                    if j not in S and isinstance(x, syntax.UnaryExpr):
+                        cs.add(j)
+                with self.without(d, cs):
                     res = omission_checker(self)
                 if res:
-                    if utils.logger.isEnabledFor(logging.DEBUG):
-                        utils.logger.debug('eliminated all conjuncts from declaration %s' % d)
-                    self.remove_clause(d)
-                    self.smoke(s, depth)
-                    continue
-                if isinstance(d, RelationDecl):
-                    l = self.rels[d]
-                    cs = set()
-                    S = self.tombstones[d]
-                    assert S is not None
-                    for j, x in enumerate(l):
-                        if j not in S and isinstance(x, syntax.UnaryExpr):
-                            cs.add(j)
-                    with self.without(d, cs):
-                        res = omission_checker(self)
-                    if res:
-                        if utils.logger.isEnabledFor(logging.DEBUG):
-                            utils.logger.debug(f'eliminated all negative conjuncts from decl {d}')
-                        self.remove_clause(d, cs)
-                        self.smoke(s, depth)
+                    self.remove_clause(d, cs)
 
-            for d, j, c in self.conjuncts():
-                with self.without(d, j):
-                    res = omission_checker(self)
-                if res:
-                    if utils.logger.isEnabledFor(logging.DEBUG):
-                        utils.logger.debug('eliminated clause %s' % c)
-                    self.remove_clause(d, j)
-                    self.smoke(s, depth)
+        for d, j, c in self.conjuncts():
+            with self.without(d, j):
+                res = omission_checker(self)
+            if res:
+                self.remove_clause(d, j)
 
         self.prune_unused_vars()
 
-        if utils.logger.isEnabledFor(logging.DEBUG):
-            utils.logger.debug('generalized diag')
-            utils.logger.debug(str(self))
+    def generalize_general(self, s: Solver, omission_checker: Callable[[Diagram], bool]) -> None:
+        return self._generalize(s, omission_checker)
 
-    @utils.log_start_end_xml(utils.logger)
-    @utils.log_start_end_time(utils.logger)
-    def generalize_general(self, s: Solver, omission_checker: Callable[[Diagram], bool], depth: Optional[int]) -> None:
-        return self._generalize(s, omission_checker, depth)
-
-
-    @utils.log_start_end_xml(utils.logger)
-    @utils.log_start_end_time(utils.logger)
-    def generalize(self, s: Solver, f: Frame,
-                   transitions_to_grouped_by_src: Dict[Phase, Sequence[PhaseTransition]],
-                   propagate_init: bool,
-                   depth: Optional[int] = None) -> None:
-        if utils.logger.isEnabledFor(logging.DEBUG):
-            utils.logger.debug('generalizing diagram')
-            utils.logger.debug(str(self))
-            with utils.LogTag(utils.logger, 'previous-frame', lvl=logging.DEBUG):
-                for p in f.phases():
-                    utils.logger.log_list(logging.DEBUG, ['previous frame for %s is' % p.name()] +
-                                          [str(x) for x in f.summary_of(p)])
-
+    def generalize(self, s: Solver, pre_frame: Sequence[Expr]) -> None:
         def prev_frame_omission_checker(diag: Diagram) -> bool:
-            return diag.check_valid_in_phase_from_frame(
-                            s, f, transitions_to_grouped_by_src, propagate_init, minimize=False)
-        self._generalize(s, prev_frame_omission_checker, depth)
+            return (
+                check_two_state_implication_all_transitions(
+                    s, pre_frame, syntax.Not(diag.to_ast()), minimize=False
+                ) is None and
+                self.valid_in_init(s, minimize=False)
+            )
+        self._generalize(s, prev_frame_omission_checker)
 
 _digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
 
@@ -1431,7 +1326,6 @@ class Trace(object):
         return '\n'.join(l)
 
     def read_out(self, z3model: z3.ModelRef, allow_undefined: bool = False) -> None:
-        # utils.logger.debug('read_out')
         def rename(s: str) -> str:
             return s.replace('!val!', '').replace('@uc_', '')
 
@@ -1447,10 +1341,6 @@ class Trace(object):
             assert sort is not None
             univ = z3model.get_universe(z3sort)
             self.univs[sort] = list(sorted(rename(str(x)) for x in univ))
-            # if utils.logger.isEnabledFor(logging.DEBUG):
-            #     utils.logger.debug(str(z3sort))
-            #     for x in self.univs[sort]:
-            #         utils.logger.debug('  ' + x)
 
         model_decls = z3model.decls()
         all_decls = model_decls

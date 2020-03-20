@@ -14,7 +14,7 @@ import logic
 from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE
 import parser
 import syntax
-from syntax import Expr, Program, InvariantDecl, AutomatonDecl
+from syntax import Expr, Program, InvariantDecl
 import updr
 import utils
 import relaxed_traces
@@ -45,8 +45,6 @@ def get_safety() -> List[Expr]:
 
     return safety
 
-@utils.log_start_end_xml(utils.logger, logging.INFO)
-@utils.log_start_end_time(utils.logger, logging.INFO)
 def do_updr(s: Solver) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
@@ -62,12 +60,6 @@ def do_updr(s: Solver) -> None:
         fs.search()
     except updr.AbstractCounterexample:
         pass
-    finally:
-        utils.logger.info(f'updr learned {fs.state_count} states (possibly with duplicates)')
-
-        utils.logger.info(f'updr learned {len(fs.predicates)} predicates (no duplicates)')
-        # for x in fs.predicates:
-        #     utils.logger.info(str(x))
 
 def debug_tokens(filename: str) -> None:
     l = parser.get_lexer()
@@ -80,109 +72,6 @@ def debug_tokens(filename: str) -> None:
         if not tok:
             break      # No more input
         utils.logger.always_print(str(tok))
-
-
-def check_automaton_init(s: Solver, a: AutomatonDecl) -> None:
-    utils.logger.always_print('checking automaton init:')
-
-    prog = syntax.the_program
-
-    t = s.get_translator((KEY_ONE,))
-
-    init_decl = a.the_init()
-    assert init_decl is not None  # checked by resolver
-    init_phase = prog.scope.get_phase(init_decl.phase)
-    assert init_phase is not None  # checked by resolver
-
-    with s.new_frame():
-        for init in prog.inits():
-            s.add(t.translate_expr(init.expr))
-
-        for inv in init_phase.invs():
-            with s.new_frame():
-                s.add(z3.Not(t.translate_expr(inv.expr)))
-
-                if inv.span is not None:
-                    msg = ' on line %d' % inv.span[0].lineno
-                else:
-                    msg = ''
-                utils.logger.always_print('  implies phase invariant%s... ' % msg, end='')
-                sys.stdout.flush()
-
-                logic.check_unsat([(inv.span, 'phase invariant%s may not hold in initial state' % msg)], s, (KEY_ONE,))
-
-def check_automaton_edge_covering(s: Solver, a: AutomatonDecl) -> None:
-    utils.logger.always_print('checking automaton edge covering:')
-
-    prog = syntax.the_program
-
-    t = s.get_translator((KEY_OLD, KEY_NEW))
-
-    for phase in a.phases():
-        utils.logger.always_print('  checking phase %s:' % phase.name)
-        with s.new_frame():
-            for inv in phase.invs():
-                s.add(t.translate_expr(inv.expr))
-
-            for trans in prog.transitions():
-                if any(delta.transition == trans.name and delta.precond is None for delta in phase.transitions()):
-                    utils.logger.always_print('    transition %s is covered trivially.' % trans.name)
-                    continue
-
-                utils.logger.always_print('    checking transition %s is covered... ' % trans.name, end='')
-
-                with s.new_frame():
-                    s.add(t.translate_transition(trans))
-                    s.add(z3.And(*(z3.Not(t.translate_precond_of_transition(delta.precond, trans))
-                                   for delta in phase.transitions() if trans.name == delta.transition)))
-
-                    logic.check_unsat([(phase.span, 'transition %s is not covered by this phase' % (trans.name, )),
-                                       (trans.span, 'this transition misses transitions from phase %s' %
-                                        (phase.name,))],
-                                      s, (KEY_OLD, KEY_NEW))
-
-
-def check_automaton_inductiveness(s: Solver, a: AutomatonDecl) -> None:
-    utils.logger.always_print('checking automaton inductiveness:')
-
-    prog = syntax.the_program
-    t = s.get_translator((KEY_OLD, KEY_NEW))
-
-    for phase in a.phases():
-        utils.logger.always_print('  checking phase %s:' % phase.name)
-
-        with s.new_frame():
-            for inv in phase.invs():
-                s.add(t.translate_expr(inv.expr))
-
-            for delta in phase.transitions():
-                trans = prog.scope.get_definition(delta.transition)
-                assert trans is not None
-                precond = delta.precond
-                target = prog.scope.get_phase(delta.target) if delta.target is not None else phase
-                assert target is not None
-
-                trans_pretty = '(%s, %s)' % (trans.name, str(precond) if (precond is not None) else 'true')
-                utils.logger.always_print('    checking transition: %s' % trans_pretty)
-
-                with s.new_frame():
-                    s.add(t.translate_transition(trans, precond=precond))
-                    for inv in target.invs():
-                        with s.new_frame():
-                            s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
-
-                            if inv.span is not None:
-                                msg = ' on line %d' % inv.span[0].lineno
-                            else:
-                                msg = ''
-                            utils.logger.always_print('      preserves invariant%s... ' % msg, end='')
-                            sys.stdout.flush()
-
-                            logic.check_unsat([(inv.span,
-                                                'invariant%s may not be preserved by transition %s in phase %s' %
-                                                (msg, trans_pretty, phase.name)),
-                                               (delta.span, 'this transition may not preserve invariant%s' % (msg,))],
-                                              s, (KEY_OLD, KEY_NEW))
 
 JSON = Dict[str, Any]
 def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
@@ -266,45 +155,31 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
 
     return obj
 
-@utils.log_start_end_time(utils.logger, logging.INFO)
+def json_verify_result(res: Union[Tuple[InvariantDecl, logic.Trace],
+                                  Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> None:
+    json_cex = json_counterexample(res)
+
+    obj: JSON = {}
+    obj['version'] = 1
+    obj['subcommand'] = utils.args.subcommand
+    obj['is_inductive'] = json_cex is None
+    if json_cex is not None:
+        obj['counterexample'] = json_cex
+        json.dump(obj, sys.stdout, indent=4)
+
 def verify(s: Solver) -> None:
     old_count = utils.error_count
-    prog = syntax.the_program
-    a = prog.the_automaton()
-    if a is None:
-        if utils.args.automaton == 'only':
-            utils.print_error_and_exit(None, "--automaton='only' requires the file to declare an automaton")
-    elif utils.args.automaton != 'no':
-        check_automaton_full(s, a)
-
-    if utils.args.automaton != 'only':
-        init_res = logic.check_init(s)
-        tr_res = logic.check_transitions(s)
-        res = init_res or tr_res
-        if res is not None and utils.args.json:
-            json_cex: Optional[JSON] = json_counterexample(res)
-        else:
-            json_cex = None
-
-        obj: JSON = {}
-        obj['version'] = 1
-        obj['subcommand'] = utils.args.subcommand
-        obj['is_inductive'] = json_cex is None
-        if json_cex is not None:
-            obj['counterexample'] = json_cex
-            json.dump(obj, sys.stdout, indent=4)
+    init_res = logic.check_init(s)
+    tr_res = logic.check_transitions(s)
+    res = init_res or tr_res
+    if res is not None and utils.args.json:
+        json_verify_result(res)
 
     if utils.error_count == old_count:
         utils.logger.always_print('all ok!')
     else:
         utils.logger.always_print('program has errors.')
 
-def check_automaton_full(s: Solver, a: AutomatonDecl) -> None:
-    check_automaton_init(s, a)
-    check_automaton_inductiveness(s, a)
-    check_automaton_edge_covering(s, a)
-
-@utils.log_start_end_time(utils.logger)
 def bmc(s: Solver) -> None:
     safety = syntax.And(*get_safety())
 
@@ -322,8 +197,6 @@ def bmc(s: Solver) -> None:
     else:
         print('no violation found.')
 
-
-@utils.log_start_end_time(utils.logger)
 def theorem(s: Solver) -> None:
     utils.logger.always_print('checking theorems:')
 
@@ -657,22 +530,11 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     updr_subparser.add_argument('--assert-inductive-trace', action=utils.YesNoAction, default=False,
                                 help='(for debugging mypyvy itself) check that frames are always inductive')
 
-    updr_subparser.add_argument('--sketch', action=utils.YesNoAction, default=False,
-                                help='use sketched invariants as additional safety (currently only in automaton)')
-
-    updr_subparser.add_argument('--automaton', action=utils.YesNoAction, default=False,
-                                help='whether to run vanilla UPDR or phase UPDR')
     updr_subparser.add_argument('--block-may-cexs', action=utils.YesNoAction, default=False,
                                 help="treat failures to push as additional proof obligations")
-    updr_subparser.add_argument('--push-frame-zero', default='if_trivial', choices=['if_trivial', 'always', 'never'],
-                                help="push lemmas from the initial frame: always/never/if_trivial, "
-                                     "the latter is when there is more than one phase")
+    updr_subparser.add_argument('--push-frame-zero', action=utils.YesNoAction, default=True,
+                                help='push lemmas from the initial frame')
 
-    verify_subparser.add_argument('--automaton', default='yes', choices=['yes', 'no', 'only'],
-                                  help="whether to use phase automata during verification. "
-                                       "by default ('yes'), both non-automaton "
-                                  "and automaton proofs are checked. 'no' means ignore automaton proofs. "
-                                  "'only' means ignore non-automaton proofs.")
     verify_subparser.add_argument('--check-transition', default=None, nargs='+',
                                   help="when verifying inductiveness, check only these transitions")
     verify_subparser.add_argument('--check-invariant', default=None, nargs='+',
@@ -740,87 +602,82 @@ def main() -> None:
     handler.terminator = ''
     handler.setFormatter(MyFormatter(fmt))
     logging.root.addHandler(handler)
-    # utils.logger.addHandler(handler)
 
-    with utils.LogTag(utils.logger, 'main', lvl=logging.INFO):
-        if utils.args.print_cmdline:
-            with utils.LogTag(utils.logger, 'options', lvl=logging.INFO):
-                utils.logger.info(' '.join([sys.executable] + sys.argv))
-                utils.logger.info('Running mypyvy with the following options:')
-                for k, v in sorted(vars(utils.args).items()):
-                    utils.logger.info(f'    {k} = {v!r}')
+    if utils.args.print_cmdline:
+        utils.logger.always_print(' '.join([sys.executable] + sys.argv))
+        utils.logger.info('Running mypyvy with the following options:')
+        for k, v in sorted(vars(utils.args).items()):
+            utils.logger.info(f'    {k} = {v!r}')
 
-        utils.logger.info('setting seed to %d' % utils.args.seed)
-        z3.set_param('smt.random_seed', utils.args.seed)
-        z3.set_param('sat.random_seed', utils.args.seed)
+    utils.logger.info('setting seed to %d' % utils.args.seed)
+    z3.set_param('smt.random_seed', utils.args.seed)
+    z3.set_param('sat.random_seed', utils.args.seed)
 
-        # utils.logger.info('enable z3 macro finder')
-        # z3.set_param('smt.macro_finder', True)
+    # utils.logger.info('enable z3 macro finder')
+    # z3.set_param('smt.macro_finder', True)
 
-        if utils.args.timeout is not None:
-            utils.logger.info('setting z3 timeout to %s' % utils.args.timeout)
-            z3.set_param('timeout', utils.args.timeout)
+    if utils.args.timeout is not None:
+        utils.logger.info('setting z3 timeout to %s' % utils.args.timeout)
+        z3.set_param('timeout', utils.args.timeout)
 
-        pre_parse_error_count = utils.error_count
+    pre_parse_error_count = utils.error_count
 
-        with open(utils.args.filename) as f:
-            prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild,
-                                 filename=utils.args.filename)
+    with open(utils.args.filename) as f:
+        prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild,
+                             filename=utils.args.filename)
 
-        if utils.error_count > pre_parse_error_count:
-            utils.logger.always_print('program has syntax errors.')
-            utils.exit(1)
+    if utils.error_count > pre_parse_error_count:
+        utils.logger.always_print('program has syntax errors.')
+        utils.exit(1)
 
-        if utils.args.print_program is not None:
-            if utils.args.print_program == 'str':
-                to_str: Callable[[Program], str] = str
-                end = '\n'
-            elif utils.args.print_program == 'repr':
-                to_str = repr
-                end = '\n'
-            elif utils.args.print_program == 'faithful':
-                to_str = syntax.faithful_print_prog
-                end = ''
-            elif utils.args.print_program == 'refactor-old-to-new':
-                pre_vocab_resolution_error_count = utils.error_count
-                prog.resolve_vocab()
-                if utils.error_count > pre_vocab_resolution_error_count:
-                    print('program has resolution errors')
-                    utils.exit(1)
-                pre_translation_error_count = utils.error_count
-                new_prog = syntax.translate_old_to_new_prog(prog, strip_old=False)
-                if utils.error_count > pre_translation_error_count:
-                    print('errors during old->new translation')
-                    utils.exit(1)
-                print(syntax.faithful_print_prog(new_prog, ignore_old=True), end='')
-                utils.exit(0)
-            else:
-                assert False
+    if utils.args.print_program is not None:
+        if utils.args.print_program == 'str':
+            to_str: Callable[[Program], str] = str
+            end = '\n'
+        elif utils.args.print_program == 'repr':
+            to_str = repr
+            end = '\n'
+        elif utils.args.print_program == 'faithful':
+            to_str = syntax.faithful_print_prog
+            end = ''
+        elif utils.args.print_program == 'refactor-old-to-new':
+            pre_vocab_resolution_error_count = utils.error_count
+            prog.resolve_vocab()
+            if utils.error_count > pre_vocab_resolution_error_count:
+                print('program has resolution errors')
+                utils.exit(1)
+            pre_translation_error_count = utils.error_count
+            new_prog = syntax.translate_old_to_new_prog(prog, strip_old=False)
+            if utils.error_count > pre_translation_error_count:
+                print('errors during old->new translation')
+                utils.exit(1)
+            print(syntax.faithful_print_prog(new_prog, ignore_old=True), end='')
+            utils.exit(0)
+        else:
+            assert False
 
-            utils.logger.always_print(to_str(prog), end=end)
+        utils.logger.always_print(to_str(prog), end=end)
 
-        pre_resolve_error_count = utils.error_count
+    pre_resolve_error_count = utils.error_count
 
-        prog.resolve()
-        if utils.error_count > pre_resolve_error_count:
-            utils.logger.always_print('program has resolution errors.')
-            utils.exit(1)
+    prog.resolve()
+    if utils.error_count > pre_resolve_error_count:
+        utils.logger.always_print('program has resolution errors.')
+        utils.exit(1)
 
-        syntax.the_program = prog
+    syntax.the_program = prog
 
-        s = Solver(use_cvc4=utils.args.cvc4)
+    s = Solver(use_cvc4=utils.args.cvc4)
 
-        # initialize common keys
-        s.get_translator((KEY_ONE,))
-        s.get_translator((KEY_NEW,))
-        s.get_translator((KEY_OLD,))
+    # initialize common keys
+    s.get_translator((KEY_ONE,))
+    s.get_translator((KEY_NEW,))
+    s.get_translator((KEY_OLD,))
 
-        utils.args.main(s)
+    utils.args.main(s)
 
-        utils.logger.info('total number of queries: %s' % s.nqueries)
-
-        if utils.args.ipython:
-            ipython(s)
+    if utils.args.ipython:
+        ipython(s)
 
     utils.exit(1 if utils.error_count > 0 else 0)
 

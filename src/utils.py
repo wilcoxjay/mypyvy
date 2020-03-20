@@ -92,7 +92,6 @@ class MypyvyArgs(object):
     sketch: bool
     block_may_cexs: bool
     push_frame_zero: str
-    automaton: Any  # str or bool depending on updr vs. verify
     check_transition: Sequence[str]
     check_invariant: Sequence[str]
     safety: str

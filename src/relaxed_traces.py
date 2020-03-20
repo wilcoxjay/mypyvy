@@ -417,7 +417,7 @@ def diagram_trace_to_explicitly_relaxed_trace_decl(trace: RelaxedTrace, ending_p
         assert isinstance(pre_diag, Diagram)
         assert isinstance(post_diag, Diagram)
 
-        actual_transition = transition_decl_from_name(t.prog_transition_name())
+        actual_transition = transition_decl_from_name(t.name)
         components.append(actual_transition)
 
         assert len(pre_diag.vs()) >= len(post_diag.vs())

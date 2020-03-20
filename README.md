@@ -56,7 +56,7 @@ a description of all command line options to a particular mode.
 - `verify`: verifies that the invariants given in the file are inductive.
   For example, we can verify the lock service:
 ```
-python3.8 src/mypyvy.py verify --automaton no examples/lockserv.pyv
+python3.8 src/mypyvy.py verify examples/lockserv.pyv
 checking init:
   implies invariant mutex... ok. (0:00:00.000176)
   ...
@@ -79,7 +79,6 @@ python3.8 src/mypyvy.py updr examples/lockserv.pyv
 checking init:
   implies invariant mutex... ok. (0:00:00.000234)
 frame is safe and inductive. done!
-summary of the_phase:
 !(exists node0:node, node1:node. node0 != node1 & holds_lock(node0) & holds_lock(node1))
 !(exists node0:node, node1:node. grant_msg(node1) & holds_lock(node0))
 !(exists node0:node. holds_lock(node0) & server_holds_lock)

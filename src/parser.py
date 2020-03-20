@@ -32,11 +32,7 @@ reserved = {
     'definition': 'DEFINITION',
     'assume': 'ASSUME',
     'assert': 'ASSERT',
-    'automaton': 'AUTOMATON',
-    'global': 'GLOBAL',
     'safety': 'SAFETY',
-    'phase': 'PHASE',
-    'self': 'SELF',
     'any': 'ANY',
     'trace': 'TRACE',
     'if': 'IF',
@@ -698,70 +694,6 @@ def p_decl_definition(p: Any) -> None:
     p[0] = syntax.DefinitionDecl(is_public_transition=False, num_states=num_states,
                                  name=p[3].value, params=p[5], body=body,
                                  span=loc_join(k_tok, loc_join(p.slice[2], body_span)))
-
-def p_phase_target_self(p: Any) -> None:
-    'phase_target : SELF'
-    p[0] = p.slice[1]
-
-def p_phase_target_phase(p: Any) -> None:
-    'phase_target : PHASE id'
-    p[0] = p[2]
-
-def p_phase_transition_decl(p: Any) -> None:
-    'phase_component : TRANSITION id IMPLIES phase_target option_guard'
-    target_tok: Token = p[4]
-    target = target_tok.value if target_tok.type == 'ID' else None
-    precond: Optional[syntax.Expr] = p[5]
-    precond_span = precond.span if precond is not None else None
-    p[0] = syntax.PhaseTransitionDecl(transition=p[2].value, precond=precond, target=target,
-                                      span=loc_join(p.slice[1], loc_join(target_tok, precond_span)))
-
-def p_option_guard_empty(p: Any) -> None:
-    'option_guard : empty'
-    p[0] = None
-
-def p_option_guard_guard(p: Any) -> None:
-    'option_guard : ASSUME expr'
-    p[0] = p[2]
-
-def p_phase_invariant_decl(p: Any) -> None:
-    'phase_component : invariant_decl'
-    p[0] = p[1]
-
-def p_phase_components_empty(p: Any) -> None:
-    'phase_components : empty'
-    p[0] = []
-
-def p_phase_components_component(p: Any) -> None:
-    'phase_components : phase_components phase_component'
-    p[0] = p[1] + [p[2]]
-
-def p_adecl_global(p: Any) -> None:
-    'automaton_decl : GLOBAL phase_components'
-    pcs: List[syntax.PhaseComponent] = p[2]
-    p[0] = syntax.GlobalPhaseDecl(pcs, span=loc_join(p.slice[1], loc_list([pc.span for pc in pcs])))
-
-def p_adecl_init_phase(p: Any) -> None:
-    'automaton_decl : INIT PHASE id'
-    p[0] = syntax.InitPhaseDecl(p[3].value, span=loc_join(p.slice[1], p[3]))
-
-def p_adecl_phase(p: Any) -> None:
-    'automaton_decl : PHASE id phase_components'
-    pcs: List[syntax.PhaseComponent] = p[3]
-    p[0] = syntax.PhaseDecl(p[2].value, p[3], span=loc_join(p.slice[1], loc_list([pc.span for pc in pcs])))
-
-def p_automaton_decls_empty(p: Any) -> None:
-    'automaton_decls : empty'
-    p[0] = []
-
-def p_automaton_decls_decl(p: Any) -> None:
-    'automaton_decls : automaton_decls automaton_decl'
-    p[0] = p[1] + [p[2]]
-
-def p_decl_automaton(p: Any) -> None:
-    'decl : AUTOMATON LBRACE automaton_decls RBRACE'
-    ads: List[syntax.AutomatonComponent] = p[3]
-    p[0] = syntax.AutomatonDecl(ads, span=loc_join(p.slice[1], p.slice[4]))
 
 def p_trace_transition_any(p: Any) -> None:
     'trace_transition : ANY TRANSITION'

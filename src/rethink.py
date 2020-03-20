@@ -6,9 +6,8 @@ import utils
 
 import z3
 import argparse
-import logging
 
-from typing import Iterable, List, Tuple, Optional, Sequence
+from typing import Iterable, List, Tuple, Optional
 
 def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     res = logic.check_two_state_implication_all_transitions(s, [candidate], candidate, minimize=True)
@@ -43,7 +42,7 @@ def itp_gen(s: Solver) -> None:
         if cti is None:
             break
 
-        utils.args.smoke_test = False # TODO: uber hack, could be made better but why should it...
+        utils.args.smoke_test = False  # TODO: uber hack, could be made better but why should it...
 
         pre_diag = cti[0]
 
@@ -51,13 +50,7 @@ def itp_gen(s: Solver) -> None:
             core = bmc_checker.check_and_core(pre_diag)
         pre_diag.minimize_from_core(core)
 
-        pre_diag.generalize_general(s,
-                                    lambda diag: generalize_cex_omission_checker(s, diag, k),
-                                    k)
-        #                     self[j - 1],
-        #                     self.automaton.transitions_to_grouped_by_src(p),
-        #                     True,
-        #                     k)
+        pre_diag.generalize_general(s, lambda diag: generalize_cex_omission_checker(s, diag, k))
 
         e = syntax.Not(pre_diag.to_ast())
 
@@ -66,14 +59,15 @@ def itp_gen(s: Solver) -> None:
 
     res = logic.check_implication(s, inits, candidate)
     if res is not None:
-        utils.logger.always_print("Failure: candidate %s excludes initial states" % ' & '.join(str(clause) for clause in candidate))
+        utils.logger.always_print("Failure: candidate %s excludes initial states" %
+                                  ' & '.join(str(clause) for clause in candidate))
     else:
         utils.logger.always_print("Success! Inductive invariant:")
         for clause in candidate:
             utils.logger.always_print(str(clause))
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
-    result : List[argparse.ArgumentParser] = []
+    result: List[argparse.ArgumentParser] = []
 
     s = subparsers.add_parser('itp-literal', help='experimental inference 1')
     s.set_defaults(main=itp_gen)

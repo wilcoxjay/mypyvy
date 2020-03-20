@@ -9,7 +9,7 @@ import functools
 import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, Sequence, cast
+    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, cast
 from typing_extensions import Protocol
 import utils
 import z3
@@ -267,27 +267,14 @@ class Z3Translator(object):
 
         return frame
 
-    def translate_transition_body(
-            self, t: DefinitionDecl, precond: Optional[Expr] = None, index: int = 0
-    ) -> z3.ExprRef:
+    def translate_transition_body(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
         return z3.And(self.translate_expr(t.expr, index=index),
-                      *self.frame(t.mods, index=index),
-                      self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True))
+                      *self.frame(t.mods, index=index))
 
-    def translate_transition(self, t: DefinitionDecl, precond: Optional[Expr] = None, index: int = 0) -> z3.ExprRef:
+    def translate_transition(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
-            body = self.translate_transition_body(t, precond, index=index)
-            if bs:
-                return z3.Exists(bs, body)
-            else:
-                return body
-
-    def translate_precond_of_transition(self, precond: Optional[Expr], t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
-        bs = self.bind(t.binder)
-        with self.scope.in_scope(t.binder, bs):
-            body = self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True)
-
+            body = self.translate_transition_body(t, index=index)
             if bs:
                 return z3.Exists(bs, body)
             else:
@@ -2114,7 +2101,7 @@ class InvariantDecl(Decl):
         with scope.n_states(1):
             self.expr.resolve(scope, BoolSort)
 
-        if not scope.in_phase_context and symbols_used(scope, self.expr) == set():
+        if symbols_used(scope, self.expr) == set():
             utils.print_error(self.span, 'this invariant mentions no mutable symbols. it can be deleted.')
 
     def __repr__(self) -> str:
@@ -2201,232 +2188,6 @@ class TheoremDecl(Decl):
             'zerostate ' if self.num_states == 0 else '',
             ('[%s] ' % self.name) if self.name is not None else '',
             self.expr
-        )
-
-# decls inside an automaton block
-
-class PhaseTransitionDecl(Denotable):
-    def __init__(
-            self, transition: str, precond: Optional[Expr], target: Optional[str], *, span: Optional[Span] = None
-    ) -> None:
-        self.span = span
-        self.transition = transition
-        self.precond = precond
-        self.target = target
-
-    def _denote(self) -> Tuple:
-        return (self.transition, self.precond, self.target)
-
-    def __repr__(self) -> str:
-        return 'PhaseTransitionDecl(transition=%s, target=%s, precond=%s)' % (
-            repr(self.transition),
-            repr(self.target),
-            repr(self.precond),
-        )
-
-    def __str__(self) -> str:
-        return 'transition %s -> %s %s' % (
-            self.transition,
-            self.target,
-            (('assume %s' % self.precond) if (self.precond is not None) else ''),
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        transition = scope.get_definition(self.transition)
-        if transition is None:
-            utils.print_error(self.span, 'unknown transition %s' % (self.transition,))
-            return
-
-        if self.precond is not None:
-            transition_constants = transition.binder.vs
-            self.precond = close_free_vars(self.precond, in_scope=[x.name for x in transition_constants],
-                                           span=self.span)
-            with scope.in_scope(transition.binder, [v.sort for v in transition_constants]):
-                with scope.n_states(1):
-                    self.precond.resolve(scope, BoolSort)
-
-        if self.target is not None and scope.get_phase(self.target) is None:
-            utils.print_error(self.span, 'unknown phase %s' % (self.target))
-
-PhaseComponent = Union[PhaseTransitionDecl, InvariantDecl]
-
-class GlobalPhaseDecl(Denotable):
-    def __init__(self, components: Sequence[PhaseComponent], *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.components = components
-
-    def _denote(self) -> Tuple:
-        return tuple(self.components)
-
-    def __repr__(self) -> str:
-        return 'GlobalPhaseDecl(components=%s)' % (
-            repr(self.components),
-        )
-
-    def __str__(self) -> str:
-        msg = ''
-        for c in self.components:
-            msg += '\n  '
-            msg += str(c)
-
-        return 'global%s' % (
-            msg,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        for c in self.components:
-            c.resolve(scope)
-
-class InitPhaseDecl(Denotable):
-    def __init__(self, phase: str, *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.phase = phase
-
-    def _denote(self) -> Tuple:
-        return (self.phase,)
-
-    def __repr__(self) -> str:
-        return 'InitPhaseDecl(phase=%s)' % (
-            self.phase,
-        )
-
-    def __str__(self) -> str:
-        return 'init phase %s' % (
-            self.phase,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        if scope.get_phase(self.phase) is None:
-            utils.print_error(self.span, 'unknown phase %s' % (self.phase,))
-
-
-class PhaseDecl(Denotable):
-    def __init__(self, name: str, components: Sequence[PhaseComponent], *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.name = name
-        self.components = components
-
-    def _denote(self) -> Tuple:
-        return (self.name, tuple(self.components))
-
-    def __repr__(self) -> str:
-        return 'PhaseDecl(name=%s, components=%s)' % (
-            repr(self.name),
-            repr(self.components),
-        )
-
-    def __str__(self) -> str:
-        msg = ''
-        for c in self.components:
-            msg += '\n  '
-            msg += str(c)
-
-        return 'phase %s%s' % (
-            self.name,
-            msg,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        with scope.in_phase():
-            for c in self.components:
-                c.resolve(scope)
-
-    def invs(self) -> Iterator[InvariantDecl]:
-        for c in self.components:
-            if isinstance(c, InvariantDecl):
-                yield c
-
-    def safeties(self) -> Iterator[InvariantDecl]:
-        for c in self.components:
-            if isinstance(c, InvariantDecl) and c.is_safety:
-                yield c
-
-    def sketch_invs(self) -> Iterator[InvariantDecl]:
-        for c in self.components:
-            if isinstance(c, InvariantDecl) and c.is_sketch:
-                yield c
-
-    def transitions(self) -> Iterator[PhaseTransitionDecl]:
-        for c in self.components:
-            if isinstance(c, PhaseTransitionDecl):
-                yield c
-
-
-AutomatonComponent = Union[GlobalPhaseDecl, InitPhaseDecl, PhaseDecl]
-
-class AutomatonDecl(Decl):
-    def __init__(self, components: Sequence[AutomatonComponent], *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.span = span
-        self.components = components
-
-    def _denote(self) -> Tuple:
-        return tuple(self.components)
-
-    def inits(self) -> Iterator[InitPhaseDecl]:
-        for c in self.components:
-            if isinstance(c, InitPhaseDecl):
-                yield c
-
-    def the_init(self) -> Optional[InitPhaseDecl]:
-        i = list(self.inits())
-        if not i:
-            utils.print_error(self.span, 'automaton must declare an initial phase')
-            return None
-        elif len(i) > 1:
-            utils.print_error(self.span, 'automaton may only declare one initial phase')
-
-        return i[0]
-
-    def globals(self) -> Iterator[GlobalPhaseDecl]:
-        for c in self.components:
-            if isinstance(c, GlobalPhaseDecl):
-                yield c
-
-    def phases(self) -> Iterator[PhaseDecl]:
-        for c in self.components:
-            if isinstance(c, PhaseDecl):
-                yield c
-
-    def resolve(self, scope: Scope) -> None:
-        for p in self.phases():
-            scope.add_phase(p)
-
-        gs = list(self.globals())
-        gcs: List[PhaseComponent] = []
-        for g in gs:
-            g.resolve(scope)
-            gcs.extend(g.components)
-
-        for p in self.phases():
-            p.components = list(p.components) + gcs
-            p.resolve(scope)
-
-        init_phase = self.the_init()
-
-        if init_phase is None:
-            return  # error reported already from the_init()
-
-        init_phase.resolve(scope)
-
-    def __repr__(self) -> str:
-        return 'AutomatonDecl(components=%s)' % (
-            self.components
-        )
-
-    def __str__(self) -> str:
-        msg = ''
-        started = False
-        for c in self.components:
-            msg += '\n'
-            started = True
-            msg += str(c)
-
-        if started:
-            msg += '\n'
-
-        return 'automaton {%s}' % (
-            msg
         )
 
 class AnyTransition(Denotable):
@@ -2585,13 +2346,10 @@ class Scope(Generic[B]):
         self.constants: Dict[str, ConstantDecl] = {}
         self.functions: Dict[str, FunctionDecl] = {}
         self.definitions: Dict[str, DefinitionDecl] = {}
-        self.phases: Dict[str, PhaseDecl] = {}
 
         # invariant: num_states > 0 ==> current_state_index < num_states
         self.num_states: int = 0
         self.current_state_index: int = 0
-
-        self.in_phase_context = False
 
     def new_allowed(self) -> bool:
         return self.current_state_index + 1 < self.num_states
@@ -2680,17 +2438,6 @@ class Scope(Generic[B]):
         self._check_duplicate_name(decl.span, decl.name)
         self.functions[decl.name] = decl
 
-    def add_phase(self, decl: PhaseDecl) -> None:
-        assert len(self.stack) == 0
-
-        if decl.name is not None:
-            if decl.name in self.phases:
-                utils.print_error(decl.span, 'there is already a phase named %s' % decl.name)
-            self.phases[decl.name] = decl
-
-    def get_phase(self, phase: str) -> Optional[PhaseDecl]:
-        return self.phases.get(phase)
-
     def add_definition(self, decl: DefinitionDecl) -> None:
         assert len(self.stack) == 0
 
@@ -2727,14 +2474,6 @@ class Scope(Generic[B]):
         yield None
         self.num_states = 0
         self.current_state_index = 0
-
-    @contextmanager
-    def in_phase(self) -> Iterator[None]:
-        assert not self.in_phase_context
-        self.in_phase_context = True
-        yield None
-        assert self.in_phase_context
-        self.in_phase_context = False
 
     @contextmanager
     def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:
@@ -2848,16 +2587,6 @@ class Program(object):
 
         return res
 
-    def automata(self) -> Iterator[AutomatonDecl]:
-        for d in self.decls:
-            if isinstance(d, AutomatonDecl):
-                yield d
-
-    def the_automaton(self) -> Optional[AutomatonDecl]:
-        for d in self.automata():
-            return d
-        return None
-
     def traces(self) -> Iterator[TraceDecl]:
         for d in self.decls:
             if isinstance(d, TraceDecl):
@@ -2883,16 +2612,6 @@ class Program(object):
 
         for tr in self.traces():
             tr.resolve(self.scope)
-
-        automata = list(self.automata())
-        if len(automata) > 1:
-            utils.print_error(automata[1].span, 'at most one automaton may be declared (first was declared at %s)' % (
-                utils.loc_to_string(automata[0].span)
-            ))
-
-        if automata:
-            a = automata[0]
-            a.resolve(self.scope)
 
         assert len(self.scope.stack) == 0
 
