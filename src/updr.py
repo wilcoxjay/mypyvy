@@ -3,7 +3,7 @@ import z3
 import utils
 from utils import MySet
 import logic
-from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, Blocked, CexFound
+from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, State
 import syntax
 from syntax import Expr, TrueExpr, DefinitionDecl
 import pickle
@@ -38,9 +38,9 @@ class Frames:
     def __init__(self, solver: Solver) -> None:
         self.solver = solver
         self.fs: List[Frame] = []
-        self.push_cache: List[Set[Expr]] = []
         self.predicates: List[Expr] = []
         self.safeties = [inv.expr for inv in syntax.the_program.safeties()]
+        self.backwards_reachable_states: List[State] = []
 
         self._first_frame()
 
@@ -58,26 +58,41 @@ class Frames:
         self.new_frame(init_conjuncts)
 
     def new_frame(self, contents: Optional[Sequence[Expr]] = None) -> None:
+        print(f'starting frame {len(self.fs)}')
         self.fs.append(Frame(contents))
-        self.push_cache.append(set())
         self.push_forward_frames()
 
     def establish_safety(self) -> None:
         frame_no = len(self.fs) - 1
 
         while res := self._get_some_cex_to_safety():
-            self.block(res, frame_no, [(None, res)], True)
+            self.block(res, frame_no, [(None, res)])
 
     def _get_some_cex_to_safety(self) -> Optional[Diagram]:
         f = self.fs[-1]
+
+        f_expr = syntax.And(*f.summary())
+        for i, state in reversed(list(enumerate(self.backwards_reachable_states))):
+            eval_res = state.eval(f_expr)
+            assert isinstance(eval_res, bool)
+            if eval_res:
+                print(f'using state #{i}')
+                return state.as_diagram()
 
         if (res := logic.check_implication(self.solver, f.summary(), self.safeties)) is None:
             return None
 
         z3m: z3.ModelRef = res
         mod = Trace.from_z3((KEY_ONE,), z3m)
-        diag = mod.as_diagram()
+        state = State(mod, 0)
+        self.record_backwards_reachable_state(state)
+        diag = state.as_diagram()
         return diag
+
+    def record_backwards_reachable_state(self, state: State) -> None:
+        print(f'discovered state #{len(self.backwards_reachable_states)}')
+        print(state)
+        self.backwards_reachable_states.append(state)
 
     def get_inductive_frame(self) -> Optional[Frame]:
         for i in range(len(self) - 1):
@@ -91,8 +106,7 @@ class Frames:
 
     def push_conjunct(self, frame_no: int, c: Expr) -> None:
         f = self.fs[frame_no]
-        res = self.clause_implied_by_transitions_from_frame(f, c, minimize=False)
-        if res is None:
+        if self.clause_implied_by_transitions_from_frame(f, c, minimize=False) is None:
             self[frame_no + 1].strengthen(c)
 
     def push_forward_frames(self) -> None:
@@ -110,36 +124,24 @@ class Frames:
         j = 0
         while j < len(conjuncts):
             c = conjuncts.l[j]
-            if c in self.fs[i + 1]._summary or c in self.push_cache[i]:
-                return
-            self.push_conjunct(i, c)
-            self.push_cache[i].add(c)
+            if c not in self.fs[i + 1]._summary:
+                self.push_conjunct(i, c)
             j += 1
 
-    # Block the diagram in the given frame.
-    # If safety_goal is True, the only possible outcomes are returning Blocked() on success
-    # or throwing an exception describing an abstract counterexample on failure.
-    # If safety_goal is False, then no abstract counterexample is ever reported to user,
-    # instead, CexFound() is returned to indicate the diagram could not be blocked.
     def block(
             self,
             diag: Diagram,
             j: int,
-            trace: Optional[RelaxedTrace] = None,
-            safety_goal: bool = True
-    ) -> Union[Blocked, CexFound]:
-        if trace is None:
-            trace = []
+            trace: RelaxedTrace
+    ) -> None:
+        print(f'block({j})')
         if j == 0 or (j == 1 and self.valid_in_initial_frame(self.solver, diag) is not None):
-            if safety_goal:
-                utils.logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') +
-                                                    str(diag) for t, diag in trace))
-                print('abstract counterexample: the system has no universal inductive invariant proving safety')
-                if utils.args.checkpoint_out:
-                    self.store_frames(utils.args.checkpoint_out)
-                raise AbstractCounterexample()
-            else:
-                return CexFound()
+            utils.logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') +
+                                                str(diag) for t, diag in trace))
+            print('abstract counterexample: the system has no universal inductive invariant proving safety')
+            if utils.args.checkpoint_out:
+                self.store_frames(utils.args.checkpoint_out)
+            raise AbstractCounterexample()
 
         while True:
             res, x = self.find_predecessor(self[j - 1], diag)
@@ -153,9 +155,7 @@ class Frames:
             pre_diag = cti.as_diagram(index=0)
 
             trace.append((trans, pre_diag))
-            ans = self.block(pre_diag, j - 1, trace, safety_goal)
-            if not isinstance(ans, Blocked):
-                return ans
+            self.block(pre_diag, j - 1, trace)
             trace.pop()
 
         diag.minimize_from_core(core)
@@ -171,8 +171,6 @@ class Frames:
 
         diag.generalize(self.solver, prev_frame_constraint)
         self.add(syntax.Not(diag.to_ast()), j)
-
-        return Blocked()
 
     def valid_in_initial_frame(self, s: Solver, diag: Diagram) -> Optional[z3.ModelRef]:
         return logic.check_implication(s, self.fs[0].summary(), [syntax.Not(diag.to_ast())])
@@ -232,6 +230,7 @@ class Frames:
                     solver.add(t.translate_transition(ition))
                     if (res := solver.check(diag.trackers)) == z3.sat:
                         m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
+                        self.record_backwards_reachable_state(State(m, 0))
                         return (z3.sat, (ition, m))
                     elif res == z3.unsat:
                         if utils.args.use_z3_unsat_cores:

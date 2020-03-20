@@ -1735,6 +1735,12 @@ class State:
     def eval(self, e: Expr) -> Union[str, bool]:
         return self.trace.eval(e, starting_index=self.index)
 
+    def as_diagram(self) -> Diagram:
+        return self.trace.as_diagram(index=self.index)
+
+    def as_onestate_formula(self) -> Expr:
+        return self.trace.as_onestate_formula(index=self.index)
+
     def univs(self) -> Universe:
         return self.trace.univs
 
@@ -1762,10 +1768,3 @@ class State:
         assert matching_sorts, "%s unknown element name" % element_name
         assert len(matching_sorts) == 1, "ambiguous element name %s" % element_name
         return matching_sorts[0]
-
-class Blocked(object):
-    pass
-class CexFound(object):
-    pass
-class GaveUp(object):
-    pass

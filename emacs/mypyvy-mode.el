@@ -70,7 +70,6 @@
       (if (search-forward "frame is safe and inductive. done!" nil t)
           (progn
             (forward-line)
-            (forward-line)
             (delete-region (point-min) (point)))
         (error "could not infer invariant!")))
     (let ((start (point)))
