@@ -1209,7 +1209,7 @@ def print_tuple(state: State, arity: List[syntax.Sort], tup: List[str]) -> str:
         l.append(print_element(state, s, x))
     return ','.join(l)
 
-def univ_str(state: State) -> List[str]:
+def _univ_str(state: State) -> List[str]:
     l = []
     for s in sorted(state.univs().keys(), key=str):
         if syntax.has_annotation(s, 'no_print'):
@@ -1229,16 +1229,16 @@ def univ_str(state: State) -> List[str]:
 
 def _state_str(
         state: State,
-        Cs: Dict[ConstantDecl, str],
-        Rs: Dict[RelationDecl, List[Tuple[List[str], bool]]],
-        Fs: Dict[FunctionDecl, List[Tuple[List[str], str]]]
 ) -> str:
     l = []
+
+    Cs = state.const_interp()
     for C in Cs:
         if syntax.has_annotation(C, 'no_print'):
             continue
         l.append('%s = %s' % (C.name, print_element(state, C.sort, Cs[C])))
 
+    Rs = state.rel_interp()
     for R in Rs:
         if syntax.has_annotation(R, 'no_print'):
             continue
@@ -1247,6 +1247,7 @@ def _state_str(
                 l.append('%s%s(%s)' % ('' if b else '!', R.name,
                                        print_tuple(state, R.arity, tup)))
 
+    Fs = state.func_interp()
     for F in Fs:
         if syntax.has_annotation(F, 'no_print'):
             continue
@@ -1302,15 +1303,13 @@ class Trace(object):
     def __str__(self) -> str:
         l = []
         dummy_state = State(self, None)
-        l.extend(univ_str(dummy_state))
-        l.append(_state_str(dummy_state, self.immut_const_interps, self.immut_rel_interps,
-                            self.immut_func_interps))
+        l.extend(_univ_str(dummy_state))
+        l.append(_state_str(dummy_state))
         for i, k in enumerate(self.keys):
             if i > 0 and self.transitions[i - 1] != '':
                 l.append('\ntransition %s' % (self.transitions[i - 1],))
             l.append('\nstate %s:' % (i,))
-            l.append(_state_str(dummy_state, self.const_interps[i], self.rel_interps[i],
-                                self.func_interps[i]))
+            l.append(_state_str(State(self, i)))
 
         return '\n'.join(l)
 
@@ -1729,6 +1728,9 @@ def _lookup_assoc(l: Sequence[Tuple[_K, _V]], k: _K) -> _V:
 class State:
     trace: Trace
     index: Optional[int]
+
+    def __str__(self) -> str:
+        return '\n'.join(_univ_str(self) + [_state_str(self)])
 
     def eval(self, e: Expr) -> Union[str, bool]:
         return self.trace.eval(e, starting_index=self.index)
