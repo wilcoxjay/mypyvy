@@ -1557,21 +1557,21 @@ class Trace(object):
 
         return self.diagram_cache[index]
 
-    def as_onestate_formula(self, i: Optional[int] = None) -> Expr:
-        assert len(self.keys) == 1 or i is not None, \
+    def as_onestate_formula(self, index: Optional[int] = None) -> Expr:
+        assert len(self.keys) == 1 or index is not None, \
             'to generate a onestate formula from a multi-state model, ' + \
             'you must specify which state you want'
-        assert i is None or (0 <= i and i < len(self.keys))
+        assert index is None or (0 <= index and index < len(self.keys))
 
-        if i is None:
-            i = 0
+        if index is None:
+            index = 0
 
-        if i not in self.onestate_formula_cache:
+        if index not in self.onestate_formula_cache:
             prog = syntax.the_program
 
-            mut_rel_interps = self.rel_interps[i]
-            mut_const_interps = self.const_interps[i]
-            mut_func_interps = self.func_interps[i]
+            mut_rel_interps = self.rel_interps[index]
+            mut_const_interps = self.const_interps[index]
+            mut_func_interps = self.func_interps[index]
 
             vs: List[syntax.SortedVar] = []
             ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
@@ -1614,8 +1614,8 @@ class Trace(object):
             assert prog.scope is not None
             with prog.scope.n_states(1):
                 e.resolve(prog.scope, None)
-            self.onestate_formula_cache[i] = e
-        return self.onestate_formula_cache[i]
+            self.onestate_formula_cache[index] = e
+        return self.onestate_formula_cache[index]
 
     def as_state(self, i: Optional[int]) -> State:
         assert i is None or (0 <= i and i < len(self.keys))
