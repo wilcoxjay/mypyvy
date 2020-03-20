@@ -168,7 +168,7 @@ class Frames:
         if j == 0 or (j == 1 and not self.valid_in_initial_frame(syntax.Not(diag.to_ast()))):
             utils.logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') +
                                                 str(diag) for t, diag in trace))
-            utils.logger.info('abstract counterexample: the system has no universal inductive invariant proving safety')
+            print('abstract counterexample: the system has no universal inductive invariant proving safety')
             if utils.args.checkpoint_out:
                 self.store_frames(utils.args.checkpoint_out)
             raise AbstractCounterexample()
