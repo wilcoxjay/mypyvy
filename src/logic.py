@@ -1223,19 +1223,20 @@ def _univ_str(state: State) -> List[str]:
 
 def _state_str(
         state: State,
-        print_negative_tuples: bool = False
+        print_immutable: bool = True,
+        print_negative_tuples: bool = False,
 ) -> str:
     l = []
 
     Cs = state.const_interp()
     for C in Cs:
-        if syntax.has_annotation(C, 'no_print'):
+        if syntax.has_annotation(C, 'no_print') or (not C.mutable and not print_immutable):
             continue
         l.append('%s = %s' % (C.name, print_element(state, C.sort, Cs[C])))
 
     Rs = state.rel_interp()
     for R in Rs:
-        if syntax.has_annotation(R, 'no_print'):
+        if syntax.has_annotation(R, 'no_print') or (not R.mutable and not print_immutable):
             continue
         for tup, b in sorted(Rs[R], key=lambda x: print_tuple(state, R.arity, x[0])):
             if b or print_negative_tuples:
@@ -1244,7 +1245,7 @@ def _state_str(
 
     Fs = state.func_interp()
     for F in Fs:
-        if syntax.has_annotation(F, 'no_print'):
+        if syntax.has_annotation(F, 'no_print') or (not F.mutable and not print_immutable):
             continue
         for tup, res in sorted(Fs[F], key=lambda x: print_tuple(state, F.arity, x[0])):
             l.append('%s(%s) = %s' % (F.name, print_tuple(state, F.arity, tup),
@@ -1304,7 +1305,7 @@ class Trace(object):
             if i > 0 and self.transitions[i - 1] != '':
                 l.append('\ntransition %s' % (self.transitions[i - 1],))
             l.append('\nstate %s:' % (i,))
-            l.append(_state_str(State(self, i)))
+            l.append(_state_str(State(self, i), print_immutable=False))
 
         return '\n'.join(l)
 
@@ -1722,11 +1723,10 @@ class State:
     index: Optional[int]
 
     def __repr__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(State(self.trace, None), print_negative_tuples=True)] +
-                         [_state_str(self, print_negative_tuples=True)])
+        return '\n'.join(_univ_str(self) + [_state_str(self, print_negative_tuples=True, print_immutable=True)])
 
     def __str__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(State(self.trace, None))] + [_state_str(self)])
+        return '\n'.join(_univ_str(self) + [_state_str(self, print_immutable=True)])
 
     def eval(self, e: Expr) -> Union[str, bool]:
         return self.trace.eval(e, starting_index=self.index)
@@ -1744,19 +1744,22 @@ class State:
         if self.index is None:
             return self.trace.immut_rel_interps
         else:
-            return self.trace.rel_interps[self.index]
+            return dict(itertools.chain(self.trace.immut_rel_interps.items(),
+                                        self.trace.rel_interps[self.index].items()))
 
     def const_interp(self) -> ConstantInterp:
         if self.index is None:
             return self.trace.immut_const_interps
         else:
-            return self.trace.const_interps[self.index]
+            return dict(itertools.chain(self.trace.immut_const_interps.items(),
+                                        self.trace.const_interps[self.index].items()))
 
     def func_interp(self) -> FunctionInterp:
         if self.index is None:
             return self.trace.immut_func_interps
         else:
-            return self.trace.func_interps[self.index]
+            return dict(itertools.chain(self.trace.immut_func_interps.items(),
+                                        self.trace.func_interps[self.index].items()))
 
     def element_sort(self, element_name: str) -> SortDecl:
         matching_sorts = [sort for (sort, univ) in self.univs().items()
