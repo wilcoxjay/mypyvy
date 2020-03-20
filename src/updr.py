@@ -68,7 +68,7 @@ class Frames:
         self.new_frame(init_conjuncts)
 
     def new_frame(self, contents: Optional[Sequence[Expr]] = None) -> None:
-        print(f'starting frame {len(self.fs)}')
+        utils.logger.info(f'starting frame {len(self.fs)}')
         self.fs.append(Frame(contents))
         self.push_forward_frames()
 
@@ -77,18 +77,21 @@ class Frames:
             self.currently_blocking = bstate
             diag = bstate.state.as_diagram()
             frame_no = bstate.known_absent_until_frame + 1
-            print(f'will block state #{bstate.id} in frame {frame_no}')
+            utils.logger.info(f'will block state #{bstate.id} in frame {frame_no}')
             self.block(diag, frame_no, [(None, diag)])
             bstate.known_absent_until_frame += 1
 
     def find_something_to_block(self) -> Optional[BackwardReachableState]:
-        print('looking for something to block')
+        utils.logger.info('looking for something to block')
 
         while True:
             for bstate in self.backwards_reachable_states:
-                print(f'#{bstate.id} valid_up_to={bstate.known_absent_until_frame} steps_to_bad={bstate.num_steps_to_bad}')
+                utils.logger.info(f'#{bstate.id} valid_up_to={bstate.known_absent_until_frame} '
+                                  f'steps_to_bad={bstate.num_steps_to_bad}')
 
-            bstate_min = min(self.backwards_reachable_states, key=lambda b: (b.known_absent_until_frame, -b.num_steps_to_bad), default=None)
+            bstate_min = min(reversed(self.backwards_reachable_states),
+                             key=lambda b: (b.known_absent_until_frame, -b.num_steps_to_bad),
+                             default=None)
 
             if bstate_min is None or (min_frame_no := bstate_min.known_absent_until_frame) == len(self) - 1:
                 break
@@ -100,11 +103,11 @@ class Frames:
 
             bstate_min.known_absent_until_frame += 1
 
-        print('no existing states to block. looking for a new state.')
+        utils.logger.info('no existing states to block. looking for a new state.')
 
         f = self.fs[-1]
         if (res := logic.check_implication(self.solver, f.summary(), self.safeties)) is None:
-            print('frontier is safe. nothing new to block either.')
+            utils.logger.info('frontier is safe. nothing new to block either.')
             return None
 
         state = State(Trace.from_z3((KEY_ONE,), res), 0)
@@ -115,8 +118,8 @@ class Frames:
         return bstate
 
     def record_backwards_reachable_state(self, state: BackwardReachableState) -> None:
-        print(f'discovered state #{len(self.backwards_reachable_states)}')
-        print(state)
+        utils.logger.info(f'discovered state #{len(self.backwards_reachable_states)}')
+        utils.logger.info(str(state))
         self.backwards_reachable_states.append(state)
 
     def get_inductive_frame(self) -> Optional[Frame]:
@@ -161,11 +164,11 @@ class Frames:
             j: int,
             trace: RelaxedTrace
     ) -> None:
-        print(f'block({j})')
+        utils.logger.info(f'block({j})')
         if j == 0 or (j == 1 and not self.valid_in_initial_frame(syntax.Not(diag.to_ast()))):
             utils.logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') +
                                                 str(diag) for t, diag in trace))
-            print('abstract counterexample: the system has no universal inductive invariant proving safety')
+            utils.logger.info('abstract counterexample: the system has no universal inductive invariant proving safety')
             if utils.args.checkpoint_out:
                 self.store_frames(utils.args.checkpoint_out)
             raise AbstractCounterexample()
@@ -198,11 +201,11 @@ class Frames:
 
         diag.generalize(self.solver, prev_frame_constraint)
         e = syntax.Not(diag.to_ast())
-        print(f'block({j}) using {e}')
+        utils.logger.info(f'block({j}) using {e}')
         self.add(e, j)
         k = j
         while k + 1 < len(self) and self.push_conjunct(k, e):
-            print(f'and pushed to {k + 1}')
+            utils.logger.info(f'and pushed to {k + 1}')
             k += 1
 
     def valid_in_initial_frame(self, e: Expr) -> bool:
@@ -265,8 +268,9 @@ class Frames:
                     if (res := solver.check(diag.trackers)) == z3.sat:
                         m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
                         state = State(m, 0)
-                        assert self.currently_blocking is not None
-                        steps_from_cex = self.currently_blocking.known_absent_until_frame + 1 - j + self.currently_blocking.num_steps_to_bad
+                        src = self.currently_blocking
+                        assert src is not None
+                        steps_from_cex = src.known_absent_until_frame + 1 - j + src.num_steps_to_bad
                         bstate = BackwardReachableState(len(self.backwards_reachable_states), state, steps_from_cex)
                         self.record_backwards_reachable_state(bstate)
                         return (z3.sat, (ition, m))
