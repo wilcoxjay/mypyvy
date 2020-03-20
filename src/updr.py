@@ -1,3 +1,5 @@
+import dataclasses
+from dataclasses import dataclass
 import z3
 
 import utils
@@ -7,7 +9,7 @@ from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, State
 import syntax
 from syntax import Expr, TrueExpr, DefinitionDecl
 import pickle
-from typing import List, Optional, Set, Tuple, Union, Sequence
+from typing import List, Optional, Tuple, Union, Sequence
 
 RelaxedTrace = List[Tuple[Optional[DefinitionDecl], Union[Diagram, Expr]]]
 
@@ -34,13 +36,21 @@ class Frame:
         return str([str(x) for x in self._summary])
 
 
+@dataclass
+class BackwardReachableState:
+    id: int
+    state: State
+    num_steps_to_bad: int
+    known_absent_until_frame: int = dataclasses.field(default=0, init=False)
+
 class Frames:
     def __init__(self, solver: Solver) -> None:
         self.solver = solver
         self.fs: List[Frame] = []
         self.predicates: List[Expr] = []
         self.safeties = [inv.expr for inv in syntax.the_program.safeties()]
-        self.backwards_reachable_states: List[State] = []
+        self.backwards_reachable_states: List[BackwardReachableState] = []
+        self.currently_blocking: Optional[BackwardReachableState] = None
 
         self._first_frame()
 
@@ -63,33 +73,48 @@ class Frames:
         self.push_forward_frames()
 
     def establish_safety(self) -> None:
-        frame_no = len(self.fs) - 1
+        while bstate := self.find_something_to_block():
+            self.currently_blocking = bstate
+            diag = bstate.state.as_diagram()
+            frame_no = bstate.known_absent_until_frame + 1
+            print(f'will block state #{bstate.id} in frame {frame_no}')
+            self.block(diag, frame_no, [(None, diag)])
+            bstate.known_absent_until_frame += 1
 
-        while res := self._get_some_cex_to_safety():
-            self.block(res, frame_no, [(None, res)])
+    def find_something_to_block(self) -> Optional[BackwardReachableState]:
+        print('looking for something to block')
 
-    def _get_some_cex_to_safety(self) -> Optional[Diagram]:
-        f = self.fs[-1]
+        while True:
+            for bstate in self.backwards_reachable_states:
+                print(f'#{bstate.id} valid_up_to={bstate.known_absent_until_frame} steps_to_bad={bstate.num_steps_to_bad}')
 
-        f_expr = syntax.And(*f.summary())
-        for i, state in reversed(list(enumerate(self.backwards_reachable_states))):
-            eval_res = state.eval(f_expr)
+            bstate_min = min(self.backwards_reachable_states, key=lambda b: (b.known_absent_until_frame, -b.num_steps_to_bad), default=None)
+
+            if bstate_min is None or (min_frame_no := bstate_min.known_absent_until_frame) == len(self) - 1:
+                break
+
+            eval_res = bstate_min.state.eval(syntax.And(*(self[min_frame_no + 1].summary())))
             assert isinstance(eval_res, bool)
             if eval_res:
-                print(f'using state #{i}')
-                return state.as_diagram()
+                return bstate_min
 
+            bstate_min.known_absent_until_frame += 1
+
+        print('no existing states to block. looking for a new state.')
+
+        f = self.fs[-1]
         if (res := logic.check_implication(self.solver, f.summary(), self.safeties)) is None:
+            print('frontier is safe. nothing new to block either.')
             return None
 
-        z3m: z3.ModelRef = res
-        mod = Trace.from_z3((KEY_ONE,), z3m)
-        state = State(mod, 0)
-        self.record_backwards_reachable_state(state)
-        diag = state.as_diagram()
-        return diag
+        state = State(Trace.from_z3((KEY_ONE,), res), 0)
+        assert len(self) >= 2
+        bstate = BackwardReachableState(len(self.backwards_reachable_states), state, 0)
+        bstate.known_absent_until_frame = len(self) - 2
+        self.record_backwards_reachable_state(bstate)
+        return bstate
 
-    def record_backwards_reachable_state(self, state: State) -> None:
+    def record_backwards_reachable_state(self, state: BackwardReachableState) -> None:
         print(f'discovered state #{len(self.backwards_reachable_states)}')
         print(state)
         self.backwards_reachable_states.append(state)
@@ -104,10 +129,12 @@ class Frames:
         res = logic.check_implication(self.solver, self[i + 1].summary(), self[i].summary(), minimize=False)
         return res is None
 
-    def push_conjunct(self, frame_no: int, c: Expr) -> None:
+    def push_conjunct(self, frame_no: int, c: Expr) -> bool:
         f = self.fs[frame_no]
         if self.clause_implied_by_transitions_from_frame(f, c, minimize=False) is None:
             self[frame_no + 1].strengthen(c)
+            return True
+        return False
 
     def push_forward_frames(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
@@ -144,7 +171,7 @@ class Frames:
             raise AbstractCounterexample()
 
         while True:
-            res, x = self.find_predecessor(self[j - 1], diag)
+            res, x = self.find_predecessor(j - 1, diag)
             if res == z3.unsat:
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
@@ -170,7 +197,13 @@ class Frames:
             )
 
         diag.generalize(self.solver, prev_frame_constraint)
-        self.add(syntax.Not(diag.to_ast()), j)
+        e = syntax.Not(diag.to_ast())
+        print(f'block({j}) using {e}')
+        self.add(e, j)
+        k = j
+        while k + 1 < len(self) and self.push_conjunct(k, e):
+            print(f'and pushed to {k + 1}')
+            k += 1
 
     def valid_in_initial_frame(self, s: Solver, diag: Diagram) -> Optional[z3.ModelRef]:
         return logic.check_implication(s, self.fs[0].summary(), [syntax.Not(diag.to_ast())])
@@ -209,9 +242,10 @@ class Frames:
 
     def find_predecessor(
             self,
-            pre_frame: Frame,
+            j: int,
             diag: Diagram
     ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[DefinitionDecl, Trace]]]:
+        pre_frame = self[j]
         prog = syntax.the_program
         solver = self.solver
         t = self.solver.get_translator((KEY_OLD, KEY_NEW))
@@ -230,7 +264,11 @@ class Frames:
                     solver.add(t.translate_transition(ition))
                     if (res := solver.check(diag.trackers)) == z3.sat:
                         m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
-                        self.record_backwards_reachable_state(State(m, 0))
+                        state = State(m, 0)
+                        assert self.currently_blocking is not None
+                        steps_from_cex = self.currently_blocking.known_absent_until_frame + 1 - j + self.currently_blocking.num_steps_to_bad
+                        bstate = BackwardReachableState(len(self.backwards_reachable_states), state, steps_from_cex)
+                        self.record_backwards_reachable_state(bstate)
                         return (z3.sat, (ition, m))
                     elif res == z3.unsat:
                         if utils.args.use_z3_unsat_cores:
