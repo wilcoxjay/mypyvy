@@ -1057,12 +1057,6 @@ class Diagram(object):
 
         return syntax.Exists(vs, e)
 
-    # TODO: can be removed? replaced with Frames.valid_in_initial_frame (YF)
-    def valid_in_init(self, s: Solver, minimize: Optional[bool] = None) -> bool:
-        prog = syntax.the_program
-        return check_implication(s, (init.expr for init in prog.inits()),
-                                 [syntax.Not(self.to_ast())], minimize=minimize) is None
-
     def minimize_from_core(self, core: Optional[Iterable[int]]) -> None:
         if core is None:
             return
