@@ -42,8 +42,6 @@ def itp_gen(s: Solver) -> None:
         if cti is None:
             break
 
-        utils.args.smoke_test = False  # TODO: uber hack, could be made better but why should it...
-
         pre_diag = cti[0]
 
         with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:

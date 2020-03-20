@@ -519,21 +519,11 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        default_description='yes for updr, else no',
                        help='in diagram generation, substitute existentially quantified variables '
                             'that are equal to constants')
-        s.add_argument('--diagrams-subclause-complete', action=utils.YesNoAction, default=False,
-                       help='in diagram generation, "complete" the diagram so that every stronger '
-                            'clause is a subclause')
 
     updr_subparser.add_argument('--use-z3-unsat-cores', action=utils.YesNoAction, default=True,
-                                help='generalize diagrams using brute force instead of unsat cores')
-    updr_subparser.add_argument('--smoke-test', action=utils.YesNoAction, default=False,
-                                help='(for debugging mypyvy itself) run bmc to confirm every conjunct added to a frame')
+                                help='generalize using unsat cores rather than brute force')
     updr_subparser.add_argument('--assert-inductive-trace', action=utils.YesNoAction, default=False,
                                 help='(for debugging mypyvy itself) check that frames are always inductive')
-
-    updr_subparser.add_argument('--block-may-cexs', action=utils.YesNoAction, default=False,
-                                help="treat failures to push as additional proof obligations")
-    updr_subparser.add_argument('--push-frame-zero', action=utils.YesNoAction, default=True,
-                                help='push lemmas from the initial frame')
 
     verify_subparser.add_argument('--check-transition', default=None, nargs='+',
                                   help="when verifying inductiveness, check only these transitions")

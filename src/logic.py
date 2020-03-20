@@ -1496,13 +1496,10 @@ class Trace(object):
                 assert isinstance(decl, FunctionDecl)
                 ensure_defined_f(decl)
 
-    def as_diagram(self, index: Optional[int] = None, subclause_complete: Optional[bool] = None) -> Diagram:
+    def as_diagram(self, index: Optional[int] = None) -> Diagram:
         assert len(self.keys) == 1 or index is not None, \
             'to generate a diagram from a multi-state model, you must specify which state you want'
         assert index is None or (0 <= index and index < len(self.keys))
-
-        if subclause_complete is None:
-            subclause_complete = utils.args.diagrams_subclause_complete
 
         if index is None:
             index = 0
@@ -1515,9 +1512,6 @@ class Trace(object):
             mut_func_interps = self.func_interps[index]
 
             vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
-            if subclause_complete:
-                from networkx.utils.union_find import UnionFind  # type: ignore
-                ufs: Dict[SortDecl, UnionFind] = {}
             ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
             rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
             consts: Dict[ConstantDecl, Expr] = OrderedDict()
@@ -1525,12 +1519,8 @@ class Trace(object):
             for sort in self.univs:
                 vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
                                       for v in self.univs[sort]]
-                if subclause_complete:
-                    ufs[sort] = UnionFind(self.univs[sort])
-                    ineqs[sort] = []
-                else:
-                    u = [syntax.Id(s) for s in self.univs[sort]]
-                    ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+                u = [syntax.Id(s) for s in self.univs[sort]]
+                ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
 
             for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
                 rels[R] = []
@@ -1541,14 +1531,7 @@ class Trace(object):
                         for (col, col_sort) in zip(tup, R.arity):
                             assert isinstance(col_sort, syntax.UninterpretedSort)
                             assert col_sort.decl is not None
-                            if subclause_complete:
-                                nm = col_sort.name + str(len(vars_by_sort[col_sort.decl]))
-                                vars_by_sort[col_sort.decl].append(syntax.SortedVar(nm, col_sort))
-                                arg = syntax.Id(nm)
-                                args.append(arg)
-                                ufs[col_sort.decl].union(col, nm)
-                            else:
-                                args.append(syntax.Id(col))
+                            args.append(syntax.Id(col))
                         e = syntax.AppExpr(R.name, args)
                     else:
                         e = syntax.Id(R.name)
@@ -1563,16 +1546,6 @@ class Trace(object):
                     e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
                     e = syntax.Eq(e, syntax.Id(res))
                     funcs[F].append(e)
-
-            if subclause_complete:
-                for sort, uf in ufs.items():
-                    sets = list(uf.to_sets())
-                    for s1, s2 in itertools.combinations(sets, 2):
-                        for x1, x2 in itertools.product(s1, s2):
-                            ineqs[sort].append(syntax.Neq(syntax.Id(x1), syntax.Id(x2)))
-                    for s in sets:
-                        for x1, x2 in itertools.combinations(s, 2):
-                            ineqs[sort].append(syntax.Eq(syntax.Id(x1), syntax.Id(x2)))
 
             vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
             diag = Diagram(vs, ineqs, rels, consts, funcs)
