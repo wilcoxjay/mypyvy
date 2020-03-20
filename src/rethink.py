@@ -16,7 +16,7 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
 
     z3m: z3.ModelRef = res[0]
     mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
-    return (mod.as_diagram(i=0), mod.as_diagram(i=1))
+    return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
 def generalize_cex_omission_checker(s: Solver, diag_to_exclude: Diagram, depth: int) -> bool:
     with logic.BoundedReachabilityCheck(s, syntax.the_program, depth) as bmc_checker:

@@ -110,7 +110,7 @@ class Frames:
 
             m, t = res
             mod = Trace.from_z3((KEY_OLD, KEY_NEW), m)
-            diag = mod.as_diagram(i=0)
+            diag = mod.as_diagram(index=0)
 
             if is_safety:
                 self.block(diag, frame_no, [(None, c), (t, diag)], safety_goal=True)
@@ -179,7 +179,8 @@ class Frames:
                 self.augment_core_for_init(diag, core)
                 break
             assert isinstance(x, tuple), (res, x)
-            trans, pre_diag = x
+            trans, cti = x
+            pre_diag = cti.as_diagram(index=0)
 
             trace.append((trans, pre_diag))
             ans = self.block(pre_diag, j - 1, trace, safety_goal)
@@ -244,7 +245,7 @@ class Frames:
             self,
             pre_frame: Frame,
             diag: Diagram
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[DefinitionDecl, Diagram]]]:
+    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[DefinitionDecl, Trace]]]:
         prog = syntax.the_program
         solver = self.solver
         t = self.solver.get_translator((KEY_OLD, KEY_NEW))
@@ -263,7 +264,7 @@ class Frames:
                     solver.add(t.translate_transition(ition))
                     if (res := solver.check(diag.trackers)) == z3.sat:
                         m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
-                        return (z3.sat, (ition, m.as_diagram(i=0)))
+                        return (z3.sat, (ition, m))
                     elif res == z3.unsat:
                         if utils.args.use_z3_unsat_cores:
                             assert core is not None

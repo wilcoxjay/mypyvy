@@ -7,7 +7,6 @@ import dataclasses
 import time
 import itertools
 import io
-import logging
 import re
 import sexp
 import subprocess
@@ -288,8 +287,8 @@ class BoundedReachabilityCheck(object):
         return None
 
     def _add_unrolling_to_solver(self, prog: Program,
-                             depth: int,
-                             preconds: Optional[Iterable[Expr]] = None) -> None:
+                                 depth: int,
+                                 preconds: Optional[Iterable[Expr]] = None) -> None:
         if preconds is None:
             preconds = (init.expr for init in prog.inits())
 
@@ -1497,23 +1496,23 @@ class Trace(object):
                 assert isinstance(decl, FunctionDecl)
                 ensure_defined_f(decl)
 
-    def as_diagram(self, i: Optional[int] = None, subclause_complete: Optional[bool] = None) -> Diagram:
-        assert len(self.keys) == 1 or i is not None, \
+    def as_diagram(self, index: Optional[int] = None, subclause_complete: Optional[bool] = None) -> Diagram:
+        assert len(self.keys) == 1 or index is not None, \
             'to generate a diagram from a multi-state model, you must specify which state you want'
-        assert i is None or (0 <= i and i < len(self.keys))
+        assert index is None or (0 <= index and index < len(self.keys))
 
         if subclause_complete is None:
             subclause_complete = utils.args.diagrams_subclause_complete
 
-        if i is None:
-            i = 0
+        if index is None:
+            index = 0
 
-        if i not in self.diagram_cache:
+        if index not in self.diagram_cache:
             prog = syntax.the_program
 
-            mut_rel_interps = self.rel_interps[i]
-            mut_const_interps = self.const_interps[i]
-            mut_func_interps = self.func_interps[i]
+            mut_rel_interps = self.rel_interps[index]
+            mut_const_interps = self.const_interps[index]
+            mut_func_interps = self.func_interps[index]
 
             vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
             if subclause_complete:
@@ -1582,9 +1581,9 @@ class Trace(object):
             assert prog.scope is not None
             diag.resolve(prog.scope)
 
-            self.diagram_cache[i] = diag
+            self.diagram_cache[index] = diag
 
-        return self.diagram_cache[i]
+        return self.diagram_cache[index]
 
     def as_onestate_formula(self, i: Optional[int] = None) -> Expr:
         assert len(self.keys) == 1 or i is not None, \
