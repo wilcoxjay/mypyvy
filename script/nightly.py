@@ -18,6 +18,8 @@ from typing import cast, Dict, IO, List, Optional
 class NightlyArgs:
     output_directory: str
     job_timeout: int
+    job_suffix: Optional[str]
+    num_threads: int
     mypyvy_path: Path
     no_run: bool
     no_analyze: bool
@@ -32,8 +34,12 @@ def parse_args() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument('output_directory', nargs='?',
                            help='name of directory where output is stored')
+    argparser.add_argument('--job-suffix',
+                           help='string to append (with dash) to the generated output directory name')
     argparser.add_argument('--job-timeout', default='60', type=int,
                            help='number of seconds to allow each job to run before killing it')
+    argparser.add_argument('-j', '--num-threads', type=int,
+                           help='number of threads to run in parallel (default: n_cpu - 1)')
     argparser.add_argument('--mypyvy-path', type=Path,
                            help='path to mypyvy repository (default: /path/to/nightly.py/../..)')
     argparser.add_argument('--no-run', action='store_true',
@@ -75,6 +81,8 @@ class JobRunner:
         self.start_time = datetime.now()
         if output_dir_name is None:
             output_dir_name = f"mypyvy-nightly-output-{format_datetime(self.start_time)}"
+        if args.job_suffix is not None:
+            output_dir_name += f'-{args.job_suffix}'
         self.output_dir = Path(output_dir_name)
         self.output_dir.mkdir(exist_ok=True)
         self.log_dir = self.output_dir / JOB_LOG_DIR
@@ -136,7 +144,11 @@ class JobRunner:
 
     def run_jobs(self) -> None:
         self.log_global('beginning to run mypyvy jobs')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max((os.cpu_count() or 1) - 1, 1)) as executor:
+        if args.num_threads is not None:
+            num_workers = args.num_threads
+        else:
+            num_workers = max((os.cpu_count() or 1) - 1, 1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
             fs = {}
             self.log_global('submitting jobs to queue')
             for job in self.jobs:
@@ -209,8 +221,8 @@ def analyze_results(output_dir: str) -> None:
                             if l == 'frame is safe and inductive. done!':
                                 result.out_msg = 'safe'
                                 break
-                            elif l == 'abstract counterexample: the system has no ' \
-                                 'universal inductive invariant proving safety':
+                            elif (l == 'abstract counterexample: the system has no '
+                                  'universal inductive invariant proving safety'):
                                 result.out_msg = 'abstractly unsafe'
 
     with (Path(output_dir) / 'analysis.log').open('w') as analysis_log:
