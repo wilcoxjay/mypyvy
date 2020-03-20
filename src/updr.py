@@ -1,4 +1,3 @@
-import logging
 import z3
 
 import utils
@@ -42,7 +41,6 @@ class Frames:
         self.push_cache: List[Set[Expr]] = []
         self.counter = 0
         self.predicates: List[Expr] = []
-        self.state_count = 0
         self.safeties = [inv.expr for inv in syntax.the_program.safeties()]
 
         self._first_frame()
@@ -190,8 +188,17 @@ class Frames:
             trace.pop()
 
         diag.minimize_from_core(core)
-        diag.generalize(self.solver, self[j - 1].summary())
 
+        def prev_frame_constraint(diag: Diagram) -> bool:
+            pre_frame = self[j - 1].summary()
+            return (
+                logic.check_two_state_implication_all_transitions(
+                    self.solver, pre_frame, syntax.Not(diag.to_ast()), minimize=False
+                ) is None and
+                diag.valid_in_init(self.solver, minimize=False)
+            )
+
+        diag.generalize(self.solver, prev_frame_constraint)
         self.add(syntax.Not(diag.to_ast()), j)
 
         return Blocked()

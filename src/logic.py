@@ -1138,18 +1138,21 @@ class Diagram(object):
             yield
             S -= j
 
-    def _generalize(self, s: Solver, omission_checker: Callable[[Diagram], bool]) -> None:
+    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool]) -> None:
+        'drop conjuncts of this diagram subject to the constraint returning true'
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
         R: Iterable[_RelevantDecl] = self.rels
         C: Iterable[_RelevantDecl] = self.consts
         F: Iterable[_RelevantDecl] = self.funcs
 
+        assert constraint(self)
+
         for d in itertools.chain(I, R, C, F):
             if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                 continue
             with self.without(d):
-                res = omission_checker(self)
+                res = constraint(self)
             if res:
                 self.remove_clause(d)
                 continue
@@ -1162,30 +1165,17 @@ class Diagram(object):
                     if j not in S and isinstance(x, syntax.UnaryExpr):
                         cs.add(j)
                 with self.without(d, cs):
-                    res = omission_checker(self)
+                    res = constraint(self)
                 if res:
                     self.remove_clause(d, cs)
 
         for d, j, c in self.conjuncts():
             with self.without(d, j):
-                res = omission_checker(self)
+                res = constraint(self)
             if res:
                 self.remove_clause(d, j)
 
         self.prune_unused_vars()
-
-    def generalize_general(self, s: Solver, omission_checker: Callable[[Diagram], bool]) -> None:
-        return self._generalize(s, omission_checker)
-
-    def generalize(self, s: Solver, pre_frame: Sequence[Expr]) -> None:
-        def prev_frame_omission_checker(diag: Diagram) -> bool:
-            return (
-                check_two_state_implication_all_transitions(
-                    s, pre_frame, syntax.Not(diag.to_ast()), minimize=False
-                ) is None and
-                self.valid_in_init(s, minimize=False)
-            )
-        self._generalize(s, prev_frame_omission_checker)
 
 _digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
 

@@ -50,7 +50,7 @@ def itp_gen(s: Solver) -> None:
             core = bmc_checker.check_and_core(pre_diag)
         pre_diag.minimize_from_core(core)
 
-        pre_diag.generalize_general(s, lambda diag: generalize_cex_omission_checker(s, diag, k))
+        pre_diag.generalize(s, lambda diag: generalize_cex_omission_checker(s, diag, k))
 
         e = syntax.Not(pre_diag.to_ast())
 
