@@ -39,7 +39,6 @@ class Frames:
         self.solver = solver
         self.fs: List[Frame] = []
         self.push_cache: List[Set[Expr]] = []
-        self.counter = 0
         self.predicates: List[Expr] = []
         self.safeties = [inv.expr for inv in syntax.the_program.safeties()]
 
@@ -66,10 +65,7 @@ class Frames:
     def establish_safety(self) -> None:
         frame_no = len(self.fs) - 1
 
-        while True:
-            if (res := self._get_some_cex_to_safety()) is None:
-                break
-
+        while res := self._get_some_cex_to_safety():
             self.block(res, frame_no, [(None, res)], True)
 
     def _get_some_cex_to_safety(self) -> Optional[Diagram]:
@@ -93,39 +89,14 @@ class Frames:
         res = logic.check_implication(self.solver, self[i + 1].summary(), self[i].summary(), minimize=False)
         return res is None
 
-    def push_conjunct(self, frame_no: int, c: Expr,
-                      frame_old_count: Optional[int] = None) -> None:
-        is_safety = c in self.safeties
-
+    def push_conjunct(self, frame_no: int, c: Expr) -> None:
         f = self.fs[frame_no]
-        while True:
-            res = self.clause_implied_by_transitions_from_frame(
-                f,
-                c,
-                minimize=is_safety or utils.args.block_may_cexs
-            )
-            if res is None:
-                self[frame_no + 1].strengthen(c)
-                break
-
-            m, t = res
-            mod = Trace.from_z3((KEY_OLD, KEY_NEW), m)
-            diag = mod.as_diagram(index=0)
-
-            if is_safety:
-                self.block(diag, frame_no, [(None, c), (t, diag)], safety_goal=True)
-            else:
-                if utils.args.block_may_cexs:
-                    ans = self.block(diag, frame_no, [(None, c), (t, diag)], safety_goal=False)
-                    if isinstance(ans, CexFound):
-                        break
-                else:
-                    break
+        res = self.clause_implied_by_transitions_from_frame(f, c, minimize=False)
+        if res is None:
+            self[frame_no + 1].strengthen(c)
 
     def push_forward_frames(self) -> None:
         for i, f in enumerate(self.fs[:-1]):
-            if i == 0 and not utils.args.push_frame_zero:
-                continue
             self.push_frame(i, f)
 
     def always_assert_inductive_trace(self) -> None:
@@ -135,14 +106,13 @@ class Frames:
                 assert res is None, ("Non inductive trace:\n\t%s\n\t%s" % (c, f))
 
     def push_frame(self, i: int, f: Frame) -> None:
-        frame_old_count = self.counter
         conjuncts = f._summary
         j = 0
         while j < len(conjuncts):
             c = conjuncts.l[j]
             if c in self.fs[i + 1]._summary or c in self.push_cache[i]:
                 return
-            self.push_conjunct(i, c, frame_old_count)
+            self.push_conjunct(i, c)
             self.push_cache[i].add(c)
             j += 1
 
@@ -233,8 +203,6 @@ class Frames:
                 core.add(int(x.decl().name()[1:]))
 
     def add(self, e: Expr, depth: Optional[int] = None) -> None:
-        self.counter += 1
-
         if depth is None:
             depth = len(self)
 
