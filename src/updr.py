@@ -39,7 +39,7 @@ class Frame:
 @dataclass
 class BackwardReachableState:
     id: int
-    state: State
+    state_or_expr: Union[State, Expr]
     num_steps_to_bad: int
     known_absent_until_frame: int = dataclasses.field(default=0, init=False)
 
@@ -48,9 +48,25 @@ class Frames:
         self.solver = solver
         self.fs: List[Frame] = []
         self.predicates: List[Expr] = []
-        self.safeties = [inv.expr for inv in syntax.the_program.safeties()]
+        self.safeties = []
         self.backwards_reachable_states: List[BackwardReachableState] = []
         self.currently_blocking: Optional[BackwardReachableState] = None
+
+        for inv in syntax.the_program.safeties():
+            try:
+                cs = syntax.as_clauses(inv.expr)
+                utils.logger.info(f'converted safety {inv.expr} in to clauses:')
+                for c in cs:
+                    utils.logger.info(str(syntax.Not(c)))
+                    self.record_backwards_reachable_state(
+                        BackwardReachableState(
+                            len(self.backwards_reachable_states),
+                            syntax.Not(c),
+                            0
+                        )
+                    )
+            except Exception:
+                self.safeties.append(inv.expr)
 
         self._first_frame()
 
@@ -75,19 +91,23 @@ class Frames:
     def establish_safety(self) -> None:
         while bstate := self.find_something_to_block():
             self.currently_blocking = bstate
-            diag = bstate.state.as_diagram()
+            if isinstance(state := bstate.state_or_expr, State):
+                diag_or_expr: Union[Diagram, Expr] = state.as_diagram()
+            else:
+                assert isinstance(expr := bstate.state_or_expr, Expr)
+                diag_or_expr = expr
             frame_no = bstate.known_absent_until_frame + 1
             utils.logger.info(f'will block state #{bstate.id} in frame {frame_no}')
-            self.block(diag, frame_no, [(None, diag)])
+            self.block(diag_or_expr, frame_no, [(None, diag_or_expr)])
             bstate.known_absent_until_frame += 1
 
     def find_something_to_block(self) -> Optional[BackwardReachableState]:
         utils.logger.info('looking for something to block')
 
         while True:
-            for bstate in self.backwards_reachable_states:
-                utils.logger.info(f'#{bstate.id} valid_up_to={bstate.known_absent_until_frame} '
-                                  f'steps_to_bad={bstate.num_steps_to_bad}')
+            # for bstate in self.backwards_reachable_states:
+            #     utils.logger.info(f'#{bstate.id} valid_up_to={bstate.known_absent_until_frame} '
+            #                       f'steps_to_bad={bstate.num_steps_to_bad}')
 
             bstate_min = min(reversed(self.backwards_reachable_states),
                              key=lambda b: (b.known_absent_until_frame, -b.num_steps_to_bad),
@@ -96,17 +116,26 @@ class Frames:
             if bstate_min is None or (min_frame_no := bstate_min.known_absent_until_frame) == len(self) - 1:
                 break
 
-            eval_res = bstate_min.state.eval(syntax.And(*(self[min_frame_no + 1].summary())))
-            assert isinstance(eval_res, bool)
-            if eval_res:
-                return bstate_min
+            if isinstance(state := bstate_min.state_or_expr, State):
+                eval_res = state.eval(syntax.And(*(self[min_frame_no + 1].summary())))
+                assert isinstance(eval_res, bool)
+                if eval_res:
+                    return bstate_min
+            else:
+                expr = state
+                res = logic.check_implication(self.solver,
+                                              self[min_frame_no + 1].summary(),
+                                              [syntax.Not(expr)],
+                                              minimize=False)
+                if res is not None:
+                    return bstate_min
 
             bstate_min.known_absent_until_frame += 1
 
         utils.logger.info('no existing states to block. looking for a new state.')
 
         f = self.fs[-1]
-        if (res := logic.check_implication(self.solver, f.summary(), self.safeties)) is None:
+        if len(self.safeties) == 0 or (res := logic.check_implication(self.solver, f.summary(), self.safeties)) is None:
             utils.logger.info('frontier is safe. nothing new to block either.')
             return None
 
@@ -160,12 +189,16 @@ class Frames:
 
     def block(
             self,
-            diag: Diagram,
+            diag_or_expr: Union[Diagram, Expr],
             j: int,
             trace: RelaxedTrace
     ) -> None:
         utils.logger.info(f'block({j})')
-        if j == 0 or (j == 1 and not self.valid_in_initial_frame(syntax.Not(diag.to_ast()))):
+
+        def as_expr() -> Expr:
+            return diag_or_expr.to_ast() if isinstance(diag_or_expr, Diagram) else diag_or_expr
+
+        if j == 0 or (j == 1 and not self.valid_in_initial_frame(syntax.Not(as_expr()))):
             utils.logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') +
                                                 str(diag) for t, diag in trace))
             print('abstract counterexample: the system has no universal inductive invariant proving safety')
@@ -174,11 +207,11 @@ class Frames:
             raise AbstractCounterexample()
 
         while True:
-            res, x = self.find_predecessor(j - 1, diag)
+            res, x = self.find_predecessor(j - 1, diag_or_expr)
             if res == z3.unsat:
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
-                self.augment_core_for_init(diag, core)
+                self.augment_core_for_init(diag_or_expr, core)
                 break
             assert isinstance(x, tuple), (res, x)
             trans, cti = x
@@ -188,7 +221,8 @@ class Frames:
             self.block(pre_diag, j - 1, trace)
             trace.pop()
 
-        diag.minimize_from_core(core)
+        if isinstance(diag_or_expr, Diagram):
+            diag_or_expr.minimize_from_core(core)
 
         def prev_frame_constraint(diag: Diagram) -> bool:
             pre_frame = self[j - 1].summary()
@@ -199,8 +233,9 @@ class Frames:
                 self.valid_in_initial_frame(syntax.Not(diag.to_ast()))
             )
 
-        diag.generalize(self.solver, prev_frame_constraint)
-        e = syntax.Not(diag.to_ast())
+        if isinstance(diag_or_expr, Diagram):
+            diag_or_expr.generalize(self.solver, prev_frame_constraint)
+        e = syntax.Not(as_expr())
         utils.logger.info(f'block({j}) using {e}')
         self.add(e, j)
         k = j
@@ -211,8 +246,11 @@ class Frames:
     def valid_in_initial_frame(self, e: Expr) -> bool:
         return logic.check_implication(self.solver, self.fs[0].summary(), [e], minimize=False) is None
 
-    def augment_core_for_init(self, diag: Diagram, core: Optional[MySet[int]]) -> None:
+    def augment_core_for_init(self, diag_or_expr: Union[Diagram, Expr], core: Optional[MySet[int]]) -> None:
         if core is None or not utils.args.use_z3_unsat_cores:
+            return
+
+        if not isinstance(diag := diag_or_expr, Diagram):
             return
 
         t = self.solver.get_translator((KEY_ONE,))
@@ -246,7 +284,7 @@ class Frames:
     def find_predecessor(
             self,
             j: int,
-            diag: Diagram
+            diag_or_expr: Union[Diagram, Expr]
     ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[DefinitionDecl, Trace]]]:
         pre_frame = self[j]
         prog = syntax.the_program
@@ -258,15 +296,27 @@ class Frames:
         else:
             core = None
 
+        def to_z3() -> z3.ExprRef:
+            if isinstance(diag_or_expr, Diagram):
+                return diag_or_expr.to_z3(t, state_index=1)
+            else:
+                return t.translate_expr(diag_or_expr, index=1)
+
+        def trackers() -> List[z3.ExprRef]:
+            if isinstance(diag_or_expr, Diagram):
+                return diag_or_expr.trackers
+            else:
+                return []
+
         with solver.new_frame(), solver.mark_assumptions_necessary():
             for f in pre_frame.summary():
                 solver.add(t.translate_expr(f, index=0))
-            solver.add(diag.to_z3(t, state_index=1))
+            solver.add(to_z3())
             for ition in prog.transitions():
                 with solver.new_frame():
                     solver.add(t.translate_transition(ition))
-                    if (res := solver.check(diag.trackers)) == z3.sat:
-                        m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(diag.trackers))
+                    if (res := solver.check(trackers())) == z3.sat:
+                        m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(trackers()))
                         state = State(m, 0)
                         src = self.currently_blocking
                         assert src is not None
@@ -275,11 +325,11 @@ class Frames:
                         self.record_backwards_reachable_state(bstate)
                         return (z3.sat, (ition, m))
                     elif res == z3.unsat:
-                        if utils.args.use_z3_unsat_cores:
+                        if utils.args.use_z3_unsat_cores and isinstance(diag_or_expr, Diagram):
                             assert core is not None
                             # carefully retrieve the unsat core before calling check again
                             uc = solver.unsat_core()
-                            res = solver.check([diag.trackers[i] for i in core])
+                            res = solver.check([diag_or_expr.trackers[i] for i in core])
                             if res == z3.unsat:
                                 continue
                             for x in sorted(uc, key=lambda y: y.decl().name()):
