@@ -1229,6 +1229,7 @@ def _univ_str(state: State) -> List[str]:
 
 def _state_str(
         state: State,
+        print_negative_tuples: bool = False
 ) -> str:
     l = []
 
@@ -1243,7 +1244,7 @@ def _state_str(
         if syntax.has_annotation(R, 'no_print'):
             continue
         for tup, b in sorted(Rs[R], key=lambda x: print_tuple(state, R.arity, x[0])):
-            if b:
+            if b or print_negative_tuples:
                 l.append('%s%s(%s)' % ('' if b else '!', R.name,
                                        print_tuple(state, R.arity, tup)))
 
@@ -1725,6 +1726,9 @@ def _lookup_assoc(l: Sequence[Tuple[_K, _V]], k: _K) -> _V:
 class State:
     trace: Trace
     index: Optional[int]
+
+    def __repr__(self) -> str:
+        return '\n'.join(_univ_str(self) + [_state_str(self, print_negative_tuples=True)])
 
     def __str__(self) -> str:
         return '\n'.join(_univ_str(self) + [_state_str(self)])
