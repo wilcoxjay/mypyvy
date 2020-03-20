@@ -115,6 +115,7 @@ class MypyvyArgs(object):
     max_depth: int
     dynamic: bool
     separator: str
+    expt_flags: Set[str]
     all_subclauses: bool
     optimize_ctis: bool
     json: bool
