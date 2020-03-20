@@ -94,7 +94,7 @@ class JobRunner:
     def collect_jobs(self) -> None:
         self.log_global('jobs:')
         self.jobs = []
-        for example_file in (args.mypyvy_path / 'examples').glob('lockserv_multi.pyv'):
+        for example_file in sorted((args.mypyvy_path / 'examples').glob('*.pyv'), key=str):
             for seed in range(args.num_seeds):
                 key = f'{seed:0{len(str(args.num_seeds - 1))}}' if args.num_seeds > 1 else None
                 job = Job(example_file.stem, key,
