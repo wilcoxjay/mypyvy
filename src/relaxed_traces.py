@@ -269,7 +269,7 @@ def is_rel_blocking_relax_step(
         with syntax.the_program.scope.n_states(2):
             diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
 
-    res = trns.eval_double_vocab(diffing_formula, idx)
+    res = trns.eval(diffing_formula, idx)
     assert isinstance(res, bool)
     return cast(bool, res)
 
@@ -280,14 +280,14 @@ def derived_rels_candidates_from_trace(
     first_relax_idx = first_relax_step_idx(trns)
     pre_relax_state = trns.as_state(first_relax_idx)
     post_relax_state = trns.as_state(first_relax_idx + 1)
-    assert pre_relax_state.univs == post_relax_state.univs
+    assert pre_relax_state.univs() == post_relax_state.univs()
 
     # relaxed elements
     relaxed_elements = []
-    for sort, univ in pre_relax_state.univs.items():
+    for sort, univ in pre_relax_state.univs().items():
         active_rel_name = 'active_' + sort.name         # TODO: de-duplicate
-        pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interp)
-        post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interp)
+        pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interp())
+        post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interp())
         pre_active_elements = [tup[0] for (tup, b) in pre_active_interp if b]
         post_active_elements = [tup[0] for (tup, b) in post_active_interp if b]
         assert set(post_active_elements).issubset(set(pre_active_elements))
@@ -298,14 +298,14 @@ def derived_rels_candidates_from_trace(
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
     relevant_facts: List[Union[RelationFact, FunctionFact, InequalityFact]] = []
 
-    for rel, rintp in pre_relax_state.rel_interp.items():
+    for rel, rintp in pre_relax_state.rel_interp().items():
         for rfact in rintp:
             (elms, polarity) = rfact
             relation_fact = RelationFact(rel, elms, polarity)
             if set(relation_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append(relation_fact)
 
-    for func, fintp in pre_relax_state.func_interp.items():
+    for func, fintp in pre_relax_state.func_interp().items():
         for ffact in fintp:
             (els_params, els_res) = ffact
             function_fact = FunctionFact(func, els_params, els_res)
@@ -313,7 +313,7 @@ def derived_rels_candidates_from_trace(
                 relevant_facts.append(function_fact)
 
     for sort, elm in relaxed_elements:  # other inequalities presumably handled by UPDR
-        for other_elm in pre_relax_state.univs[sort]:
+        for other_elm in pre_relax_state.univs()[sort]:
             if other_elm == elm:
                 continue
             relevant_facts.append(InequalityFact(elm, other_elm))

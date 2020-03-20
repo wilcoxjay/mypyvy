@@ -44,7 +44,7 @@ def get_function(name: str) -> FunctionDecl:
 
 def get_ordinal(state: State, order: RelationDecl, elt: str) -> int:
     graph: Dict[str, Set[str]] = defaultdict(set)
-    for tup, b in state.rel_interp[order]:
+    for tup, b in state.rel_interp()[order]:
         if b:
             assert len(tup) == 2
             lo, hi = tup
@@ -74,7 +74,7 @@ def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     item_sort_decl = syntax.get_decl_from_sort(item_sort)
 
     items: Set[str] = set()
-    for tup, b in state.rel_interp[member]:
+    for tup, b in state.rel_interp()[member]:
         assert len(tup) == 2
         item, set_id = tup
         if b and set_id == elt:
@@ -85,7 +85,7 @@ def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
 def const_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     prog = syntax.the_program
     for c in prog.constants():
-        if syntax.get_decl_from_sort(c.sort) == s and state.const_interp[c] == elt:
+        if syntax.get_decl_from_sort(c.sort) == s and state.const_interp()[c] == elt:
             return c.name
 
     return elt
@@ -104,7 +104,7 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     elt_sort = syntax.get_decl_from_sort(value.sort)
 
     none: Optional[str] = None
-    for tup, b in state.rel_interp[is_none]:
+    for tup, b in state.rel_interp()[is_none]:
         if b:
             assert none is None and len(tup) == 1
             none = tup[0]
@@ -115,7 +115,7 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         return 'None'
     else:
         the_value: Optional[str] = None
-        for tup, res in state.func_interp[value]:
+        for tup, res in state.func_interp()[value]:
             assert len(tup) == 1
             if tup[0] == elt:
                 assert the_value is None
@@ -163,7 +163,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         assert rel_or_func.arity[1].decl == index_sort
 
     entries: Dict[str, LogEntry] = {}
-    for tup, b in state.rel_interp[index_used]:
+    for tup, b in state.rel_interp()[index_used]:
         if not b:
             continue
 
@@ -177,7 +177,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
             val_rel = get_relation(name)
             assert_valid_rel_or_func(val_rel)
             value_sorts.append(syntax.get_decl_from_sort(val_rel.arity[2]))
-            for tup, b in state.rel_interp[val_rel]:
+            for tup, b in state.rel_interp()[val_rel]:
                 if not b:
                     continue
 
@@ -190,7 +190,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
             val_func = get_function(name)
             assert_valid_rel_or_func(val_func)
             value_sorts.append(syntax.get_decl_from_sort(val_func.sort))
-            for tup, res in state.func_interp[val_func]:
+            for tup, res in state.func_interp()[val_func]:
                 log, index = tup
                 if log == elt:
                     if index not in entries:

@@ -116,7 +116,7 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                                   s, (KEY_ONE,))
                 if res is not None:
                     if utils.args.smoke_test_solver:
-                        state = res.as_state(i=0)
+                        state = State(res, 0)
                         for ax in prog.axioms():
                             if state.eval(ax.expr) is not True:
                                 print('\n\n'.join(str(x) for x in s.debug_recent()))
@@ -1211,7 +1211,7 @@ def print_tuple(state: State, arity: List[syntax.Sort], tup: List[str]) -> str:
 
 def univ_str(state: State) -> List[str]:
     l = []
-    for s in sorted(state.univs.keys(), key=str):
+    for s in sorted(state.univs().keys(), key=str):
         if syntax.has_annotation(s, 'no_print'):
             continue
 
@@ -1223,7 +1223,7 @@ def univ_str(state: State) -> List[str]:
                 return (m['prefix'], int(m['suffix']))
             else:
                 return (ans, 0)
-        for x in sorted(state.univs[s], key=key):
+        for x in sorted(state.univs()[s], key=key):
             l.append('  %s' % print_element(state, s, x))
     return l
 
@@ -1257,6 +1257,11 @@ def _state_str(
     return '\n'.join(l)
 
 
+Universe = Dict[SortDecl, List[str]]
+RelationInterp = Dict[RelationDecl, List[Tuple[List[str], bool]]]
+ConstantInterp = Dict[ConstantDecl, str]
+FunctionInterp = Dict[FunctionDecl, List[Tuple[List[str], str]]]
+
 class Trace(object):
     def __init__(
             self,
@@ -1264,19 +1269,15 @@ class Trace(object):
     ) -> None:
         self.keys = keys
 
-        self.univs: Dict[SortDecl, List[str]] = OrderedDict()
+        self.univs: Universe = OrderedDict()
 
-        RT = Dict[RelationDecl, List[Tuple[List[str], bool]]]
-        CT = Dict[ConstantDecl, str]
-        FT = Dict[FunctionDecl, List[Tuple[List[str], str]]]
+        self.immut_rel_interps: RelationInterp = OrderedDict()
+        self.immut_const_interps: ConstantInterp = OrderedDict()
+        self.immut_func_interps: FunctionInterp = OrderedDict()
 
-        self.immut_rel_interps: RT = OrderedDict()
-        self.immut_const_interps: CT = OrderedDict()
-        self.immut_func_interps: FT = OrderedDict()
-
-        self.rel_interps: List[RT] = [OrderedDict() for i in range(len(self.keys))]
-        self.const_interps: List[CT] = [OrderedDict() for i in range(len(self.keys))]
-        self.func_interps: List[FT] = [OrderedDict() for i in range(len(self.keys))]
+        self.rel_interps: List[RelationInterp] = [OrderedDict() for i in range(len(self.keys))]
+        self.const_interps: List[ConstantInterp] = [OrderedDict() for i in range(len(self.keys))]
+        self.func_interps: List[FunctionInterp] = [OrderedDict() for i in range(len(self.keys))]
 
         self.transitions: List[str] = ['' for i in range(len(self.keys) - 1)]
         self.onestate_formula_cache: Dict[int, Expr] = {}
@@ -1300,8 +1301,7 @@ class Trace(object):
 
     def __str__(self) -> str:
         l = []
-        dummy_state = State(self.univs, self.immut_rel_interps, self.immut_const_interps,
-                            self.immut_func_interps)
+        dummy_state = State(self, None)
         l.extend(univ_str(dummy_state))
         l.append(_state_str(dummy_state, self.immut_const_interps, self.immut_rel_interps,
                             self.immut_func_interps))
@@ -1645,94 +1645,72 @@ class Trace(object):
             self.onestate_formula_cache[i] = e
         return self.onestate_formula_cache[i]
 
-    def as_state(self, i: Optional[int] = None) -> State:
-        assert len(self.keys) == 1 or i is not None, \
-            'to generate a State from a multi-state model, ' + \
-            'you must specify which state you want'
+    def as_state(self, i: Optional[int]) -> State:
         assert i is None or (0 <= i and i < len(self.keys))
+        return State(self, i)
 
-        if i is None:
-            i = 0
-
-        return State(self.univs,
-                     dict(itertools.chain(self.immut_rel_interps.items(), self.rel_interps[i].items())),
-                     dict(itertools.chain(self.immut_const_interps.items(), self.const_interps[i].items())),
-                     dict(itertools.chain(self.immut_func_interps.items(), self.func_interps[i].items())))
-
-    def eval_double_vocab(self, full_expr: Expr, start_location: int) -> Union[str, bool]:
-        def eval(expr: Expr, old: bool) -> Union[str, bool]:
-            def current_index() -> int:
-                return start_location + (1 if not old else 0)
-
+    def eval(self, full_expr: Expr, starting_index: Optional[int]) -> Union[str, bool]:
+        def go(expr: Expr, index: Optional[int]) -> Union[str, bool]:
             def current_rels() -> Dict[RelationDecl, List[Tuple[List[str], bool]]]:
                 return dict(itertools.chain(self.immut_rel_interps.items(),
-                                            self.rel_interps[current_index()].items()))
+                                            self.rel_interps[index].items() if index is not None else []))
 
             def current_consts() -> Dict[ConstantDecl, str]:
                 return dict(itertools.chain(self.immut_const_interps.items(),
-                                            self.const_interps[current_index()].items()))
+                                            self.const_interps[index].items() if index is not None else []))
 
             def current_funcs() -> Dict[FunctionDecl, List[Tuple[List[str], str]]]:
                 return dict(itertools.chain(self.immut_func_interps.items(),
-                                            self.func_interps[current_index()].items()))
+                                            self.func_interps[index].items() if index is not None else []))
             scope: syntax.Scope[Union[str, bool]] = \
                 cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
             if isinstance(expr, syntax.Bool):
                 return expr.val
             elif isinstance(expr, syntax.UnaryExpr):
-                if expr.op == 'OLD':
-                    return eval(expr.arg, old=True)
+                if expr.op == 'NEW':
+                    assert index is not None
+                    return go(expr.arg, index=index + 1)
                 elif expr.op == 'NOT':
-                    return not eval(expr.arg, old)
+                    return not go(expr.arg, index)
                 assert False, "eval unknown operation %s" % expr.op
             elif isinstance(expr, syntax.BinaryExpr):
                 if expr.op == 'IMPLIES':
-                    return not eval(expr.arg1, old) or eval(expr.arg2, old)
+                    return not go(expr.arg1, index) or go(expr.arg2, index)
                 elif expr.op in ['IFF', 'EQUAL']:
-                    return eval(expr.arg1, old) == eval(expr.arg2, old)
+                    return go(expr.arg1, index) == go(expr.arg2, index)
                 else:
                     assert expr.op == 'NOTEQ'
-                    return eval(expr.arg1, old) != eval(expr.arg2, old)
+                    return go(expr.arg1, index) != go(expr.arg2, index)
             elif isinstance(expr, syntax.NaryExpr):
                 assert expr.op in ['AND', 'OR', 'DISTINCT']
                 if expr.op in ['AND', 'OR']:
                     p = all if expr.op == 'AND' else any
-                    return p(eval(arg, old) for arg in expr.args)
+                    return p(go(arg, index) for arg in expr.args)
                 else:
                     assert expr.op == 'DISTINCT'
-                    return len(set(eval(arg, old) for arg in expr.args)) == len(expr.args)
+                    return len(set(go(arg, index) for arg in expr.args)) == len(expr.args)
             elif isinstance(expr, syntax.AppExpr):
                 d = scope.get(expr.callee)
                 assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
                 table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
                 if isinstance(d, syntax.RelationDecl):
-                    # TODO: replace the following line due to pickling non-uniqueness of RelationDecl
-                    # table = self.rel_interp[d]
-                    interp_from_name = dict((r.name, interp) for (r, interp) in current_rels().items())
-                    table = interp_from_name[d.name]
+                    table = current_rels()[d]
                 else:
-                    # TODO: replace the following line due to pickling non-uniqueness of FunctionDecl
-                    # table = current_funcs()[d]
-                    interp_from_name_f = dict((f.name, interp) for (f, interp) in current_funcs().items())
-                    table = interp_from_name_f[d.name]
+                    table = current_funcs()[d]
                 args = []
                 for arg in expr.args:
-                    ans = eval(arg, old)
+                    ans = go(arg, index)
                     assert isinstance(ans, str)
                     args.append(ans)
                 return _lookup_assoc(table, args)
             elif isinstance(expr, syntax.QuantifierExpr):
                 assert expr.quant in ['FORALL', 'EXISTS']
                 p = all if expr.quant == 'FORALL' else any
-                # TODO: replaced the following line due to pickling non-uniqueness of SortDecl
-                # doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
-                univs_from_str = dict((s.name, univ) for (s, univ) in self.univs.items())
-                assert all(isinstance(sv.sort, syntax.UninterpretedSort) for sv in expr.binder.vs)
-                doms = [univs_from_str[cast(syntax.UninterpretedSort, sv.sort).name] for sv in expr.binder.vs]
+                doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
 
                 def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
                     with scope.in_scope(q.binder, list(tup)):
-                        ans = eval(q.body, old)
+                        ans = go(q.body, index)
                         assert isinstance(ans, bool)
                         return ans
                 return p(one(expr, t) for t in itertools.product(*doms))
@@ -1753,17 +1731,17 @@ class Trace(object):
                     assert isinstance(a, str) or isinstance(a, bool)
                     return a
             elif isinstance(expr, syntax.IfThenElse):
-                branch = eval(expr.branch, old)
+                branch = go(expr.branch, index)
                 assert isinstance(branch, bool)
-                return eval(expr.then, old) if branch else eval(expr.els, old)
+                return go(expr.then, index) if branch else go(expr.els, index)
             elif isinstance(expr, syntax.Let):
-                val = eval(expr.val, old)
+                val = go(expr.val, index)
                 with scope.in_scope(expr.binder, [val]):
-                    return eval(expr.body, old)
+                    return go(expr.body, index)
             else:
                 assert False, expr
 
-        return eval(full_expr, old=False)
+        return go(full_expr, index=starting_index)
 
 _K = TypeVar('_K')
 _V = TypeVar('_V')
@@ -1775,104 +1753,36 @@ def _lookup_assoc(l: Sequence[Tuple[_K, _V]], k: _K) -> _V:
     assert False
 
 @dataclass
-class State(object):
-    univs: Dict[SortDecl, List[str]]
-    rel_interp: Dict[RelationDecl, List[Tuple[List[str], bool]]]
-    const_interp: Dict[ConstantDecl, str]
-    func_interp: Dict[FunctionDecl, List[Tuple[List[str], str]]]
+class State:
+    trace: Trace
+    index: Optional[int]
 
-    def __str__(self) -> str:
-        l = []
-        l.extend(univ_str(self))
-        l.append(_state_str(self, self.const_interp, self.rel_interp, self.func_interp))
-        return '\n'.join(l)
+    def eval(self, e: Expr) -> Union[str, bool]:
+        return self.trace.eval(e, starting_index=self.index)
 
-    # TODO: eliminate duplication with trace.eval_double_vocab
-    def eval(self, expr: Expr) -> Union[str, bool]:
-        scope: syntax.Scope[Union[str, bool]] = \
-            cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
-        if isinstance(expr, syntax.Bool):
-            return expr.val
-        elif isinstance(expr, syntax.UnaryExpr):
-            assert expr.op != 'OLD', "cannot eval 'old' in a single state"
-            assert expr.op == 'NOT'
-            return not self.eval(expr.arg)
-        elif isinstance(expr, syntax.BinaryExpr):
-            if expr.op == 'IMPLIES':
-                return not self.eval(expr.arg1) or self.eval(expr.arg2)
-            elif expr.op in ['IFF', 'EQUAL']:
-                return self.eval(expr.arg1) == self.eval(expr.arg2)
-            else:
-                assert expr.op == 'NOTEQ'
-                return self.eval(expr.arg1) != self.eval(expr.arg2)
-        elif isinstance(expr, syntax.NaryExpr):
-            assert expr.op in ['AND', 'OR', 'DISTINCT']
-            if expr.op in ['AND', 'OR']:
-                p = all if expr.op == 'AND' else any
-                return p(self.eval(arg) for arg in expr.args)
-            else:
-                assert expr.op == 'DISTINCT'
-                return len(set(self.eval(arg) for arg in expr.args)) == len(expr.args)
-        elif isinstance(expr, syntax.AppExpr):
-            d = scope.get(expr.callee)
-            assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
-            table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
-            if isinstance(d, syntax.RelationDecl):
-                # TODO: replace the following line due to pickling non-uniqueness of RelationDecl
-                # table = self.rel_interp[d]
-                interp_from_name = dict((r.name, interp) for (r, interp) in self.rel_interp.items())
-                table = interp_from_name[d.name]
-            else:
-                table = self.func_interp[d]
-            args = []
-            for arg in expr.args:
-                ans = self.eval(arg)
-                assert isinstance(ans, str)
-                args.append(ans)
-            return _lookup_assoc(table, args)
-        elif isinstance(expr, syntax.QuantifierExpr):
-            assert expr.quant in ['FORALL', 'EXISTS']
-            p = all if expr.quant == 'FORALL' else any
-            # TODO: replaced the following line due to pickling non-uniqueness of SortDecl
-            # doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
-            univs_from_str = dict((s.name, univ) for (s, univ) in self.univs.items())
-            assert all(isinstance(sv.sort, syntax.UninterpretedSort) for sv in expr.binder.vs)
-            doms = [univs_from_str[cast(syntax.UninterpretedSort, sv.sort).name] for sv in expr.binder.vs]
+    def univs(self) -> Universe:
+        return self.trace.univs
 
-            def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
-                with scope.in_scope(q.binder, list(tup)):
-                    ans = self.eval(q.body)
-                    assert isinstance(ans, bool)
-                    return ans
-            return p(one(expr, t) for t in itertools.product(*doms))
-        elif isinstance(expr, syntax.Id):
-            a = scope.get(expr.name)
-            # definitions are not supported
-            assert not isinstance(a, syntax.DefinitionDecl) and not isinstance(a, syntax.FunctionDecl) and a is not None
-            if isinstance(a, syntax.RelationDecl):
-                return _lookup_assoc(self.rel_interp[a], [])
-            elif isinstance(a, syntax.ConstantDecl):
-                return self.const_interp[a]
-            elif isinstance(a, tuple):
-                # bound variable introduced to scope
-                (bound_elem,) = a
-                return bound_elem
-            else:
-                assert isinstance(a, str) or isinstance(a, bool)
-                return a
-        elif isinstance(expr, syntax.IfThenElse):
-            branch = self.eval(expr.branch)
-            assert isinstance(branch, bool)
-            return self.eval(expr.then) if branch else self.eval(expr.els)
-        elif isinstance(expr, syntax.Let):
-            val = self.eval(expr.val)
-            with scope.in_scope(expr.binder, [val]):
-                return self.eval(expr.body)
+    def rel_interp(self) -> RelationInterp:
+        if self.index is None:
+            return self.trace.immut_rel_interps
         else:
-            assert False, expr
+            return self.trace.rel_interps[self.index]
+
+    def const_interp(self) -> ConstantInterp:
+        if self.index is None:
+            return self.trace.immut_const_interps
+        else:
+            return self.trace.const_interps[self.index]
+
+    def func_interp(self) -> FunctionInterp:
+        if self.index is None:
+            return self.trace.immut_func_interps
+        else:
+            return self.trace.func_interps[self.index]
 
     def element_sort(self, element_name: str) -> SortDecl:
-        matching_sorts = [sort for (sort, univ) in self.univs.items()
+        matching_sorts = [sort for (sort, univ) in self.univs().items()
                           if element_name in univ]
         assert matching_sorts, "%s unknown element name" % element_name
         assert len(matching_sorts) == 1, "ambiguous element name %s" % element_name
