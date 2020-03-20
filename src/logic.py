@@ -1503,59 +1503,56 @@ class Trace(object):
         if index is None:
             index = 0
 
-        if index not in self.diagram_cache:
-            prog = syntax.the_program
+        prog = syntax.the_program
 
-            mut_rel_interps = self.rel_interps[index]
-            mut_const_interps = self.const_interps[index]
-            mut_func_interps = self.func_interps[index]
+        mut_rel_interps = self.rel_interps[index]
+        mut_const_interps = self.const_interps[index]
+        mut_func_interps = self.func_interps[index]
 
-            vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
-            ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
-            rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
-            consts: Dict[ConstantDecl, Expr] = OrderedDict()
-            funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
-            for sort in self.univs:
-                vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
-                                      for v in self.univs[sort]]
-                u = [syntax.Id(s) for s in self.univs[sort]]
-                ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+        vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
+        ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
+        rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
+        consts: Dict[ConstantDecl, Expr] = OrderedDict()
+        funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
+        for sort in self.univs:
+            vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
+                                  for v in self.univs[sort]]
+            u = [syntax.Id(s) for s in self.univs[sort]]
+            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
 
-            for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
-                rels[R] = []
-                for tup, ans in l:
-                    e: Expr
-                    if tup:
-                        args: List[Expr] = []
-                        for (col, col_sort) in zip(tup, R.arity):
-                            assert isinstance(col_sort, syntax.UninterpretedSort)
-                            assert col_sort.decl is not None
-                            args.append(syntax.Id(col))
-                        e = syntax.AppExpr(R.name, args)
-                    else:
-                        e = syntax.Id(R.name)
-                    e = e if ans else syntax.Not(e)
-                    rels[R].append(e)
-            for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-                e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
-                consts[C] = e
-            for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
-                funcs[F] = []
-                for tup, res in fl:
-                    e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
-                    e = syntax.Eq(e, syntax.Id(res))
-                    funcs[F].append(e)
+        for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
+            rels[R] = []
+            for tup, ans in l:
+                e: Expr
+                if tup:
+                    args: List[Expr] = []
+                    for (col, col_sort) in zip(tup, R.arity):
+                        assert isinstance(col_sort, syntax.UninterpretedSort)
+                        assert col_sort.decl is not None
+                        args.append(syntax.Id(col))
+                    e = syntax.AppExpr(R.name, args)
+                else:
+                    e = syntax.Id(R.name)
+                e = e if ans else syntax.Not(e)
+                rels[R].append(e)
+        for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
+            e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
+            consts[C] = e
+        for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
+            funcs[F] = []
+            for tup, res in fl:
+                e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
+                e = syntax.Eq(e, syntax.Id(res))
+                funcs[F].append(e)
 
-            vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
-            diag = Diagram(vs, ineqs, rels, consts, funcs)
-            if utils.args.simplify_diagram:
-                diag.simplify_consts()
-            assert prog.scope is not None
-            diag.resolve(prog.scope)
+        vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
+        diag = Diagram(vs, ineqs, rels, consts, funcs)
+        if utils.args.simplify_diagram:
+            diag.simplify_consts()
+        assert prog.scope is not None
+        diag.resolve(prog.scope)
 
-            self.diagram_cache[index] = diag
-
-        return self.diagram_cache[index]
+        return diag
 
     def as_onestate_formula(self, index: Optional[int] = None) -> Expr:
         assert len(self.keys) == 1 or index is not None, \
