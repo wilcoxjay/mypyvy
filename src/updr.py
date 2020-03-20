@@ -162,7 +162,7 @@ class Frames:
             trace: RelaxedTrace
     ) -> None:
         print(f'block({j})')
-        if j == 0 or (j == 1 and self.valid_in_initial_frame(diag)):
+        if j == 0 or (j == 1 and not self.valid_in_initial_frame(syntax.Not(diag.to_ast()))):
             utils.logger.always_print('\n'.join(((t.name + ' ') if t is not None else '') +
                                                 str(diag) for t, diag in trace))
             print('abstract counterexample: the system has no universal inductive invariant proving safety')
@@ -193,7 +193,7 @@ class Frames:
                 logic.check_two_state_implication_all_transitions(
                     self.solver, pre_frame, syntax.Not(diag.to_ast()), minimize=False
                 ) is None and
-                self.valid_in_initial_frame(diag)
+                self.valid_in_initial_frame(syntax.Not(diag.to_ast()))
             )
 
         diag.generalize(self.solver, prev_frame_constraint)
@@ -205,9 +205,8 @@ class Frames:
             print(f'and pushed to {k + 1}')
             k += 1
 
-    def valid_in_initial_frame(self, diag: Diagram) -> bool:
-        return logic.check_implication(self.solver, self.fs[0].summary(),
-                                       [syntax.Not(diag.to_ast())], minimize=False) is None
+    def valid_in_initial_frame(self, e: Expr) -> bool:
+        return logic.check_implication(self.solver, self.fs[0].summary(), [e], minimize=False) is None
 
     def augment_core_for_init(self, diag: Diagram, core: Optional[MySet[int]]) -> None:
         if core is None or not utils.args.use_z3_unsat_cores:
