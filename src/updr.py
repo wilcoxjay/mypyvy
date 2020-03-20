@@ -43,6 +43,24 @@ class BackwardReachableState:
     num_steps_to_bad: int
     known_absent_until_frame: int = dataclasses.field(default=0, init=False)
 
+def negate_clause(c: Expr) -> Expr:
+    if isinstance(c, syntax.Bool):
+        return syntax.Bool(not c.val)
+    elif isinstance(c, syntax.UnaryExpr):
+        assert c.op == 'NOT'
+        return c.arg
+    elif isinstance(c, syntax.BinaryExpr):
+        assert c.op in ['EQUAL', 'NOTEQ']
+        op = 'NOTEQ' if c.op == 'EQUAL' else 'EQUAL'
+        return syntax.BinaryExpr(op, c.arg1, c.arg2)
+    elif isinstance(c, syntax.NaryExpr):
+        assert c.op == 'OR'
+        return syntax.NaryExpr('AND', [negate_clause(arg) for arg in c.args])
+    elif isinstance(c, syntax.AppExpr) or isinstance(c, syntax.Id):
+        return syntax.Not(c)
+    else:
+        assert False, f'unsupported expression {c} in negate_clause'
+
 class Frames:
     def __init__(self, solver: Solver) -> None:
         self.solver = solver
@@ -57,11 +75,12 @@ class Frames:
                 cs = syntax.as_clauses(inv.expr)
                 utils.logger.info(f'converted safety {inv.expr} in to clauses:')
                 for c in cs:
-                    utils.logger.info(str(syntax.Not(c)))
+                    d = negate_clause(c)
+                    utils.logger.info(str(d))
                     self.record_backwards_reachable_state(
                         BackwardReachableState(
                             len(self.backwards_reachable_states),
-                            syntax.Not(c),
+                            d,
                             0
                         )
                     )
