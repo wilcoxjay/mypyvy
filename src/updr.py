@@ -128,8 +128,8 @@ class Frames:
             #     utils.logger.info(f'#{bstate.id} valid_up_to={bstate.known_absent_until_frame} '
             #                       f'steps_to_bad={bstate.num_steps_to_bad}')
 
-            bstate_min = min(reversed(self.backwards_reachable_states),
-                             key=lambda b: (b.known_absent_until_frame, -b.num_steps_to_bad),
+            bstate_min = min(self.backwards_reachable_states,
+                             key=lambda b: (b.known_absent_until_frame, b.num_steps_to_bad),
                              default=None)
 
             if bstate_min is None or (min_frame_no := bstate_min.known_absent_until_frame) == len(self) - 1:
