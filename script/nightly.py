@@ -19,6 +19,7 @@ class NightlyArgs:
     output_directory: str
     job_timeout: int
     job_suffix: Optional[str]
+    files: Optional[List[str]]
     num_threads: int
     mypyvy_path: Path
     no_run: bool
@@ -32,16 +33,18 @@ def parse_args() -> None:
     global args
 
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('output_directory', nargs='?',
+    argparser.add_argument('--output-directory',
                            help='name of directory where output is stored')
     argparser.add_argument('--job-suffix',
                            help='string to append (with dash) to the generated output directory name')
     argparser.add_argument('--job-timeout', default='60', type=int,
                            help='number of seconds to allow each job to run before killing it')
+    argparser.add_argument('--files', nargs='+', default=None,
+                           help='pyv files to run')
     argparser.add_argument('-j', '--num-threads', type=int,
                            help='number of threads to run in parallel (default: n_cpu - 1)')
     argparser.add_argument('--mypyvy-path', type=Path,
-                           help='path to mypyvy repository (default: /path/to/nightly.py/../..)')
+                           help='path to mypyvy repository (default: /path/to/script/nightly.py/../..)')
     argparser.add_argument('--no-run', action='store_true',
                            help='do not run jobs, just analyze and/or publish results in existing directory')
     argparser.add_argument('--no-analyze', action='store_true',
@@ -102,7 +105,11 @@ class JobRunner:
     def collect_jobs(self) -> None:
         self.log_global('jobs:')
         self.jobs = []
-        for example_file in sorted((args.mypyvy_path / 'examples').glob('*.pyv'), key=str):
+        if args.files is None:
+            files = sorted((args.mypyvy_path / 'examples').glob('*.pyv'), key=str)
+        else:
+            files = [Path(f) for f in args.files]
+        for example_file in files:
             for seed in range(args.num_seeds):
                 key = f'{seed:0{len(str(args.num_seeds - 1))}}' if args.num_seeds > 1 else None
                 job = Job(example_file.stem, key,
