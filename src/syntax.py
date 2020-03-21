@@ -2031,7 +2031,7 @@ class DefinitionDecl(Decl):
         if utils.error_count > old_error_count:
             return
 
-        if self.num_states == 2:
+        if self.is_public_transition:  # which implies num_states == 2, as checked in __init__
             with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
                 syms = symbols_used(scope, self.expr)
                 for index, spans, sym in syms:

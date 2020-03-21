@@ -131,8 +131,7 @@ definition get_last(l: log, lli: option_index, llt: option_term) =
   else & lli = none_index
        & llt = none_term
 
-twostate definition set_term(n: node, t: term)
-  modifies current_term, left_term
+twostate definition set_term(n: node, t: term) =
   & (forall N,T. new(current_term(N,T)) <-> N != n & current_term(N,T) | N = n & T = t)
   & (forall N,T. new(left_term(N,T)) <-> N != n & left_term(N,T) | N = n & !term_le(t, T))
 
