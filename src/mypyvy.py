@@ -36,10 +36,19 @@ def get_safety() -> List[Expr]:
         if the_inv is not None:
             safety = [the_inv.expr]
         else:
-            e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
-            with prog.scope.n_states(1):
-                e.resolve(prog.scope, syntax.BoolSort)
-            safety = [e]
+            try:
+                oldcount = utils.error_count
+                e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
+                with prog.scope.n_states(1):
+                    e.resolve(prog.scope, syntax.BoolSort)
+                assert oldcount == utils.error_count, 'errors in parsing or typechecking'
+                safety = [e]
+            except Exception as e:
+                print(e)
+                utils.print_error_and_exit(None,
+                                           f'--safety received string "{utils.args.safety}", '
+                                           'which is neither the name of an invariant/safety property '
+                                           'nor does it parse and typecheck as an expression')
     else:
         safety = [s.expr for s in prog.safeties()]
 
