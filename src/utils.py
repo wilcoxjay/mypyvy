@@ -109,6 +109,7 @@ class MypyvyArgs(object):
     restarts: bool
     induction_width: int
     logic: str
+    output_folder: str
     inductive_generalize: bool
     separator: str
     all_subclauses: bool

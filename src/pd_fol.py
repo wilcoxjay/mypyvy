@@ -4,6 +4,7 @@ This file contains code for the Primal Dual research project
 import time
 import argparse
 import itertools
+import os.path
 from itertools import product, chain, combinations, repeat
 from collections import defaultdict
 
@@ -166,7 +167,61 @@ class FOLSeparator(object):
         e = formula_to_expr(f)
         e.resolve(syntax.the_program.scope, BoolSort)
         return e
-
+    def predicate_to_formula(self, p: Expr) -> separators.logic.Formula:
+        L = separators.logic
+        def q2f(b: Binder, is_forall: bool, f: L.Formula) -> L.Formula:
+            for q in reversed(b.vs):
+                assert isinstance(q.sort, UninterpretedSort)
+                if is_forall:
+                    f = L.Forall(q.name, q.sort.name, f)
+                else:
+                    f = L.Exists(q.name, q.sort.name, f)
+            return f
+        def p2f(p: Expr) -> L.Formula:
+            if isinstance(p, BinaryExpr):
+                if p.op == 'EQUAL':
+                    return L.Equal(p2t(p.arg1), p2t(p.arg2))
+                elif p.op == 'NOTEQ':
+                    return L.Not(L.Equal(p2t(p.arg1), p2t(p.arg2)))
+                elif p.op == 'IMPLIES':
+                    return L.Or([L.Not(p2f(p.arg1)), p2f(p.arg2)])
+                elif p.op == 'IFF':
+                    return L.Or([L.And([L.Not(p2f(p.arg1)), L.Not(p2f(p.arg2))]), L.And([p2f(p.arg2), p2f(p.arg1)])])
+                else:
+                    assert False
+            elif isinstance(p, NaryExpr):
+                if p.op == 'AND':
+                    return L.And([p2f(a) for a in p.args])
+                elif p.op == 'OR':
+                    return L.Or([p2f(a) for a in p.args])
+                else:
+                    assert False
+            elif isinstance(p, UnaryExpr):
+                if p.op == 'NOT':
+                    return L.Not(p2f(p.arg))
+                else:
+                    assert False
+            elif isinstance(p, AppExpr):
+                assert(p.callee in self.sig.relations)
+                return L.Relation(p.callee, [p2t(a) for a in p.args])
+            elif isinstance(p, QuantifierExpr):
+                return q2f(p.binder, p.quant == 'FORALL', p2f(p.body))                    
+            elif isinstance(p, Id):
+                assert(p.name in self.sig.relations)
+                # TODO: this should be resolved to a application. we're assuming this based on context
+                return L.Relation(p.name, [])
+            else:
+                assert False
+        def p2t(p: Expr) -> L.Term:
+            if isinstance(p, Id):
+                return L.Var(p.name)
+            elif isinstance(p, AppExpr):
+                assert p.callee in self.sig.functions
+                return L.Func(p.callee, [p2t(a) for a in p.args])
+            else:
+                assert False
+        f = p2f(p)
+        return f
 
 
 def fol_pd_houdini(solver: Solver) -> None:
@@ -611,6 +666,32 @@ def fol_ice(solver: Solver) -> None:
         print(f'Inductive invariant found!')
         break
 
+def fol_extract_formulas(solver: Solver) -> None:
+    prog = syntax.the_program
+    sep = FOLSeparator([])
+    conjunctnames: Set[str] = set()
+    basename = os.path.splitext(os.path.basename(utils.args.filename))[0]
+    
+    for conj in prog.invs():
+        if conj.name is None or conj.name == '' or conj.name in conjunctnames:
+            i = 0
+            while f'c{i}' in conjunctnames:
+                i += 1
+            n = f'c{i}'
+        else:
+            n = conj.name
+        conjunctnames.add(n)
+        
+
+        fi = open(os.path.join(utils.args.output_folder, f"{basename}-{n}.fol"), "w")
+        fi.write(f"; File: {utils.args.filename}\n\n")
+        fi.write(str(sep.sig))
+        fi.write("; End sig\n\n; Axioms\n")
+        for ax in prog.axioms():
+            fi.write(f"(axiom {repr(sep.predicate_to_formula(ax.expr))})\n")
+        fi.write("\n")
+        fi.write(f"; Conjecture {n}\n(conjecture {repr(sep.predicate_to_formula(conj.expr))})")
+        fi.close()
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
 
@@ -628,6 +709,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     s = subparsers.add_parser('fol-ice', help='Run ICE invariant learning with folseparators')
     s.set_defaults(main=fol_ice)
+    result.append(s)
+
+    s = subparsers.add_parser('fol-extract-formulas', help='Generate FOL inputs from invariants')
+    s.set_defaults(main=fol_extract_formulas)
+    s.add_argument('--output-folder', type=str, default='.', help='Location to write output files (must be extant folder)')
     result.append(s)
 
     for s in result:
