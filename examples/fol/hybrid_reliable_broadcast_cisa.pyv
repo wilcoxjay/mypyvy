@@ -51,13 +51,6 @@ immutable relation member_fi(node)
 immutable relation member_fs(node)
 immutable relation member_fa(node)
 
-# definition obedient(n:node) = !member_fs(n) & !member_fa(n)
-# definition symmetric(n:node) = !member_fi(n) & !member_fa(n)
-# definition correct(n:node) = !member_fc(n) & !member_fi(n) & !member_fs(n) & !member_fa(n)
-derived relation obedient(node): obedient(N) <-> !member_fs(N) & !member_fa(N)
-derived relation symmetric(node): symmetric(N) <-> !member_fi(N) & !member_fa(N)
-derived relation correct(node): correct(N) <-> !member_fc(N) & !member_fi(N) & !member_fs(N) & !member_fa(N)
-
 ################################################################################
 #
 # Intersection properties
@@ -227,7 +220,7 @@ transition faulty_send_a(n:node)
 #
 ################################################################################
 
-safety [unforgebility] (exists N. obedient(N) & accept(N)) -> (exists M. obedient(M) & rcv_init(M))
+safety [unforgebility] (exists N. !member_fs(N) & !member_fa(N) & accept(N)) -> (exists M. !member_fs(M) & !member_fa(M) & rcv_init(M))
 
 ################################################################################
 #
@@ -238,11 +231,11 @@ safety [unforgebility] (exists N. obedient(N) & accept(N)) -> (exists M. obedien
 invariant sent_msg_proj(N1) -> exists N2. sent_msg(N1,N2) # breaks decidability
 
 invariant sent_msg(N1,N2) -> sent_msg_proj(N1)
-invariant obedient(N2) & rcv_msg(N1,N2) -> sent_msg(N1,N2)
-invariant symmetric(N1) & sent_msg_proj(N1) -> sent_msg(N1,N2) # symmetric where it should be
-invariant obedient(N1) & sent_msg(N1,N2) & !rcv_init(N1) -> exists A. forall M. member_a(M,A) -> sent_msg_proj(M)
-invariant obedient(N1) & accept(N1) -> exists B. forall M. member_b(M,B) -> sent_msg_proj(M)
-invariant (exists A. forall M. member_a(M,A) & obedient(M) -> sent_msg_proj(M)) -> (exists N. obedient(N) & rcv_init(N))
+invariant !member_fs(N2) & !member_fa(N2) & rcv_msg(N1,N2) -> sent_msg(N1,N2)
+invariant !member_fi(N1) & !member_fa(N1) & sent_msg_proj(N1) -> sent_msg(N1,N2) # symmetric where it should be
+invariant !member_fs(N1) & !member_fa(N1) & sent_msg(N1,N2) & !rcv_init(N1) -> exists A. forall M. member_a(M,A) -> sent_msg_proj(M)
+invariant !member_fs(N1) & !member_fa(N1) & accept(N1) -> exists B. forall M. member_b(M,B) -> sent_msg_proj(M)
+invariant (exists A. forall M. member_a(M,A) & !member_fs(M) & !member_fa(M) -> sent_msg_proj(M)) -> (exists N. !member_fs(N) & !member_fa(N) & rcv_init(N))
 
 ################################################################################
 #
@@ -253,7 +246,7 @@ invariant (exists A. forall M. member_a(M,A) & obedient(M) -> sent_msg_proj(M)) 
 sat trace {
     any transition
     any transition
-    assert obedient(N) & accept(N)
+    assert !member_fs(N) & !member_fa(N) & accept(N)
 }
 
 # TODO: add more
