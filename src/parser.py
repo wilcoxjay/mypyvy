@@ -57,11 +57,13 @@ tokens = [
     'COLONEQUALS',
     'SEMI',
     'BANG',
+    'TILDE',
     'IFF',
     'IMPLIES',
     'PIPE',
     'EQUAL',
     'NOTEQ',
+    'NOTEQ2',
     'COMMA',
     'AMPERSAND',
     'STAR',
@@ -90,11 +92,13 @@ t_COLON = r':'
 t_COLONEQUALS = r':='
 t_SEMI = r';'
 t_BANG = r'\!'
+t_TILDE = r'~'
 t_IMPLIES = r'->'
 t_IFF = r'<->'
 t_PIPE = r'\|'
 t_EQUAL = r'='
 t_NOTEQ = r'\!='
+t_NOTEQ2 = r'~='
 t_COMMA = r','
 t_AMPERSAND = r'&'
 t_STAR = r'\*'
@@ -131,8 +135,8 @@ precedence = (
     ('right', 'IMPLIES'),
     ('left', 'PIPE'),
     ('left', 'AMPERSAND'),
-    ('nonassoc', 'EQUAL', 'NOTEQ'),
-    ('right', 'BANG')
+    ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2'),
+    ('right', 'BANG', 'TILDE')
 )
 
 # NOTE: assumes list is sorted by lexpos
@@ -452,7 +456,8 @@ def p_expr_false(p: Any) -> None:
     p[0] = syntax.Bool(False, span=span_from_tok(p.slice[1]))
 
 def p_expr_not(p: Any) -> None:
-    'expr : BANG expr'
+    '''expr : BANG expr
+            | TILDE expr'''
     expr: syntax.Expr = p[2]
     p[0] = syntax.UnaryExpr('NOT', expr, span=loc_join(p.slice[1], expr.span))
 
@@ -520,7 +525,8 @@ def p_expr_eq(p: Any) -> None:
     p[0] = syntax.BinaryExpr('EQUAL', l, r, span=span)
 
 def p_expr_noteq(p: Any) -> None:
-    'expr : expr NOTEQ expr'
+    '''expr : expr NOTEQ expr
+            | expr NOTEQ2 expr'''
     l: syntax.Expr = p[1]
     r: syntax.Expr = p[3]
     span = loc_join(l.span, r.span)
