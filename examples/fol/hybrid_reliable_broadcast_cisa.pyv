@@ -51,9 +51,12 @@ immutable relation member_fi(node)
 immutable relation member_fs(node)
 immutable relation member_fa(node)
 
-definition obedient(n:node) = !member_fs(n) & !member_fa(n)
-definition symmetric(n:node) = !member_fi(n) & !member_fa(n)
-definition correct(n:node) = !member_fc(n) & !member_fi(n) & !member_fs(n) & !member_fa(n)
+# definition obedient(n:node) = !member_fs(n) & !member_fa(n)
+# definition symmetric(n:node) = !member_fi(n) & !member_fa(n)
+# definition correct(n:node) = !member_fc(n) & !member_fi(n) & !member_fs(n) & !member_fa(n)
+derived relation obedient(node): obedient(N) <-> !member_fs(N) & !member_fa(N)
+derived relation symmetric(node): symmetric(N) <-> !member_fi(N) & !member_fa(N)
+derived relation correct(node): correct(N) <-> !member_fc(N) & !member_fi(N) & !member_fs(N) & !member_fa(N)
 
 ################################################################################
 #
