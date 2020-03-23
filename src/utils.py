@@ -13,7 +13,7 @@ import xml.sax
 import xml.sax.saxutils
 
 from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
-                   Any, Callable, cast, Sequence, Tuple, Union
+    Any, Callable, cast, Sequence, Tuple, Union
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 T = TypeVar('T')
 
 class OrderedSet(Generic[T], Iterable[T]):
-    def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
+    def __init__(self, contents: Optional[Iterable[T]] = None) -> None:
         self.l: List[T] = []
         self.s: Set[T] = set()
 
@@ -86,13 +86,8 @@ class MypyvyArgs(object):
     simplify_diagram: bool
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
-    smoke_test: bool
     smoke_test_solver: bool
-    assert_inductive_trace: bool
     sketch: bool
-    block_may_cexs: bool
-    push_frame_zero: str
-    automaton: Any  # str or bool depending on updr vs. verify
     check_transition: Sequence[str]
     check_invariant: Sequence[str]
     safety: str
@@ -118,8 +113,12 @@ class MypyvyArgs(object):
     cvc4: bool
     cvc4_minimize_models: bool
     accept_old: bool
-    def main(self, solver: Any) -> None: ...
-    def __contains__(self, key: str) -> bool: ...
+
+    def main(self, solver: Any) -> None:
+        ...
+
+    def __contains__(self, key: str) -> bool:
+        ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
 
@@ -175,22 +174,22 @@ class MyLogger(object):
     def isEnabledFor(self, lvl: int) -> bool:
         return self.logger.isEnabledFor(lvl)
 
-    def warning(self, msg: str, end: str='\n') -> None:
+    def warning(self, msg: str, end: str = '\n') -> None:
         self.log(logging.WARNING, msg, end=end)
 
-    def info(self, msg: str, end: str='\n') -> None:
+    def info(self, msg: str, end: str = '\n') -> None:
         self.log(logging.INFO, msg, end=end)
 
-    def debug(self, msg: str, end: str='\n') -> None:
+    def debug(self, msg: str, end: str = '\n') -> None:
         self.log(logging.DEBUG, msg, end=end)
 
-    def always_print(self, msg: str, end: str='\n') -> None:
+    def always_print(self, msg: str, end: str = '\n') -> None:
         self.log(MyLogger.ALWAYS_PRINT, msg, end=end)
 
     def time(self) -> float:
         return (datetime.now() - self.start).total_seconds()
 
-    def log_list(self, lvl: int, msgs: List[str], sep: str='\n', end: str='\n') -> None:
+    def log_list(self, lvl: int, msgs: List[str], sep: str = '\n', end: str = '\n') -> None:
         if args.log_xml:
             n = len(msgs)
             for i, msg in enumerate(msgs):
@@ -198,7 +197,7 @@ class MyLogger(object):
         else:
             self.log(lvl, sep.join(msgs), end=end)
 
-    def log(self, lvl: int, msg: str, end: str='\n') -> None:
+    def log(self, lvl: int, msg: str, end: str = '\n') -> None:
         if self.isEnabledFor(lvl):
             if args.log_xml:
                 msg = xml.sax.saxutils.escape(msg)
@@ -207,11 +206,11 @@ class MyLogger(object):
             else:
                 self.rawlog(lvl, msg, end=end)
 
-    def rawlog(self, lvl: int, msg: str, end: str='\n') -> None:
+    def rawlog(self, lvl: int, msg: str, end: str = '\n') -> None:
         self.logger.log(lvl, msg + end)
 
 class LogTag(object):
-    def __init__(self, logger: MyLogger, name: str, lvl: int=MyLogger.ALWAYS_PRINT, **kwargs: str) -> None:
+    def __init__(self, logger: MyLogger, name: str, lvl: int = MyLogger.ALWAYS_PRINT, **kwargs: str) -> None:
         self.logger = logger
         self.name = name
         self.lvl = lvl
@@ -233,7 +232,7 @@ logger = MyLogger(logging.getLogger('mypyvy'), datetime.now())
 
 FuncType = Callable[..., Any]
 F = TypeVar('F', bound=FuncType)
-def log_start_end_time(logger: MyLogger, lvl: int=logging.DEBUG) -> Callable[[F], F]:
+def log_start_end_time(logger: MyLogger, lvl: int = logging.DEBUG) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -246,7 +245,9 @@ def log_start_end_time(logger: MyLogger, lvl: int=logging.DEBUG) -> Callable[[F]
         return cast(F, wrapped)
     return dec
 
-def log_start_end_xml(logger: MyLogger, lvl: int=logging.DEBUG, tag: Optional[str]=None, **attrs: str) -> Callable[[F], F]:
+def log_start_end_xml(
+        logger: MyLogger, lvl: int = logging.DEBUG, tag: Optional[str] = None, **attrs: str
+) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -263,15 +264,16 @@ class YesNoAction(argparse.Action):
     https://thisdataguy.com/2017/07/03/no-options-with-argparse-and-python/
     https://stackoverflow.com/questions/9234258/in-python-argparse-is-it-possible-to-have-paired-no-something-something-arg
     '''
-    def __init__(self,
-                 option_strings: List[str],
-                 dest: str,
-                 nargs: Any = None,
-                 const: Any = None,
-                 default: bool = False,
-                 default_description: Optional[str] = None,
-                 help: Optional[str] = None,
-                 **kwargs: Any
+    def __init__(
+            self,
+            option_strings: List[str],
+            dest: str,
+            nargs: Any = None,
+            const: Any = None,
+            default: bool = False,
+            default_description: Optional[str] = None,
+            help: Optional[str] = None,
+            **kwargs: Any
     ) -> None:
         if nargs is not None:
             raise ValueError('nargs not allowed')
@@ -290,7 +292,7 @@ class YesNoAction(argparse.Action):
         self._yes = yes
         self._no = no
 
-    def __call__(self, parser: Any, namespace: Any, values: Any, option_string : Optional[str] = None) -> None:
+    def __call__(self, parser: Any, namespace: Any, values: Any, option_string: Optional[str] = None) -> None:
         assert option_string is not None, 'Cannot use Flag as a positional argument'
         assert option_string in [self._yes, self._no]
         setattr(namespace, self.dest, option_string == self._yes)

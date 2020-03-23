@@ -117,52 +117,6 @@ invariant !(grant_msg(N) & server_holds_lock)
 invariant !(holds_lock(N) & server_holds_lock)
 invariant !(unlock_msg(N) & server_holds_lock)
 
-# Declare a phase automaton structure to prove safety.
-automaton {
-  init phase server  # The initial phase.
-
-  # Adds the given transition to every phase.
-  global
-    safety holds_lock(N1) & holds_lock(N2) -> N1 = N2
-    transition send_lock -> self
-
-  # Now come the phases. Each has a name, and then a sequence of declarations,
-  # consisting of allowed transitions and (partial) characterizations.
-
-  phase server
-    transition recv_lock -> phase grant
-    sketch invariant server_holds_lock
-
-    invariant !grant_msg(X)
-    invariant !holds_lock(X)
-    invariant !unlock_msg(X)
-
-  phase grant
-    transition recv_grant -> phase client
-    sketch invariant grant_msg(X) & grant_msg(Y) -> X = Y
-
-    invariant !server_holds_lock
-    invariant !holds_lock(X)
-    invariant !unlock_msg(X)
-
-  phase client
-    transition unlock -> phase unlock
-    sketch invariant holds_lock(X) & holds_lock(Y) -> X = Y
-
-    invariant !server_holds_lock
-    invariant !grant_msg(X)
-    invariant !unlock_msg(X)
-
-  phase unlock
-    transition recv_unlock -> phase server
-    sketch invariant unlock_msg(X) & unlock_msg(Y) -> X = Y
-
-    invariant !server_holds_lock
-    invariant !grant_msg(X)
-    invariant !holds_lock(X)
-}
-
-
 sat trace {
   any transition
   any transition

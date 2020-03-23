@@ -6,7 +6,9 @@ import z3
 
 from typing import Callable, List, Optional, Tuple
 
-def translate_transition_call(s: Solver, lator: syntax.Z3Translator, key_index: int, c: syntax.TransitionCall) -> z3.ExprRef:
+def translate_transition_call(
+        s: Solver, lator: syntax.Z3Translator, key_index: int, c: syntax.TransitionCall
+) -> z3.ExprRef:
     prog = syntax.the_program
     ition = prog.scope.get_definition(c.target)
     assert ition is not None
@@ -22,15 +24,16 @@ def translate_transition_call(s: Solver, lator: syntax.Z3Translator, key_index: 
     qs1 = [q for q in qs if q is not None]
     with lator.scope.in_scope(ition.binder, bs):
         body = lator.translate_transition_body(ition, index=key_index)
-    if len(qs1) > 0:
+    if qs1:
         return z3.Exists(qs1, body)
     else:
         return body
 
 
-def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
-              s: Solver, sat_checker: Callable[[Solver, Tuple[str, ...]], Optional[logic.Trace]],
-              log: bool=False
+def bmc_trace(
+        prog: syntax.Program, trace: syntax.TraceDecl,
+        s: Solver, sat_checker: Callable[[Solver, Tuple[str, ...]], Optional[logic.Trace]],
+        log: bool = False
 ) -> Optional[logic.Trace]:
     n_states = len(list(trace.transitions())) + 1
     if log:
@@ -40,7 +43,7 @@ def bmc_trace(prog: syntax.Program, trace: syntax.TraceDecl,
 
     lator = s.get_translator(keys)
 
-    with s:
+    with s.new_frame():
         if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
             for init in prog.inits():
                 s.add(lator.translate_expr(init.expr, index=0))

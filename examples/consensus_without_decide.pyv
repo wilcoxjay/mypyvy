@@ -22,12 +22,11 @@ transition send_request_vote(src: node, dst: node)
 	new(vote_request_msg(N1, N2)) <-> (vote_request_msg(N1, N2) | (N1=src & N2=dst))
 
 transition send_vote(src: node, dst: node)
-  modifies vote_msg, voted, vote_request_msg
+  modifies vote_msg, voted #, vote_request_msg
   (!voted(src) & (vote_request_msg(dst, src))) &
   (new(vote_msg(N1, N2)) <-> vote_msg(N1, N2) | N1 = src & N2 = dst) &
-  (new(voted(N)) <-> voted(N) | N=src) &
-  ((!(N1=dst & N2=src)) -> (new(vote_request_msg(N1, N2)) <-> vote_request_msg(N1, N2)))
-
+  (new(voted(N)) <-> voted(N) | N=src)
+  # & ((!(N1=dst & N2=src)) -> (new(vote_request_msg(N1, N2)) <-> vote_request_msg(N1, N2)))
 
 transition recv_vote(n: node, sender: node)
   modifies votes
@@ -51,40 +50,3 @@ invariant votes(N, N1) -> vote_msg(N1, N)
 invariant vote_msg(N, N1) & vote_msg(N, N2) -> N1 = N2
 invariant vote_msg(N, N1) -> voted(N)
 invariant leader(N) & member(N1, voting_quorum) -> votes(N, N1)
-
-automaton {
-  init phase gathering
-
-  global
-      safety leader(N1) & leader(N2) -> N1 = N2
-
-      transition send_request_vote -> self
-      transition send_vote -> self
-      transition recv_vote -> self
-      transition choose_voting_quorum -> self
-
-  phase gathering
-      transition become_leader -> phase elected
-
-      # partial characterizations
-      sketch invariant !leader(N)
-
-      # full characterizations
-      invariant votes(N, M) -> vote_msg(M, N)
-      invariant vote_msg(M, N1) & vote_msg(M, N2) -> N1 = N2
-      invariant vote_msg(M, N) -> voted(M)
-
-
-  phase elected
-      transition become_leader -> self
-
-      # partial characterizations
-      sketch invariant leader(N1) & leader(N2) -> N1 = N2
-
-      # full characterizations
-      invariant leader(N1) & member(N2, voting_quorum) -> votes(N1, N2)
-      invariant leader(N1) & member(N2, voting_quorum) -> votes(N1, N2)
-      invariant votes(N, M) -> vote_msg(M, N)
-      invariant vote_msg(M, N1) & vote_msg(M, N2) -> N1 = N2
-      invariant vote_msg(M, N) -> voted(M)
-}

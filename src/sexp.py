@@ -128,7 +128,7 @@ class SexpParser(object):
                 else:
                     ans = tok
 
-                if len(self.stack) == 0:
+                if not self.stack:
                     yield ans
                 else:
                     self.stack[-1].append(ans)
@@ -141,7 +141,7 @@ class SexpParser(object):
                     assert tok == ')'
                     assert len(self.stack) > 0, 'unexpected close paren'
                     prev = SList(self.stack.pop())
-                    if len(self.stack) == 0:
+                    if not self.stack:
                         yield prev
                     else:
                         self.stack[-1].append(prev)

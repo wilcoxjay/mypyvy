@@ -1,7 +1,11 @@
-PYTHON := python3.7 -u
+PYTHON := python3.8 -u
 MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
+
+style:
+	$(PYTHON) -m flake8 $(SRC_FILES) || true
+	grep the_program $(SRC_FILES) || true
 
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
@@ -30,9 +34,6 @@ verify-pd: \
 trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
 updr: examples/lockserv.updr examples/sharded-kv.updr
-
-bench:
-	$(PYTHON) script/benchmark.py
 
 %.typecheck: %.pyv
 	$(PYTHON) src/mypyvy.py typecheck $(MYPYVY_OPTS) $<
@@ -96,7 +97,10 @@ check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 src/%.importable: src/%.py
 	@cd src; $(PYTHON) -c "import $(shell basename -s .py $<)" || { echo "file $< is not importable"; exit 1; }
 
+nightly:
+	python3 script/nightly.py
+
 clear-cache:
 	rm -iv examples/*.cache examples/*/*.cache
 
-.PHONY: check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache
+.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache nightly

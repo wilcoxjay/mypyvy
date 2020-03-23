@@ -1,4 +1,4 @@
-# MYPYVY: typecheck --print-exit-code --error-filename-basename
+# MYPYVY: typecheck --no-print-cmdline --print-exit-code --error-filename-basename --accept-old
 
 sort A
 

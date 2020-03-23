@@ -1,1 +1,0 @@
-python3 benchmark.py -n 4 -j 4 --timeout 36000 --pin-cores --keep-logs logs/181028-124930-cache-long --benchmark test/cache.pyv

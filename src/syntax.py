@@ -9,7 +9,7 @@ import functools
 import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
-    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, Sequence, cast
+    Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, cast
 from typing_extensions import Protocol
 import utils
 import z3
@@ -70,7 +70,7 @@ class HasSortField(Protocol):
     sort: InferenceSort
 
 class SortInferencePlaceholder(object):
-    def __init__(self, d: Optional[HasSortField]=None) -> None:
+    def __init__(self, d: Optional[HasSortField] = None) -> None:
         self.backpatches: List[HasSortField] = []
         self.sort: Optional[Sort] = None
         self.parent: Optional[SortInferencePlaceholder] = None
@@ -144,7 +144,8 @@ class Z3Translator(object):
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []
         for sv in binder.vs:
-            n = sv.name + '_%s' % (self.counter,)  # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
+            # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
+            n = sv.name + '_%s' % (self.counter,)
             self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, SortInferencePlaceholder)
             bs.append(z3.Const(n, sv.sort.to_z3()))
@@ -156,7 +157,7 @@ class Z3Translator(object):
         else:
             return None
 
-    def translate_expr(self, expr: Expr, index: int=0) -> z3.ExprRef:
+    def translate_expr(self, expr: Expr, index: int = 0) -> z3.ExprRef:
         if isinstance(expr, Bool):
             return z3.BoolVal(expr.val)
         elif isinstance(expr, UnaryExpr):
@@ -177,8 +178,10 @@ class Z3Translator(object):
             d = self.scope.get(expr.callee)
             assert d is not None
             if isinstance(d, DefinitionDecl):
-                assert index + d.num_states <= len(self.keys)  # checked by resolver; see NOTE(calling-stateful-definitions)
-                translated_args = [self.translate_expr(arg, index) for arg in expr.args]  # translate args in the scope of caller
+                # checked by resolver; see NOTE(calling-stateful-definitions)
+                assert index + d.num_states <= len(self.keys)
+                # now translate args in the scope of caller
+                translated_args = [self.translate_expr(arg, index) for arg in expr.args]
                 with self.scope.fresh_stack():
                     with self.scope.in_scope(d.binder, translated_args):
                         return self.translate_expr(d.expr, index)  # translate body of def in fresh scope
@@ -209,7 +212,8 @@ class Z3Translator(object):
                 assert isinstance(x, z3.ExprRef)
                 return x
             elif isinstance(d, DefinitionDecl):
-                assert index + d.num_states <= len(self.keys)  # checked in resolver; see NOTE(calling-stateful-definitions)
+                # checked in resolver; see NOTE(calling-stateful-definitions)
+                assert index + d.num_states <= len(self.keys)
                 with self.scope.fresh_stack():
                     return self.translate_expr(d.expr, index)
             else:
@@ -226,21 +230,20 @@ class Z3Translator(object):
         else:
             assert False, expr
 
-
     def frame(self, mods: Iterable[ModifiesClause], index: int = 0) -> List[z3.ExprRef]:
         frame = []
         R: Iterator[StateDecl] = iter(self.scope.relations.values())
         C: Iterator[StateDecl] = iter(self.scope.constants.values())
         F: Iterator[StateDecl] = iter(self.scope.functions.values())
         for d in itertools.chain(R, C, F):
-            if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or any(mc.name == d.name for mc in mods):
+            if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or \
+               any(mc.name == d.name for mc in mods):
                 continue
 
             k_new = self.get_key_opt(index + 1)
             k_old = self.get_key_opt(index)
             assert k_new is not None
             assert k_old is not None
-
 
             if isinstance(d, ConstantDecl) or len(d.arity) == 0:
                 lhs = d.to_z3(k_new)
@@ -264,26 +267,15 @@ class Z3Translator(object):
 
         return frame
 
-    def translate_transition_body(self, t: DefinitionDecl, precond: Optional[Expr]=None, index: int = 0) -> z3.ExprRef:
+    def translate_transition_body(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
         return z3.And(self.translate_expr(t.expr, index=index),
-                      *self.frame(t.mods, index=index),
-                      self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True))
+                      *self.frame(t.mods, index=index))
 
-    def translate_transition(self, t: DefinitionDecl, precond: Optional[Expr]=None, index: int = 0) -> z3.ExprRef:
+    def translate_transition(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
-            body = self.translate_transition_body(t, precond, index=index)
-            if len(bs) > 0:
-                return z3.Exists(bs, body)
-            else:
-                return body
-
-    def translate_precond_of_transition(self, precond: Optional[Expr], t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
-        bs = self.bind(t.binder)
-        with self.scope.in_scope(t.binder, bs):
-            body = self.translate_expr(precond, index=index) if (precond is not None) else z3.BoolVal(True)
-
-            if len(bs) > 0:
+            body = self.translate_transition_body(t, index=index)
+            if bs:
                 return z3.Exists(bs, body)
             else:
                 return body
@@ -300,8 +292,10 @@ class Z3Translator(object):
 #     - i is the "state index" of the usage. in a single-vocabulary formula, this will
 #       always be 0, but in a multi-vocabulary formula, it indicates how many new() operators
 #       the usage is under.
-def symbols_used(scope: Scope, expr: Expr, state_index: int=0) -> Set[Tuple[int, Tuple[Optional[Span], ...], str]]:
-    def add_caller_span(s: Set[Tuple[int, Tuple[Optional[Span], ...], str]]) -> Set[Tuple[int, Tuple[Optional[Span], ...], str]]:
+def symbols_used(scope: Scope, expr: Expr, state_index: int = 0) -> Set[Tuple[int, Tuple[Optional[Span], ...], str]]:
+    def add_caller_span(
+            s: Set[Tuple[int, Tuple[Optional[Span], ...], str]]
+    ) -> Set[Tuple[int, Tuple[Optional[Span], ...], str]]:
         return set((i, (expr.span,) + l, sym) for (i, l, sym) in s)
 
     if isinstance(expr, Bool):
@@ -368,7 +362,7 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
         return UnaryExpr(op=expr.op, arg=subst_vars_simple(expr.arg, subst))
     elif isinstance(expr, BinaryExpr):
         return BinaryExpr(op=expr.op, arg1=subst_vars_simple(expr.arg1, subst),
-                                                arg2=subst_vars_simple(expr.arg2, subst))
+                          arg2=subst_vars_simple(expr.arg2, subst))
     elif isinstance(expr, AppExpr):
         return AppExpr(callee=expr.callee, args=[subst_vars_simple(a, subst) for a in expr.args])
     elif isinstance(expr, Id):
@@ -381,7 +375,7 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
 def xor(b1: bool, b2: bool) -> bool:
     return b1 != b2
 
-def as_clause_body(expr: Expr, negated: bool=False) -> List[List[Expr]]:
+def as_clause_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
     if isinstance(expr, Bool):
         return [[Bool(xor(expr.val, negated))]]
     elif isinstance(expr, UnaryExpr):
@@ -404,7 +398,8 @@ def as_clause_body(expr: Expr, negated: bool=False) -> List[List[Expr]]:
             return list(itertools.chain(*(as_clause_body(arg, negated=False) for arg in expr.args)))
         else:
             assert expr.op == 'OR'
-            return [list(itertools.chain(*tup)) for tup in itertools.product(*(as_clause_body(arg, negated=False) for arg in expr.args))]
+            return [list(itertools.chain(*tup))
+                    for tup in itertools.product(*(as_clause_body(arg, negated=False) for arg in expr.args))]
     elif isinstance(expr, AppExpr) or isinstance(expr, Id):
         if negated:
             return [[Not(expr)]]
@@ -413,7 +408,7 @@ def as_clause_body(expr: Expr, negated: bool=False) -> List[List[Expr]]:
     else:
         assert False, "unsupported expressions %s in as_clause_body" % expr
 
-def as_quant_clauses(expr: Expr, negated: bool=False) -> Tuple[List[SortedVar], List[List[Expr]]]:
+def as_quant_clauses(expr: Expr, negated: bool = False) -> Tuple[List[SortedVar], List[List[Expr]]]:
     if isinstance(expr, QuantifierExpr):
         if negated:
             other_quant = 'EXISTS' if expr.quant == 'FORALL' else 'FORALL'
@@ -622,7 +617,8 @@ class FaithfulPrinter(object):
         elif isinstance(e, UnaryExpr):
             if self.ignore_old and e.op == 'OLD':
                 assert e.span is not None
-                needs_parens = not (isinstance(e.arg, (AppExpr, Id, UnaryExpr)) or (isinstance(e.arg, BinaryExpr) and e.arg.op in ('EQUAL', 'NOTEQ')))
+                needs_parens = not (isinstance(e.arg, (AppExpr, Id, UnaryExpr)) or
+                                    (isinstance(e.arg, BinaryExpr) and e.arg.op in ('EQUAL', 'NOTEQ')))
                 self.skip_expect('old(')
                 if needs_parens:
                     self.buf.append('(')
@@ -746,7 +742,7 @@ class Bool(Expr):
     def free_ids(self) -> List[str]:
         return []
 
-TrueExpr  = Bool(True)
+TrueExpr = Bool(True)
 FalseExpr = Bool(False)
 
 UNOPS = {
@@ -799,7 +795,8 @@ class UnaryExpr(Expr):
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
         if self.op == 'NEW':
             if not scope.new_allowed():
-                utils.print_error(self.span, f'new is not allowed here because this is a {scope.num_states}-state environment, and the current state index is {scope.current_state_index}')
+                utils.print_error(self.span, f'new is not allowed here because this is a {scope.num_states}-state '
+                                  f'environment, and the current state index is {scope.current_state_index}')
             with scope.next_state_index():
                 return self.arg.resolve(scope, sort)
         elif self.op == 'NOT':
@@ -859,10 +856,10 @@ BINOPS = {
     'NOTEQ'
 }
 z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
-    'IMPLIES' : z3.Implies,
-    'IFF' : lambda x, y: x == y,
-    'EQUAL' : lambda x, y: x == y,
-    'NOTEQ' : lambda x, y: x != y
+    'IMPLIES': z3.Implies,
+    'IFF': lambda x, y: x == y,
+    'EQUAL': lambda x, y: x == y,
+    'NOTEQ': lambda x, y: x != y
 }
 
 class BinaryExpr(Expr):
@@ -885,7 +882,6 @@ class BinaryExpr(Expr):
             self.arg2.resolve(scope, s)
 
         return BoolSort
-
 
     def _denote(self) -> Tuple:
         return (self.op, self.arg1, self.arg2)
@@ -1024,17 +1020,17 @@ class NaryExpr(Expr):
         return l
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
-    if len(vs) == 0:
+    if not vs:
         return body
     return QuantifierExpr('FORALL', vs, body)
 
 def Exists(vs: List[SortedVar], body: Expr) -> Expr:
-    if len(vs) == 0:
+    if not vs:
         return body
     return QuantifierExpr('EXISTS', vs, body)
 
 def And(*args: Expr) -> Expr:
-    if len(args) == 0:
+    if not args:
         return TrueExpr
     elif len(args) == 1:
         return args[0]
@@ -1042,7 +1038,7 @@ def And(*args: Expr) -> Expr:
         return NaryExpr('AND', list(args))
 
 def Or(*args: Expr) -> Expr:
-    if len(args) == 0:
+    if not args:
         return FalseExpr
     elif len(args) == 1:
         return args[0]
@@ -1079,20 +1075,23 @@ class AppExpr(Expr):
             return sort  # bogus
 
         if not (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl) or isinstance(d, DefinitionDecl)):
-            utils.print_error(self.span, 'Only relations, functions, or definitions can be applied, not %s' % self.callee)
+            utils.print_error(self.span, 'Only relations, functions, or definitions can be applied, not %s' %
+                              (self.callee,))
             return sort  # bogus
 
-        if ((isinstance(d, RelationDecl) or isinstance(d, FunctionDecl))
-            and d.mutable and not scope.mutable_allowed()):
+        if (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)) and \
+           d.mutable and not scope.mutable_allowed():
             name = 'relation' if isinstance(d, RelationDecl) else 'function'
             utils.print_error(self.span, f'Only immutable {name}s can be referenced in this context')
             # note that we don't return here. typechecking can continue.
             # see NOTE(resolving-malformed-programs)
 
         if isinstance(d, DefinitionDecl) and not scope.call_allowed(d):
-            utils.print_error(self.span, f'a {d.num_states}-state definition cannot be called from a {scope.num_states}-state context inside {scope.current_state_index} nested new()s!')
+            utils.print_error(self.span,
+                              f'a {d.num_states}-state definition cannot be called from a '
+                              f'{scope.num_states}-state context inside {scope.current_state_index} nested new()s!')
 
-        if len(d.arity) == 0 or len(self.args) != len(d.arity):
+        if not d.arity or len(self.args) != len(d.arity):
             utils.print_error(self.span, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(self.args, d.arity):
             arg.resolve(scope, s)
@@ -1142,7 +1141,8 @@ class SortedVar(Denotable):
         self.sort: InferenceSort = sort
 
     def _denote(self, allow_untyped: bool = False) -> Tuple:
-        assert allow_untyped or isinstance(self.sort, Sort), 'SortedVar._denote should only be called after type inference'
+        assert allow_untyped or isinstance(self.sort, Sort), \
+            'SortedVar._denote should only be called after type inference'
         return (self.name, self.sort)
 
     def __eq__(self, other: object) -> bool:
@@ -1269,14 +1269,14 @@ class Id(Expr):
             utils.print_error(self.span, 'Function %s must be applied to arguments' % (self.name,))
             return sort  # bogus
 
-        if ((isinstance(d, RelationDecl) or isinstance(d, ConstantDecl))
-            and d.mutable and not scope.mutable_allowed()):
+        if (isinstance(d, RelationDecl) or isinstance(d, ConstantDecl)) \
+           and d.mutable and not scope.mutable_allowed():
             name = 'relation' if isinstance(d, RelationDecl) else 'constant'
             utils.print_error(self.span, f'Only immutable {name}s can be referenced in this context')
             return sort  # bogus
 
         if isinstance(d, RelationDecl):
-            if len(d.arity) > 0:
+            if d.arity:
                 utils.print_error(self.span, 'Relation %s must be applied to arguments' % (self.name,))
                 return sort  # bogus
             check_constraint(self.span, sort, BoolSort)
@@ -1285,7 +1285,7 @@ class Id(Expr):
             sort = check_constraint(self.span, sort, d.sort)
             return sort
         elif isinstance(d, DefinitionDecl):
-            if len(d.arity) > 0:
+            if d.arity:
                 utils.print_error(self.span, 'Definition %s must be applied to arguments' % (self.name,))
                 return sort  # bogus
             check_constraint(self.span, sort, d.sort)
@@ -1476,14 +1476,18 @@ def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
         elif isinstance(stmt, AssignmentStatement):
             assert stmt.assignee not in mods_str_list, 'block statements may only assign to a component once!'
             mods_str_list.append(stmt.assignee)
-            if len(stmt.args) == 0:
+            if not stmt.args:
                 conjuncts.append(Eq(New(Id(stmt.assignee)), stmt.rhs))
             else:
                 assert isinstance(stmt.rhs, Bool)
                 if stmt.rhs.val:
-                    f = lambda x, y: Or(x, y)
+                    def my_or(x: Expr, y: Expr) -> Expr:
+                        return Or(x, y)
+                    f = my_or
                 else:
-                    f = lambda x, y: And(x, Not(y))
+                    def my_and_not(x: Expr, y: Expr) -> Expr:
+                        return And(x, Not(y))
+                    f = my_and_not
                 vs = ['X%s' % i for i, _ in enumerate(stmt.args)]
                 c = And(*(Eq(Id(X), arg) for X, arg in zip(vs, stmt.args)))
 
@@ -1491,7 +1495,6 @@ def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
                                         Iff(New(Apply(stmt.assignee, [Id(v) for v in vs])),
                                             f(Apply(stmt.assignee, [Id(v) for v in vs]), c))))
         else:
-            reveal_type(stmt)
             assert False
     return ([ModifiesClause(name) for name in mods_str_list], And(*conjuncts))
 
@@ -1540,7 +1543,10 @@ class SortDecl(Decl):
         return self.z3
 
 class FunctionDecl(Decl):
-    def __init__(self, name: str, arity: Arity, sort: Sort, mutable: bool, annotations: List[Annotation], *, span: Optional[Span] = None) -> None:
+    def __init__(
+            self, name: str, arity: Arity, sort: Sort, mutable: bool, annotations: List[Annotation], *,
+            span: Optional[Span] = None
+    ) -> None:
         super().__init__(span)
         self.span = span
         self.name = name
@@ -1601,7 +1607,10 @@ class FunctionDecl(Decl):
 
 
 class RelationDecl(Decl):
-    def __init__(self, name: str, arity: Arity, mutable: bool, derived: Optional[Expr], annotations: List[Annotation], *, span: Optional[Span] = None) -> None:
+    def __init__(
+            self, name: str, arity: Arity, mutable: bool, derived: Optional[Expr], annotations: List[Annotation], *,
+            span: Optional[Span] = None
+    ) -> None:
         super().__init__(span)
         self.span = span
         self.name = name
@@ -1634,7 +1643,8 @@ class RelationDecl(Decl):
                 self.derived_axiom.resolve(scope, BoolSort)
 
     def __repr__(self) -> str:
-        return 'RelationDecl(name=%s, arity=%s, mutable=%s, derived=%s)' % (repr(self.name), self.arity, self.mutable, self.derived_axiom)
+        return 'RelationDecl(name=%s, arity=%s, mutable=%s, derived=%s)' % \
+            (repr(self.name), self.arity, self.mutable, self.derived_axiom)
 
     def __str__(self) -> str:
         return '%s relation %s(%s)%s' % ('derived' if self.derived_axiom is not None else
@@ -1648,7 +1658,7 @@ class RelationDecl(Decl):
         if self.mutable:
             assert key is not None
             if key not in self.mut_z3:
-                if len(self.arity) > 0:
+                if self.arity:
                     a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
                     self.mut_z3[key] = z3.Function(key + '_' + self.name, *a)
                 else:
@@ -1657,7 +1667,7 @@ class RelationDecl(Decl):
             return self.mut_z3[key]
         else:
             if self.immut_z3 is None:
-                if len(self.arity) > 0:
+                if self.arity:
                     a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
                     self.immut_z3 = z3.Function(self.name, *a)
                 else:
@@ -1668,10 +1678,11 @@ class RelationDecl(Decl):
     def is_derived(self) -> bool:
         return self.derived_axiom is not None
 
-
-
 class ConstantDecl(Decl):
-    def __init__(self, name: str, sort: Sort, mutable: bool, annotations: List[Annotation], *, span: Optional[Span]) -> None:
+    def __init__(
+            self, name: str, sort: Sort, mutable: bool, annotations: List[Annotation], *,
+            span: Optional[Span]
+    ) -> None:
         super().__init__(span)
         self.span = span
         self.name = name
@@ -1715,7 +1726,7 @@ class ConstantDecl(Decl):
 
             return self.immut_z3
 
-def close_free_vars(expr: Expr, in_scope: List[str]=[], span: Optional[Span] = None) -> Expr:
+def close_free_vars(expr: Expr, in_scope: List[str] = [], span: Optional[Span] = None) -> Expr:
     vs = [s for s in expr.free_ids() if s not in in_scope and s.isupper()]
     if vs == []:
         return expr
@@ -1738,7 +1749,8 @@ class InitDecl(Decl):
             self.expr.resolve(scope, BoolSort)
 
         if symbols_used(scope, self.expr) == set():
-            utils.print_error(self.span, 'this initial condition mentions no mutable symbols. it should be declared `axiom` instead.')
+            utils.print_error(self.span, 'this initial condition mentions no mutable symbols. '
+                              'it should be declared `axiom` instead.')
 
     def __repr__(self) -> str:
         return 'InitDecl(name=%s, expr=%s)' % (
@@ -1928,7 +1940,8 @@ def translate_old_to_new_prog(prog: Program, strip_old: bool = True) -> Program:
     for d in prog.decls:
         if isinstance(d, DefinitionDecl) and d.num_states == 2:
             if not uses_old(d.expr) and not uses_new(d.expr):
-                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs refactoring')
+                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); '
+                                  'cannot automatically detect whether it needs refactoring')
             if uses_old(d.expr):
                 dd = copy(d)
                 with scope.in_scope(d.binder, [v.sort for v in d.binder.vs]):
@@ -1938,7 +1951,8 @@ def translate_old_to_new_prog(prog: Program, strip_old: bool = True) -> Program:
                 ds.append(d)
         elif isinstance(d, TheoremDecl) and d.num_states == 2:
             if not uses_old(d.expr) and not uses_new(d.expr):
-                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs refactoring')
+                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); '
+                                  'cannot automatically detect whether it needs refactoring')
             if uses_old(d.expr):
                 t = copy(d)
                 t.expr = translate_old_to_new_expr(scope, t.expr, strip_old=strip_old)
@@ -1991,12 +2005,14 @@ class DefinitionDecl(Decl):
             mod.resolve(scope)
 
         if self.num_states == 2:
-            if not uses_old(self.expr) and not uses_new(self.expr):
-                utils.print_error(self.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs to be translated')
+            if utils.args.accept_old and not uses_old(self.expr) and not uses_new(self.expr):
+                utils.print_error(self.span, 'twostate expression uses neither old() nor new(); '
+                                  'cannot automatically detect whether it needs to be translated')
 
             if uses_old(self.expr):
                 if utils.args.accept_old:
-                    utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+                    utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, '
+                                        'mypyvy will now attempt to automatically translate from old() to new()...')
 
                     utils.logger.info(f'translating transition {self.name}')
                     with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
@@ -2015,7 +2031,7 @@ class DefinitionDecl(Decl):
         if utils.error_count > old_error_count:
             return
 
-        if self.num_states == 2:
+        if self.is_public_transition:  # which implies num_states == 2, as checked in __init__
             with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
                 syms = symbols_used(scope, self.expr)
                 for index, spans, sym in syms:
@@ -2028,24 +2044,30 @@ class DefinitionDecl(Decl):
                             assert decl is not None
                             if not (isinstance(decl, RelationDecl) and decl.is_derived()):
                                 if len(spans) == 1:
-                                    utils.print_error(spans[0], 'symbol %s is referred to in the new state, but is not mentioned in the modifies clause' % (sym,))
+                                    utils.print_error(spans[0], 'symbol %s is referred to in the new state, '
+                                                      'but is not mentioned in the modifies clause' % (sym,))
                                 else:
-                                    utils.print_error(spans[0], 'this call indirectly refers to symbol %s in the new state, but is not mentioned in the modifies clause' % (sym,))
+                                    utils.print_error(spans[0], 'this call indirectly refers to symbol %s in the new '
+                                                      'state, but is not mentioned in the modifies clause' % (sym,))
                                     for span in spans[1:-1]:
-                                        utils.print_info(span, 'symbol %s is referred to via a call-chain passing through this point' % (sym,))
+                                        utils.print_info(span, 'symbol %s is referred to via a call-chain passing '
+                                                         'through this point' % (sym,))
                                     utils.print_info(spans[-1], 'symbol %s is referred to here' % (sym,))
 
                 for mod in self.mods:
                     decl = scope.get(mod.name)
                     assert decl is not None
                     if isinstance(decl, RelationDecl) and decl.is_derived():
-                        utils.print_error(mod.span, 'derived relation %s may not be mentioned by the modifies clause, since derived relations are always modified' % (mod.name,))
+                        utils.print_error(mod.span, 'derived relation %s may not be mentioned by the modifies clause, '
+                                          'since derived relations are always modified' % (mod.name,))
                         continue
                     for index, _, sym in syms:
                         if mod.name == sym and index == 1:
                             break
                     else:
-                        utils.print_error(mod.span, 'symbol %s is mentioned by the modifies clause, but is not referred to in the new state, so it will be havoced. supress this error by using %s in a no-op.' % (mod.name, mod.name))
+                        utils.print_error(mod.span, 'symbol %s is mentioned by the modifies clause, but is not '
+                                          'referred to in the new state, so it will be havoced. supress this error by '
+                                          'using %s in a no-op.' % (mod.name, mod.name))
 
     def __repr__(self) -> str:
         return 'TransitionDecl(name=%s, params=%s, mods=%s, expr=%s)' % (
@@ -2061,7 +2083,9 @@ class DefinitionDecl(Decl):
              self.expr)
 
 class InvariantDecl(Decl):
-    def __init__(self, name: Optional[str], expr: Expr, is_safety: bool, is_sketch: bool, *, span: Optional[Span] = None) -> None:
+    def __init__(
+            self, name: Optional[str], expr: Expr, is_safety: bool, is_sketch: bool, *, span: Optional[Span] = None
+    ) -> None:
         super().__init__(span)
         self.span = span
         self.name = name
@@ -2077,7 +2101,7 @@ class InvariantDecl(Decl):
         with scope.n_states(1):
             self.expr.resolve(scope, BoolSort)
 
-        if not scope.in_phase_context and symbols_used(scope, self.expr) == set():
+        if symbols_used(scope, self.expr) == set():
             utils.print_error(self.span, 'this invariant mentions no mutable symbols. it can be deleted.')
 
     def __repr__(self) -> str:
@@ -2133,12 +2157,14 @@ class TheoremDecl(Decl):
 
     def resolve(self, scope: Scope) -> None:
         if self.num_states == 2:
-            if not uses_old(self.expr) and not uses_new(self.expr):
-                utils.print_error(self.span, 'twostate expression uses neither old() nor new(); cannot automatically detect whether it needs to be translated')
+            if utils.args.accept_old and not uses_old(self.expr) and not uses_new(self.expr):
+                utils.print_error(self.span, 'twostate expression uses neither old() nor new(); '
+                                  'cannot automatically detect whether it needs to be translated')
 
             if uses_old(self.expr):
                 if utils.args.accept_old:
-                    utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, mypyvy will now attempt to automatically translate from old() to new()...')
+                    utils.print_warning(self.span, 'old() is deprecated; please use new(). as a temporary convenience, '
+                                        'mypyvy will now attempt to automatically translate from old() to new()...')
 
                     utils.logger.info(f'translating theorem {self.name}')
                     self.expr = translate_old_to_new_expr(scope, self.expr)
@@ -2162,230 +2188,6 @@ class TheoremDecl(Decl):
             'zerostate ' if self.num_states == 0 else '',
             ('[%s] ' % self.name) if self.name is not None else '',
             self.expr
-        )
-
-## decls inside an automaton block
-
-class PhaseTransitionDecl(Denotable):
-    def __init__(self, transition: str, precond: Optional[Expr], target: Optional[str], *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.transition = transition
-        self.precond = precond
-        self.target = target
-
-    def _denote(self) -> Tuple:
-        return (self.transition, self.precond, self.target)
-
-    def __repr__(self) -> str:
-        return 'PhaseTransitionDecl(transition=%s, target=%s, precond=%s)' % (
-            repr(self.transition),
-            repr(self.target),
-            repr(self.precond),
-        )
-
-    def __str__(self) -> str:
-        return 'transition %s -> %s %s' % (
-            self.transition,
-            self.target,
-            (('assume %s' % self.precond) if (self.precond is not None) else ''),
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        transition = scope.get_definition(self.transition)
-        if transition is None:
-            utils.print_error(self.span, 'unknown transition %s' % (self.transition,))
-            return
-
-        if self.precond is not None:
-            transition_constants = transition.binder.vs
-            self.precond = close_free_vars(self.precond, in_scope=[x.name for x in transition_constants], span=self.span)
-            with scope.in_scope(transition.binder, [v.sort for v in transition_constants]):
-                with scope.n_states(1):
-                    self.precond.resolve(scope, BoolSort)
-
-        if self.target is not None and scope.get_phase(self.target) is None:
-            utils.print_error(self.span, 'unknown phase %s' % (self.target))
-
-PhaseComponent = Union[PhaseTransitionDecl, InvariantDecl]
-
-class GlobalPhaseDecl(Denotable):
-    def __init__(self, components: Sequence[PhaseComponent], *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.components = components
-
-    def _denote(self) -> Tuple:
-        return tuple(self.components)
-
-    def __repr__(self) -> str:
-        return 'GlobalPhaseDecl(components=%s)' % (
-            repr(self.components),
-        )
-
-    def __str__(self) -> str:
-        msg = ''
-        for c in self.components:
-            msg += '\n  '
-            msg += str(c)
-
-        return 'global%s' % (
-            msg,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        for c in self.components:
-            c.resolve(scope)
-
-class InitPhaseDecl(Denotable):
-    def __init__(self, phase: str, *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.phase = phase
-
-    def _denote(self) -> Tuple:
-        return (self.phase,)
-
-    def __repr__(self) -> str:
-        return 'InitPhaseDecl(phase=%s)' % (
-            self.phase,
-        )
-
-    def __str__(self) -> str:
-        return 'init phase %s' % (
-            self.phase,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        if scope.get_phase(self.phase) is None:
-            utils.print_error(self.span, 'unknown phase %s' % (self.phase,))
-
-
-class PhaseDecl(Denotable):
-    def __init__(self, name: str, components: Sequence[PhaseComponent], *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.name = name
-        self.components = components
-
-    def _denote(self) -> Tuple:
-        return (self.name, tuple(self.components))
-
-    def __repr__(self) -> str:
-        return 'PhaseDecl(name=%s, components=%s)' % (
-            repr(self.name),
-            repr(self.components),
-        )
-
-    def __str__(self) -> str:
-        msg = ''
-        for c in self.components:
-            msg += '\n  '
-            msg += str(c)
-
-        return 'phase %s%s' % (
-            self.name,
-            msg,
-        )
-
-    def resolve(self, scope: Scope) -> None:
-        with scope.in_phase():
-            for c in self.components:
-                c.resolve(scope)
-
-    def invs(self) -> Iterator[InvariantDecl]:
-        for c in self.components:
-            if isinstance(c, InvariantDecl):
-                yield c
-
-    def safeties(self) -> Iterator[InvariantDecl]:
-        for c in self.components:
-            if isinstance(c, InvariantDecl) and c.is_safety :
-                yield c
-
-    def sketch_invs(self) -> Iterator[InvariantDecl]:
-        for c in self.components:
-            if isinstance(c, InvariantDecl) and c.is_sketch:
-                yield c
-
-
-    def transitions(self) -> Iterator[PhaseTransitionDecl]:
-        for c in self.components:
-            if isinstance(c, PhaseTransitionDecl):
-                yield c
-
-
-AutomatonComponent = Union[GlobalPhaseDecl, InitPhaseDecl, PhaseDecl]
-
-class AutomatonDecl(Decl):
-    def __init__(self, components: Sequence[AutomatonComponent], *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.span = span
-        self.components = components
-
-    def _denote(self) -> Tuple:
-        return tuple(self.components)
-
-    def inits(self) -> Iterator[InitPhaseDecl]:
-        for c in self.components:
-            if isinstance(c, InitPhaseDecl):
-                yield c
-
-    def the_init(self) -> Optional[InitPhaseDecl]:
-        i = list(self.inits())
-        if len(i) == 0:
-            utils.print_error(self.span, 'automaton must declare an initial phase')
-            return None
-        elif len(i) > 1:
-            utils.print_error(self.span, 'automaton may only declare one initial phase')
-
-        return i[0]
-
-    def globals(self) -> Iterator[GlobalPhaseDecl]:
-        for c in self.components:
-            if isinstance(c, GlobalPhaseDecl):
-                yield c
-
-    def phases(self) -> Iterator[PhaseDecl]:
-        for c in self.components:
-            if isinstance(c, PhaseDecl):
-                yield c
-
-    def resolve(self, scope: Scope) -> None:
-        for p in self.phases():
-            scope.add_phase(p)
-
-        gs = list(self.globals())
-        gcs: List[PhaseComponent] = []
-        for g in gs:
-            g.resolve(scope)
-            gcs.extend(g.components)
-
-        for p in self.phases():
-            p.components = list(p.components) + gcs
-            p.resolve(scope)
-
-        init_phase = self.the_init()
-
-        if init_phase is None:
-            return  # error reported already from the_init()
-
-        init_phase.resolve(scope)
-
-    def __repr__(self) -> str:
-        return 'AutomatonDecl(components=%s)' % (
-            self.components
-        )
-
-    def __str__(self) -> str:
-        msg = ''
-        started = False
-        for c in self.components:
-            msg += '\n'
-            started = True
-            msg += str(c)
-
-        if started:
-            msg += '\n'
-
-        return 'automaton {%s}' % (
-            msg
         )
 
 class AnyTransition(Denotable):
@@ -2430,7 +2232,8 @@ class TransitionCall(Denotable):
 
         if self.args is not None:
             if len(self.args) != len(ition.binder.vs):
-                utils.print_error(self.span, 'transition applied to the wrong number of arguments (expected %s, got %s)' % (len(ition.binder.vs), len(self.args)))
+                utils.print_error(self.span, 'transition applied to wrong number of arguments (expected %s, got %s)' %
+                                  (len(ition.binder.vs), len(self.args)))
                 return
 
             for a, sort in zip(self.args, (v.sort for v in ition.binder.vs)):
@@ -2490,7 +2293,7 @@ class AssertDecl(Denotable):
                 self.expr.resolve(scope, BoolSort)
 
 
-TraceComponent = Union[TraceTransitionDecl, AssertDecl] # , AxiomDecl, ConstantDecl]
+TraceComponent = Union[TraceTransitionDecl, AssertDecl]  # , AxiomDecl, ConstantDecl]
 
 class TraceDecl(Decl):
     def __init__(self, components: List[TraceComponent], sat: bool, *, span: Optional[Span] = None) -> None:
@@ -2543,13 +2346,10 @@ class Scope(Generic[B]):
         self.constants: Dict[str, ConstantDecl] = {}
         self.functions: Dict[str, FunctionDecl] = {}
         self.definitions: Dict[str, DefinitionDecl] = {}
-        self.phases: Dict[str, PhaseDecl] = {}
 
         # invariant: num_states > 0 ==> current_state_index < num_states
         self.num_states: int = 0
         self.current_state_index: int = 0
-
-        self.in_phase_context = False
 
     def new_allowed(self) -> bool:
         return self.current_state_index + 1 < self.num_states
@@ -2581,7 +2381,8 @@ class Scope(Generic[B]):
                     return (b,)
 
         # otherwise, check for constants/relations/functions/definitions (whose domains are disjoint)
-        d = self.constants.get(name) or self.relations.get(name) or self.functions.get(name) or self.definitions.get(name)
+        d = self.constants.get(name) or self.relations.get(name) or \
+            self.functions.get(name) or self.definitions.get(name)
         return d
 
     def _check_duplicate_name(self, span: Optional[Span], name: str) -> None:
@@ -2596,7 +2397,6 @@ class Scope(Generic[B]):
 
         if name in self.definitions:
             utils.print_error(span, 'Name %s is already declared as a definition' % (name,))
-
 
     def add_sort(self, decl: SortDecl) -> None:
         assert len(self.stack) == 0
@@ -2638,17 +2438,6 @@ class Scope(Generic[B]):
         self._check_duplicate_name(decl.span, decl.name)
         self.functions[decl.name] = decl
 
-    def add_phase(self, decl: PhaseDecl) -> None:
-        assert len(self.stack) == 0
-
-        if decl.name is not None:
-            if decl.name in self.phases:
-                utils.print_error(decl.span, 'there is already a phase named %s' % decl.name)
-            self.phases[decl.name] = decl
-
-    def get_phase(self, phase: str) -> Optional[PhaseDecl]:
-        return self.phases.get(phase)
-
     def add_definition(self, decl: DefinitionDecl) -> None:
         assert len(self.stack) == 0
 
@@ -2668,7 +2457,6 @@ class Scope(Generic[B]):
 
     @contextmanager
     def next_state_index(self) -> Iterator[None]:
-        previous = self.current_state_index
         if self.current_state_index + 1 < self.num_states:
             self.current_state_index += 1
             yield None
@@ -2688,14 +2476,6 @@ class Scope(Generic[B]):
         self.current_state_index = 0
 
     @contextmanager
-    def in_phase(self) -> Iterator[None]:
-        assert not self.in_phase_context
-        self.in_phase_context = True
-        yield None
-        assert self.in_phase_context
-        self.in_phase_context = False
-
-    @contextmanager
     def in_scope(self, b: Binder, annots: List[B]) -> Iterator[None]:
         n = len(self.stack)
         assert len(b.vs) == len(annots)
@@ -2704,7 +2484,7 @@ class Scope(Generic[B]):
         self.pop()
         assert n == len(self.stack)
 
-    def fresh(self, base_name: str, also_avoid: List[str]=[]) -> str:
+    def fresh(self, base_name: str, also_avoid: List[str] = []) -> str:
         if self.get(base_name) is None:
             return base_name
         counter = 0
@@ -2715,6 +2495,7 @@ class Scope(Generic[B]):
         return candidate
 
 StateDecl = Union[RelationDecl, ConstantDecl, FunctionDecl]
+DeclContainingExpr = Union[InitDecl, DefinitionDecl, InvariantDecl, AxiomDecl, TheoremDecl]
 
 class Program(object):
     def __init__(self, decls: List[Decl]) -> None:
@@ -2784,8 +2565,7 @@ class Program(object):
             if isinstance(d, RelationDecl) and d.derived_axiom:
                 yield d
 
-    def decls_containing_exprs(self)\
-        -> Iterator[Union[InitDecl, DefinitionDecl, InvariantDecl, AxiomDecl, TheoremDecl]]:
+    def decls_containing_exprs(self) -> Iterator[DeclContainingExpr]:
         for d in self.decls:
             if isinstance(d, InitDecl) or \
                isinstance(d, DefinitionDecl) or \
@@ -2795,9 +2575,10 @@ class Program(object):
                 yield d
 
     def decls_quantifier_alternation_graph(self, additional: List[Expr]) -> DiGraph:
-        res = quantifier_alternation_graph(self, [axiom.expr for axiom in self.axioms()] +
-                                                 [cast(Expr, rel.derived_axiom) for rel in self.derived_relations()] +
-                                                 additional)
+        res = quantifier_alternation_graph(self,
+                                           [axiom.expr for axiom in self.axioms()] +
+                                           [cast(Expr, rel.derived_axiom) for rel in self.derived_relations()] +
+                                           additional)
         for f in self.functions():
             for asort in f.arity:
                 esort = f.sort
@@ -2805,16 +2586,6 @@ class Program(object):
                              self.scope.get_sort_checked(str(esort)).name)
 
         return res
-
-    def automata(self) -> Iterator[AutomatonDecl]:
-        for d in self.decls:
-            if isinstance(d, AutomatonDecl):
-                yield d
-
-    def the_automaton(self) -> Optional[AutomatonDecl]:
-        for d in self.automata():
-            return d
-        return None
 
     def traces(self) -> Iterator[TraceDecl]:
         for d in self.decls:
@@ -2842,16 +2613,6 @@ class Program(object):
         for tr in self.traces():
             tr.resolve(self.scope)
 
-        automata = list(self.automata())
-        if len(automata) > 1:
-            utils.print_error(automata[1].span, 'at most one automaton may be declared (first was declared at %s)' % (
-                utils.loc_to_string(automata[0].span)
-            ))
-
-        if len(automata) > 0:
-            a = automata[0]
-            a.resolve(self.scope)
-
         assert len(self.scope.stack) == 0
 
     def __repr__(self) -> str:
@@ -2869,7 +2630,7 @@ def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[str, str]]:
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
         yield (sort_from_z3sort(prog, ssortz3).name,
-               sort_from_z3sort(prog, tsortz3).name) # TODO: consider overriding equals instead of using the names
+               sort_from_z3sort(prog, tsortz3).name)  # TODO: consider overriding equals instead of using the names
 
 
 def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
