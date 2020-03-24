@@ -39,11 +39,12 @@ def itp_gen(s: Solver) -> None:
             pre_diag = cti[0]
 
             core = bmc_checker.unsat_core(pre_diag)
-            pre_diag.minimize_from_core(core)
-            if pre_diag is None:
-                utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of " %
+            if core is None:
+                utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of %s" %
                                           ' & '.join(str(clause) for clause in candidate))
                 break
+
+            pre_diag.minimize_from_core(core)
 
             pre_diag.generalize(s, lambda diag: bmc_checker.check(diag) is None)
 
