@@ -42,7 +42,7 @@ def itp_gen(s: Solver) -> None:
             if core is None:
                 utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of %s" %
                                           ' & '.join(str(clause) for clause in candidate))
-                break
+                assert False
 
             pre_diag.minimize_from_core(core)
 
