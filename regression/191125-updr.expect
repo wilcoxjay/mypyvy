@@ -1,6 +1,6 @@
 checking init:
   implies invariant on line 26... ok.
 frame is safe and inductive. done!
-!(exists A0:A. T(A0) & !S(A0))
 !(exists A0:A. !R(A0) & S(A0))
+!(exists X:A. T(X) & !R(X))
 mypyvy exiting with status 0
