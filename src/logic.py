@@ -316,6 +316,10 @@ class BoundedReachabilityCheck(object):
         with self._s.new_frame():
             self._s.add(target.to_z3(self._t, state_index=len(self._keys) - 1))
             res = self._s.check(target.trackers)
+            if res == z3.unknown:
+                utils.logger.always_print('unknown!')
+                utils.logger.always_print('reason unknown: ' + self._s.reason_unknown())
+                assert False, 'unexpected unknown from z3!'
             assert res == z3.unsat
             uc = self._s.unsat_core()
             assert uc
