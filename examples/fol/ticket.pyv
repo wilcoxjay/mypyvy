@@ -1,0 +1,93 @@
+sort thread
+sort ticket
+
+immutable relation le(ticket, ticket) @no_minimize
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+immutable constant zero:ticket
+axiom forall X. le(zero, X)
+
+mutable relation pc1(thread)
+mutable relation pc2(thread)
+mutable relation pc3(thread)
+mutable constant service: ticket
+mutable constant next_ticket: ticket
+mutable relation m(thread, ticket)  # use relation and not a function to be in EPR
+
+init pc1(T)
+init !pc2(T)
+init !pc3(T)
+init service = zero
+init next_ticket = zero
+init m(T,K) <-> K = zero
+
+definition succ(x: ticket, y:ticket) = (!le(y,x) & forall Z:ticket. !le(Z,x) -> le(y,Z))
+
+
+transition step12(t:thread)
+    modifies pc1, pc2, m, next_ticket
+    & old(pc1(t))
+    & (forall T, K. m(T, K) <-> if T = t then K = old(next_ticket) else old(m(T, K)))
+    & succ(old(next_ticket), next_ticket)
+    & (forall T. pc1(T) <-> (old(pc1(T)) & T != t))
+    & (forall T. pc2(T) <-> (old(pc2(T)) | T = t))
+
+transition step23(t:thread, k:ticket)
+    modifies pc2, pc3
+    & old(pc2(t))
+    & old(m(t,k))
+    & le(k, old(service))
+    & (forall T. pc2(T) <-> (old(pc2(T)) & T != t))
+    & (forall T. pc3(T) <-> (old(pc3(T)) | T = t))
+
+transition step31(t:thread)
+    modifies pc3, pc1, service
+    & old(pc3(t))
+    & succ(old(service), service)
+    & (forall T. pc3(T) <-> (old(pc3(T)) & T != t))
+    & (forall T. pc1(T) <-> (old(pc1(T)) | T = t))
+
+# safety property
+safety [mutex] pc3(T1) & pc3(T2) -> T1 = T2
+
+# ecoding invariants
+invariant pc1(T) | pc2(T) | pc3(T)
+invariant !pc1(T) | !pc2(T)
+invariant !pc1(T) | !pc3(T)
+invariant !pc2(T) | !pc3(T)
+invariant m(T,K1) & m(T,K2) -> K1 = K2
+
+# inductive invariant for proving safety
+invariant next_ticket = zero -> m(T,zero)
+invariant next_ticket != zero & m(T,M) -> !le(next_ticket,M)
+invariant (pc2(T) | pc3(T)) -> next_ticket != zero
+invariant m(T1,M) & m(T2,M) & M != zero -> T1 = T2
+invariant pc2(T) & m(T,M) -> le(service,M)
+invariant pc3(T) -> m(T,service)
+invariant le(service,next_ticket)
+invariant !(!pc1(T1) & !pc1(T2) & m(T1,zero) & m(T2,zero) & T1 != T2)
+
+
+sat trace {
+    step12
+    step23
+    step31
+}
+
+sat trace {
+    step12
+    step12
+    step23
+    step31
+    step23
+    step31
+}
+
+unsat trace {
+    step12
+    step12
+    step23
+    step23
+}
