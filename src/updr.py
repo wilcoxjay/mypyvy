@@ -58,6 +58,9 @@ def negate_clause(c: Expr) -> Expr:
         return syntax.NaryExpr('AND', [negate_clause(arg) for arg in c.args])
     elif isinstance(c, syntax.AppExpr) or isinstance(c, syntax.Id):
         return syntax.Not(c)
+    elif isinstance(c, syntax.QuantifierExpr):
+        assert c.quant == 'FORALL'
+        return syntax.QuantifierExpr('EXISTS', c.vs(), negate_clause(c.body))
     else:
         assert False, f'unsupported expression {c} in negate_clause'
 
