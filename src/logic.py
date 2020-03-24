@@ -300,15 +300,18 @@ class BoundedReachabilityCheck(object):
 
     def check(self, target: Diagram) -> Optional[Trace]:
         # TODO: important not to use target.to_z3() here (tracking API)
-        res = self._s.check([self._t.translate_expr(target.to_ast(), index=len(self._keys) - 1)])
-        if res == z3.sat:
-            m = Trace.from_z3(tuple(self._keys), self._s.model())
-            return m
-        elif res == z3.unknown:
-            utils.logger.always_print('unknown!')
-            utils.logger.always_print('reason unknown: ' + self._s.reason_unknown())
-            assert False, 'unexpected unknown from z3!'
-        return None
+        with self._s.new_frame():
+            self._s.add(target.to_z3(self._t, state_index=len(self._keys) - 1))
+            res = self._s.check(target.trackers)
+
+            if res == z3.sat:
+                m = Trace.from_z3(tuple(self._keys), self._s.model())
+                return m
+            elif res == z3.unknown:
+                utils.logger.always_print('unknown!')
+                utils.logger.always_print('reason unknown: ' + self._s.reason_unknown())
+                assert False, 'unexpected unknown from z3!'
+            return None
 
     def check_and_core(self, target: Diagram) -> MySet[int]:
         core: MySet[int] = MySet()
