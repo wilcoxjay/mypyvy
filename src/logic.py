@@ -313,7 +313,7 @@ class BoundedReachabilityCheck(object):
                 assert False, 'unexpected unknown from z3!'
             return None
 
-    def check_and_core(self, target: Diagram) -> MySet[int]:
+    def unsat_core(self, target: Diagram) -> Optional[MySet[int]]:
         core: MySet[int] = MySet()
 
         with self._s.new_frame():
@@ -323,6 +323,8 @@ class BoundedReachabilityCheck(object):
                 utils.logger.always_print('unknown!')
                 utils.logger.always_print('reason unknown: ' + self._s.reason_unknown())
                 assert False, 'unexpected unknown from z3!'
+            if res == z3.sat:
+                return None
             assert res == z3.unsat
             uc = self._s.unsat_core()
             assert uc

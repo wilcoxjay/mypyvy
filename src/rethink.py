@@ -29,26 +29,30 @@ def itp_gen(s: Solver) -> None:
     utils.logger.info("proving safety property: %s" % safety)
 
     candidate = [safety]
-    while True:
-        cti = get_cti(s, syntax.And(*candidate))
-        if cti is None:
-            break
 
-        pre_diag = cti[0]
+    with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
+        while True:
+            cti = get_cti(s, syntax.And(*candidate))
+            if cti is None:
+                break
 
-        with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
+            pre_diag = cti[0]
+
             core = bmc_checker.check_and_core(pre_diag)
-            pre_diag.minimize_from_core(core)
+            pre_diag.unsat_core(core)
+            if pre_diag is None:
+                utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of %s" %
+                                          ' & '.join(str(clause) for clause in candidate))
+                break
 
             pre_diag.generalize(s, lambda diag: bmc_checker.check(diag) is None)
 
-        e = syntax.Not(pre_diag.to_ast())
+            e = syntax.Not(pre_diag.to_ast())
 
-        utils.logger.info('adding new clause to the invariant: %s' % str(e))
-        candidate.append(e)
+            utils.logger.info('adding new clause to the invariant: %s' % str(e))
+            candidate.append(e)
 
-    res = logic.check_implication(s, inits, candidate)
-    if res is not None:
+    if logic.check_implication(s, inits, candidate) is not None:
         utils.logger.always_print("Failure: candidate %s excludes initial states" %
                                   ' & '.join(str(clause) for clause in candidate))
     else:
