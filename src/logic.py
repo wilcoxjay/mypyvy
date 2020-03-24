@@ -296,11 +296,12 @@ class BoundedReachabilityCheck(object):
             self._s.add(self._t.translate_expr(precond, index=0))
 
         for i in range(depth):
-            assert_any_transition(self._s, self._t, i, allow_stutter=False)
+            assert_any_transition(self._s, self._t, i, allow_stutter=True)
 
     def check(self, target: Diagram) -> Optional[Trace]:
+        # TODO: important not to use target.to_z3() here (tracking API)
         with self._s.new_frame():
-            self._s.add(z3.Or(*(target.to_z3(self._t, state_index=idx) for idx in range(0, len(self._keys)))))
+            self._s.add(target.to_z3(self._t, state_index=len(self._keys) - 1))
             res = self._s.check(target.trackers)
 
             if res == z3.sat:
@@ -316,7 +317,7 @@ class BoundedReachabilityCheck(object):
         core: MySet[int] = MySet()
 
         with self._s.new_frame():
-            self._s.add(z3.Or(*(target.to_z3(self._t, state_index=idx) for idx in range(0, len(self._keys)))))
+            self._s.add(target.to_z3(self._t, state_index=len(self._keys) - 1))
             res = self._s.check(target.trackers)
             if res == z3.unknown:
                 utils.logger.always_print('unknown!')
