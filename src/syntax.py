@@ -2553,6 +2553,11 @@ class Program(object):
             if isinstance(d, FunctionDecl):
                 yield d
 
+    def relations(self) -> Iterator[RelationDecl]:
+        for d in self.decls:
+            if isinstance(d, RelationDecl):
+                yield d
+
     def relations_constants_and_functions(self) -> Iterator[StateDecl]:
         for d in self.decls:
             if isinstance(d, RelationDecl) or \
