@@ -18,14 +18,6 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
     return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
-def generalize_cex_omission_checker(s: Solver, diag_to_exclude: Diagram, depth: int) -> bool:
-    with logic.BoundedReachabilityCheck(s, syntax.the_program, depth) as bmc_checker:
-        res = bmc_checker.check(diag_to_exclude)
-
-    utils.logger.info("bmc res for %s: %s" % (diag_to_exclude, res))
-    excludes_bounded_reachable_states = (res is not None)
-    return not excludes_bounded_reachable_states
-
 def itp_gen(s: Solver) -> None:
     k = 4
 
@@ -46,9 +38,9 @@ def itp_gen(s: Solver) -> None:
 
         with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
             core = bmc_checker.check_and_core(pre_diag)
-        pre_diag.minimize_from_core(core)
+            pre_diag.minimize_from_core(core)
 
-        pre_diag.generalize(s, lambda diag: generalize_cex_omission_checker(s, diag, k))
+            pre_diag.generalize(s, lambda diag: bmc_checker.check(diag) is None)
 
         e = syntax.Not(pre_diag.to_ast())
 
