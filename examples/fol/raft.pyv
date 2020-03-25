@@ -432,14 +432,14 @@ invariant [term_at_commit_term]
     index_used(commit_log, commit_index) -> term_at(commit_log, commit_index, commit_term)
 
 invariant [choosable_AER_current_log]
-    (exists Q. forall N. member(N, Q) ->
-        append_reply_msg(N, T1, I, T1) | !left_term(N, T1)) &
+    (exists Q. forall N1. member(N1, Q) ->
+        append_reply_msg(N1, T1, I, T1) | !left_term(N1, T1)) &
     append_reply_msg(N, T1, I, T1) ->
     term_at(current_log(N), I, T1)
 
 invariant [choosable_vote_msg]
-    (exists Q. forall N. member(N, Q) ->
-        append_reply_msg(N, T1, I, T1) | !left_term(N, T1)) &
+    (exists Q. forall N1. member(N1, Q) ->
+        append_reply_msg(N1, T1, I, T1) | !left_term(N1, T1)) &
     append_reply_msg(N, T1, I, T1) &
     vote_msg(C, T2, N) & !term_le(T2, T1) & !started(T2) & !left_term(C, T2) ->
     term_at(current_log(C), I, T1)
