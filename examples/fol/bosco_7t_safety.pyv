@@ -173,7 +173,7 @@ safety [validity1] forall V1, V2. ((forall N:node. !member_f(N) -> input(N,V1)) 
 safety [validity2] forall V1, V2. (forall N:node. !member_f(N) -> input(N,V1)) & V1 != V2 -> !und_cons_dec(V2) # validity
 
 # special for n > 7t
-safety [strongly_one_step] (forall N . !member_f(N) -> input(N,V)) & done(M) & !member_f(M)-> dec(M,V)
+safety [strongly_one_step] (forall N . !member_f(N) -> input(N,V)) & done(M) & !member_f(M) -> dec(M,V)
 
 ################################################################################
 #
