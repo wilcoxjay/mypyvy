@@ -44,7 +44,7 @@ transition recv(v: id, n: node, next: node)
 
 safety [leader_unique] leader(X) & leader(Y) -> X = Y
 invariant [leader_max] leader(L) -> le(idn(N), idn(L))
-invariant [seflf_pending_max] pending(idn(L), L) -> le(idn(N), idn(L))
+invariant [self_pending_max] pending(idn(L), L) -> le(idn(N), idn(L))
 invariant [no_bypass] pending(idn(S), D) & btw(S, N, D) -> le(idn(N), idn(S))
 
 sat trace {
