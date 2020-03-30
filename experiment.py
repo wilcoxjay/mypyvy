@@ -1,5 +1,5 @@
 
-import subprocess, os, signal, sys, json, threading, time, argparse, random
+import subprocess, os, signal, sys, json, threading, time, argparse, random, traceback
 from os import path
 from concurrent.futures import ThreadPoolExecutor
 from typing import *
@@ -42,7 +42,7 @@ def run(r: Any, logger: ResultsLogger) -> None:
         r['killed'] = True
         r['success'] = False
     except Exception as e:
-        print(e)
+        print(traceback.format_exc())
     r['elapsed'] = time.monotonic() - start
     logger.add_result(r)
 
@@ -61,41 +61,69 @@ def main() -> None:
     os.makedirs(path.abspath(args.log_dir), exist_ok=True)
     logger = ResultsLogger(args.output)
     extra_args =  args.args if len(args.args) == 0 or args.args[0] != '--' else args.args[1:]
-    descs = [
-        # work reliably
-        ('client_server_ae', False, True),
-        ('client_server_db_ae', False, True),
-        ('consensus_forall', True, False),
-        ('consensus_forall_without_decide', True, False),
-        ('firewall', False, True),
-        ('lockserv', True, False),
-        ('ring', True, False),
-        ('sharded-kv-no-lost-keys', False, True),
-        ('sharded-kv', True, False),
-        ('toy_consensus_forall', True, False),
-        ('toy_consensus_epr', False, True),
-        
-        # don't work reliably
-        ('ring-not-dead', False, True),
-        ('consensus_epr', False, True),
-        ('learning_switch', True, True),
-    ]
-
     common_name = path.splitext(path.basename(args.output))[0]
+    
+    def make_ic3_cmd(base, is_universal):
+        cmd = ['fol-ic3']
+        if is_universal:
+            cmd.append('--logic=universal')
+        else:
+            cmd.append('--cvc4')
+        cmd.extend(extra_args)
+        cmd.append(f'examples/fol/{name}.pyv')
+        return cmd
+
+    def make_updr_cmd(base, is_universal):
+        assert is_universal
+        return ['updr', '--log=info', f'examples/fol/{name}.pyv']
+    
+            # Existentials:
+    descs = [('client_server_ae', False),
+            ('client_server_db_ae', False),
+            ('consensus_epr', False),
+            ('firewall', False),
+            ('hybrid_reliable_broadcast_cisa', False),
+            ('ring_id_not_dead', False),
+            ('sharded_kv_no_lost_keys', False),
+            ('toy_consensus_epr', False),
+
+            # Universal only:
+            ('consensus_forall', True),
+            ('consensus_wo_decide', True),
+            ('learning_switch', True),
+            ('lockserv', True),
+            ('ring_id', True),
+            ('sharded_kv', True),
+            ('ticket', True),
+            ('toy_consensus_forall', True)]
+
+
     with ThreadPoolExecutor(max_workers=args.cpus) as executor:
         for i in range(args.count):
             random.shuffle(descs)
-            for (name, is_universal, use_cvc4) in descs:
+            for (name, is_universal) in descs:
                 if args.single and name != args.single:
                     continue
-                a = (['--logic=universal'] if is_universal else []) + (['--cvc4'] if use_cvc4 else []) + extra_args + [f'examples/fol/{name}.pyv']
+                a = make_ic3_cmd(name, is_universal)
                 r = {"name": name,
                      "index": i,
+                     "type": "fol-ic3",
                      "timeout": args.timeout,
-                     "log": path.join(args.log_dir, f"{common_name}-log-{name}-{i}.out"),
-                     "args": ['python3.7', '-u', 'src/mypyvy.py', 'fol-ic3'] + a}
-            
+                     "log": path.join(args.log_dir, f"{common_name}-log-fol-ic3-{name}-{i}.out"),
+                     "args": ['python3.7', '-u', 'src/mypyvy.py'] + a}
                 executor.submit(run, r, logger)
+
+                if is_universal:
+                    a = make_updr_cmd(name, is_universal)
+                    r = {"name": name,
+                        "index": i,
+                        "type": "updr",
+                        "timeout": args.timeout,
+                        "log": path.join(args.log_dir, f"{common_name}-log-updr-{name}-{i}.out"),
+                        "args": ['python3.7', '-u', 'src/mypyvy.py'] + a}
+                    executor.submit(run, r, logger)
+
+                
     logger.close()
 
 if __name__ == '__main__':
