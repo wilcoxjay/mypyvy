@@ -18,6 +18,12 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
     return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
+def bmc_upto_bound(s: Solver, diag: logic.Diagram, bound: int) -> Optional[logic.Trace]:
+    for k in range(0, bound + 1):
+        if (m := logic.check_bmc(s, syntax.Not(diag.to_ast()), k)) is not None:
+            return m
+    return None
+
 def itp_gen(s: Solver) -> None:
     k = 4
 
@@ -30,28 +36,28 @@ def itp_gen(s: Solver) -> None:
 
     candidate = [safety]
 
-    with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
-        while True:
-            cti = get_cti(s, syntax.And(*candidate))
-            if cti is None:
-                break
+    # with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
+    while True:
+        cti = get_cti(s, syntax.And(*candidate))
+        if cti is None:
+            break
 
-            pre_diag = cti[0]
+        pre_diag = cti[0]
 
-            core = bmc_checker.unsat_core(pre_diag)
-            if core is None:
-                utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of %s" %
-                                          ' & '.join(str(clause) for clause in candidate))
-                assert False
+        # core = bmc_checker.unsat_core(pre_diag)
+        # if core is None:
+        #     utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of %s" %
+        #                               ' & '.join(str(clause) for clause in candidate))
+        #     assert False
+        #
+        # pre_diag.minimize_from_core(core)
 
-            pre_diag.minimize_from_core(core)
+        pre_diag.generalize(s, lambda diag: bmc_upto_bound(s, diag, k) is None)
 
-            pre_diag.generalize(s, lambda diag: bmc_checker.check(diag) is None)
+        e = syntax.Not(pre_diag.to_ast())
 
-            e = syntax.Not(pre_diag.to_ast())
-
-            utils.logger.info('adding new clause to the invariant: %s' % str(e))
-            candidate.append(e)
+        utils.logger.info('adding new clause to the invariant: %s' % str(e))
+        candidate.append(e)
 
     if logic.check_implication(s, inits, candidate) is not None:
         utils.logger.always_print("Failure: candidate %s excludes initial states" %
