@@ -88,7 +88,7 @@ def brat(s: Solver) -> None:
 
     while logic.check_implication(s, current_frame, prev_frame, minimize=False) is not None:
         prev_frame = current_frame
-        current_frame = brat_new_frame(s, prev_frame, k, inits, safety, bad_cache)
+        current_frame = brat_next_frame(s, prev_frame, k, inits, safety, bad_cache)
         utils.logger.info("Frame:")
         for c in current_frame:
             utils.logger.info(str(c))
@@ -99,10 +99,10 @@ def brat(s: Solver) -> None:
     verify_inductive_invariant(s, current_frame)
 
 
-def brat_new_frame(s: Solver, prev_frame: List[Expr],
+def brat_next_frame(s: Solver, prev_frame: List[Expr],
                    bound: int, inits: List[Expr], safety: Expr,
                    bad_cache: Set[Diagram]) -> List[Expr]:
-    current_frame: List[Expr] = [syntax.TrueExpr]
+    current_frame: List[Expr] = new_frame(s, prev_frame)
 
     for bad_model in bad_cache:
         if logic.check_implication(s, current_frame, [syntax.Not(bad_model.to_ast())]) is None:
@@ -114,6 +114,23 @@ def brat_new_frame(s: Solver, prev_frame: List[Expr],
         bad_cache.add(bad_model)
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
 
+    return current_frame
+
+
+def new_frame(s: Solver, prev_frame: List[Expr]) -> List[Expr]:
+    if not utils.args.push:
+        return [syntax.TrueExpr]
+
+    current_frame = []
+
+    for c in prev_frame:
+        if c == syntax.FalseExpr:
+            continue
+        if logic.check_two_state_implication_all_transitions(s, prev_frame, c, minimize=False) is None:
+            current_frame.append(c)
+
+    if not current_frame:
+        current_frame = [syntax.TrueExpr]
     return current_frame
 
 
@@ -150,8 +167,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=itp_gen)
     result.append(s)
 
-    s = subparsers.add_parser('brat', help='experimental inference 2')
-    s.set_defaults(main=brat)
-    result.append(s)
+    brat_subparser = subparsers.add_parser('brat', help='experimental inference 2')
+    brat_subparser.set_defaults(main=brat)
+    result.append(brat_subparser)
+
+    brat_subparser.add_argument('--push', action=utils.YesNoAction, default=True,
+                                help='new frame begins with pushing from previous frame')
 
     return result

@@ -113,6 +113,7 @@ class MypyvyArgs(object):
     cvc4: bool
     cvc4_minimize_models: bool
     accept_old: bool
+    push: bool
 
     def main(self, solver: Any) -> None:
         ...
