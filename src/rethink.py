@@ -72,7 +72,7 @@ def valid_in_initial_frame(s: Solver, inits: List[Expr], e: Expr) -> bool:
     return logic.check_implication(s, inits, [e], minimize=False) is None
 
 def brat(s: Solver) -> None:
-    k = 6
+    k = utils.args.depth
 
     prog = syntax.the_program
     safety = syntax.And(*(inv.expr for inv in prog.invs() if inv.is_safety))
@@ -171,6 +171,9 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     brat_subparser.set_defaults(main=brat)
     result.append(brat_subparser)
 
+    # TODO: remove default for depth
+    brat_subparser.add_argument('--depth', type=int, default=6, metavar='N',
+                                help='number of steps in backwards exploration')
     brat_subparser.add_argument('--push', action=utils.YesNoAction, default=True,
                                 help='new frame begins with pushing from previous frame')
 
