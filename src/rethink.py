@@ -3,11 +3,12 @@ from logic import Solver, Diagram, Trace, KEY_NEW, KEY_OLD
 import syntax
 from syntax import Expr
 import utils
+import copy
 
 import z3
 import argparse
 
-from typing import Iterable, List, Tuple, Optional
+from typing import Iterable, List, Tuple, Optional, Set
 
 def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     res = logic.check_two_state_implication_all_transitions(s, [candidate], candidate, minimize=True)
@@ -83,10 +84,14 @@ def brat(s: Solver) -> None:
     current_frame = inits
     prev_frame: List[Expr] = [syntax.FalseExpr]
 
+    bad_cache: Set[Diagram] = set()
+
     while logic.check_implication(s, current_frame, prev_frame, minimize=False) is not None:
         prev_frame = current_frame
-        current_frame = brat_new_frame(s, prev_frame, k, inits, safety)
-        utils.logger.info("Frame: %s" % ' & '.join(str(c) for c in current_frame))
+        current_frame = brat_new_frame(s, prev_frame, k, inits, safety, bad_cache)
+        utils.logger.info("Frame:")
+        for c in current_frame:
+            utils.logger.info(str(c))
 
     utils.logger.always_print("Success! Inductive invariant:")
     for clause in current_frame:
@@ -95,29 +100,38 @@ def brat(s: Solver) -> None:
 
 
 def brat_new_frame(s: Solver, prev_frame: List[Expr],
-                   bound: int, inits: List[Expr], safety: Expr) -> List[Expr]:
+                   bound: int, inits: List[Expr], safety: Expr,
+                   bad_cache: Set[Diagram]) -> List[Expr]:
     current_frame: List[Expr] = [syntax.TrueExpr]
-    while True:
-        bad_trace = bmc_upto_bound(s, safety, bound, preconds=current_frame)
-        if bad_trace is None:
-            break
 
+    for bad_model in bad_cache:
+        if logic.check_implication(s, current_frame, [syntax.Not(bad_model.to_ast())]) is None:
+            continue
+        print(bad_model)
+        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
+
+    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame)) is not None:
         bad_model = bad_trace.as_diagram(0)
-
-        # TODO: duplicated from updr
-        def prev_frame_constraint(diag: Diagram) -> bool:
-            return (
-                    logic.check_two_state_implication_all_transitions(
-                        s, prev_frame, syntax.Not(diag.to_ast()), minimize=False
-                    ) is None
-                    and valid_in_initial_frame(s, inits, syntax.Not(diag.to_ast()))
-            )
-
-        bad_model.generalize(s, prev_frame_constraint)
-
-        current_frame.append(syntax.Not(bad_model.to_ast()))
+        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
 
     return current_frame
+
+
+def post_image_prime_consequence(s: Solver, prev_frame: List[Expr], inits: List[Expr], bad_model: Diagram) -> Expr:
+    # TODO: duplicated from updr
+    def prev_frame_constraint(diag: Diagram) -> bool:
+        return (
+                logic.check_two_state_implication_all_transitions(
+                    s, prev_frame, syntax.Not(diag.to_ast()), minimize=False
+                ) is None
+                and valid_in_initial_frame(s, inits, syntax.Not(diag.to_ast()))
+        )
+
+    bad_model_copy = copy.copy(bad_model)
+    bad_model_copy.generalize(s, prev_frame_constraint)
+
+    return syntax.Not(bad_model_copy.to_ast())
+
 
 def verify_inductive_invariant(s: Solver, inv: List[Expr]) -> None:
     prog = syntax.the_program
