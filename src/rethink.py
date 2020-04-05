@@ -18,9 +18,9 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
     return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
-def bmc_upto_bound(s: Solver, diag: logic.Diagram, bound: int) -> Optional[logic.Trace]:
+def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]]=None) -> Optional[logic.Trace]:
     for k in range(0, bound + 1):
-        if (m := logic.check_bmc(s, syntax.Not(diag.to_ast()), k)) is not None:
+        if (m := logic.check_bmc(s, post, k, preconds=preconds)) is not None:
             return m
     return None
 
@@ -52,7 +52,7 @@ def itp_gen(s: Solver) -> None:
         #
         # pre_diag.minimize_from_core(core)
 
-        pre_diag.generalize(s, lambda diag: bmc_upto_bound(s, diag, k) is None)
+        pre_diag.generalize(s, lambda diag: bmc_upto_bound(s, syntax.Not(diag.to_ast()), k) is None)
 
         e = syntax.Not(pre_diag.to_ast())
 
@@ -67,11 +67,77 @@ def itp_gen(s: Solver) -> None:
         for clause in candidate:
             utils.logger.always_print(str(clause))
 
+def valid_in_initial_frame(s: Solver, inits: List[Expr], e: Expr) -> bool:
+    return logic.check_implication(s, inits, [e], minimize=False) is None
+
+def brat(s: Solver) -> None:
+    k = 6
+
+    prog = syntax.the_program
+    safety = syntax.And(*(inv.expr for inv in prog.invs() if inv.is_safety))
+    inits = [init.expr for init in prog.inits()]
+
+    utils.logger.info("initial state: %s" % str(inits))
+    utils.logger.info("proving safety property: %s" % safety)
+
+    current_frame = inits
+    prev_frame: List[Expr] = [syntax.FalseExpr]
+
+    while logic.check_implication(s, current_frame, prev_frame, minimize=False) is not None:
+        prev_frame = current_frame
+        current_frame = brat_new_frame(s, prev_frame, k, inits, safety)
+        utils.logger.info("Frame: %s" % ' & '.join(str(c) for c in current_frame))
+
+    utils.logger.always_print("Success! Inductive invariant:")
+    for clause in current_frame:
+        utils.logger.always_print(str(clause))
+    verify_inductive_invariant(s, current_frame)
+
+
+def brat_new_frame(s: Solver, prev_frame: List[Expr],
+                   bound: int, inits: List[Expr], safety: Expr) -> List[Expr]:
+    current_frame: List[Expr] = [syntax.TrueExpr]
+    while True:
+        bad_trace = bmc_upto_bound(s, safety, bound, preconds=current_frame)
+        if bad_trace is None:
+            break
+
+        bad_model = bad_trace.as_diagram(0)
+
+        # TODO: duplicated from updr
+        def prev_frame_constraint(diag: Diagram) -> bool:
+            return (
+                    logic.check_two_state_implication_all_transitions(
+                        s, prev_frame, syntax.Not(diag.to_ast()), minimize=False
+                    ) is None
+                    and valid_in_initial_frame(s, inits, syntax.Not(diag.to_ast()))
+            )
+
+        bad_model.generalize(s, prev_frame_constraint)
+
+        current_frame.append(syntax.Not(bad_model.to_ast()))
+
+    return current_frame
+
+def verify_inductive_invariant(s: Solver, inv: List[Expr]) -> None:
+    prog = syntax.the_program
+    inits = [init.expr for init in prog.inits()]
+    safeties = [inv.expr for inv in prog.invs() if inv.is_safety]
+
+    assert logic.check_implication(s, inits, inv) is None
+    assert logic.check_implication(s, inv, safeties) is None
+    assert logic.check_implication(s, inv, inv) is None
+
+
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result: List[argparse.ArgumentParser] = []
 
     s = subparsers.add_parser('itp-literal', help='experimental inference 1')
     s.set_defaults(main=itp_gen)
+    result.append(s)
+
+    s = subparsers.add_parser('brat', help='experimental inference 2')
+    s.set_defaults(main=brat)
     result.append(s)
 
     return result
