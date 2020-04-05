@@ -107,11 +107,11 @@ def brat_new_frame(s: Solver, prev_frame: List[Expr],
     for bad_model in bad_cache:
         if logic.check_implication(s, current_frame, [syntax.Not(bad_model.to_ast())]) is None:
             continue
-        print(bad_model)
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
 
     while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame)) is not None:
         bad_model = bad_trace.as_diagram(0)
+        bad_cache.add(bad_model)
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
 
     return current_frame
@@ -127,7 +127,7 @@ def post_image_prime_consequence(s: Solver, prev_frame: List[Expr], inits: List[
                 and valid_in_initial_frame(s, inits, syntax.Not(diag.to_ast()))
         )
 
-    bad_model_copy = copy.copy(bad_model)
+    bad_model_copy = copy.deepcopy(bad_model)
     bad_model_copy.generalize(s, prev_frame_constraint)
 
     return syntax.Not(bad_model_copy.to_ast())
