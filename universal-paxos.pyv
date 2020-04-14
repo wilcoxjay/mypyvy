@@ -1,0 +1,134 @@
+sort node
+sort value
+sort quorum
+sort round
+
+immutable constant none: round
+immutable relation le(round, round) @no_minimize
+
+# instantiate total_order(round, le)
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation one_a(round)
+mutable relation one_b(node, round)
+mutable relation left_round(node, round)
+mutable relation proposal(round, value)
+mutable relation vote(node, round, value)
+mutable relation decision(round, value)
+
+mutable function decision_quorum(round, value): quorum
+derived relation choosable(round, value, quorum):
+    (choosable(R, V, Q) <-> ((forall N. (member(N, Q) -> (!left_round(N, R) | vote(N, R, V))))))
+
+init !one_a(R)
+init !one_b(N, R)
+init !left_round(N, R)
+init !proposal(R, V)
+init !vote(N, R, V)
+init !decision(R, V)
+# init choosable(R, V, Q)
+
+transition send_1a(r: round)
+  modifies one_a
+  r != none &
+  (forall R. one_a(R) <-> old(one_a(R)) | R = r)
+
+transition join_round(n: node, r: round)
+  modifies one_b, left_round
+  r != none &
+  old(one_a(r)) &
+  !old(left_round(n, r)) &
+  (forall N, R. one_b(N, R) <-> old(one_b(N,R)) | N = n & R = r) &
+  (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
+
+transition propose(r: round, q: quorum, maxr: round, v: value)
+  modifies proposal
+  r != none &
+  (forall V. !old(proposal(r, V))) &
+  (forall N. member(N, q) -> old(one_b(N, r))) &
+  ((maxr = none & forall N,MAXR,V. !(member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V)))) |
+   (maxr != none &
+    (exists N. member(N, q) & !le(r,maxr) & old(vote(N,maxr,v))) &
+    (forall N,MAXR,V. (member(N, q) & !le(r,MAXR) & old(vote(N,MAXR,V))) -> le(MAXR,maxr)))) &
+  (forall R, V. proposal(R, V) <-> old(proposal(R, V)) | (R = r & V = v))
+
+transition cast_vote(n: node, v: value, r: round)
+  modifies vote
+  r != none &
+  !old(left_round(n, r)) &
+  old(proposal(r, v)) &
+  (forall N, R, V. vote(N, R, V) <-> old(vote(N, R, V)) | N = n & R = r & V = v)
+
+transition decide(r: round, v: value, q: quorum)
+  modifies decision, decision_quorum
+  r != none &
+  (forall N. member(N, q) -> old(vote(N, r, v))) &
+  (forall R, V. decision(R, V) <-> old(decision(R, V)) | R = r & V = v) &
+  (forall R, V.
+    !(R = r & V = v) -> decision_quorum(R, V) = old(decision_quorum(R, V))) &
+  decision_quorum(r, v) = q
+
+safety
+  decision(R1, V1) & decision(R2, V2) -> V1 = V2
+
+invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
+invariant vote(N,R,V) -> proposal(R,V)
+invariant !vote(N,none,V)
+invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
+
+#invariant
+#   forall R1, V1, R2, V2.
+#     (exists Q. forall N. member(N, Q) -> !left_round(N, R1) | vote(N, R1, V1)) &
+#     !le(R2, R1) &
+#     proposal(R2, V2) ->
+#     V1 = V2
+
+#invariant forall R, V, Q.
+#  choosable(R, V, Q) <->
+#  (forall N. member(N, Q) -> !left_round(N, R) | vote(N, R, V))
+
+invariant [hard]
+  forall R1, V1, R2, V2, Q.
+    choosable(R1, V1, Q) ->
+    !le(R2, R1) &
+    proposal(R2, V2) ->
+    V1 = V2
+
+
+invariant
+  forall R, V.
+    decision(R, V) ->
+    forall N. member(N, decision_quorum(R, V)) -> vote(N, R, V)
+
+# invariant
+#   forall R, V.
+#     decision(R, V) ->
+#     exists Q.
+#       forall N. member(N, Q) -> vote(N, R, V)
+
+
+invariant [ice] forall N:node. !one_b(N, none)
+invariant [ice] forall N:node, R:round. le(R, none) | !left_round(N, R) | left_round(N, none)
+invariant [ice] forall R:round, V:value. !le(none, R) | !proposal(R, V) | !choosable(none, V, decision_quorum(none, V))
+invariant [ice] forall V:value. !proposal(none, V)
+invariant [ice] forall N:node, R:round. one_a(R) | !one_b(N, R)
+invariant [ice] !one_a(none)
+invariant [ice] forall R:round, V:value. one_a(R) | !proposal(R, V)
+invariant [ice] forall N:node, R1:round, R2:round. !le(R1, R2) | !left_round(N, R2) | left_round(N, R1)
+invariant [ice] forall R1:round, R2:round, V:value. !le(R1, R2) | !proposal(R2, V) | proposal(R1, V) | !choosable(R1, V, decision_quorum(R1, V))
+invariant [ice] forall R1:round, R2:round, V1:value, V2:value. le(R2, R1) | !proposal(R2, V1) | proposal(R1, V2) | !choosable(R1, V2, decision_quorum(none, V2))
+invariant [ice] forall R1:round, R2:round, V1:value, V2:value. !le(R2, R1) | !proposal(R1, V1) | !choosable(R2, V2, decision_quorum(none, V1)) | choosable(R2, V1, decision_quorum(none, V1))
+invariant [ice] forall Q:quorum, R:round, V:value. !le(none, R) | !proposal(R, V) | !choosable(none, V, Q)
+invariant [ice] forall Q:quorum, R1:round, R2:round, V:value. !le(R1, R2) | !proposal(R2, V) | proposal(R1, V) | !choosable(R1, V, Q)
+
+invariant [ice2] forall R1:round, R2:round, V1:value, V2:value. le(R2, R1) | !proposal(R2, V2) | proposal(R1, V1) | !choosable(R1, V1, decision_quorum(R2, V1))
+invariant [ice2] forall Q:quorum, R1:round, R2:round, V1:value, V2:value. !le(R1, R2) | !proposal(R2, V2) | proposal(R1, V2) | !choosable(R1, V1, Q)
+invariant [ice2] forall R1:round, R2:round, V1:value, V2:value. le(R2, R1) | !proposal(R2, V2) | proposal(R1, V2) | !choosable(R1, V1, decision_quorum(R1, V2))
+invariant [ice2] forall R1:round, R2:round, V1:value, V2:value. le(R1, R2) | !proposal(R1, V1) | !choosable(R2, V2, decision_quorum(none, V2)) | choosable(R2, V2, decision_quorum(none, V1))
+invariant [ice2] forall R1:round, R2:round, V1:value, V2:value. le(R2, R1) | !proposal(R2, V1) | !choosable(R1, V2, decision_quorum(none, V1)) | decision_quorum(none, V1) = decision_quorum(none, V2)

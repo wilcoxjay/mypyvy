@@ -141,11 +141,10 @@ class FOLSeparator(object):
             return f
         def p2f(p: Expr) -> L.Formula:
             if isinstance(p, BinaryExpr):
-                a,b = p2t(p.arg1), p2t(p.arg2)
                 if p.op == 'EQUAL':
-                    return L.Equal(a,b)
+                    return L.Equal(p2t(p.arg1), p2t(p.arg2))
                 elif p.op == 'NOTEQ':
-                    return L.Not(L.Equal(a,b))
+                    return L.Not(L.Equal(p2t(p.arg1), p2t(p.arg2)))
                 else:
                     assert False
             elif isinstance(p, NaryExpr):
