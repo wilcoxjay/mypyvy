@@ -19,9 +19,10 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
     return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
-def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]]=None) -> Optional[logic.Trace]:
+def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]]=None,
+                   minimize: Optional[bool]=None) -> Optional[logic.Trace]:
     for k in range(0, bound + 1):
-        if (m := logic.check_bmc(s, post, k, preconds=preconds)) is not None:
+        if (m := logic.check_bmc(s, post, k, preconds=preconds, minimize=minimize)) is not None:
             return m
     return None
 
@@ -86,10 +87,12 @@ def brat(s: Solver) -> None:
 
     bad_cache: Set[Diagram] = set()
 
+    idx = 0
     while logic.check_implication(s, current_frame, prev_frame, minimize=False) is not None:
+        idx += 1
         prev_frame = current_frame
-        current_frame = brat_next_frame(s, prev_frame, k, inits, safety, bad_cache)
-        utils.logger.info("Frame:")
+        current_frame = brat_next_frame(s, prev_frame, k, inits, safety, bad_cache, utils.args.minimize_models)
+        utils.logger.info("Frame: %d" % idx)
         for c in current_frame:
             utils.logger.info(str(c))
 
@@ -101,7 +104,8 @@ def brat(s: Solver) -> None:
 
 def brat_next_frame(s: Solver, prev_frame: List[Expr],
                    bound: int, inits: List[Expr], safety: Expr,
-                   bad_cache: Set[Diagram]) -> List[Expr]:
+                   bad_cache: Set[Diagram],
+                   minimize: bool) -> List[Expr]:
     current_frame: List[Expr] = new_frame(s, prev_frame)
 
     for bad_model in bad_cache:
@@ -109,7 +113,7 @@ def brat_next_frame(s: Solver, prev_frame: List[Expr],
             continue
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
 
-    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame)) is not None:
+    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize)) is not None:
         bad_model = bad_trace.as_diagram(0)
         bad_cache.add(bad_model)
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))

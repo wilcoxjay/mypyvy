@@ -335,7 +335,8 @@ class BoundedReachabilityCheck(object):
         return core
 
 
-def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None) -> Optional[Trace]:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
+              minimize: Optional[bool]=None) -> Optional[Trace]:
     keys = tuple('state%02d' % i for i in range(depth + 1))
     prog = syntax.the_program
 
@@ -357,7 +358,8 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
         res = s.check()
         if res == z3.sat:
-            m = Trace.from_z3(tuple(keys), s.model())
+            z3m = s.model(minimize=minimize)
+            m = Trace.from_z3(tuple(keys), z3m)
             return m
         elif res == z3.unknown:
             print('unknown!')
