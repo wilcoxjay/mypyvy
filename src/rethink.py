@@ -91,7 +91,14 @@ def brat(s: Solver) -> None:
     while logic.check_implication(s, current_frame, prev_frame, minimize=False) is not None:
         idx += 1
         prev_frame = current_frame
-        current_frame = brat_next_frame(s, prev_frame, k, inits, safety, bad_cache, utils.args.minimize_models)
+        if not utils.args.decrease_depth:
+            current_depth = k
+        else:
+            current_depth = k - idx + 1
+            if current_depth <= 0:
+                assert False, "exhaused bmc depth: becoming non-positive"
+
+        current_frame = brat_next_frame(s, prev_frame, current_depth, inits, safety, bad_cache, utils.args.minimize_models)
         utils.logger.info("Frame: %d" % idx)
         for c in current_frame:
             utils.logger.info(str(c))
@@ -180,5 +187,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                                 help='number of steps in backwards exploration')
     brat_subparser.add_argument('--push', action=utils.YesNoAction, default=True,
                                 help='new frame begins with pushing from previous frame')
+    brat_subparser.add_argument('--decrease-depth', action=utils.YesNoAction, default=False,
+                                help='BMC bound decreased as frames increase (similar to PDR with backward-reach cache)')
 
     return result
