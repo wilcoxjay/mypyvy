@@ -203,7 +203,7 @@ def verify_inductive_invariant(s: Solver, inv: List[Expr]) -> None:
 
     assert logic.check_implication(s, inits, inv) is None
     assert logic.check_implication(s, inv, safeties) is None
-    assert logic.check_implication(s, inv, inv) is None
+    assert logic.check_two_state_implication_all_transitions(s, inv, syntax.And(*inv), minimize=False) is None
 
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
