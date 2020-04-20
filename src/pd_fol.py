@@ -1,226 +1,11 @@
 
-import time
 import argparse
-import itertools
-import re
 import random
-import math
-from itertools import product, chain, combinations, repeat
-from collections import defaultdict
+import time
 
 from syntax import *
 from logic import *
-from pd import check_two_state_implication
-
-try:
-    import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
-    import separators.timer
-except ModuleNotFoundError:
-    pass
-
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
-
-PDState = Tuple[Trace, int]
-
-def eval_predicate(s: PDState, p: Expr) -> bool:
-    r = s[0].as_state(s[1]).eval(p)
-    assert isinstance(r, bool)
-    return r
-
-class FOLSeparator(object):
-    '''Class used to call into the folseparators code'''
-    def __init__(self, states: List[PDState]) -> None:
-        prog = syntax.the_program
-        self.states = states
-        self.ids: Dict[int, int] = {}
-        self.sig = separators.logic.Signature()
-        def sort_to_name(s: Sort) -> str:
-            assert isinstance(s, UninterpretedSort)
-            return s.name
-        for d in prog.decls:
-            if isinstance(d, SortDecl):
-                self.sig.sorts.add(d.name)
-            elif isinstance(d, ConstantDecl):
-                self.sig.constants[d.name] = sort_to_name(d.sort)
-            elif isinstance(d, RelationDecl):
-                self.sig.relations[d.name] = list(sort_to_name(s) for s in d.arity)
-            elif isinstance(d, FunctionDecl):
-                self.sig.functions[d.name] = (list(sort_to_name(s) for s in d.arity), sort_to_name(d.sort))
-        self.sig.finalize_sorts()
-        S = separators.separate.HybridSeparator if utils.args.separator == 'hybrid' else\
-            separators.separate.GeneralizedSeparator if utils.args.separator == 'generalized' else\
-            separators.separate.SeparatorNaive
-        self.separator = S(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
-
-    def _state_id(self, i: int) -> int:
-        assert 0 <= i < len(self.states)
-        if i not in self.ids:
-            # add a new state
-            m = self.state_to_model(self.states[i])
-            self.ids[i] = self.separator.add_model(m)
-        return self.ids[i]
-
-    def separate(self,
-                 pos: Collection[int],
-                 neg: Collection[int],
-                 imp: Collection[Tuple[int, int]],
-                 complexity: int
-    ) -> Optional[Expr]:
-        mtimer = separators.timer.UnlimitedTimer()
-        timer = separators.timer.UnlimitedTimer()
-        with timer:
-            f = self.separator.separate(
-                pos=[self._state_id(i) for i in pos],
-                neg=[self._state_id(i) for i in neg],
-                imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
-                max_depth=utils.args.max_depth,
-                max_clauses=utils.args.max_clauses,
-                max_complexity=complexity,
-                timer=timer
-            )
-        if f is None:
-            if False:
-                _pos=[self._state_id(i) for i in pos]
-                _neg=[self._state_id(i) for i in neg]
-                _imp=[(self._state_id(i), self._state_id(j)) for i, j in imp]
-                    
-                fi = open("/tmp/error.fol", "w")
-                fi.write(str(self.sig))
-                for i,j in self.ids.items():
-                    m = self.state_to_model(self.states[i])
-                    m.label = str(j)
-                    fi.write(str(m))
-                fi.write(f"(constraint {' '.join(str(x) for x in _pos)})\n")
-                fi.write(f"(constraint {' '.join('(not '+str(x)+')' for x in _neg)})\n")
-                fi.write(f"(constraint {' '.join('(implies '+str(x)+' '+str(y)+')' for x, y in _imp)})\n")
-            return None
-        else:
-            p = self.formula_to_predicate(f)
-            for i in pos:
-               assert eval_predicate(self.states[i], p)
-            for i in neg:
-               assert not eval_predicate(self.states[i], p)
-            for i, j in imp:
-               assert (not eval_predicate(self.states[i], p)) or eval_predicate(self.states[j], p)
-            return p
-
-    def successors(self, p: Expr) -> List[Expr]:
-        #print ("Successors of ", p, "-->", self.predicate_to_formula(p))
-        return [self.formula_to_predicate(s) for s in separators.separate.successor_formula(self.sig, self.predicate_to_formula(p))]
-    def predecessors(self, p: Expr) -> List[Expr]:
-        return [self.formula_to_predicate(s) for s in separators.separate.predecessor_formula(self.sig, self.predicate_to_formula(p))]
-    def state_to_model(self, s: PDState) -> separators.logic.Model:
-        t, i = s
-        relations = dict(itertools.chain(t.immut_rel_interps.items(), t.rel_interps[i].items()))
-        constants = dict(itertools.chain(t.immut_const_interps.items(), t.const_interps[i].items()))
-        functions = dict(itertools.chain(t.immut_func_interps.items(), t.func_interps[i].items()))
-        m = separators.logic.Model(self.sig)
-        for sort in sorted(t.univs.keys(),key=str):
-            for e in t.univs[sort]:
-                m.add_elem(e, sort.name)
-        for cd, e in constants.items():
-            res = m.add_constant(cd.name, e)
-            assert res
-        for rd in relations:
-            for es, v in relations[rd]:
-                if v:
-                    m.add_relation(rd.name, es)
-        for fd in functions:
-            for es, e in functions[fd]:
-                m.add_function(fd.name, es, e)
-        return m
-    def predicate_to_formula(self, p: Expr) -> separators.logic.Formula:
-        L = separators.logic
-        def q2f(b: Binder, is_forall: bool, f: L.Formula) -> L.Formula:
-            for q in reversed(b.vs):
-                assert isinstance(q.sort, UninterpretedSort)
-                if is_forall:
-                    f = L.Forall(q.name, q.sort.name, f)
-                else:
-                    f = L.Exists(q.name, q.sort.name, f)
-            return f
-        def p2f(p: Expr) -> L.Formula:
-            if isinstance(p, BinaryExpr):
-                if p.op == 'EQUAL':
-                    return L.Equal(p2t(p.arg1), p2t(p.arg2))
-                elif p.op == 'NOTEQ':
-                    return L.Not(L.Equal(p2t(p.arg1), p2t(p.arg2)))
-                else:
-                    assert False
-            elif isinstance(p, NaryExpr):
-                if p.op == 'AND':
-                    return L.And([p2f(a) for a in p.args])
-                elif p.op == 'OR':
-                    return L.Or([p2f(a) for a in p.args])
-                else:
-                    assert False
-            elif isinstance(p, UnaryExpr):
-                if p.op == 'NOT':
-                    return L.Not(p2f(p.arg))
-                else:
-                    assert False
-            elif isinstance(p, AppExpr):
-                assert(p.callee in self.sig.relations)
-                return L.Relation(p.callee, [p2t(a) for a in p.args])
-            elif isinstance(p, QuantifierExpr):
-                return q2f(p.binder, p.quant == 'FORALL', p2f(p.body))                    
-            else:
-                assert False
-        def p2t(p: Expr) -> L.Term:
-            if isinstance(p, Id):
-                return L.Var(p.name)
-            elif isinstance(p, AppExpr):
-                assert p.callee in self.sig.functions
-                return L.Func(p.callee, [p2t(a) for a in p.args])
-            else:
-                assert False
-        f = p2f(p)
-        return f
-    def formula_to_predicate(self, f: separators.logic.Formula) -> Expr:
-        def term_to_expr(t: separators.logic.Term) -> Expr:
-            if isinstance(t, separators.logic.Var):
-                return Id(None, t.var)
-            elif isinstance(t, separators.logic.Func):
-                return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
-            else:
-                assert False
-        def formula_to_expr(f: separators.logic.Formula) -> Expr:
-            if isinstance(f, separators.logic.And):
-                return And(*(formula_to_expr(a) for a in f.c))
-            elif isinstance(f, separators.logic.Or):
-                return Or(*(formula_to_expr(a) for a in f.c))
-            elif isinstance(f, separators.logic.Not):
-                if isinstance(f.f, separators.logic.Equal): # special case !=
-                    return Neq(term_to_expr(f.f.args[0]), term_to_expr(f.f.args[1]))
-                return Not(formula_to_expr(f.f))
-            elif isinstance(f, separators.logic.Equal):
-                return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
-            elif isinstance(f, separators.logic.Relation):
-                if len(f.args) == 0:
-                    return Id(None, f.rel)
-                else:
-                    return AppExpr(None, f.rel, [term_to_expr(a) for a in f.args])
-            elif isinstance(f, separators.logic.Exists):
-                body = formula_to_expr(f.f)
-                v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
-                if isinstance(body, QuantifierExpr) and body.quant == 'EXISTS':
-                    return Exists([v] + body.binder.vs, body.body)
-                else:
-                    return Exists([v], body)
-            elif isinstance(f, separators.logic.Forall):
-                body = formula_to_expr(f.f)
-                v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
-                if isinstance(body, QuantifierExpr) and body.quant == 'FORALL':
-                    return Forall([v] + body.binder.vs, body.body)
-                else:
-                    return Forall([v], body)
-            else:
-                assert False
-
-        e = formula_to_expr(f)
-        e.resolve(syntax.the_program.scope, BoolSort)
-        return e
-
+from fol_trans import *
 
 def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
     prog = syntax.the_program
@@ -242,14 +27,13 @@ def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
         return s
     return None
 
-def trace_pair_from_model(m: z3.ModelRef) -> Tuple[Trace, Trace]:
-    old = Trace.from_z3([KEY_OLD], m)
-    new = Trace.from_z3([KEY_NEW, KEY_OLD], m)
-    return (old, new)
+# Returns a trace where index 0 = pre-state, 1 = post-state
+def two_state_trace_from_z3(m: z3.ModelRef) -> Trace:
+    return Trace.from_z3([KEY_OLD, KEY_NEW], m)
 
-def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr, minimize: Optional[bool] = None, timeout: int = 0) -> Optional[Tuple[Trace, Trace]]:
+def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr, minimize: Optional[bool] = None, timeout: int = 0) -> Optional[Trace]:
     edge = check_two_state_implication_all_transitions_unknown_is_unsat(solver, old_hyps = ps, new_conc = c, minimize=minimize, timeout=timeout)
-    return trace_pair_from_model(edge[0]) if edge is not None else None
+    return two_state_trace_from_z3(edge[0]) if edge is not None else None
 
 def check_two_state_implication_generalized(
         s: Solver,
@@ -272,8 +56,6 @@ def check_two_state_implication_generalized(
         if res == z3.sat:
             return (z3.sat, s.model(minimize=minimize))
         return (res, None)
-
-
 
 def cover(s: Sequence[Set[int]]) -> Sequence[int]:
     if len(s) == 0: return []
@@ -482,7 +264,7 @@ def fol_ic3(solver: Solver) -> None:
             if edge is None:
                 t.predecessors_eliminated = True
                 return True
-            s_i = add_state((edge[0], 0))
+            s_i = add_state((edge, 0))
             add_transition(s_i, t.state)
             assert t.frame > 0
             print(f"Eliminating predecessor {s_i} from F_{t.frame - 1}")
@@ -561,7 +343,7 @@ def fol_ic3(solver: Solver) -> None:
             tr = check_two_state_implication_uncached(solver, frame_predicates(i-1), p)
             if tr is not None:
                 print("Adding new edge")
-                s_i, s_j = add_state((tr[0],0)), add_state((tr[1],0))
+                s_i, s_j = add_state((tr,0)), add_state((tr,1))
                 add_transition(s_i, s_j)
                 continue
 
@@ -620,8 +402,8 @@ def fol_ic3(solver: Solver) -> None:
             if eval_predicate(states[s_i], p) and not eval_predicate(states[s_j], p):
                 p_respects_all_transitions = False
                 t.imp_constraints.append((s_i, s_j))
-                print_constraint_matrix(t)
-                simplify_constraints(t, all_transitions, set(abs_reach))
+                # print_constraint_matrix(t)
+                # simplify_constraints(t, all_transitions, set(abs_reach))
                 break # only add up to one transition at a time
         if not p_respects_all_transitions:
             # exit and go back up to the top of this function, but with new constraints
@@ -640,19 +422,20 @@ def fol_ic3(solver: Solver) -> None:
             add_initial((state, 0))
             return
         # F_i-1 ^ p => wp(p)?
-        # tr = find_generalized_implication_lattice_climbing(solver, states, t, frame_predicates(t.frame-1), p_ind)
+        
         if t.generalizer is None:
             t.generalizer = LatticeEdgeGeneralizer()
-        tr = t.generalizer.find_generalized_implication(solver, states[t.state], t, frame_predicates(t.frame-1), p)
-        if tr is not None:
+        res = t.generalizer.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
+        if res is not None:
             print("Adding new edge")
-            s_i, s_j = add_state((tr[0],0)), add_state((tr[1],0))
+            tr, trans = res
+            s_i, s_j = add_state((tr,0)), add_state((tr,1))
             add_transition(s_i, s_j)
-            print(f"constriants = {len(t.imp_constraints)}")
+            # print(f"constriants = {len(t.imp_constraints)}")
             t.imp_constraints.append((s_i, s_j))
-            print_constraint_matrix(t)
-            simplify_constraints(t, all_transitions, set(abs_reach))
-            print(f"constriants = {len(t.imp_constraints)}")
+            # print_constraint_matrix(t)
+            # simplify_constraints(t, all_transitions, set(abs_reach))
+            # print(f"constriants = {len(t.imp_constraints)}")
             return
         
         print_learn_predicate(p)
@@ -660,108 +443,108 @@ def fol_ic3(solver: Solver) -> None:
         push()
         return
 
-    def imp_constraints_covering(t:BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
-        # Find a set cover of implication constraints that can erase 
-        possiblities = [set(i for i,p in enumerate(t.prior_predicates) if task_prior_eval(t, i, a) and not task_prior_eval(t, i, b))
-                        for tr_ind, (a,b) in enumerate(all_transitions)]
-        possiblities.append(set(i for i,p in enumerate(t.prior_predicates) if any(not task_prior_eval(t, i, a) for a in all_reachable)))
-        covering = cover(possiblities)
-        t.imp_constraints = [all_transitions[i] for i in covering if i < len(all_transitions)]
+    # def imp_constraints_covering(t:BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
+    #     # Find a set cover of implication constraints that can erase 
+    #     possiblities = [set(i for i,p in enumerate(t.prior_predicates) if task_prior_eval(t, i, a) and not task_prior_eval(t, i, b))
+    #                     for tr_ind, (a,b) in enumerate(all_transitions)]
+    #     possiblities.append(set(i for i,p in enumerate(t.prior_predicates) if any(not task_prior_eval(t, i, a) for a in all_reachable)))
+    #     covering = cover(possiblities)
+    #     t.imp_constraints = [all_transitions[i] for i in covering if i < len(all_transitions)]
 
-    def simplify_constraints(t: BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
-        #imp_constraints_covering(t, all_transitions, all_reachable)
-        def sortfunc(transition: Tuple[int, int]) -> Tuple[int, int]:
-            return (sum(1 if not task_prior_eval(t, i, transition[0]) else 0 for i in range(len(t.prior_predicates))),
-                    sum(1 if not task_prior_eval(t, i, transition[1]) else 0 for i in range(len(t.prior_predicates))))
-        B = 1 # 1 + math.floor(len(t.imp_constraints) / 15)
-        if len(t.prior_predicates) >= 10 and len(t.imp_constraints) > 5 and t.heuristic_child_count < B:
-            trs = list(sorted(filter(lambda tr: tr[0] not in all_reachable and not tasks.state_has_task(tr[0]), t.imp_constraints), key = sortfunc, reverse=True))
-            if len(trs) > 0 and sortfunc(trs[0])[0] > 0:
-                tasks.add(BlockTask(False, trs[0][0], t.frame-1, t, heuristic=True))
-                print(f"Generating heuristic may-block constraint for {trs[0][0]} in frame {t.frame-1}")
-        if t.generalize_bound < 0:
-            t.generalize_bound = 1000000
-        if len(t.prior_predicates) >= t.generalize_bound:
-            t.generalize_bound = int(1 + t.generalize_bound * 2.0)
-            print(f"Old length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
-            force_generalize(t)
-            # imp_constraints_covering(t, all_transitions, all_reachable)
-            print(f"New length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
-            imp_constraints_covering(t, list(frame_transitions_indices(t.frame-1)), all_reachable)
-            print(f"After min imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
+    # def simplify_constraints(t: BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
+    #     #imp_constraints_covering(t, all_transitions, all_reachable)
+    #     def sortfunc(transition: Tuple[int, int]) -> Tuple[int, int]:
+    #         return (sum(1 if not task_prior_eval(t, i, transition[0]) else 0 for i in range(len(t.prior_predicates))),
+    #                 sum(1 if not task_prior_eval(t, i, transition[1]) else 0 for i in range(len(t.prior_predicates))))
+    #     B = 1 # 1 + math.floor(len(t.imp_constraints) / 15)
+    #     if len(t.prior_predicates) >= 10 and len(t.imp_constraints) > 5 and t.heuristic_child_count < B:
+    #         trs = list(sorted(filter(lambda tr: tr[0] not in all_reachable and not tasks.state_has_task(tr[0]), t.imp_constraints), key = sortfunc, reverse=True))
+    #         if len(trs) > 0 and sortfunc(trs[0])[0] > 0:
+    #             tasks.add(BlockTask(False, trs[0][0], t.frame-1, t, heuristic=True))
+    #             print(f"Generating heuristic may-block constraint for {trs[0][0]} in frame {t.frame-1}")
+    #     if t.generalize_bound < 0:
+    #         t.generalize_bound = 1000000
+    #     if len(t.prior_predicates) >= t.generalize_bound:
+    #         t.generalize_bound = int(1 + t.generalize_bound * 2.0)
+    #         print(f"Old length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
+    #         force_generalize(t)
+    #         # imp_constraints_covering(t, all_transitions, all_reachable)
+    #         print(f"New length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
+    #         imp_constraints_covering(t, list(frame_transitions_indices(t.frame-1)), all_reachable)
+    #         print(f"After min imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
 
-    def force_generalize(t: BlockTask) -> None:
-        print("Force generalizing")
-        timer = separators.timer.UnlimitedTimer()
-        with timer:
-            not_reachable_preds = set(i for i,p in enumerate(t.prior_predicates) if all(task_prior_eval(t, i, a) for a in abstractly_reachable()))
-            remaining_preds = set(not_reachable_preds)
-            more = []
-            while len(remaining_preds) > 0:
-                tr, eliminated = max(((tr, set(i for i in remaining_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1]))) for tr in t.imp_constraints), key = lambda x: len(x[1]))
-                initial_eliminated = len(eliminated)
-                remaining_preds.difference_update(eliminated)
-                for pi in remaining_preds:
-                    if pi in eliminated: continue
-                    ps = [t.prior_predicates[ei] for ei in eliminated] + [t.prior_predicates[pi]]
-                    new_tr = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1) + ps, Or(*ps), minimize=False, timeout=10000)
-                    if new_tr is not None:
-                        eliminated.add(pi)
-                        s_i, s_j = add_state((new_tr[0],0)), add_state((new_tr[1],0))
-                        add_transition(s_i, s_j)
-                        tr = (s_i, s_j)
-                        # add other predicates that are also blocked by this edge
-                        for pj in remaining_preds:
-                            if task_prior_eval(t, pj, s_i) and not task_prior_eval(t, pj, s_j):
-                                eliminated.add(pj)
-                more.append(tr)
-                remaining_preds.difference_update(eliminated)
-                true_eliminated = len(set(i for i in not_reachable_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1])))
-                print(f"Found new edge eliminating {len(eliminated)}/{true_eliminated} predicates out of {initial_eliminated}")
-            t.imp_constraints.extend(more)
+    # def force_generalize(t: BlockTask) -> None:
+    #     print("Force generalizing")
+    #     timer = separators.timer.UnlimitedTimer()
+    #     with timer:
+    #         not_reachable_preds = set(i for i,p in enumerate(t.prior_predicates) if all(task_prior_eval(t, i, a) for a in abstractly_reachable()))
+    #         remaining_preds = set(not_reachable_preds)
+    #         more = []
+    #         while len(remaining_preds) > 0:
+    #             tr, eliminated = max(((tr, set(i for i in remaining_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1]))) for tr in t.imp_constraints), key = lambda x: len(x[1]))
+    #             initial_eliminated = len(eliminated)
+    #             remaining_preds.difference_update(eliminated)
+    #             for pi in remaining_preds:
+    #                 if pi in eliminated: continue
+    #                 ps = [t.prior_predicates[ei] for ei in eliminated] + [t.prior_predicates[pi]]
+    #                 new_tr = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1) + ps, Or(*ps), minimize=False, timeout=10000)
+    #                 if new_tr is not None:
+    #                     eliminated.add(pi)
+    #                     s_i, s_j = add_state((new_tr,0)), add_state((new_tr,1))
+    #                     add_transition(s_i, s_j)
+    #                     tr = (s_i, s_j)
+    #                     # add other predicates that are also blocked by this edge
+    #                     for pj in remaining_preds:
+    #                         if task_prior_eval(t, pj, s_i) and not task_prior_eval(t, pj, s_j):
+    #                             eliminated.add(pj)
+    #             more.append(tr)
+    #             remaining_preds.difference_update(eliminated)
+    #             true_eliminated = len(set(i for i in not_reachable_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1])))
+    #             print(f"Found new edge eliminating {len(eliminated)}/{true_eliminated} predicates out of {initial_eliminated}")
+    #         t.imp_constraints.extend(more)
         
-        print(f"Force generalized in {timer.elapsed():0.2f} sec")
-        pass
-    def task_prior_eval(t: BlockTask, ind: int, state: int) -> bool:
-        """ Returns whether states[state] satisfies t.prior_predicates[ind], and caches the result"""
-        (cache_true, cache_false) = t.prior_eval_cache[ind]
-        if state in cache_true:
-            return True
-        if state in cache_false:
-            return False
-        value = eval_predicate(states[state], t.prior_predicates[ind])
-        if value:
-            cache_true.add(state)
-        else:
-            cache_false.add(state)
-        return value
+    #     print(f"Force generalized in {timer.elapsed():0.2f} sec")
+        
+    # def task_prior_eval(t: BlockTask, ind: int, state: int) -> bool:
+    #     """ Returns whether states[state] satisfies t.prior_predicates[ind], and caches the result"""
+    #     (cache_true, cache_false) = t.prior_eval_cache[ind]
+    #     if state in cache_true:
+    #         return True
+    #     if state in cache_false:
+    #         return False
+    #     value = eval_predicate(states[state], t.prior_predicates[ind])
+    #     if value:
+    #         cache_true.add(state)
+    #     else:
+    #         cache_false.add(state)
+    #     return value
 
-    def print_constraint_matrix(t: BlockTask) -> None:
-        pass
-        for (i,j) in t.imp_constraints:
-            if all(eval_predicate(states[i], p.expr) for p in prog.invs()):
-                print("I", end='')
-            else:
-                print(".", end='')
-        print("")
-        print("--- begin matrix ---")
-        for ind, p in enumerate(t.prior_predicates):
-            l = []
-            for (i,j) in t.imp_constraints:
-                a = task_prior_eval(t, ind, i)
-                if a and not task_prior_eval(t, ind, j):
-                    l.append('#')
-                else:
-                    l.append('+' if a else '-')
-            print(''.join(l))
-        print("--- end matrix ---")
+    # def print_constraint_matrix(t: BlockTask) -> None:
+    #     pass
+    #     for (i,j) in t.imp_constraints:
+    #         if all(eval_predicate(states[i], p.expr) for p in prog.invs()):
+    #             print("I", end='')
+    #         else:
+    #             print(".", end='')
+    #     print("")
+    #     print("--- begin matrix ---")
+    #     for ind, p in enumerate(t.prior_predicates):
+    #         l = []
+    #         for (i,j) in t.imp_constraints:
+    #             a = task_prior_eval(t, ind, i)
+    #             if a and not task_prior_eval(t, ind, j):
+    #                 l.append('#')
+    #             else:
+    #                 l.append('+' if a else '-')
+    #         print(''.join(l))
+    #     print("--- end matrix ---")
     def push() -> None:
         made_changes = False
         for frame in range(frame_n):
             for i in range(len(frame_numbers)):
                 if frame_numbers[i] == frame:
                     # try to push i
-                    cex = check_two_state_implication(solver, frame_predicates(frame), predicates[i], minimize=False)
+                    cex = check_two_state_implication_all_transitions(solver, frame_predicates(frame), predicates[i], minimize=False)
                     if cex is None:
                         frame_numbers[i] += 1
                         print(f"pushed {predicates[i]} to F_{frame_numbers[i]}")
@@ -812,7 +595,7 @@ def fol_ic3(solver: Solver) -> None:
                 if not any(inv_frame == f for f in frame_numbers):
                     continue
                 ps = frame_predicates(inv_frame)
-                if all(check_two_state_implication(solver, ps, p, minimize=False) is None for p in ps):
+                if all(check_two_state_implication_all_transitions(solver, ps, p, minimize=False) is None for p in ps):
                     
                     ps = frame_predicates(inv_frame)
                     print(f"[IC3] Found inductive invariant in frame {inv_frame}!")
@@ -826,15 +609,31 @@ def fol_ic3(solver: Solver) -> None:
     # Loops exits if the protocol is unsafe. Still print statistics
     print_summary()
 
-class LatticeEdgeGeneralizer(object):
+class EdgeGeneralizer(object):
+    '''Abstract base class for methods that find generalized CTIs (i.e. counterexample edges) to And(fp) => wp(p).'''
+    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]: pass
+
+class TrivialEdgeGeneralizer(EdgeGeneralizer):
+    '''Generates edges as the first thing that comes from the solver without actually generalizing.'''
     def __init__(self) -> None:
         pass
-    def find_generalized_implication(self, solver: Solver, state: PDState, t: BlockTask, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, Trace]]:
-        result: Optional[Tuple[int, Trace, Trace]] = None
+    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
+        for trans in syntax.the_program.transitions():
+            res, tr = check_two_state_implication_generalized(solver, trans, fp + [p], p, minimize=False, timeout=10000)
+            if tr is not None:
+                return two_state_trace_from_z3(tr), trans
+        return None
+
+class LatticeEdgeGeneralizer(EdgeGeneralizer):
+    '''Generalizes edges by climbing the lattice of implications.'''
+    def __init__(self) -> None:
+        self.sig = prog_to_sig(syntax.the_program)
+    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
+        result: Optional[Tuple[int, Trace, DefinitionDecl]] = None
         
         N = 5 if 'repeatlattice5' in utils.args.expt_flags else 2 if 'repeatlattice2' in utils.args.expt_flags else 1
         for rep in range(N):
-            r = self.find_generalized_implication_lattice_climbing(solver, state, t, fp, p)
+            r = self._lattice_climb(solver, state, fp, p)
             if result is None:
                 result = r
             elif r is None:
@@ -846,33 +645,35 @@ class LatticeEdgeGeneralizer(object):
             print(f"Final lattice distance is {result[0]}")
             return result[1], result[2]
         return None
-    def find_generalized_implication_lattice_climbing(self, solver: Solver, state: PDState, t: BlockTask, fp: List[Expr], p: Expr) -> Optional[Tuple[int, Trace, Trace]]:
-        #p = t.prior_predicates[p_ind]
+    def _lattice_climb(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[int, Trace, DefinitionDecl]]:
         tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
         if tr is None: return None # early out if UNSAT
         
         all_transitions = []
         for trans in syntax.the_program.transitions():
             res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + [p], p, minimize=False, timeout=10000)
-            if res != z3.unsat:
+            if res == z3.sat:
+                assert tr_prime is not None
                 all_transitions.append(trans)
-                
-        def check_sat(a: Expr, b: Expr) -> bool: # returns true if satisfiable, and stores transition in `tr`
-            nonlocal tr
+                tr = two_state_trace_from_z3(tr_prime)
+                tr_trans = trans
+                        
+        def check_sat(a: Expr, b: Expr) -> bool: # returns true if satisfiable, and stores transition in `tr` and `tr_trans`
+            nonlocal tr, tr_trans
             for trans in all_transitions:
                 res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + [a], b, minimize=False, timeout=10000)
                 if tr_prime is None:
                     continue
-                tr = trace_pair_from_model(tr_prime)
+                tr = two_state_trace_from_z3(tr_prime)
+                tr_trans = trans
                 return True
             return False
-        assert t.sep is not None
         print("Optimizing post-state")
         pre = p
         post = p
         pre_dist, post_dist = 0,0
         while True:
-            x = t.sep.successors(post)
+            x = [formula_to_predicate(x) for x in separators.separate.successor_formula(self.sig, predicate_to_formula(post))]
             random.shuffle(x)
             for next_p in x:
                 if eval_predicate(state, next_p): # TODO: should this be eval next_p or not eval next_p or eval post?
@@ -885,7 +686,7 @@ class LatticeEdgeGeneralizer(object):
                 break
         print("Optimizing pre-state")
         while True:
-            x = t.sep.predecessors(pre)
+            x = [formula_to_predicate(x) for x in separators.separate.predecessor_formula(self.sig, predicate_to_formula(pre))]
             random.shuffle(x)
             for next_p in x:
                 if check_sat(next_p, post):
@@ -896,9 +697,10 @@ class LatticeEdgeGeneralizer(object):
                 break
         print(f"Found edge between predicates {pre} --> {post}")
         print(f"Done optimizing edge, lattice distance is {post_dist + pre_dist} (post {post_dist}, pre {pre_dist})")
-        return post_dist + pre_dist, tr[0], tr[1]
+        return post_dist + pre_dist, tr, tr_trans
 
-class EdgeGeneralizer(object):
+class CombiningEdgeGeneralizer(EdgeGeneralizer):
+    '''Generalizes edges by combining them into one query. Not recommended.'''
     def __init__(self) -> None:
         self._prior_predicates : List[Expr] = []
         self._prop_solver: z3.Solver = z3.Solver()
@@ -918,7 +720,7 @@ class EdgeGeneralizer(object):
     def _vars_for_edge(self, trans: DefinitionDecl, pre: List[int], post: List[int]) -> List[z3.ExprRef]:
         return [self._trans_var(trans)] + [self._pred_var(i, True) for i in pre] + [self._pred_var(i, False) for i in post]
     
-    def find_generalized_implication(self, solver: Solver, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, Trace]]:
+    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
         p_ind = len(self._prior_predicates)
         self._prior_predicates.append(p)
         tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
@@ -969,7 +771,7 @@ class EdgeGeneralizer(object):
                     continue
                 res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), Or(*self._to_exprs(post)), minimize=False, timeout=10000)
                 if tr_prime is not None:
-                    tr = trace_pair_from_model(tr_prime)
+                    tr = two_state_trace_from_z3(tr_prime)
                     tr_trans = trans
                     success = True
                     if skip: break
@@ -994,7 +796,7 @@ class EdgeGeneralizer(object):
         if not check_sat([p_ind], [p_ind], skip=False):
             # if we get timeouts, return what we already have from check_two_state_implication_uncached
             # we need to do this because if this function fails we won't have set tr_trans correctlys
-            return tr
+            return tr, tr_trans
         
         pre, post = [p_ind],[p_ind]
         
@@ -1007,16 +809,8 @@ class EdgeGeneralizer(object):
                 # remove the edge from prior; it will be added back at the end after it's expanded
                 del self._prior_edges[edge_i]
                 break
-        
-        # print("Optimizing post-state")
-        # remaining_priors = list(range(p_ind))
-        # while len(remaining_priors) > 0:
-        #     c = remaining_priors.pop()
-        #     if c in post: continue
-        #     if check_sat(pre, post+[c]):
-        #         post = post + [c]
-        
-        print("Optimizing edge")  # FOR UNIFORM PRE/POST
+
+        print("Optimizing edge")
         remaining_priors = list(range(p_ind))
         while len(remaining_priors) > 0:
             c = remaining_priors.pop()
@@ -1025,153 +819,48 @@ class EdgeGeneralizer(object):
                 post = post + [c]
                 pre = pre + [c]
         
-        # print("Optimizing pre-state")
-        # remaining_priors = list(range(p_ind))
-        # while len(remaining_priors) > 0:
-        #     c = remaining_priors.pop()
-        #     if c in pre: continue
-        #     if check_sat(pre + [c], post):
-        #         pre = pre + [c]
         assert tr is not None
-        pre_size = len(tr[0].as_diagram(0).binder.vs)
-        post_size = len(tr[1].as_diagram(0).binder.vs)
+        pre_size = len(tr.as_diagram(0).binder.vs)
+        post_size = len(tr.as_diagram(1).binder.vs)
 
         print(f"Done optimizing edge |pre|={len(pre)}, |post|={len(post)}, size pre = {pre_size}, size post = {post_size}")
         self._prior_edges.append((tr_trans, pre, post))
-        return tr
+        return tr, tr_trans
 
-def find_generalized_implication(solver: Solver, t: BlockTask, fp: List[Expr], p_ind: int) -> Optional[Tuple[Trace, Trace]]:
-    def CI(i: int, j: int) -> bool:
-        if (i,j) not in t.ci_cache:
-            t.ci_cache[(i,j)] = check_implication(solver, [t.prior_predicates[i]], [t.prior_predicates[j]]) is None
-        return t.ci_cache[(i,j)]
-    
-    p = t.prior_predicates[p_ind]
-    tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
-    if tr is None: return None # early out if UNSAT
-    # Now try to optimize the edge.
-    predecessor_ps = [i for i in range(len(t.prior_predicates)) if i == p_ind or CI(i, p_ind)]
+def generalize_initial(solver: Solver, m: PDState) -> separators.logic.Model:
+    prog = syntax.the_program
+    M: separators.logic.Model = state_to_model(m)
 
-    print(f"Toposorting implication predecessors {predecessor_ps}, p_ind={p_ind}")
-    for i in predecessor_ps:
-        print(f"i={i} {t.prior_predicates[i]}")
-    toposort: List[int] = []
-    while len(predecessor_ps) != 0:
-        # pick a node with no predecessors
-        for n in predecessor_ps:
-            print(f"n={n} {[(j, j == n, CI(j, n)) for j in predecessor_ps]}")
-            if all(j == n or not CI(j, n) for j in predecessor_ps):
-                toposort.append(n)
-                break
-        else:
-            print("couldn't find implication-predecessor free state")
-            toposort.append(predecessor_ps[0])
-        print(f"Removing {toposort[-1]}")
-        predecessor_ps = [x for x in predecessor_ps if x != toposort[-1]]
-    assert toposort[-1] == p_ind
-    print("Finding first edge")
-    for prior in toposort:
-        print(f"Checking for edge {prior} -> ~{p_ind}")
-        tr = check_two_state_implication_uncached(solver, fp + [t.prior_predicates[prior]], p, minimize=False)
-        if tr is not None:
-            return tr
-    assert False
+    inits = tuple(init.expr for init in prog.inits())
+    axioms = tuple(init.expr for init in prog.axioms())
+    derived_axioms = tuple(r.derived_axiom for r in prog.derived_relations() if r.derived_axiom is not None)
+    e = separators.logic.And([*(predicate_to_formula(i) for i in inits), 
+                              *(predicate_to_formula(a) for a in axioms),
+                              *(predicate_to_formula(a) for a in derived_axioms)])
+    return separators.learn.generalize_model(M, e, label='Initial')
 
-def find_generalized_implication2(solver: Solver, t: BlockTask, fp: List[Expr], p_ind: int) -> Optional[Tuple[Trace, Trace]]:
-    p = t.prior_predicates[p_ind]
-    tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
-    if tr is None: return None # early out if UNSAT
-    
-    def check_sat(pre: List[Expr], post: List[Expr]) -> bool: # returns true if satisfiable, and stores transition in `tr`
-        nonlocal tr
-        tr_prime = check_two_state_implication_uncached(solver, fp + pre, Or(*post), minimize=False, timeout=10000)
-        if tr_prime is None:
-            return False
-        tr = tr_prime
-        return True
-    
-    print("Optimizing post-state")
-    pre = [p]
-    post = [p]
-    remaining_priors = list(t.prior_predicates)
-    while len(remaining_priors) > 0:
-        c = remaining_priors.pop()
-        if check_sat(pre, post+[c]):
-            post = post + [c]
-    
-    print("Optimizing pre-state")
-    remaining_priors = list(t.prior_predicates)
-    while len(remaining_priors) > 0:
-        c = remaining_priors.pop()
-        if check_sat(pre + [c], post):
-            pre = pre + [c]
-
-    print(f"Done optimizing edge |pre|={len(pre)}, |post|={len(post)}")
-    return tr
-
-def find_generalized_implication_lattice_climbing(solver: Solver, states: List[PDState], t: BlockTask, fp: List[Expr], p_ind: int) -> Optional[Tuple[Trace, Trace]]:
-    p = t.prior_predicates[p_ind]
-    tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
-    if tr is None: return None # early out if UNSAT
-    
-    all_transitions = []
-    for trans in syntax.the_program.transitions():
-        res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + [p], p, minimize=False, timeout=10000)
-        if res != z3.unsat:
-            all_transitions.append(trans)
-            
-    def check_sat(a: Expr, b: Expr) -> bool: # returns true if satisfiable, and stores transition in `tr`
-        nonlocal tr
-        for trans in all_transitions:
-            res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + [a], b, minimize=False, timeout=10000)
-            if tr_prime is None:
-                continue
-            tr = trace_pair_from_model(tr_prime)
-            return True
-        return False
-    assert t.sep is not None
-    print("Optimizing post-state")
-    pre = p
-    post = p
-    pre_dist, post_dist = 0,0
-    while True:
-        x = t.sep.successors(post)
-        random.shuffle(x)
-        for next_p in x:
-            if eval_predicate(states[t.state], post):
-                continue
-            if check_sat(pre, next_p):
-                post = next_p
-                post_dist += 1
-                break
-        else:
-            break
-    print("Optimizing pre-state")
-    while True:
-        x = t.sep.predecessors(pre)
-        random.shuffle(x)
-        for next_p in x:
-            if check_sat(next_p, post):
-                pre = next_p
-                pre_dist += 1
-                break
-        else:
-            break
-    print(f"Found edge between predicates {pre} --> {post}")
-    print(f"Done optimizing edge, lattice distance is {post_dist + pre_dist} (post {post_dist}, pre {pre_dist})")
-    return tr
+def generalize_cti(solver: Solver, trans: DefinitionDecl, tr: Trace, frame: Sequence[Expr]) -> separators.logic.Model:
+    prog = syntax.the_program
+    M: separators.logic.Model = two_state_trace_to_model(tr, two_state=True)
+    axioms = tuple(init.expr for init in prog.axioms())
+    derived_axioms = tuple(r.derived_axiom for r in prog.derived_relations() if r.derived_axiom is not None)
+    e = separators.logic.And([*(predicate_to_formula(a) for a in axioms),
+                              *(predicate_to_formula(a) for a in derived_axioms),
+                              *(predicate_to_formula(a, two_state=True) for a in derived_axioms),
+                              transition_to_formula(trans),
+                              *(predicate_to_formula(f) for f in frame)])
+    return separators.learn.generalize_model(M, e, two_state=True, label='CTI')
 
 def fol_ice(solver: Solver) -> None:
-    prog = syntax.the_program
-
+    
     states: List[PDState] = []
     def add_state(s: PDState) -> int:
         i = len(states)
         states.append(s)
         return i
 
-    rest = [inv.expr for inv in prog.invs() if inv.name != 'hard']
-    hard = next(inv for inv in prog.invs() if inv.name == 'hard').expr
+    rest = [inv.expr for inv in syntax.the_program.invs() if inv.name != 'hard']
+    hard = next(inv for inv in syntax.the_program.invs() if inv.name == 'hard').expr
     pos: List[int] = [] # keep reachable states
     imp: List[Tuple[int, int]] = []
     mp = FOLSeparator(states)
@@ -1188,25 +877,16 @@ def fol_ice(solver: Solver) -> None:
         m = check_implication(solver, rest, [hard])
         if m is None:
             print_time()
-            print("Eliminated all bad states")
+            print("[ICE] Eliminated all bad states")
             return
         trace = Trace.from_z3([KEY_ONE], m)
-        print(f"The size of the diagram is {len(list(trace.as_diagram().conjuncts()))}, {len(trace.as_diagram().binder.vs)} existentials")
+        print(f"The size of the diagram is {len(list(trace.as_diagram().conjuncts()))}, with {len(trace.as_diagram().binder.vs)} existentials")
         neg = [add_state((trace, 0))]
-        
-        #imp = [] # Try resetting edges on each solution
-        t = BlockTask(True, neg[0], 0, None, False)
-
-        #mp = FOLSeparator(states)
-        #generalizer = EdgeGeneralizer()
         generalizer = LatticeEdgeGeneralizer()
         
-        B = 25
-        def CI(i: int, j: int) -> bool:
-            if (i,j) not in t.ci_cache:
-                t.ci_cache[(i,j)] = check_implication(solver, [t.prior_predicates[i]], [t.prior_predicates[j]]) is None
-            return t.ci_cache[(i,j)]
-
+        #imp = [] # Try resetting edges on each solution
+        #mp = FOLSeparator(states) # Try resetting separator
+        
         while True:
             print_time()
             print(f'Separating with |pos|={len(pos)}, |neg|={len(neg)}, |imp|={len(imp)}')
@@ -1217,55 +897,46 @@ def fol_ice(solver: Solver) -> None:
                 return
             print(f'FOLSeparator returned {q}')
             
-            p_ind = len(t.prior_predicates)
-            t.prior_predicates.append(q)
             res_init = check_initial(solver, q)
             if res_init is not None:
-                pos.append(add_state((res_init,0)))
+                M_general = generalize_initial(solver, (res_init, 0))
+                print("Initial state generalized model:")
+                print(M_general)
+                if 'eagerinitial' in utils.args.expt_flags:
+                    for completion in separators.learn.expand_completions(M_general):
+                        print('Adding completion', completion)
+                        pos.append(add_state(model_to_state(completion)))
+                else:
+                    pos.append(add_state((res_init,0)))                
                 continue
             
             with generalization_timer:
-                #res_imp = generalizer.find_generalized_implication(solver, rest, q)
-                t.sep = mp
-                res_imp = generalizer.find_generalized_implication(solver, states[t.state], t, rest, q)
-            if res_imp is not None:
-                s1, s2 = res_imp
-                st1, st2 = add_state((s1, 0)), add_state((s2, 0))
+                res = generalizer.find_generalized_implication(solver, states[neg[0]], rest, q)
+            if res is None:
+                print(f'[ICE] Eliminated state with {q}')
+                rest.append(q)
+                break
+            
+            tr, trans = res
+            two_state_model = generalize_cti(solver, trans, tr, rest)
+            print("CTI generalized model:")
+            print(two_state_model)
+            # pre = separators.learn.two_state_pre(two_state_model)
+            # print("Pre-state projection:\n{pre}")
+            # post = separators.learn.two_state_post(two_state_model)
+            # print("Post-state projection:\n{post}")
+            # print(f"Generalized CTI to {len(list(separators.learn.expand_completions(pre)))} pre and {len(list(separators.learn.expand_completions(post)))} post")
+            
+            if 'eagercti' in utils.args.expt_flags:
+                print("Expanding a CTI")
+                raise NotImplemented
+            else:
+                st1, st2 = add_state((tr, 0)), add_state((tr, 1))
                 if 'goldenimptopos' in utils.args.expt_flags and eval_predicate(states[st1], hard):
                     print("Golden formula was true for pre-state; adding positive constraint")
                     pos.extend([st1, st2])
                 else:
                     imp.append((st1, st2))
-                if False: #len(imp) >= B:
-                    # Find a set cover of implication constraints that can erase 
-                    possiblities = [set(i for i,p in enumerate(t.prior_predicates) if eval_predicate(states[a], p) and not eval_predicate(states[b], p))
-                                    for tr_ind, (a,b) in enumerate(imp)]
-                    possiblities.append(set(i for i,p in enumerate(t.prior_predicates) if any(not eval_predicate(states[a], p) for a in pos)))
-                    covering = cover(possiblities)
-                    pre_covering = len(imp)
-                    #imp = [imp[i] for i in covering if i < len(imp)]
-                    #print(f"Performed set covering bringing implications from {pre_covering} -> {len(imp)}")
-                    B = max(B, len(imp) + 5)
-                    # for i in range(len(t.prior_predicates)):
-                    #     l = []
-                    #     for j in range(len(t.prior_predicates)):
-                    #         if i < j:
-                    #             if CI(i,j):
-                    #                 l.append(">")
-                    #             elif CI(j,i):
-                    #                 l.append("<")
-                    #             else:
-                    #                 l.append(" ")
-                    #         else:
-                    #             l.append('.')
-                    #     print("".join(l))
-
-                continue
-
-            print(f'Eliminated state with {q}')
-            rest.append(q)
-            break
-
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
 
