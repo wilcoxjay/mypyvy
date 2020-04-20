@@ -175,7 +175,7 @@ def oneshot_compute_inv(s: Solver,
 
 def bmc_prime_consequence(s: Solver, bound: int, inits: List[Expr], bad_model: Diagram) -> Expr:
     def bmc_constraint(diag: Diagram) -> bool:
-        return logic.check_bmc(s, syntax.Not(diag.to_ast()), bound, preconds=inits) is None
+        return bmc_upto_bound(s, syntax.Not(diag.to_ast()), bound, preconds=inits) is None
 
     bad_model_copy = copy.deepcopy(bad_model)
     bad_model_copy.generalize(s, bmc_constraint)
