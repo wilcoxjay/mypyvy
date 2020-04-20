@@ -115,6 +115,7 @@ class MypyvyArgs(object):
     accept_old: bool
     push: bool
     decrease_depth: bool
+    forward_depth: int
 
     def main(self, solver: Any) -> None:
         ...

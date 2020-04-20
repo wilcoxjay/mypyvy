@@ -155,11 +155,46 @@ def post_image_prime_consequence(s: Solver, prev_frame: List[Expr], inits: List[
                 and valid_in_initial_frame(s, inits, syntax.Not(diag.to_ast()))
         )
 
+    # TODO: unsat core first
     bad_model_copy = copy.deepcopy(bad_model)
     bad_model_copy.generalize(s, prev_frame_constraint)
 
     return syntax.Not(bad_model_copy.to_ast())
 
+def oneshot_compute_inv(s: Solver,
+                        bound: int,
+                        inits: List[Expr], safety: Expr,
+                        minimize: bool) -> List[Expr]:
+    current_frame: List[Expr] = [syntax.TrueExpr]
+
+    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize)) is not None:
+        bad_model = bad_trace.as_diagram(0)
+        current_frame.append(bmc_prime_consequence(s, utils.args.forward_depth, inits, bad_model))
+
+    return current_frame
+
+def bmc_prime_consequence(s: Solver, bound: int, inits: List[Expr], bad_model: Diagram) -> Expr:
+    def bmc_constraint(diag: Diagram) -> bool:
+        return logic.check_bmc(s, syntax.Not(diag.to_ast()), bound, preconds=inits) is None
+
+    bad_model_copy = copy.deepcopy(bad_model)
+    bad_model_copy.generalize(s, bmc_constraint)
+
+    return syntax.Not(bad_model_copy.to_ast())
+
+def oneshot(s: Solver) -> None:
+    prog = syntax.the_program
+    safety = syntax.And(*(inv.expr for inv in prog.invs() if inv.is_safety))
+    inits = [init.expr for init in prog.inits()]
+
+    utils.logger.info("initial state: %s" % str(inits))
+    utils.logger.info("proving safety property: %s" % safety)
+
+    candidate = oneshot_compute_inv(s, utils.args.depth, inits, safety, minimize=True)
+    utils.logger.always_print("Got candidate:")
+    for clause in candidate:
+        utils.logger.always_print(str(clause))
+    verify_inductive_invariant(s, candidate)
 
 def verify_inductive_invariant(s: Solver, inv: List[Expr]) -> None:
     prog = syntax.the_program
@@ -189,5 +224,14 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                                 help='new frame begins with pushing from previous frame')
     brat_subparser.add_argument('--decrease-depth', action=utils.YesNoAction, default=False,
                                 help='BMC bound decreased as frames increase (similar to PDR with backward-reach cache)')
+
+
+    oneshot_subparser = subparsers.add_parser('oneshot', help='experimental inference 3')
+    oneshot_subparser.set_defaults(main=oneshot)
+    result.append(oneshot_subparser)
+    oneshot_subparser.add_argument('--depth', type=int, default=6, metavar='N',
+                                help='number of steps in backwards exploration')
+    oneshot_subparser.add_argument('--forward-depth', type=int, default=4, metavar='N',
+                                help='number of steps in forwards exploration')
 
     return result
