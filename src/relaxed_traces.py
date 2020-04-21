@@ -6,7 +6,9 @@ from syntax import Expr
 from utils import Set
 from updr import RelaxedTrace
 from trace import bmc_trace
+import copy
 
+import z3
 import itertools
 import networkx  # type: ignore
 from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence
@@ -50,15 +52,8 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
         elif isinstance(d, syntax.InitDecl):
             new_decls.append(d)
         elif isinstance(d, syntax.DefinitionDecl):
-            assert not isinstance(d.body, syntax.BlockStatement), \
-                "relax does not support transitions written in imperative syntax"
-            mods, expr = d.body
-            expr = syntax.relativize_quantifiers(actives, expr)
-            if d.is_public_transition:
-                guard = syntax.relativization_guard_for_binder(actives, d.binder)
-                expr = syntax.And(guard, expr)
-            new_decls.append(syntax.DefinitionDecl(d.is_public_transition, d.num_states, d.name,
-                                                   params=d.binder.vs, body=(mods, expr)))
+            relativized_def = relativize_decl(d, actives)
+            new_decls.append(relativized_def)
         elif isinstance(d, syntax.InvariantDecl):
             expr = syntax.relativize_quantifiers(actives, d.expr)
             new_decls.append(syntax.InvariantDecl(d.name, expr=expr,
@@ -71,6 +66,19 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
     res = syntax.Program(new_decls)
     res.resolve()  # #sorrynotsorry
     return res
+
+
+def relativize_decl(d: syntax.DefinitionDecl, actives: Mapping[syntax.SortDecl, syntax.RelationDecl]) -> syntax.DefinitionDecl:
+    assert not isinstance(d.body, syntax.BlockStatement), \
+        "relax does not support transitions written in imperative syntax"
+    mods, expr = d.body
+    expr = syntax.relativize_quantifiers(actives, expr)
+    if d.is_public_transition:
+        guard = syntax.relativization_guard_for_binder(actives, d.binder)
+        expr = syntax.And(guard, expr)
+    relativized_def = syntax.DefinitionDecl(d.is_public_transition, d.num_states, d.name,
+                                            params=d.binder.vs, body=(mods, expr))
+    return relativized_def
 
 
 def relaxation_action_def(
@@ -447,3 +455,44 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
         res = bmc_trace(relaxed_prog, trace_decl, s, lambda slvr, ks: logic.check_solver(slvr, ks, minimize=True))
         print(res)
         assert False
+
+
+class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
+    def __init__(self, scope: syntax.Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
+        self._active_rels_mapping: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
+        self._generate_active_rels(scope)
+
+        self._active_scope = copy.deepcopy(scope)
+        for active_rel in self._active_rels_mapping.values():
+            self._active_scope.add_relation(active_rel)
+
+        self._t = syntax.Z3Translator(self._active_scope, keys)
+        self._prog = syntax.the_program
+
+    def _generate_active_rels(self, scope: syntax.Scope) -> None:
+        for sort in scope.known_sorts():
+            active_name = scope.fresh('active_%s' % sort.name)
+            # TODO: is there a better way to get Sort out of SortDecl?
+            sort_not_decl = syntax.UninterpretedSort(sort.name)
+            sort_not_decl.resolve(scope)
+            active_rel = syntax.RelationDecl(active_name, arity=[sort_not_decl],
+                                             mutable=True, derived=None, annotations=[])
+            self._active_rels_mapping[sort] = active_rel
+
+    def translate_expr(self, expr: Expr, index: int = 0) -> z3.ExprRef:
+        rel_expr = syntax.relativize_quantifiers(self._active_rels_mapping, expr)
+        res = self._t.translate_expr(rel_expr, index)
+        return res
+
+    def translate_transition(self, t: syntax.DefinitionDecl, index: int = 0) -> z3.ExprRef:
+        new_decl = relativize_decl(t, self._active_rels_mapping)
+        # TODO: hack! relativize_decl doesn't do this, so the expression can be non-closed.
+        # TODO: Should it generate & use an extended scope?
+        new_decl.resolve(self._active_scope)
+        # TODO: add the relaxation clause
+        res = self._t.translate_transition(new_decl, index)
+        return res
+
+class RelaxedSolver(object):
+    pass
+    # TODO:

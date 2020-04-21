@@ -202,7 +202,7 @@ class Z3Translator(object):
             return q(bs, e)
         elif isinstance(expr, Id):
             d = self.scope.get(expr.name)
-            assert d is not None
+            assert d is not None, expr.name
             if isinstance(d, RelationDecl) or \
                isinstance(d, ConstantDecl) or \
                isinstance(d, FunctionDecl):
@@ -1409,7 +1409,7 @@ class UninterpretedSort(Sort):
         return self.name
 
     def to_z3(self) -> z3.SortRef:
-        assert self.decl is not None
+        assert self.decl is not None, str(self)
 
         return self.decl.to_z3()
 
@@ -2416,6 +2416,9 @@ class Scope(Generic[B]):
         res = self.get_sort(sort)
         assert res is not None
         return res
+
+    def known_sorts(self) -> Iterable[SortDecl]:
+        return list(self.sorts.values())
 
     def add_constant(self, decl: ConstantDecl) -> None:
         assert len(self.stack) == 0
