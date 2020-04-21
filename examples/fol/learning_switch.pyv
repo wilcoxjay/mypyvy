@@ -2,8 +2,8 @@
 
 sort node
 
-mutable relation table(node, node, node)
-mutable relation pending(node, node, node, node)
+mutable relation table(node, node, node) @no_minimize
+mutable relation pending(node, node, node, node) @no_minimize
 
 init table(T, N1, N2) <-> N1 = N2
 init !pending(PS, PD, S, D)
