@@ -6,6 +6,8 @@ from datetime import datetime
 import dataclasses
 import time
 import itertools
+import math
+import random
 import io
 import re
 import sexp
@@ -1142,7 +1144,7 @@ class Diagram(object):
             yield
             S -= j
 
-    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool]) -> None:
+    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool], order: Optional[int]=None) -> None:
         'drop conjuncts of this diagram subject to the constraint returning true'
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
@@ -1151,8 +1153,11 @@ class Diagram(object):
         F: Iterable[_RelevantDecl] = self.funcs
 
         assert constraint(self)
+        
+        generalization_order = list(itertools.chain(I, R, C, F))
+        generalization_order = reorder(generalization_order, order)
 
-        for d in itertools.chain(I, R, C, F):
+        for d in generalization_order:
             if isinstance(d, SortDecl) and len(self.ineqs[d]) == 1:
                 continue
             with self.without(d):
@@ -1180,6 +1185,18 @@ class Diagram(object):
                 self.remove_clause(d, j)
 
         self.prune_unused_vars()
+
+def reorder(lst: List[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]], order: Optional[int]) \
+        -> List[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]]:
+    if not order:
+        return lst
+
+    if order == -1:
+        random.shuffle(lst)
+        return lst
+
+    assert 0 <= order < math.factorial(len(lst))
+    return list(utils.generator_element(itertools.permutations(lst), order))
 
 _digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
 

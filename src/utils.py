@@ -11,6 +11,7 @@ import sys
 import xml
 import xml.sax
 import xml.sax.saxutils
+import itertools
 
 from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
     Any, Callable, cast, Sequence, Tuple, Union
@@ -116,6 +117,7 @@ class MypyvyArgs(object):
     push: bool
     decrease_depth: bool
     forward_depth: int
+    generalization_order: Optional[int]
 
     def main(self, solver: Any) -> None:
         ...
@@ -304,3 +306,7 @@ def exit(returncode: int) -> NoReturn:
     if args.print_exit_code:
         print(f'mypyvy exiting with status {returncode}')
     sys.exit(returncode)
+
+def generator_element(gen: Iterator[T], index: int) -> T:
+    # https://stackoverflow.com/questions/2300756/get-the-nth-item-of-a-generator-in-python
+    return next(itertools.islice(gen, index, None))

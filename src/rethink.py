@@ -118,12 +118,14 @@ def brat_next_frame(s: Solver, prev_frame: List[Expr],
     for bad_model in bad_cache:
         if logic.check_implication(s, current_frame, [syntax.Not(bad_model.to_ast())]) is None:
             continue
-        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
+        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model,
+                                                          gen_order=utils.args.generalization_order))
 
     while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize)) is not None:
         bad_model = bad_trace.as_diagram(0)
         bad_cache.add(bad_model)
-        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model))
+        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model,
+                                                          gen_order=utils.args.generalization_order))
 
     return current_frame
 
@@ -145,7 +147,8 @@ def new_frame(s: Solver, prev_frame: List[Expr]) -> List[Expr]:
     return current_frame
 
 
-def post_image_prime_consequence(s: Solver, prev_frame: List[Expr], inits: List[Expr], bad_model: Diagram) -> Expr:
+def post_image_prime_consequence(s: Solver, prev_frame: List[Expr], inits: List[Expr], bad_model: Diagram,
+                                 gen_order: Optional[int]=None) -> Expr:
     # TODO: duplicated from updr
     def prev_frame_constraint(diag: Diagram) -> bool:
         return (
@@ -157,7 +160,7 @@ def post_image_prime_consequence(s: Solver, prev_frame: List[Expr], inits: List[
 
     # TODO: unsat core first
     bad_model_copy = copy.deepcopy(bad_model)
-    bad_model_copy.generalize(s, prev_frame_constraint)
+    bad_model_copy.generalize(s, prev_frame_constraint, order=gen_order)
 
     return syntax.Not(bad_model_copy.to_ast())
 
@@ -224,6 +227,8 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                                 help='new frame begins with pushing from previous frame')
     brat_subparser.add_argument('--decrease-depth', action=utils.YesNoAction, default=False,
                                 help='BMC bound decreased as frames increase (similar to PDR with backward-reach cache)')
+    brat_subparser.add_argument('--generalization-order', type=int,
+                                help='generalization order index, -1 means random')
 
 
     oneshot_subparser = subparsers.add_parser('oneshot', help='experimental inference 3')
