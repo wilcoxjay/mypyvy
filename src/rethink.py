@@ -27,7 +27,7 @@ def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterabl
     return None
 
 def itp_gen(s: Solver) -> None:
-    k = 4
+    k = utils.args.forward_depth
 
     prog = syntax.the_program
     safety = syntax.And(*(inv.expr for inv in prog.invs() if inv.is_safety))
@@ -38,7 +38,6 @@ def itp_gen(s: Solver) -> None:
 
     candidate = [safety]
 
-    # with logic.BoundedReachabilityCheck(s, syntax.the_program, k) as bmc_checker:
     while True:
         cti = get_cti(s, syntax.And(*candidate))
         if cti is None:
@@ -46,15 +45,8 @@ def itp_gen(s: Solver) -> None:
 
         pre_diag = cti[0]
 
-        # core = bmc_checker.unsat_core(pre_diag)
-        # if core is None:
-        #     utils.logger.always_print("Failure: attempted to exclude reachable state, a pre-state of %s" %
-        #                               ' & '.join(str(clause) for clause in candidate))
-        #     assert False
-        #
-        # pre_diag.minimize_from_core(core)
-
-        pre_diag.generalize(s, lambda diag: bmc_upto_bound(s, syntax.Not(diag.to_ast()), k) is None)
+        pre_diag.generalize(s, lambda diag: bmc_upto_bound(s, syntax.Not(diag.to_ast()), k) is None,
+                            order=utils.args.generalization_order)
 
         e = syntax.Not(pre_diag.to_ast())
 
@@ -212,9 +204,13 @@ def verify_inductive_invariant(s: Solver, inv: List[Expr]) -> None:
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result: List[argparse.ArgumentParser] = []
 
-    s = subparsers.add_parser('itp-literal', help='experimental inference 1')
-    s.set_defaults(main=itp_gen)
-    result.append(s)
+    itp_subparser = subparsers.add_parser('itp-literal', help='experimental inference 1')
+    itp_subparser.add_argument('--forward-depth', type=int, default=4, metavar='N',
+                                help='number of steps in backwards exploration')
+    itp_subparser.add_argument('--generalization-order', type=int,
+                                help='generalization order index, -1 means random')
+    itp_subparser.set_defaults(main=itp_gen)
+    result.append(itp_subparser)
 
     brat_subparser = subparsers.add_parser('brat', help='experimental inference 2')
     brat_subparser.set_defaults(main=brat)
