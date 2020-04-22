@@ -11,7 +11,7 @@ import copy
 import z3
 import itertools
 import networkx  # type: ignore
-from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence
+from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable
 
 T = TypeVar('T')
 
@@ -511,6 +511,10 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
         res = self._t.translate_transition(new_decl, index)
         return res
 
-class RelaxedSolver(object):
-    pass
-    # TODO:
+def relaxed_semantics_solver() -> logic.Solver:
+    return logic.Solver(translator_factory=lambda s, k: Z3RelaxedSemanticsTranslator(s, k))
+
+def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
+                      minimize: Optional[bool]=None) -> Optional[Trace]:
+    return logic.check_bmc(relaxed_semantics_solver(),
+                           safety, depth, preconds, minimize)

@@ -253,6 +253,7 @@ def assert_any_transition(s: Solver, t: syntax.Z3Translator,
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
         tids.append(tid)
+        print("transition translate: ", t.translate_transition(transition, index=key_index))
         s.add(z3.Implies(tid, t.translate_transition(transition, index=key_index)))
 
     if allow_stutter:
@@ -502,12 +503,15 @@ class CVC4Model(object):
         return ans
 
 class Solver(object):
-    def __init__(self, include_program: bool = True, use_cvc4: bool = False) -> None:
+    def __init__(self, include_program: bool = True, use_cvc4: bool = False,
+                 translator_factory: Optional[Callable[[syntax.Scope, Tuple[str, ...]], syntax.Z3Translator]]=None) \
+            -> None:
         self.z3solver = z3.Solver()
         prog = syntax.the_program
         assert prog.scope is not None
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
+        self.translator_factory = translator_factory
         self.translators: Dict[Tuple[str, ...], syntax.Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
@@ -570,7 +574,11 @@ class Solver(object):
         if t not in self.translators:
             for k in keys:
                 self._initialize_key(k)
-            self.translators[t] = syntax.Z3Translator(self.scope, keys)
+            if not self.translator_factory:
+                lator = syntax.Z3Translator(self.scope, keys)
+            else:
+                lator = self.translator_factory(self.scope, keys)
+            self.translators[t] = lator
         return self.translators[t]
 
     @contextmanager
