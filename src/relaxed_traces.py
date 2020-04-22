@@ -52,7 +52,7 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
         elif isinstance(d, syntax.InitDecl):
             new_decls.append(d)
         elif isinstance(d, syntax.DefinitionDecl):
-            relativized_def = relativize_decl(d, actives)
+            relativized_def = relativize_decl(d, actives, prog.scope, inline_relax_actives=False)
             new_decls.append(relativized_def)
         elif isinstance(d, syntax.InvariantDecl):
             expr = syntax.relativize_quantifiers(actives, d.expr)
@@ -68,7 +68,8 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
     return res
 
 
-def relativize_decl(d: syntax.DefinitionDecl, actives: Mapping[syntax.SortDecl, syntax.RelationDecl]) -> syntax.DefinitionDecl:
+def relativize_decl(d: syntax.DefinitionDecl, actives: Dict[syntax.SortDecl, syntax.RelationDecl],
+                    scope: syntax.Scope, inline_relax_actives: bool) -> syntax.DefinitionDecl:
     assert not isinstance(d.body, syntax.BlockStatement), \
         "relax does not support transitions written in imperative syntax"
     mods, expr = d.body
@@ -76,6 +77,12 @@ def relativize_decl(d: syntax.DefinitionDecl, actives: Mapping[syntax.SortDecl, 
     if d.is_public_transition:
         guard = syntax.relativization_guard_for_binder(actives, d.binder)
         expr = syntax.And(guard, expr)
+
+    if inline_relax_actives:
+        new_mods, new_conjs = relax_actives_action_chunk(scope, actives)
+        mods += new_mods
+        expr = syntax.And(expr, *new_conjs)
+
     relativized_def = syntax.DefinitionDecl(d.is_public_transition, d.num_states, d.name,
                                             params=d.binder.vs, body=(mods, expr))
     return relativized_def
@@ -93,13 +100,9 @@ def relaxation_action_def(
         actives = active_rel_by_sort(prog)
 
     # a conjunct allowing each domain to decrease
-    for sort in prog.sorts():
-        name = prog.scope.fresh(sort.name[0].upper())
-        ap = syntax.Apply(actives[sort].name, [syntax.Id(name)])
-        expr = syntax.Forall([syntax.SortedVar(name, None)],
-                             syntax.Implies(syntax.New(ap), ap))
-        conjs.append(expr)
-        mods.append(syntax.ModifiesClause(actives[sort].name))
+    new_mods, new_conjs = relax_actives_action_chunk(prog.scope, actives)
+    mods += new_mods
+    conjs += new_conjs
 
     # constants are active
     for const in prog.constants():
@@ -146,6 +149,22 @@ def relaxation_action_def(
 
     return syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=decrease_name,
                                  params=[], body=(mods, syntax.And(*conjs)))
+
+
+def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDecl, syntax.RelationDecl]) \
+        -> Tuple[List[syntax.ModifiesClause], List[Expr]]:
+    new_mods = []
+    new_conjs = []
+
+    for sort, active_rel in actives.items():
+        name = scope.fresh(sort.name[0].upper())
+        ap = syntax.Apply(active_rel.name, [syntax.Id(name)])
+        expr = syntax.Forall([syntax.SortedVar(name, None)],
+                             syntax.Implies(syntax.New(ap), ap))
+        new_conjs.append(expr)
+        new_mods.append(syntax.ModifiesClause(actives[sort].name))
+
+    return new_mods, new_conjs
 
 
 class RelationFact(object):
@@ -485,11 +504,10 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
         return res
 
     def translate_transition(self, t: syntax.DefinitionDecl, index: int = 0) -> z3.ExprRef:
-        new_decl = relativize_decl(t, self._active_rels_mapping)
+        new_decl = relativize_decl(t, self._active_rels_mapping, self._active_scope, inline_relax_actives=True)
         # TODO: hack! relativize_decl doesn't do this, so the expression can be non-closed.
         # TODO: Should it generate & use an extended scope?
         new_decl.resolve(self._active_scope)
-        # TODO: add the relaxation clause
         res = self._t.translate_transition(new_decl, index)
         return res
 
