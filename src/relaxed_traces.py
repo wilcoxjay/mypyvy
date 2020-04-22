@@ -512,7 +512,9 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
         return res
 
 def relaxed_semantics_solver() -> logic.Solver:
-    return logic.Solver(translator_factory=lambda s, k: Z3RelaxedSemanticsTranslator(s, k))
+    # reassert_axioms=True ensures that axioms continue to hold active relations change
+    return logic.Solver(translator_factory=lambda s, k: Z3RelaxedSemanticsTranslator(s, k),
+                        reassert_axioms=True)
 
 def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
                       minimize: Optional[bool]=None) -> Optional[Trace]:
