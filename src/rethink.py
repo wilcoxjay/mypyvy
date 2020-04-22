@@ -169,15 +169,19 @@ def oneshot_compute_inv(s: Solver,
                         minimize: bool) -> List[Expr]:
     current_frame: List[Expr] = [syntax.TrueExpr]
 
-    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize)) is not None:
+    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize,
+                                       relaxed_semantics=utils.args.relax_backwards)) is not None:
         bad_model = bad_trace.as_diagram(0)
-        current_frame.append(bmc_prime_consequence(s, utils.args.forward_depth, inits, bad_model))
+        current_frame.append(bmc_prime_consequence(s, utils.args.forward_depth, inits, bad_model,
+                                                   utils.args.relax_forwards))
 
     return current_frame
 
-def bmc_prime_consequence(s: Solver, bound: int, inits: List[Expr], bad_model: Diagram) -> Expr:
+def bmc_prime_consequence(s: Solver, bound: int, inits: List[Expr], bad_model: Diagram,
+                          relaxed_semantics: bool) -> Expr:
     def bmc_constraint(diag: Diagram) -> bool:
-        return bmc_upto_bound(s, syntax.Not(diag.to_ast()), bound, preconds=inits) is None
+        return bmc_upto_bound(s, syntax.Not(diag.to_ast()), bound, preconds=inits,
+                              relaxed_semantics=relaxed_semantics) is None
 
     bad_model_copy = copy.deepcopy(bad_model)
     bad_model_copy.generalize(s, bmc_constraint)
@@ -212,12 +216,15 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     result: List[argparse.ArgumentParser] = []
 
     itp_subparser = subparsers.add_parser('itp-literal', help='experimental inference 1')
+    itp_subparser.set_defaults(main=itp_gen)
+    result.append(itp_subparser)
+
     itp_subparser.add_argument('--forward-depth', type=int, default=4, metavar='N',
                                 help='number of steps in backwards exploration')
     itp_subparser.add_argument('--generalization-order', type=int,
                                 help='generalization order index, -1 means random')
-    itp_subparser.set_defaults(main=itp_gen)
-    result.append(itp_subparser)
+    itp_subparser.add_argument('--relax-forwards', action=utils.YesNoAction, default=False,
+                               help='relaxed semantics in forwards BMC')
 
     brat_subparser = subparsers.add_parser('brat', help='experimental inference 2')
     brat_subparser.set_defaults(main=brat)
@@ -243,5 +250,9 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                                 help='number of steps in backwards exploration')
     oneshot_subparser.add_argument('--forward-depth', type=int, default=4, metavar='N',
                                 help='number of steps in forwards exploration')
+    oneshot_subparser.add_argument('--relax-forwards', action=utils.YesNoAction, default=False,
+                                help='relaxed semantics in forwards BMC')
+    oneshot_subparser.add_argument('--relax-backwards', action=utils.YesNoAction, default=False,
+                                help='relaxed semantics in backwards BMC')
 
     return result

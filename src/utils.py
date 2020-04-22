@@ -120,6 +120,7 @@ class MypyvyArgs(object):
     generalization_order: Optional[int]
     relax: bool
     relax_backwards: bool
+    relax_forwards: bool
 
     def main(self, solver: Any) -> None:
         ...
