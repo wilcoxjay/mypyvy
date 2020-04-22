@@ -2,6 +2,7 @@ import logic
 from logic import Solver, Diagram, Trace, KEY_NEW, KEY_OLD
 import syntax
 from syntax import Expr
+import relaxed_traces
 import utils
 import copy
 
@@ -20,9 +21,14 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
 def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]]=None,
-                   minimize: Optional[bool]=None) -> Optional[logic.Trace]:
+                   minimize: Optional[bool]=None, relaxed_semantics: bool=False) -> Optional[logic.Trace]:
+    if not relaxed_semantics:
+        bmcer = lambda bound: logic.check_bmc(s, post, bound, preconds, minimize)
+    else:
+        bmcer = lambda bound: relaxed_traces.check_relaxed_bmc(post, bound, preconds, minimize)
+
     for k in range(0, bound + 1):
-        if (m := logic.check_bmc(s, post, k, preconds=preconds, minimize=minimize)) is not None:
+        if (m := bmcer(k)) is not None:
             return m
     return None
 
@@ -113,7 +119,8 @@ def brat_next_frame(s: Solver, prev_frame: List[Expr],
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model,
                                                           gen_order=utils.args.generalization_order))
 
-    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize)) is not None:
+    while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize,
+                                       relaxed_semantics=utils.args.relax_backwards)) is not None:
         bad_model = bad_trace.as_diagram(0)
         bad_cache.add(bad_model)
         current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model,
@@ -225,6 +232,8 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                                 help='BMC bound decreased as frames increase (similar to PDR with backward-reach cache)')
     brat_subparser.add_argument('--generalization-order', type=int,
                                 help='generalization order index, -1 means random')
+    brat_subparser.add_argument('--relax-backwards', action=utils.YesNoAction, default=False,
+                                help='relaxed semantics in backwards BMC')
 
 
     oneshot_subparser = subparsers.add_parser('oneshot', help='experimental inference 3')

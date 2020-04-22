@@ -118,6 +118,8 @@ class MypyvyArgs(object):
     decrease_depth: bool
     forward_depth: int
     generalization_order: Optional[int]
+    relax: bool
+    relax_backwards: bool
 
     def main(self, solver: Any) -> None:
         ...

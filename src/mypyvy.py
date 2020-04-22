@@ -197,8 +197,13 @@ def bmc(s: Solver) -> None:
     utils.logger.always_print('bmc checking the following property up to depth %d' % n)
     utils.logger.always_print('  ' + str(safety))
 
+    if not utils.args.relax:
+        bmcer = lambda bound: logic.check_bmc(s, safety, bound)
+    else:
+        bmcer = lambda bound: relaxed_traces.check_relaxed_bmc(safety, bound)
+
     for k in range(0, n + 1):
-        if (m := logic.check_bmc(s, safety, k)) is not None:
+        if (m := bmcer(k)) is not None:
             if utils.args.print_counterexample:
                 print('found violation')
                 print(str(m))
@@ -551,6 +556,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     bmc_subparser.add_argument('--safety', help='property to check')
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
                                help='number of steps to check')
+    bmc_subparser.add_argument('--relax', action=utils.YesNoAction, default=False,
+                                help='relaxed semantics (domain can decrease)')
 
     argparser.add_argument('filename')
 

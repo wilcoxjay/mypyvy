@@ -253,7 +253,6 @@ def assert_any_transition(s: Solver, t: syntax.Z3Translator,
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
         tids.append(tid)
-        print("transition translate: ", t.translate_transition(transition, index=key_index))
         s.add(z3.Implies(tid, t.translate_transition(transition, index=key_index)))
 
     if allow_stutter:
