@@ -503,7 +503,8 @@ class CVC4Model(object):
 
 class Solver(object):
     def __init__(self, include_program: bool = True, use_cvc4: bool = False,
-                 translator_factory: Optional[Callable[[syntax.Scope, Tuple[str, ...]], syntax.Z3Translator]]=None) \
+                 translator_factory: Optional[Callable[[syntax.Scope, Tuple[str, ...]], syntax.Z3Translator]]=None,
+                 reassert_axioms: bool=False) \
             -> None:
         self.z3solver = z3.Solver()
         prog = syntax.the_program
@@ -528,7 +529,10 @@ class Solver(object):
                                          if r.derived_axiom is not None)
             t = self.get_translator()
             for a in prog.axioms():
-                self.add(t.translate_expr(a.expr))
+                if not reassert_axioms:
+                    self.add(t.translate_expr(a.expr))
+                else:
+                    self.register_mutable_axioms([a.expr])
 
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
