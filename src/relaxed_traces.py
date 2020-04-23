@@ -11,7 +11,7 @@ import copy
 import z3
 import itertools
 import networkx  # type: ignore
-from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable
+from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable, Iterator
 
 T = TypeVar('T')
 
@@ -511,12 +511,29 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
         res = self._t.translate_transition(new_decl, index)
         return res
 
-def relaxed_semantics_solver() -> logic.Solver:
+def consts_exist_axioms(prog: syntax.Program) -> List[Expr]:
+    res = []
+
+    for c in prog.constants():
+        name = prog.scope.fresh('e_%s' % c.name)
+        ax = syntax.Exists([syntax.SortedVar(name, c.sort)],
+                           syntax.Eq(syntax.Id(c.name), syntax.Id(name)))
+        with prog.scope.n_states(1):
+            ax.resolve(prog.scope, syntax.BoolSort)
+        res.append(ax)
+
+    return res
+
+def relaxed_semantics_solver(prog: syntax.Program) -> logic.Solver:
     # reassert_axioms=True ensures that axioms continue to hold active relations change
+    # additional_mutable_axioms guarantee that constants are always active
+    # (through a relaxation of asserting the existence of an element that equals them)
     return logic.Solver(translator_factory=lambda s, k: Z3RelaxedSemanticsTranslator(s, k),
-                        reassert_axioms=True)
+                        reassert_axioms=True,
+                        additional_mutable_axioms=consts_exist_axioms(prog))
 
 def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
                       minimize: Optional[bool]=None) -> Optional[Trace]:
-    return logic.check_bmc(relaxed_semantics_solver(),
+    prog = syntax.the_program
+    return logic.check_bmc(relaxed_semantics_solver(prog),
                            safety, depth, preconds, minimize)

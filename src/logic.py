@@ -504,7 +504,7 @@ class CVC4Model(object):
 class Solver(object):
     def __init__(self, include_program: bool = True, use_cvc4: bool = False,
                  translator_factory: Optional[Callable[[syntax.Scope, Tuple[str, ...]], syntax.Z3Translator]]=None,
-                 reassert_axioms: bool=False) \
+                 reassert_axioms: bool=False, additional_mutable_axioms: List[Expr]=[]) \
             -> None:
         self.z3solver = z3.Solver()
         prog = syntax.the_program
@@ -524,15 +524,28 @@ class Solver(object):
         self.cvc4_last_query: Optional[str] = None
         self.cvc4_last_model_response: Optional[str] = None
 
+        self._init_axioms(prog, include_program, reassert_axioms, additional_mutable_axioms)
+
+    def _init_axioms(self, prog: syntax.Program, include_program: bool,
+                     reassert_axioms: bool, additional_mutable_axioms: List[Expr]) -> None:
+        axioms = []
+        mutable_axioms = []
         if include_program:
-            self.register_mutable_axioms(r.derived_axiom for r in prog.derived_relations()
-                                         if r.derived_axiom is not None)
-            t = self.get_translator()
-            for a in prog.axioms():
-                if not reassert_axioms:
-                    self.add(t.translate_expr(a.expr))
-                else:
-                    self.register_mutable_axioms([a.expr])
+            if not reassert_axioms:
+                axioms += [a.expr for a in prog.axioms()]
+            else:
+                mutable_axioms += [a.expr for a in prog.axioms()]
+
+            mutable_axioms += [r.derived_axiom for r in prog.derived_relations()
+                               if r.derived_axiom is not None]
+
+        mutable_axioms += additional_mutable_axioms
+
+        t = self.get_translator()
+        for aexpr in axioms:
+            self.add(t.translate_expr(aexpr))
+
+        self.register_mutable_axioms(mutable_axioms)
 
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
