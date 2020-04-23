@@ -172,19 +172,22 @@ def oneshot_compute_inv(s: Solver,
     while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize,
                                        relaxed_semantics=utils.args.relax_backwards)) is not None:
         bad_model = bad_trace.as_diagram(0)
-        current_frame.append(bmc_prime_consequence(s, utils.args.forward_depth, inits, bad_model,
-                                                   utils.args.relax_forwards))
+        learned_clause = bmc_prime_consequence(s, utils.args.forward_depth, inits, bad_model,
+                                               utils.args.relax_forwards,
+                                               utils.args.generalization_order)
+        utils.logger.info("Learned clause: %s" % str(learned_clause))
+        current_frame.append(learned_clause)
 
     return current_frame
 
 def bmc_prime_consequence(s: Solver, bound: int, inits: List[Expr], bad_model: Diagram,
-                          relaxed_semantics: bool) -> Expr:
+                          relaxed_semantics: bool, generalization_order: Optional[int]=None) -> Expr:
     def bmc_constraint(diag: Diagram) -> bool:
         return bmc_upto_bound(s, syntax.Not(diag.to_ast()), bound, preconds=inits,
                               relaxed_semantics=relaxed_semantics) is None
 
     bad_model_copy = copy.deepcopy(bad_model)
-    bad_model_copy.generalize(s, bmc_constraint)
+    bad_model_copy.generalize(s, bmc_constraint, order=generalization_order)
 
     return syntax.Not(bad_model_copy.to_ast())
 
@@ -196,7 +199,7 @@ def oneshot(s: Solver) -> None:
     utils.logger.info("initial state: %s" % str(inits))
     utils.logger.info("proving safety property: %s" % safety)
 
-    candidate = oneshot_compute_inv(s, utils.args.depth, inits, safety, minimize=True)
+    candidate = oneshot_compute_inv(s, utils.args.depth, inits, safety, minimize=utils.args.minimize_models)
     utils.logger.always_print("Got candidate:")
     for clause in candidate:
         utils.logger.always_print(str(clause))
@@ -254,5 +257,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
                                 help='relaxed semantics in forwards BMC')
     oneshot_subparser.add_argument('--relax-backwards', action=utils.YesNoAction, default=False,
                                 help='relaxed semantics in backwards BMC')
+    oneshot_subparser.add_argument('--generalization-order', type=int,
+                               help='generalization order index, -1 means random')
 
     return result
