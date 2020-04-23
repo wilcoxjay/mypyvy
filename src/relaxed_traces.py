@@ -524,13 +524,41 @@ def consts_exist_axioms(prog: syntax.Program) -> List[Expr]:
 
     return res
 
+def functions_total_axioms(prog: syntax.Program) -> List[Expr]:
+    res = []
+
+    for func in prog.functions():
+        # TODO: generation of part of the formula duplicated from relaxation_action_def.
+        # TODO: would be best to beef up the expression-generation library
+        names: List[str] = []
+        params = []
+        for arg_sort in func.arity:
+            arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
+            name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
+                                    also_avoid=names)
+            params.append(syntax.SortedVar(name, arg_sort))
+        ap_func = syntax.Apply(func.name, [syntax.Id(v.name) for v in params])
+
+        name = prog.scope.fresh('y', also_avoid=names)
+
+        ax = syntax.Forall(params,
+                           syntax.Exists([syntax.SortedVar(name, func.sort)],
+                                         syntax.Eq(syntax.Id(name), ap_func)))
+        with prog.scope.n_states(1):
+            ax.resolve(prog.scope, syntax.BoolSort)
+
+        res.append(ax)
+
+    return res
+
 def relaxed_semantics_solver(prog: syntax.Program) -> logic.Solver:
     # reassert_axioms=True ensures that axioms continue to hold active relations change
     # additional_mutable_axioms guarantee that constants are always active
-    # (through a relaxation of asserting the existence of an element that equals them)
+    # (through a relaxation of asserting the existence of an element that equals them),
+    # and that functions are always total (through a relaxation of this axiom)
     return logic.Solver(translator_factory=lambda s, k: Z3RelaxedSemanticsTranslator(s, k),
                         reassert_axioms=True,
-                        additional_mutable_axioms=consts_exist_axioms(prog))
+                        additional_mutable_axioms=consts_exist_axioms(prog) + functions_total_axioms(prog))
 
 def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
                       minimize: Optional[bool]=None) -> Optional[Trace]:
