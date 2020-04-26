@@ -123,8 +123,10 @@ def brat_next_frame(s: Solver, prev_frame: List[Expr],
                                        relaxed_semantics=utils.args.relax_backwards)) is not None:
         bad_model = bad_trace.as_diagram(0)
         bad_cache.add(bad_model)
-        current_frame.append(post_image_prime_consequence(s, prev_frame, inits, bad_model,
-                                                          gen_order=utils.args.generalization_order))
+        learned_clause = post_image_prime_consequence(s, prev_frame, inits, bad_model,
+                                                      gen_order=utils.args.generalization_order)
+        utils.logger.info("Learned clause: %s" % str(learned_clause))
+        current_frame.append(learned_clause)
 
     return current_frame
 
