@@ -506,6 +506,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='report how long various z3 queries take')
         s.add_argument('--print-counterexample', action=utils.YesNoAction, default=True,
                        help='print counterexamples')
+        s.add_argument('--print-negative-tuples', action=utils.YesNoAction, default=False,
+                       help='print negative counterexamples')
         s.add_argument('--print-cmdline', action=utils.YesNoAction, default=True,
                        help='print the command line passed to mypyvy')
         s.add_argument('--clear-cache', action=utils.YesNoAction, default=False,

@@ -82,6 +82,7 @@ class MypyvyArgs(object):
     error_filename_basename: bool
     query_time: bool
     print_counterexample: bool
+    print_negative_tuples: bool
     print_cmdline: bool
     print_exit_code: bool
     simplify_diagram: bool

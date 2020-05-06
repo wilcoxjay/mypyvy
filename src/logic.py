@@ -1202,8 +1202,11 @@ def _univ_str(state: State) -> List[str]:
 def _state_str(
         state: State,
         print_immutable: bool = True,
-        print_negative_tuples: bool = False,
+        print_negative_tuples: Optional[bool] = None,
 ) -> str:
+    if print_negative_tuples is None:
+        print_negative_tuples = utils.args.print_negative_tuples
+
     l = []
 
     Cs = state.const_interp()
