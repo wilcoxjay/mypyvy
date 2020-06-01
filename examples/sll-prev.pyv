@@ -39,14 +39,29 @@ transition step()
   new(j) = i &
   n(i, new(i))
 
-safety !(i != x & i != null) -> (nrtc(h, x) -> i = x)
-invariant nrtc(h, x) -> nrtc(i, x)
 
-safety !(i != x & i != null) -> (!nrtc(h, x) -> i = null)
-invariant nrtc(h, i)
+derived relation ix:
+	ix <-> i = x
+derived relation xh:
+	xh <-> x = h
+derived relation inull:
+	inull <-> i = null
+derived relation hreachx:
+	hreachx <-> nrtc(h, x)
+derived relation ireachx:
+	ireachx <-> nrtc(i, x)
+derived relation jnx:
+	jnx <-> n(j, x)
 
-safety !(i != x & i != null) -> 
-			(i = x & j != null -> 
-				n(j,x)
-		)
+# safety !(i != x & i != null) -> (nrtc(h, x) -> i = x)
+# invariant nrtc(h, x) -> nrtc(i, x)
+safety (!ix & !inull) | (!hreachx | ix)
+invariant !hreachx | ireachx
+# both cannot hold together: 
+# invariant !(!hreachx & ireachx)
 
+# safety !(i != x & i != null) -> (!nrtc(h, x) -> i = null)
+# invariant nrtc(h, i)
+
+# safety i = x & x != h -> n(j, x)
+safety !ix | xh | jnx
