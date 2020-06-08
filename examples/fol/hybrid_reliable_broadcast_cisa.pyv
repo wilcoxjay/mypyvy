@@ -1,0 +1,252 @@
+# Hybrid Reliable Broadcast
+#
+# Widder, J., Schmid, U. Booting clock synchronization in partially
+# synchronous systems with hybrid process and link
+# failures. Distrib. Comput. 20, 115140
+# (2007).https://doi.org/10.1007/s00446-007-0026-0
+#
+# Bbased on hybrid_reliable_broadcast_cisa.ivy from:
+# Berkovits I., Lazic M., Losa G., Padon O., Shoham S. Verification of Threshold-Based Distributed Algorithms by Decomposition to Decidable Logics. CAV 2019. https://link.springer.com/chapter/10.1007%2F978-3-030-25543-5_15
+#
+# This version includes all 4 node failure modes of Definitions 2, 6 and 7:
+#
+# f_c: processes are either clean crash or symmetric omission faulty
+#      (obedient processes that either perform complete broadcasts or
+#      full omissions). That is, when they send they may send to all
+#      or to none. Crash is simulated by sending to none from some
+#      point onwards.
+#
+# f_i: processes are either crash faulty or asymmetric omission faulty
+#      (obedient processes that may perform incomplete
+#      broadcasts). That is, they send only correct messages but may
+#      send to a subset of the nodes. Crash is simulated as above.
+#
+# f_s: processes are symmetric faulty. That is, send arbitrary
+#      messages, but either to all or to none.
+#
+# f_a: processes are arbitrary faulty. That is, send arbitrary
+#      messages, and also different messages to different nodes.
+#
+
+################################################################################
+#
+# Types, relations and functions describing state of the network
+#
+################################################################################
+
+sort node     # n > tc + 3ta + 2ts + 2ti
+sort quorum_a # >= ta + ts + 1
+sort quorum_b # >= n - tc - ta - ts - ti
+
+immutable relation member_a(node, quorum_a)
+immutable relation member_b(node, quorum_b)
+
+# fc - symmetric omission
+# fi - arbitrary omission
+# fs - symmetric Byzantine
+# fa - arbitrary Byzantine
+
+immutable relation member_fc(node)
+immutable relation member_fi(node)
+immutable relation member_fs(node)
+immutable relation member_fa(node)
+
+################################################################################
+#
+# Intersection properties
+#
+################################################################################
+
+# B( ~fa & ~fc & ~fs & ~fi )
+axiom exists B:quorum_b. forall N:node. member_b(N, B) -> !member_fa(N) & !member_fc(N) & !member_fs(N) & !member_fi(N)
+
+# nonempty( A & ~fa & ~fs )
+axiom forall A_BP:quorum_a. exists N:node. member_a(N, A_BP) & !member_fa(N) & !member_fs(N)
+
+# A( B & ~fa & ~fi )
+axiom forall B_CF:quorum_b. exists A:quorum_a. forall N:node. member_a(N, A) -> member_b(N, B_CF) & !member_fa(N) & !member_fi(N)
+
+# fc,fi,fs,fa are disjoint
+axiom forall N:node. !(member_fc(N) & member_fi(N))
+axiom forall N:node. !(member_fc(N) & member_fs(N))
+axiom forall N:node. !(member_fc(N) & member_fa(N))
+axiom forall N:node. !(member_fi(N) & member_fs(N))
+axiom forall N:node. !(member_fi(N) & member_fa(N))
+axiom forall N:node. !(member_fs(N) & member_fa(N))
+
+################################################################################
+#
+# Protocol state
+#
+################################################################################
+
+# state of nodes
+immutable relation rcv_init(node)
+mutable relation accept(node)
+
+# state of the network
+mutable relation sent_msg(node, node) # (src, dst)
+mutable relation rcv_msg(node, node) # (src, dst)
+
+# projection of sent_msg
+mutable relation sent_msg_proj(node) # := exists D. sent_msg(S,D)
+
+init !accept(N)
+init !sent_msg(N1, N2)
+init !sent_msg_proj(N)
+init !rcv_msg(N1, N2)
+
+################################################################################
+#
+# Protocol transitions
+#
+################################################################################
+
+################################################################################
+# Correct nodes
+################################################################################
+
+transition receive_init(n:node)
+    modifies sent_msg, sent_msg_proj
+    & rcv_init(n)
+    & ( forall S, D. sent_msg(S, D) <-> (old(sent_msg(S, D)) | S = n) )
+    & ( forall S. sent_msg_proj(S) <-> (old(sent_msg_proj(S)) | S = n) )
+
+transition receive_msg(n:node, s:node)
+    modifies rcv_msg, accept, sent_msg, sent_msg_proj
+    & old(sent_msg(s, n))
+    & ( forall S, D. rcv_msg(S, D) <-> (old(rcv_msg(S, D)) | (S = s & D = n)) )
+    & ( if exists B. forall N. member_b(N,B) -> rcv_msg(N,n)
+        then (forall N. accept(N) <-> (old(accept(N)) | N = n))
+        else (forall N. accept(N) <->  old(accept(N)))
+      )
+    & ( if exists A. forall N. member_a(N,A) -> rcv_msg(N,n)
+        then & ( forall S, D. sent_msg(S, D) <-> (old(sent_msg(S, D)) | S = n) )
+             & ( forall S. sent_msg_proj(S) <-> (old(sent_msg_proj(S)) | S = n) )
+	else & ( forall S, D. sent_msg(S, D) <-> old(sent_msg(S, D)) )
+             & ( forall S. sent_msg_proj(S) <-> old(sent_msg_proj(S)) )
+      )
+
+################################################################################
+# fc - symmetric omission
+################################################################################
+
+# receive_init_c - not needed
+
+transition receive_msg_c(n:node, s:node)
+    modifies rcv_msg, accept, sent_msg, sent_msg_proj
+    & member_fc(n)
+    & old(sent_msg(s, n))
+    & ( forall S, D. rcv_msg(S, D) <-> (old(rcv_msg(S, D)) | (S = s & D = n)) )
+    & ( if exists B. forall N. member_b(N,B) -> rcv_msg(N,n)
+        then (forall N. accept(N) <-> (old(accept(N)) | N = n))
+        else (forall N. accept(N) <->  old(accept(N)))
+      )
+    & ( | ( & ( exists A. forall N. member_a(N,A) -> rcv_msg(N,n) )
+            & ( forall S, D. sent_msg(S, D) <-> (old(sent_msg(S, D)) | S = n) )
+            & ( forall S. sent_msg_proj(S) <-> (old(sent_msg_proj(S)) | S = n) )
+	  )
+	| ( & ( forall S, D. sent_msg(S, D) <-> old(sent_msg(S, D)) )
+            & ( forall S. sent_msg_proj(S) <-> old(sent_msg_proj(S)) )
+	  )
+      )
+
+################################################################################
+# fi - arbitrary omission
+################################################################################
+
+transition receive_init_i(n:node)
+    modifies sent_msg, sent_msg_proj
+    & member_fi(n)
+    & rcv_init(n)
+    & ( forall S, D. S != n -> (sent_msg(S, D) <-> old(sent_msg(S, D))) )
+    & ( forall D. old(sent_msg(n, D)) -> sent_msg(n, D) )
+    & ( forall S. S != n -> (sent_msg_proj(S) <-> old(sent_msg_proj(S))) )
+    & ( sent_msg_proj(n) <-> (exists D. sent_msg(n, D)) )
+    & ( old(sent_msg_proj(n)) -> sent_msg_proj(n) )
+
+transition receive_msg_i(n:node, s:node)
+    modifies rcv_msg, accept, sent_msg, sent_msg_proj
+    & member_fi(n)
+    & old(sent_msg(s, n))
+    & ( forall S, D. rcv_msg(S, D) <-> (old(rcv_msg(S, D)) | (S = s & D = n)) )
+    & ( if exists B. forall N. member_b(N,B) -> rcv_msg(N,n)
+        then (forall N. accept(N) <-> (old(accept(N)) | N = n))
+        else (forall N. accept(N) <->  old(accept(N)))
+      )
+    & ( if exists A. forall N. member_a(N,A) -> rcv_msg(N,n)
+        then & ( forall S, D. S != n -> (sent_msg(S, D) <-> old(sent_msg(S, D))) )
+             & ( forall D. old(sent_msg(n, D)) -> sent_msg(n, D) )
+             & ( forall S. S != n -> (sent_msg_proj(S) <-> old(sent_msg_proj(S))) )
+             & ( sent_msg_proj(n) <-> (exists D. sent_msg(n, D)) )
+	     & ( old(sent_msg_proj(n)) -> sent_msg_proj(n) )
+	else & ( forall S, D. sent_msg(S, D) <-> old(sent_msg(S, D)) )
+             & ( forall S. sent_msg_proj(S) <-> old(sent_msg_proj(S)) )
+      )
+
+################################################################################
+# fs - symmetric Byzantine
+################################################################################
+
+transition faulty_send_s(n:node)
+    modifies sent_msg, sent_msg_proj
+    & member_fs(n)
+    & ( forall S, D. sent_msg(S, D) <-> (old(sent_msg(S, D)) | S = n) )
+    & ( forall S. sent_msg_proj(S) <-> (old(sent_msg_proj(S)) | S = n) )
+
+transition faulty_state_sa(n:node)
+    modifies rcv_msg, accept
+    & ( member_fs(n) | member_fa(n) )
+    & ( forall S, D. D != n -> (rcv_msg(S, D) <-> old(rcv_msg(S, D))) )
+    & ( forall N. N != n -> (accept(N) <-> old(accept(N))) )
+
+################################################################################
+# fa - arbitrary Byzantine
+################################################################################
+
+transition faulty_send_a(n:node)
+    modifies sent_msg, sent_msg_proj
+    & member_fa(n)
+    & ( forall S, D. S != n -> (sent_msg(S, D) <-> old(sent_msg(S, D))) )
+    & ( forall D. old(sent_msg(n, D)) -> sent_msg(n, D) )
+    & ( forall S. S != n -> (sent_msg_proj(S) <-> old(sent_msg_proj(S))) )
+    & ( sent_msg_proj(n) <-> (exists D. sent_msg(n, D)) )
+    & ( old(sent_msg_proj(n)) -> sent_msg_proj(n) )
+
+
+################################################################################
+#
+# Safety property
+#
+################################################################################
+
+safety [unforgebility] (exists N. !member_fs(N) & !member_fa(N) & accept(N)) -> (exists M. !member_fs(M) & !member_fa(M) & rcv_init(M))
+
+################################################################################
+#
+# Inductive invariant
+#
+################################################################################
+
+invariant sent_msg_proj(N1) -> exists N2. sent_msg(N1,N2) # breaks decidability
+
+invariant sent_msg(N1,N2) -> sent_msg_proj(N1)
+invariant !member_fs(N2) & !member_fa(N2) & rcv_msg(N1,N2) -> sent_msg(N1,N2)
+invariant !member_fi(N1) & !member_fa(N1) & sent_msg_proj(N1) -> sent_msg(N1,N2) # symmetric where it should be
+invariant !member_fs(N1) & !member_fa(N1) & sent_msg(N1,N2) & !rcv_init(N1) -> exists A. forall M. member_a(M,A) -> sent_msg_proj(M)
+invariant !member_fs(N1) & !member_fa(N1) & accept(N1) -> exists B. forall M. member_b(M,B) -> sent_msg_proj(M)
+invariant (exists A. forall M. member_a(M,A) & !member_fs(M) & !member_fa(M) -> sent_msg_proj(M)) -> (exists N. !member_fs(N) & !member_fa(N) & rcv_init(N))
+
+################################################################################
+#
+# sanity checks using trace
+#
+################################################################################
+
+sat trace {
+    any transition
+    any transition
+    assert !member_fs(N) & !member_fa(N) & accept(N)
+}
+
+# TODO: add more

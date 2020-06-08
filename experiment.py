@@ -61,37 +61,38 @@ def main() -> None:
     logger = ResultsLogger(args.output)
     extra_args =  args.args if len(args.args) == 0 or args.args[0] != '--' else args.args[1:]
     descs = [
-        # work reliably
-        ('client_server_ae', False, True),
-        ('consensus_forall', True, False),
-        ('consensus_forall_without_decide', True, False),
-        ('firewall', False, True),
-        ('lockserv', True, False),
-        ('ring-not-dead', False, True),
-        ('ring', True, False),
-        ('sharded-kv-no-lost-keys', False, True),
-        ('sharded-kv', True, False),
-        ('toy_consensus_forall', True, False),
-        ('toy_consensus_epr', False, True),
-        
-        # don't work reliably
-        ('client_server_db_ae', False, True),
-        ('consensus_epr', False, True),
-        ('learning_switch', True, True),
-    ]
+        ("bosco_3t_safety", False),
+        ("client_server_ae", False),
+        ("client_server_db_ae", False),
+        ("consensus_epr", False),
+        ("consensus_forall", True),
+        ("consensus_wo_decide", True),
+        ("firewall", False),
+        ("hybrid_reliable_broadcast_cisa", False),
+        ("learning_switch", True),
+        ("lockserv", True),
+        ("paxos_epr", False),
+        ("raft", False),
+        ("ring_id_not_dead", False),
+        ("ring_id", True),
+        ("sharded_kv_no_lost_keys", False),
+        ("sharded_kv", True),
+        ("ticket", True),
+        ("toy_consensus_epr", False),
+        ("toy_consensus_forall", True)]
 
     with ThreadPoolExecutor(max_workers=args.cpus) as executor:
         for i in range(args.count):
             random.shuffle(descs)
-            for (name, is_universal, use_cvc4) in descs:
+            for (name, is_universal) in descs:
                 if args.single and name != args.single:
                     continue
-                a = (['--logic=universal'] if is_universal else []) + (['--cvc4'] if use_cvc4 else []) + extra_args + [f'examples/fol/{name}.pyv']
+                a = (['--logic=universal'] if is_universal else []) + (['--cvc4'] if not is_universal else []) + extra_args + [f'examples/fol/{name}.pyv']
                 r = {"name": name,
                      "index": i,
                      "timeout": args.timeout,
                      "log": f"{args.log_dir}/log_{name}_{i}.out",
-                     "args": ['python3.7', 'src/mypyvy.py', 'fol-ic3'] + a}
+                     "args": ['python3', 'src/mypyvy.py', 'fol-ic3'] + a}
             
                 executor.submit(run, r, logger)
     logger.close()

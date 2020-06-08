@@ -1,0 +1,57 @@
+sort node
+sort id
+
+immutable relation le(id, id) @no_minimize
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation btw(node, node, node) @no_minimize
+axiom btw(W, X, Y) & btw(W, Y, Z) -> btw(W, X, Z)
+axiom btw(W, X, Y) -> !btw(W, Y, X)
+axiom btw(W, X, Y) | btw(W, Y, X) | W = X | W = Y | X = Y
+axiom btw(X, Y, Z) -> btw(Y, Z, X)
+
+immutable function idn(node): id
+axiom idn(X) = idn(Y) -> X = Y  # the idn function is injective
+
+mutable relation leader(node)
+mutable relation pending(id, node)
+
+init !leader(N)
+init !pending(V, N)
+
+transition send(n: node, next: node)
+    modifies pending
+    & (forall Z. (Z != n & Z != next) -> btw(n, next, Z))
+    & (forall V, N. pending(V, N) <-> old(pending(V, N)) | (V = idn(n) & N = next))
+
+transition recv(v: id, n: node, next: node)
+    modifies pending, leader
+    & (forall Z. (Z != n & Z != next) -> btw(n, next, Z))
+    & old(pending(v, n))
+    & if v = idn(n)
+      then & (forall N. leader(N) <-> (old(leader(N)) | N = n))
+           & (forall V, N. # message may or may not be removed, nothing is sent
+                  !(V = v & N = n) -> (pending(V, N) <-> old(pending(V, N))))
+      else & (forall N. leader(N) <-> old(leader(N)))
+           & if le(idn(n), v)
+             then (forall V, N. # forward v to next, original message may or may not be removed
+	             !(V = v & N = n) -> (pending(V, N) <-> (old(pending(V, N)) | (V = v & N = next))))
+             else (forall V, N. # message may or may not be removed, nothing is sent
+                     !(V = v & N = n) -> (pending(V, N) <-> old(pending(V, N))))
+
+safety [leader_unique] leader(X) & leader(Y) -> X = Y
+invariant [leader_max] leader(L) -> le(idn(N), idn(L))
+invariant [self_pending_max] pending(idn(L), L) -> le(idn(N), idn(L))
+invariant [no_bypass] pending(idn(S), D) & btw(S, N, D) -> le(idn(N), idn(S))
+
+sat trace {
+    send
+    recv
+    recv
+    recv
+    assert exists N. leader(N)
+    assert exists N1,N2,N3:node. N1 != N2 & N1 != N3 & N2 != N3
+}
