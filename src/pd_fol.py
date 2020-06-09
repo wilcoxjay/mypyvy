@@ -57,21 +57,6 @@ def check_two_state_implication_generalized(
             return (z3.sat, s.model(minimize=minimize))
         return (res, None)
 
-def cover(s: Sequence[Set[int]]) -> Sequence[int]:
-    if len(s) == 0: return []
-    m = len(set(y for ss in s for y in ss))
-    covered: Set[int] = set()
-    sets = list(s)
-    indices = list(range(len(s)))
-    covering = []
-    while len(covered) != m:
-        best = max(range(len(sets)), key = lambda t: len(sets[t].difference(covered)))
-        covering.append(indices[best])
-        covered.update(sets[best])
-        del sets[best]
-        del indices[best]
-    return covering
-
 class BlockTask(object):
     def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask'], heuristic: bool = False):
         self.is_must = is_must
@@ -368,18 +353,6 @@ def fol_ic3(solver: Solver) -> None:
 
         abs_reach = abstractly_reachable()
 
-        # oracle = next(i.expr for i in prog.invs() if i.name == 'hard')
-        # oracle_solves = all(eval_predicate(states[p], oracle) for p in abs_reach)\
-        #     and all(not eval_predicate(states[n], oracle) for n in [t.state])\
-        #     and all((not eval_predicate(states[a], oracle) or eval_predicate(states[b], oracle)) for (a,b) in t.imp_constraints)
-        # print(f"Oracle: {oracle}, works: {oracle_solves}")
-        # if not oracle_solves or K_bound < 3 or True:
-        #     print(f"Separating in inductive_generalize |pos|={len(abs_reach)}, |imp|={len(t.imp_constraints)}")
-        #     p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
-        # else:
-        #     print(f"Using oracle predicate")
-        #     p = oracle
-
         p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
         if p is None:
             t.is_unsep = True
@@ -431,11 +404,7 @@ def fol_ic3(solver: Solver) -> None:
             tr, trans = res
             s_i, s_j = add_state((tr,0)), add_state((tr,1))
             add_transition(s_i, s_j)
-            # print(f"constriants = {len(t.imp_constraints)}")
             t.imp_constraints.append((s_i, s_j))
-            # print_constraint_matrix(t)
-            # simplify_constraints(t, all_transitions, set(abs_reach))
-            # print(f"constriants = {len(t.imp_constraints)}")
             return
         
         print_learn_predicate(p)
@@ -443,101 +412,6 @@ def fol_ic3(solver: Solver) -> None:
         push()
         return
 
-    # def imp_constraints_covering(t:BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
-    #     # Find a set cover of implication constraints that can erase 
-    #     possiblities = [set(i for i,p in enumerate(t.prior_predicates) if task_prior_eval(t, i, a) and not task_prior_eval(t, i, b))
-    #                     for tr_ind, (a,b) in enumerate(all_transitions)]
-    #     possiblities.append(set(i for i,p in enumerate(t.prior_predicates) if any(not task_prior_eval(t, i, a) for a in all_reachable)))
-    #     covering = cover(possiblities)
-    #     t.imp_constraints = [all_transitions[i] for i in covering if i < len(all_transitions)]
-
-    # def simplify_constraints(t: BlockTask, all_transitions: List[Tuple[int, int]], all_reachable: Set[int]) -> None:
-    #     #imp_constraints_covering(t, all_transitions, all_reachable)
-    #     def sortfunc(transition: Tuple[int, int]) -> Tuple[int, int]:
-    #         return (sum(1 if not task_prior_eval(t, i, transition[0]) else 0 for i in range(len(t.prior_predicates))),
-    #                 sum(1 if not task_prior_eval(t, i, transition[1]) else 0 for i in range(len(t.prior_predicates))))
-    #     B = 1 # 1 + math.floor(len(t.imp_constraints) / 15)
-    #     if len(t.prior_predicates) >= 10 and len(t.imp_constraints) > 5 and t.heuristic_child_count < B:
-    #         trs = list(sorted(filter(lambda tr: tr[0] not in all_reachable and not tasks.state_has_task(tr[0]), t.imp_constraints), key = sortfunc, reverse=True))
-    #         if len(trs) > 0 and sortfunc(trs[0])[0] > 0:
-    #             tasks.add(BlockTask(False, trs[0][0], t.frame-1, t, heuristic=True))
-    #             print(f"Generating heuristic may-block constraint for {trs[0][0]} in frame {t.frame-1}")
-    #     if t.generalize_bound < 0:
-    #         t.generalize_bound = 1000000
-    #     if len(t.prior_predicates) >= t.generalize_bound:
-    #         t.generalize_bound = int(1 + t.generalize_bound * 2.0)
-    #         print(f"Old length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
-    #         force_generalize(t)
-    #         # imp_constraints_covering(t, all_transitions, all_reachable)
-    #         print(f"New length of imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
-    #         imp_constraints_covering(t, list(frame_transitions_indices(t.frame-1)), all_reachable)
-    #         print(f"After min imp_constraints is {len(t.imp_constraints)}, {t.imp_constraints}")
-
-    # def force_generalize(t: BlockTask) -> None:
-    #     print("Force generalizing")
-    #     timer = separators.timer.UnlimitedTimer()
-    #     with timer:
-    #         not_reachable_preds = set(i for i,p in enumerate(t.prior_predicates) if all(task_prior_eval(t, i, a) for a in abstractly_reachable()))
-    #         remaining_preds = set(not_reachable_preds)
-    #         more = []
-    #         while len(remaining_preds) > 0:
-    #             tr, eliminated = max(((tr, set(i for i in remaining_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1]))) for tr in t.imp_constraints), key = lambda x: len(x[1]))
-    #             initial_eliminated = len(eliminated)
-    #             remaining_preds.difference_update(eliminated)
-    #             for pi in remaining_preds:
-    #                 if pi in eliminated: continue
-    #                 ps = [t.prior_predicates[ei] for ei in eliminated] + [t.prior_predicates[pi]]
-    #                 new_tr = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1) + ps, Or(*ps), minimize=False, timeout=10000)
-    #                 if new_tr is not None:
-    #                     eliminated.add(pi)
-    #                     s_i, s_j = add_state((new_tr,0)), add_state((new_tr,1))
-    #                     add_transition(s_i, s_j)
-    #                     tr = (s_i, s_j)
-    #                     # add other predicates that are also blocked by this edge
-    #                     for pj in remaining_preds:
-    #                         if task_prior_eval(t, pj, s_i) and not task_prior_eval(t, pj, s_j):
-    #                             eliminated.add(pj)
-    #             more.append(tr)
-    #             remaining_preds.difference_update(eliminated)
-    #             true_eliminated = len(set(i for i in not_reachable_preds if task_prior_eval(t, i, tr[0]) and not task_prior_eval(t, i, tr[1])))
-    #             print(f"Found new edge eliminating {len(eliminated)}/{true_eliminated} predicates out of {initial_eliminated}")
-    #         t.imp_constraints.extend(more)
-        
-    #     print(f"Force generalized in {timer.elapsed():0.2f} sec")
-        
-    # def task_prior_eval(t: BlockTask, ind: int, state: int) -> bool:
-    #     """ Returns whether states[state] satisfies t.prior_predicates[ind], and caches the result"""
-    #     (cache_true, cache_false) = t.prior_eval_cache[ind]
-    #     if state in cache_true:
-    #         return True
-    #     if state in cache_false:
-    #         return False
-    #     value = eval_predicate(states[state], t.prior_predicates[ind])
-    #     if value:
-    #         cache_true.add(state)
-    #     else:
-    #         cache_false.add(state)
-    #     return value
-
-    # def print_constraint_matrix(t: BlockTask) -> None:
-    #     pass
-    #     for (i,j) in t.imp_constraints:
-    #         if all(eval_predicate(states[i], p.expr) for p in prog.invs()):
-    #             print("I", end='')
-    #         else:
-    #             print(".", end='')
-    #     print("")
-    #     print("--- begin matrix ---")
-    #     for ind, p in enumerate(t.prior_predicates):
-    #         l = []
-    #         for (i,j) in t.imp_constraints:
-    #             a = task_prior_eval(t, ind, i)
-    #             if a and not task_prior_eval(t, ind, j):
-    #                 l.append('#')
-    #             else:
-    #                 l.append('+' if a else '-')
-    #         print(''.join(l))
-    #     print("--- end matrix ---")
     def push() -> None:
         made_changes = False
         for frame in range(frame_n):
