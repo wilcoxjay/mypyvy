@@ -1,5 +1,5 @@
 
-import subprocess, os, signal, sys, json, threading, time, argparse, random
+import subprocess, os, signal, sys, json, threading, time, argparse, random, os.path
 from concurrent.futures import ThreadPoolExecutor
 from typing import *
 
@@ -91,7 +91,7 @@ def main() -> None:
                 r = {"name": name,
                      "index": i,
                      "timeout": args.timeout,
-                     "log": f"{args.log_dir}/log_{name}_{i}.out",
+                     "log": os.path.join(args.log_dir, f"log_{name}_{i}.out"),
                      "args": ['python3', 'src/mypyvy.py', 'fol-ic3'] + a}
             
                 executor.submit(run, r, logger)
