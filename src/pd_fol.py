@@ -392,6 +392,10 @@ def fol_ic3(solver: Solver) -> None:
         state = check_initial(solver, p)
         if state is not None:
             print("Adding new initial state")
+            general = generalize_initial(solver, (state, 0))
+            print("Initial generalized model:")
+            print(general)
+
             add_initial((state, 0))
             return
         # F_i-1 ^ p => wp(p)?
@@ -402,6 +406,11 @@ def fol_ic3(solver: Solver) -> None:
         if res is not None:
             print("Adding new edge")
             tr, trans = res
+
+            two_state_model = generalize_cti(solver, trans, tr, frame_predicates(t.frame-1))
+            print("CTI generalized model:")
+            print(two_state_model)
+
             s_i, s_j = add_state((tr,0)), add_state((tr,1))
             add_transition(s_i, s_j)
             t.imp_constraints.append((s_i, s_j))
