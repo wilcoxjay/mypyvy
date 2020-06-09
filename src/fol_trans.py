@@ -125,6 +125,8 @@ def predicate_to_formula(p: Expr, two_state:bool = False) -> separators.logic.Fo
             return L.Relation(p.callee if old or immutable else p.callee+'\'', [p2t(a, old) for a in p.args])
         elif isinstance(p, QuantifierExpr):
             return q2f(p.binder, p.quant == 'FORALL', p2f(p.body, old))                    
+        elif isinstance(p, IfThenElse):
+            return L.And([L.Implies(p2f(p.branch, old), p2f(p.then, old)), L.Implies(L.Not(p2f(p.branch, old)), p2f(p.els, old))])
         else:
             assert False
     def p2t(p: Expr, old: bool) -> L.Term:
