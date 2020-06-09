@@ -448,7 +448,7 @@ def fol_ic3(solver: Solver) -> None:
     print(f"[IC3] Inferring with K_bound = {K_bound} up to {K_limit} ({'dynamic' if utils.args.dynamic else 'static'}), with max clauses={utils.args.max_clauses}, depth={utils.args.max_depth}")
     start_time = time.time()
     while not system_unsafe:
-        print(f"[time] Elapsed: {time.time()-start_time}")
+        print(f"[time] Elapsed: {time.time()-start_time:0.3f}")
         # Try to block things, if there are things to block
         if process_task():
             continue
@@ -719,8 +719,8 @@ def generalize_cti(solver: Solver, trans: DefinitionDecl, tr: Trace, frame: Sequ
     axioms = tuple(init.expr for init in prog.axioms())
     derived_axioms = tuple(r.derived_axiom for r in prog.derived_relations() if r.derived_axiom is not None)
     e = separators.logic.And([*(predicate_to_formula(a) for a in axioms),
-                              *(predicate_to_formula(a) for a in derived_axioms),
-                              *(predicate_to_formula(a, two_state=True) for a in derived_axioms),
+                              *(predicate_to_formula(a) for a in derived_axioms), # ensure axioms for pre-state
+                              *(predicate_to_formula(a, two_state=True) for a in derived_axioms), # ensure axioms for post-state
                               transition_to_formula(trans),
                               *(predicate_to_formula(f) for f in frame)])
     return separators.learn.generalize_model(M, e, two_state=True, label='CTI')
