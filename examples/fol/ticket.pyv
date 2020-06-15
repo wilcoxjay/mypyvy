@@ -30,7 +30,8 @@ transition step12(t:thread)
     modifies pc1, pc2, m, next_ticket
     & old(pc1(t))
     & (forall T, K. m(T, K) <-> if T = t then K = old(next_ticket) else old(m(T, K)))
-    & succ(old(next_ticket), next_ticket)
+    #& succ(old(next_ticket), next_ticket)
+    & (!le(next_ticket, old(next_ticket)) & forall Z:ticket. !le(Z, old(next_ticket)) -> le(next_ticket, Z))
     & (forall T. pc1(T) <-> (old(pc1(T)) & T != t))
     & (forall T. pc2(T) <-> (old(pc2(T)) | T = t))
 
@@ -45,7 +46,8 @@ transition step23(t:thread, k:ticket)
 transition step31(t:thread)
     modifies pc3, pc1, service
     & old(pc3(t))
-    & succ(old(service), service)
+    #& succ(old(service), service)
+    & (!le(service, old(service)) & forall Z:ticket. !le(Z, old(service)) -> le(service, Z))
     & (forall T. pc3(T) <-> (old(pc3(T)) & T != t))
     & (forall T. pc1(T) <-> (old(pc1(T)) | T = t))
 
