@@ -401,7 +401,7 @@ def fol_ic3(solver: Solver) -> None:
         # F_i-1 ^ p => wp(p)?
         
         if t.generalizer is None:
-            t.generalizer = LatticeEdgeGeneralizer()
+            t.generalizer = TrivialEdgeGeneralizer()
         res = t.generalizer.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
         if res is not None:
             print("Adding new edge")
@@ -732,6 +732,10 @@ def generalize_cti(solver: Solver, trans: DefinitionDecl, tr: Trace, frame: Sequ
                               *(predicate_to_formula(a, two_state=True) for a in derived_axioms), # ensure axioms for post-state
                               transition_to_formula(trans),
                               *(predicate_to_formula(f) for f in frame)])
+    # print(trans)
+    # for c in transition_to_formula(trans).c:
+    #     print(c, '=', separators.check.check(c, M))
+    # assert separators.check.check(transition_to_formula(trans), M)
     return separators.learn.generalize_model(M, e, two_state=True, label='CTI')
 
 def fol_ice(solver: Solver) -> None:
