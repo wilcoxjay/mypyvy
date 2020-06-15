@@ -117,7 +117,7 @@ def predicate_to_formula(p: Expr, two_state:bool = False) -> separators.logic.Fo
             else:
                 assert False
         elif isinstance(p, AppExpr):
-            #assert(p.callee in self.sig.relations)
+            assert p.callee in [r.name for r in syntax.the_program.relations()] and "Definitions not supported"
             immutable = False
             for r in syntax.the_program.relations():
                 if r.name == p.callee and not r.mutable:
@@ -127,11 +127,19 @@ def predicate_to_formula(p: Expr, two_state:bool = False) -> separators.logic.Fo
             return q2f(p.binder, p.quant == 'FORALL', p2f(p.body, old))                    
         elif isinstance(p, IfThenElse):
             return L.And([L.Implies(p2f(p.branch, old), p2f(p.then, old)), L.Implies(L.Not(p2f(p.branch, old)), p2f(p.els, old))])
+        elif isinstance(p, Id):
+            assert p.name in [r.name for r in syntax.the_program.relations()]
+            return p2f(AppExpr(None, p.name, []), old)
         else:
             assert False
     def p2t(p: Expr, old: bool) -> L.Term:
         if isinstance(p, Id):
-            return L.Var(p.name)
+            # in this case immutable is also true for quantified variables
+            immutable = True
+            for c in syntax.the_program.constants():
+                if c.name == p.name and c.mutable:
+                    immutable = False
+            return L.Var(p.name if old or immutable else p.name+'\'')
         elif isinstance(p, AppExpr):
             #assert p.callee in self.sig.functions
             immutable = False
@@ -162,7 +170,7 @@ def frame_to_formula(mods: Iterable[ModifiesClause]) -> separators.logic.Formula
             bvars = [f"__arg_{i}" for i in range(len(sorts))]
             r_a = L.Relation(d.name, [L.Var(v) for v in bvars])
             r_b = L.Relation(d.name+'\'', [L.Var(v) for v in bvars])
-            body: L.Formula = L.And([L.Or([L.Not(r_a), r_b]), L.Or([L.Not(r_b), r_a])])
+            body: L.Formula = L.Iff(r_a, r_b) 
             for bv,sort in zip(bvars, sorts):
                 body = L.Forall(bv, sort, body)
             frame.append(body)
@@ -194,7 +202,7 @@ def transition_to_formula(trans: DefinitionDecl) -> separators.logic.Formula:
     
     body = predicate_to_formula(trans.expr, two_state=True)
     frame = frame_to_formula(trans.mods)
-    return q2f(trans.binder, False, L.And([body, frame]))
+    return L.And([q2f(trans.binder, False, body), frame])
 
 def formula_to_predicate(f: separators.logic.Formula) -> Expr:
     def term_to_expr(t: separators.logic.Term) -> Expr:
@@ -280,9 +288,7 @@ class FOLSeparator(object):
         self.states = states
         self.ids: Dict[int, int] = {}
         self.sig = prog_to_sig(prog, two_state=False)
-        S = separators.separate.HybridSeparator if utils.args.separator == 'hybrid' else\
-            separators.separate.GeneralizedSeparator if utils.args.separator == 'generalized' else\
-            separators.separate.SeparatorNaive
+        S = separators.separate.HybridSeparator
         self.separator = S(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
 
     def _state_id(self, i: int) -> int:
