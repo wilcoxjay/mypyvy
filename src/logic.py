@@ -65,7 +65,8 @@ def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Span], str]],
         s: Solver,
         keys: Tuple[str, ...],
-        minimize: Optional[bool] = None
+        minimize: Optional[bool] = None,
+        verbose: bool = True
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
@@ -73,31 +74,35 @@ def check_unsat(
     #     logger.debug(str(s.assertions()))
 
     if (m := check_solver(s, keys, minimize=minimize)) is not None:
-        utils.logger.always_print('')
-        if utils.args.print_counterexample:
-            utils.logger.always_print(str(m))
+        if verbose:
+            utils.logger.always_print('')
+            if utils.args.print_counterexample:
+                utils.logger.always_print(str(m))
 
-        for span, msg in errmsgs:
-            utils.print_error(span, msg)
+            for span, msg in errmsgs:
+                utils.print_error(span, msg)
 
         return m
     else:
-        if not utils.args.query_time:
-            time_msg = ''
-        else:
-            time_msg = ' (%s)' % (datetime.now() - start, )
-        utils.logger.always_print('ok.%s' % (time_msg,))
+        if verbose:
+            if not utils.args.query_time:
+                time_msg = ''
+            else:
+                time_msg = ' (%s)' % (datetime.now() - start, )
+            utils.logger.always_print('ok.%s' % (time_msg,))
 
-        sys.stdout.flush()
+            sys.stdout.flush()
         return None
 
 
 def check_init(
         s: Solver,
         safety_only: bool = False,
-        minimize: Optional[bool] = None
+        minimize: Optional[bool] = None,
+        verbose: bool = True
 ) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
-    utils.logger.always_print('checking init:')
+    if verbose:
+        utils.logger.always_print('checking init:')
 
     prog = syntax.the_program
     t = s.get_translator((KEY_ONE,))
@@ -116,11 +121,12 @@ def check_init(
                     msg = ' on line %d' % inv.span[0].lineno
                 else:
                     msg = ''
-                utils.logger.always_print('  implies invariant%s... ' % msg, end='')
-                sys.stdout.flush()
+                if verbose:
+                    utils.logger.always_print('  implies invariant%s... ' % msg, end='')
+                    sys.stdout.flush()
 
                 res = check_unsat([(inv.span, 'invariant%s may not hold in initial state' % msg)],
-                                  s, (KEY_ONE,), minimize=minimize)
+                                  s, (KEY_ONE,), minimize=minimize, verbose=verbose)
                 if res is not None:
                     if utils.args.smoke_test_solver:
                         state = State(res, 0)
@@ -142,7 +148,7 @@ def check_init(
                     return inv, res
     return None
 
-def check_transitions(s: Solver, minimize: Optional[bool] = None) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
+def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool = True) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
@@ -155,7 +161,8 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None) -> Optional[Tu
                trans.name not in utils.args.check_transition:
                 continue
 
-            utils.logger.always_print('checking transation %s:' % (trans.name,))
+            if verbose:
+                utils.logger.always_print('checking transation %s:' % (trans.name,))
 
             with s.new_frame():
                 s.add(t.translate_transition(trans))
@@ -173,14 +180,15 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None) -> Optional[Tu
                             msg = ' on line %d' % inv.span[0].lineno
                         else:
                             msg = ''
-                        utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
-                        sys.stdout.flush()
+                        if verbose:
+                            utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
+                            sys.stdout.flush()
 
                         res = check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s'
                                             % (msg, trans.name)),
                                            (trans.span, 'this transition may not preserve invariant%s'
                                             % (msg,))],
-                                          s, (KEY_OLD, KEY_NEW), minimize=minimize)
+                                          s, (KEY_OLD, KEY_NEW), minimize=minimize, verbose=verbose)
                         if res is not None:
                             if utils.args.smoke_test_solver:
                                 pre_state = res.as_state(i=0)
