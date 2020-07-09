@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Union, Sequence
+from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Union, Sequence, Set
 import z3
 import resource
 
@@ -418,6 +418,42 @@ def trace(s: Solver) -> None:
                               (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
 
 
+def check_one_bounded_width_invariant(s: Solver) -> None:
+    prog = syntax.the_program
+    other_decls = [d for d in prog.decls if not isinstance(d, InvariantDecl)]
+    invs = list(prog.invs())
+    S: Set[InvariantDecl] = set()
+
+    def check() -> bool:
+        prog.decls = other_decls + list(S)
+        if logic.check_init(s, minimize=False, verbose=False) is not None:
+            return False
+        if logic.check_transitions(s, minimize=False, verbose=False) is not None:
+            return False
+
+        return True
+
+    while len(S) != len(invs):
+        did_something = False
+        for inv in invs:
+            if inv in S:
+                continue
+            S.add(inv)
+            if check():
+                did_something = True
+            else:
+                S.remove(inv)
+        if not did_something:
+            break
+    result = len(S) == len(invs)
+    if result:
+        print('invariant is 1-provable')
+    else:
+        print('invariant is not 1-provable, but here is the maximal subset that is')
+        for inv in S:
+            print(inv)
+
+
 def relax(s: Solver) -> None:
     print(relaxed_traces.relaxed_program(syntax.the_program))
 
@@ -474,6 +510,13 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     relax_subparser.set_defaults(main=relax)
     all_subparsers.append(relax_subparser)
 
+    check_one_bounded_width_invariant_parser = subparsers.add_parser(
+        'check-one-bounded-width-invariant',
+        help='popl'
+    )
+    check_one_bounded_width_invariant_parser.set_defaults(main=check_one_bounded_width_invariant)
+    all_subparsers.append(check_one_bounded_width_invariant_parser)
+
     all_subparsers += pd.add_argparsers(subparsers)
 
     all_subparsers += rethink.add_argparsers(subparsers)
@@ -529,6 +572,10 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--cvc4', action='store_true',
                        help='use CVC4 as the backend solver. this is not very well supported.')
 
+        s.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
+                       help='(for debugging mypyvy itself) double check countermodels by evaluation')
+
+
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
                        default=(s is updr_subparser),
@@ -547,8 +594,6 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                                   help="when verifying inductiveness, check only these invariants")
     verify_subparser.add_argument('--json', action='store_true',
                                   help="output machine-parseable verification results in JSON format")
-    verify_subparser.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
-                                  help='(for debugging mypyvy itself) double check countermodels by evaluation')
 
     updr_subparser.add_argument('--checkpoint-in',
                                 help='start from internal state as stored in given file')
@@ -559,7 +604,7 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
                                help='number of steps to check')
     bmc_subparser.add_argument('--relax', action=utils.YesNoAction, default=False,
-                                help='relaxed semantics (domain can decrease)')
+                               help='relaxed semantics (domain can decrease)')
 
     argparser.add_argument('filename')
 
