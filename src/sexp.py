@@ -4,7 +4,7 @@ import dataclasses
 from dataclasses import dataclass
 import string
 
-from typing import Iterable, Iterator, List, Union, overload
+from typing import Iterable, Iterator, List, Mapping, Optional, Set, Union, overload
 
 @dataclass
 class SList(object):
@@ -41,6 +41,34 @@ class Comment(object):
         return f';{self.contents}\n'
 
 Sexp = Union[Comment, str, SList]
+
+# note: does not understand variable binding!
+# be careful when substituting into expressions with bound variables.
+def subst(assignment: Mapping[str, Sexp], e: Sexp) -> Sexp:
+    if isinstance(e, Comment):
+        return e
+    elif isinstance(e, str):
+        if e in assignment:
+            return assignment[e]
+        else:
+            return e
+    else:
+        return SList([subst(assignment, x) for x in e.contents])
+
+
+def symbols_used(e: Sexp, into: Optional[Set[str]] = None) -> Set[str]:
+    if into is None:
+        into = set()
+    if isinstance(e, Comment):
+        return into
+    elif isinstance(e, str):
+        into.add(e)
+        return into
+    else:
+        for x in e.contents:
+            symbols_used(x, into=into)
+        return into
+
 
 @dataclass
 class EOF(object):
