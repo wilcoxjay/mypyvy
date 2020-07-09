@@ -64,14 +64,15 @@ def check_solver(s: Solver, keys: Tuple[str, ...], minimize: Optional[bool] = No
 def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Span], str]],
         s: Solver,
-        keys: Tuple[str, ...]
+        keys: Tuple[str, ...],
+        minimize: Optional[bool] = None
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
     #     logger.debug('assertions')
     #     logger.debug(str(s.assertions()))
 
-    if (m := check_solver(s, keys)) is not None:
+    if (m := check_solver(s, keys, minimize=minimize)) is not None:
         utils.logger.always_print('')
         if utils.args.print_counterexample:
             utils.logger.always_print(str(m))
@@ -91,7 +92,11 @@ def check_unsat(
         return None
 
 
-def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
+def check_init(
+        s: Solver,
+        safety_only: bool = False,
+        minimize: Optional[bool] = None
+) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
     utils.logger.always_print('checking init:')
 
     prog = syntax.the_program
@@ -115,7 +120,7 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                 sys.stdout.flush()
 
                 res = check_unsat([(inv.span, 'invariant%s may not hold in initial state' % msg)],
-                                  s, (KEY_ONE,))
+                                  s, (KEY_ONE,), minimize=minimize)
                 if res is not None:
                     if utils.args.smoke_test_solver:
                         state = State(res, 0)
@@ -137,7 +142,7 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                     return inv, res
     return None
 
-def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
+def check_transitions(s: Solver, minimize: Optional[bool] = None) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
     t = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
@@ -175,7 +180,7 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                                             % (msg, trans.name)),
                                            (trans.span, 'this transition may not preserve invariant%s'
                                             % (msg,))],
-                                          s, (KEY_OLD, KEY_NEW))
+                                          s, (KEY_OLD, KEY_NEW), minimize=minimize)
                         if res is not None:
                             if utils.args.smoke_test_solver:
                                 pre_state = res.as_state(i=0)
