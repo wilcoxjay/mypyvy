@@ -157,7 +157,8 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool 
             s.add(t.translate_expr(inv.expr))
 
         for trans in prog.transitions():
-            if utils.args.check_transition is not None and \
+            if 'check_transition' in utils.args and \
+               utils.args.check_transition is not None and \
                trans.name not in utils.args.check_transition:
                 continue
 
@@ -167,7 +168,8 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool 
             with s.new_frame():
                 s.add(t.translate_transition(trans))
                 for inv in prog.invs():
-                    if utils.args.check_invariant is not None and \
+                    if 'check_invariant' in utils.args and \
+                       utils.args.check_invariant is not None and \
                        inv.name not in utils.args.check_invariant:
                         continue
 
