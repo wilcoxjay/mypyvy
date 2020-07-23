@@ -2,6 +2,39 @@
 
 A language for symbolic transition systems, inspired by Ivy.
 
+**This is the pinned branch for the [artifact](https://doi.org/10.1145/3395650) of our [PLDI20 paper](https://dl.acm.org/doi/abs/10.1145/3385412.3386018). It will not be kept up to date with development of mypyvy.**
+
+## Inferring invariants with fol-ic3
+
+This repository depends on the separator implementation ([folseparators](https://github.com/jrkoenig/folseparators/tree/pldi20-artifact)). The `pldi20-artifact` branch of that repository should be checked out in a sibling directory to mypyvy (i.e. `path/to/mypyvy` and `path/to/folseparators`). Then the symbolic link in `src/` will point to the correct package. (Alternatively, the [artifact](https://doi.org/10.1145/3395650) contains all required dependencies and folder structure.) mypyvy will gain a new command, `fol-ic3`.
+
+    ~/mypyvy $ python3 src/mypyvy.py fol-ic3 --logic=universal examples/fol/lockserv.pyv
+    ...
+    check_two_state_implication_all_transitions: checking recv_grant... unsat
+    check_two_state_implication_all_transitions: checking unlock... unsat
+    check_two_state_implication_all_transitions: checking recv_unlock... unsat
+    [IC3] Found inductive invariant in frame 10!
+    [IC3] invariant: forall N1:node, N2:node. !holds_lock(N2) | !holds_lock(N1) | N1 = N2
+    [IC3] invariant: forall N1:node, N2:node. !grant_msg(N2) | !grant_msg(N1) | N1 = N2
+    [IC3] invariant: forall N1:node, N2:node. !grant_msg(N1) | !holds_lock(N2)
+    [IC3] invariant: forall N:node. !grant_msg(N) | !server_holds_lock
+    [IC3] invariant: forall N:node. !holds_lock(N) | !server_holds_lock
+    [IC3] invariant: forall N1:node, N2:node. !unlock_msg(N1) | !holds_lock(N2)
+    [IC3] invariant: forall N1:node, N2:node. !grant_msg(N1) | !unlock_msg(N2)
+    [IC3] invariant: forall N:node. !unlock_msg(N) | !server_holds_lock
+    [IC3] invariant: forall N1:node, N2:node. !unlock_msg(N2) | !unlock_msg(N1) | N1 = N2
+    [IC3] time: 7.742 sec
+    [IC3] predicates considered: 14
+    [IC3] states considered: 61
+    [IC3] frames opened: 10
+    ~/mypyvy $
+
+The options that are most important for fol-ic3 are:
+- `--logic=L` set to either `fol`, for quantifier alternation, or `universal` for universal only. (`epr` and `existential` are not well tested.)
+- `--cvc4` to use CVC4 for counterexample to induction (CTI) generation. This usually works better for formulas with alternations.
+
+The remainder of this document is from upstream mypyvy and describes the system in general.
+
 ## Using the VM
 
 Download from https://tinyurl.com/mypyvy-vm and import into Virtual Box.
