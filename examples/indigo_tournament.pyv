@@ -40,15 +40,15 @@ transition removeTournament(t: tournament)
 
 transition enrollTournament(p: player, t: tournament)
   modifies enrolled, participant, nrPlayers, budget
-  & budget(P) > 0  # pre
-  & player(P)  # pre
-  & tournament(T)  # pre
-  & nrPlayers(T) + 1 < capacity  # pre
+  & budget(p) > 0  # pre
+  & player(p)  # pre
+  & tournament(t)  # pre
+  & nrPlayers(t) + 1 < capacity  # pre
   & !active(t)  # pre
   & (forall P, T. new(enrolled(P, T)) <-> enrolled(P, T) | P = p & T = t)
   & (forall P, T. new(participant(P, T)) <-> participant(P, T) & !(P = p & T = t))
-  & (forall T. new(nrPlayers(T)) = nrPlayers(T) + 1)
-  & (forall P. new(budget(P)) = budget(P) - 1)
+  & (forall T. new(nrPlayers(T)) = if T = t then nrPlayers(t) + 1 else nrPlayers(T))
+  & (forall P. new(budget(P)) = if P = p then budget(p) - 1 else budget(P))
 
 transition beginTournament(t: tournament)
   modifies active, participant
