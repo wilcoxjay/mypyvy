@@ -1,6 +1,13 @@
-#!/usr/bin/env python3.8
+#!/Library/Frameworks/Python.framework/Versions/3.8/bin/python3.8
 
 from __future__ import annotations
+import os
+# print(os.environ)
+import sys
+#print(sys.path)
+open('test.py','a+').write(f'path_{os.getpid()} = {repr(sys.path)}\n\n')
+#assert False
+
 import argparse
 from datetime import datetime
 import json
@@ -22,6 +29,7 @@ from trace import bmc_trace
 
 import pd
 import rethink
+import kod
 
 T = TypeVar('T')
 
@@ -475,6 +483,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     all_subparsers.append(relax_subparser)
 
     all_subparsers += pd.add_argparsers(subparsers)
+
+    all_subparsers += kod.add_argparsers(subparsers)
 
     all_subparsers += rethink.add_argparsers(subparsers)
 
