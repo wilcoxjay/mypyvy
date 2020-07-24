@@ -535,9 +535,10 @@ def span_endlexpos(x: Union[Span, HasSpan]) -> Optional[int]:
     return s[1].lexpos + len(s[1].value)
 
 class FaithfulPrinter(object):
-    def __init__(self, prog: Program, ignore_old: bool = False) -> None:
+    def __init__(self, prog: Program, ignore_old: bool = False, skip_invariants: bool = False) -> None:
         self.prog = prog
         self.ignore_old = ignore_old
+        self.skip_invariants = skip_invariants
         self.pos = 0
         self.buf: List[str] = []
 
@@ -583,9 +584,17 @@ class FaithfulPrinter(object):
 
     def process(self) -> str:
         assert self.prog.input is not None
+        skip = False
         for d in self.prog.decls:
-            self.move_to_start(d)
-            self.process_decl(d)
+            if skip:
+                self.skip_to_start(d)
+                skip = False
+            else:
+                self.move_to_start(d)
+            if self.skip_invariants and isinstance(d, InvariantDecl):
+                skip = True
+            else:
+                self.process_decl(d)
 
         self.move_to(len(self.prog.input))
 
@@ -659,8 +668,8 @@ class FaithfulPrinter(object):
 #
 # If ignore_old is True, then do not print any old() expressions. This is useful
 # in conjunction with strip_old=False in translate_old_to_new_prog.
-def faithful_print_prog(prog: Program, ignore_old: bool = False) -> str:
-    return FaithfulPrinter(prog, ignore_old).process()
+def faithful_print_prog(prog: Program, ignore_old: bool = False, skip_invariants: bool = False) -> str:
+    return FaithfulPrinter(prog, ignore_old, skip_invariants).process()
 
 @functools.total_ordering
 class Expr(Denotable):

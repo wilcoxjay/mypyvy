@@ -422,10 +422,10 @@ def check_one_bounded_width_invariant(s: Solver) -> None:
     prog = syntax.the_program
     other_decls = [d for d in prog.decls if not isinstance(d, InvariantDecl)]
     invs = list(prog.invs())
-    S: Set[InvariantDecl] = set()
+    R: Set[InvariantDecl] = set()
 
     def check() -> bool:
-        prog.decls = other_decls + list(S)
+        prog.decls = other_decls + list(R)
         if logic.check_init(s, minimize=False, verbose=False) is not None:
             return False
         if logic.check_transitions(s, minimize=False, verbose=False) is not None:
@@ -433,24 +433,27 @@ def check_one_bounded_width_invariant(s: Solver) -> None:
 
         return True
 
-    while len(S) != len(invs):
+    while len(R) != len(invs):
         did_something = False
         for inv in invs:
-            if inv in S:
+            if inv in R:
                 continue
-            S.add(inv)
+            print('trying to add', inv, '...', end='')
+            R.add(inv)
             if check():
+                print('added')
                 did_something = True
             else:
-                S.remove(inv)
+                print('failed to add')
+                R.remove(inv)
         if not did_something:
             break
-    result = len(S) == len(invs)
+    result = len(R) == len(invs)
     if result:
         print('invariant is 1-provable')
     else:
         print('invariant is not 1-provable, but here is the maximal subset that is')
-        for inv in S:
+        for inv in R:
             print(inv)
 
 
@@ -531,7 +534,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--log-xml', action=utils.YesNoAction, default=False,
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
-        s.add_argument('--print-program', choices=['str', 'repr', 'faithful', 'refactor-old-to-new'],
+        s.add_argument('--print-program',
+                       choices=['str', 'repr', 'faithful', 'refactor-old-to-new', 'without-invariants'],
                        help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -692,6 +696,11 @@ def main() -> None:
             end = '\n'
         elif utils.args.print_program == 'faithful':
             to_str = syntax.faithful_print_prog
+            end = ''
+        elif utils.args.print_program == 'without-invariants':
+            def p(prog: Program) -> str:
+                return syntax.faithful_print_prog(prog, skip_invariants=True)
+            to_str = p
             end = ''
         elif utils.args.print_program == 'refactor-old-to-new':
             pre_vocab_resolution_error_count = utils.error_count
