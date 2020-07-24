@@ -26,7 +26,7 @@ transition addPlayer(p: player)
 
 transition removePlayer(p: player)
   modifies player
-  & (forall T. !enrolled(P, T))  # pre
+  & (forall T. !enrolled(p, T))  # pre
   & (forall P. new(player(P)) <-> player(P) & P != p)
 
 transition addTournament(t: tournament)
@@ -35,7 +35,7 @@ transition addTournament(t: tournament)
 
 transition removeTournament(t: tournament)
   modifies tournament
-  & (forall P. !enrolled(P, T))  # pre
+  & (forall P. !enrolled(P, t))  # pre
   & (forall T. new(tournament(T)) <-> tournament(T) & T != t)
 
 transition enrollTournament(p: player, t: tournament)
@@ -70,3 +70,31 @@ invariant budget(P) >= 0
 invariant nrPlayers(T) <= capacity
 invariant active(T) -> nrPlayers(T) >= 1
 invariant active(T) & enrolled(P, T) -> participant(P, T)
+
+
+sat trace {
+  addPlayer
+  addTournament
+  addFunds(*, 1)
+  enrollTournament
+  beginTournament
+  endTournament
+}
+
+sat trace {
+  addPlayer
+  addPlayer
+  addTournament
+  addFunds(*, 1)
+  enrollTournament
+  removePlayer
+}
+
+sat trace {
+  addPlayer
+  addTournament
+  addTournament
+  addFunds(*, 1)
+  enrollTournament
+  removeTournament
+}
