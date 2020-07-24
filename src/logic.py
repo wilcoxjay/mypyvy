@@ -1374,7 +1374,7 @@ class Trace(object):
                         g = itertools.product(*domains)
                         for row in g:
                             ans = z3model.eval(z3decl(*row))
-                            if z3.is_arith(ans):
+                            if z3.is_int_value(ans):
                                 ans_str = str(ans.as_long())
                             else:
                                 ans_str = rename(ans.decl().name())
@@ -1387,7 +1387,7 @@ class Trace(object):
                 else:
                     assert isinstance(decl, ConstantDecl)
                     v = z3model.eval(z3decl())
-                    if z3.is_arith(v):
+                    if z3.is_int_value(v):
                         v_str = str(v.as_long())
                     else:
                         v_str = rename(v.decl().name())
