@@ -1185,6 +1185,8 @@ def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
 
 def print_element(state: State, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
     if not isinstance(s, SortDecl):
+        if isinstance(s, (syntax._BoolSort, syntax._IntSort)):
+            return elt
         s = syntax.get_decl_from_sort(s)
 
     return try_printed_by(state, s, elt) or elt
@@ -1372,16 +1374,26 @@ class Trace(object):
                         g = itertools.product(*domains)
                         for row in g:
                             ans = z3model.eval(z3decl(*row))
-                            fl.append(([rename(str(col)) for col in row],
-                                       rename(ans.decl().name())))
+                            if z3.is_arith(ans):
+                                ans_str = str(ans.as_long())
+                            else:
+                                ans_str = rename(ans.decl().name())
+
+                            fl.append(([rename(str(col)) for col in row], ans_str))
+
                         assert decl not in F
                         F[decl] = fl
 
                 else:
                     assert isinstance(decl, ConstantDecl)
-                    v = z3model.eval(z3decl()).decl().name()
+                    v = z3model.eval(z3decl())
+                    if z3.is_arith(v):
+                        v_str = str(v.as_long())
+                    else:
+                        v_str = rename(v.decl().name())
+
                     assert decl not in C
-                    C[decl] = rename(v)
+                    C[decl] = v_str
             else:
                 if name.startswith(TRANSITION_INDICATOR + '_') and z3model.eval(z3decl()):
                     name = name[len(TRANSITION_INDICATOR + '_'):]
@@ -1431,6 +1443,13 @@ class Trace(object):
                     m[r] = get_interp()
 
         def arbitrary_interp_c(c: ConstantDecl) -> str:
+            if isinstance(c.sort, syntax._BoolSort):
+                return 'false'
+            elif isinstance(c.sort, syntax._IntSort):
+                return '0'
+
+            assert isinstance(c.sort, syntax.UninterpretedSort)
+
             sort = c.sort
             return get_univ(syntax.get_decl_from_sort(sort))[0]
 

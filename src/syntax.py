@@ -112,13 +112,14 @@ InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
 PREC_BOT = 0
 PREC_NOT = 1
-PREC_EQ = 2
-PREC_AND = 3
-PREC_OR = 4
-PREC_IMPLIES = 5
-PREC_IFF = 6
-PREC_QUANT = 7
-PREC_TOP = 8
+PREC_PLUS = 2
+PREC_EQ = 3
+PREC_AND = 4
+PREC_OR = 5
+PREC_IMPLIES = 6
+PREC_IFF = 7
+PREC_QUANT = 8
+PREC_TOP = 9
 
 PREC_ASSOC = {
     PREC_BOT: 'NONE',
@@ -160,6 +161,8 @@ class Z3Translator(object):
     def translate_expr(self, expr: Expr, index: int = 0) -> z3.ExprRef:
         if isinstance(expr, Bool):
             return z3.BoolVal(expr.val)
+        elif isinstance(expr, Int):
+            return z3.IntVal(expr.val)
         elif isinstance(expr, UnaryExpr):
             if expr.op == 'NEW':
                 assert index + 1 < len(self.keys)
@@ -298,7 +301,7 @@ def symbols_used(scope: Scope, expr: Expr, state_index: int = 0) -> Set[Tuple[in
     ) -> Set[Tuple[int, Tuple[Optional[Span], ...], str]]:
         return set((i, (expr.span,) + l, sym) for (i, l, sym) in s)
 
-    if isinstance(expr, Bool):
+    if isinstance(expr, Bool) or isinstance(expr, Int):
         return set()
     elif isinstance(expr, UnaryExpr):
         if expr.op == 'NEW':
@@ -356,7 +359,7 @@ def symbols_used(scope: Scope, expr: Expr, state_index: int = 0) -> Set[Tuple[in
 
 
 def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
-    if isinstance(expr, Bool):
+    if isinstance(expr, Bool) or isinstance(expr, Int):
         return expr
     elif isinstance(expr, UnaryExpr):
         return UnaryExpr(op=expr.op, arg=subst_vars_simple(expr.arg, subst))
@@ -754,6 +757,31 @@ class Bool(Expr):
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
 
+class Int(Expr):
+    def __init__(self, val: int, *, span: Optional[Span] = None) -> None:
+        super().__init__(span)
+        self.val = val
+
+    def __repr__(self) -> str:
+        return str(self.val)
+
+    def _denote(self) -> Tuple:
+        return (self.val,)
+
+    def prec(self) -> int:
+        return PREC_BOT
+
+    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
+        buf.append(str(self.val))
+
+    def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
+        check_constraint(self.span, sort, IntSort)
+        return IntSort
+
+    def free_ids(self) -> List[str]:
+        return []
+
+
 UNOPS = {
     'NOT',
     'NEW'
@@ -862,13 +890,25 @@ BINOPS = {
     'IMPLIES',
     'IFF',
     'EQUAL',
-    'NOTEQ'
+    'NOTEQ',
+    'GE',
+    'GT',
+    'LE',
+    'LT',
+    'PLUS',
+    'SUB',
 }
 z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
     'IMPLIES': z3.Implies,
     'IFF': lambda x, y: x == y,
     'EQUAL': lambda x, y: x == y,
-    'NOTEQ': lambda x, y: x != y
+    'NOTEQ': lambda x, y: x != y,
+    'GE': lambda x, y: x >= y,
+    'GT': lambda x, y: x > y,
+    'LE': lambda x, y: x <= y,
+    'LT': lambda x, y: x < y,
+    'PLUS': lambda x, y: x + y,
+    'SUB': lambda x, y: x - y,
 }
 
 class BinaryExpr(Expr):
@@ -880,17 +920,30 @@ class BinaryExpr(Expr):
         self.arg2 = arg2
 
     def resolve(self, scope: Scope[InferenceSort], sort: InferenceSort) -> InferenceSort:
-        check_constraint(self.span, sort, BoolSort)
-
+        ans: InferenceSort = None
         if self.op in ['AND', 'OR', 'IMPLIES', 'IFF']:
+            check_constraint(self.span, sort, BoolSort)
             self.arg1.resolve(scope, BoolSort)
             self.arg2.resolve(scope, BoolSort)
-        else:
-            assert self.op in ['EQUAL', 'NOTEQ']
+            ans = BoolSort
+        elif self.op in ['EQUAL', 'NOTEQ']:
+            check_constraint(self.span, sort, BoolSort)
             s = self.arg1.resolve(scope, None)
             self.arg2.resolve(scope, s)
+            ans = BoolSort
+        elif self.op in ['GE', 'GT', 'LE', 'LT']:
+            check_constraint(self.span, sort, BoolSort)
+            self.arg1.resolve(scope, IntSort)
+            self.arg2.resolve(scope, IntSort)
+            ans = BoolSort
+        else:
+            check_constraint(self.span, sort, IntSort)
+            assert self.op in ['PLUS', 'SUB']
+            self.arg1.resolve(scope, IntSort)
+            self.arg2.resolve(scope, IntSort)
+            ans = IntSort
 
-        return BoolSort
+        return ans
 
     def _denote(self) -> Tuple:
         return (self.op, self.arg1, self.arg2)
@@ -906,8 +959,10 @@ class BinaryExpr(Expr):
             return PREC_IMPLIES
         elif self.op == 'IFF':
             return PREC_IFF
-        elif self.op == 'EQUAL' or self.op == 'NOTEQ':
+        elif self.op in ['EQUAL', 'NOTEQ', 'GE', 'GT', 'LE', 'LT']:
             return PREC_EQ
+        elif self.op in ['PLUS', 'SUB']:
+            return PREC_PLUS
         else:
             assert False
 
@@ -915,16 +970,21 @@ class BinaryExpr(Expr):
         p = self.prec()
         self.arg1.pretty(buf, p, 'LEFT')
 
-        if self.op == 'IMPLIES':
-            s = '->'
-        elif self.op == 'IFF':
-            s = '<->'
-        elif self.op == 'EQUAL':
-            s = '='
-        elif self.op == 'NOTEQ':
-            s = '!='
-        else:
-            assert False
+        pretties = {
+            'IMPLIES': '->',
+            'IFF': '<->',
+            'EQUAL': '==',
+            'NOTEQ': '!=',
+            'GE': '>=',
+            'GT': '>',
+            'LE': '<=',
+            'LT': '<',
+            'PLUS': '+',
+            'SUB': '-',
+        }
+
+        assert self.op in pretties
+        s = pretties[self.op]
 
         buf.append(' %s ' % s)
 
@@ -1116,7 +1176,7 @@ class AppExpr(Expr):
         return (self.callee, tuple(self.args))
 
     def __repr__(self) -> str:
-        return 'AppExpr(rel=%s, args=%s)' % (repr(self.callee), self.args)
+        return 'AppExpr(callee=%s, args=%s)' % (repr(self.callee), self.args)
 
     def prec(self) -> int:
         return PREC_BOT
@@ -1423,9 +1483,13 @@ class UninterpretedSort(Sort):
         return self.decl.to_z3()
 
     def _denote(self) -> Tuple:
-        return (self.name,)
+        return ('uninterpreted', self.name,)
 
 class _BoolSort(Sort):
+    def __init__(self, *, span: Optional[Span] = None) -> None:
+        super().__init__()
+        self.span = span
+
     def __repr__(self) -> str:
         return 'bool'
 
@@ -1439,14 +1503,37 @@ class _BoolSort(Sort):
         return z3.BoolSort()
 
     def _denote(self) -> Tuple:
-        return ()
+        return ('bool', )
+
+BoolSort = _BoolSort()
+
+class _IntSort(Sort):
+    def __init__(self, *, span: Optional[Span] = None) -> None:
+        super().__init__()
+        self.span = span
+
+    def __repr__(self) -> str:
+        return 'int'
+
+    def __str__(self) -> str:
+        return 'int'
+
+    def resolve(self, scope: Scope) -> None:
+        pass
+
+    def to_z3(self) -> z3.SortRef:
+        return z3.IntSort()
+
+    def _denote(self) -> Tuple:
+        return ('int',)
+
+IntSort = _IntSort()
+
 
 def get_decl_from_sort(s: InferenceSort) -> SortDecl:
     assert isinstance(s, UninterpretedSort)
     assert s.decl is not None
     return s.decl
-
-BoolSort = _BoolSort()
 
 class AssumeStatement(object):
     def __init__(self, expr: Expr, *, span: Optional[Span] = None) -> None:
@@ -1789,7 +1876,7 @@ class ModifiesClause(object):
         return self.name
 
 def uses_new(e: Expr) -> bool:
-    if isinstance(e, Bool):
+    if isinstance(e, Bool) or isinstance(e, Int):
         return False
     elif isinstance(e, UnaryExpr):
         return e.op == 'NEW' or uses_new(e.arg)
@@ -1811,7 +1898,7 @@ def uses_new(e: Expr) -> bool:
         assert False, e
 
 def uses_old(e: Expr) -> bool:
-    if isinstance(e, Bool):
+    if isinstance(e, Bool) or isinstance(e, Int):
         return False
     elif isinstance(e, UnaryExpr):
         return e.op == 'OLD' or uses_old(e.arg)
@@ -1865,7 +1952,7 @@ class OldToNewTranslator(object):
     def translate(self, e: Expr) -> Expr:
         assert not (self.in_old and self.out_new)
 
-        if isinstance(e, Bool):
+        if isinstance(e, Bool) or isinstance(e, Int):
             return e
         elif isinstance(e, UnaryExpr):
             if e.op == 'OLD':

@@ -1,0 +1,72 @@
+sort player
+sort tournament
+
+immutable constant capacity: int
+axiom capacity > 0
+
+mutable relation enrolled(player, tournament)
+mutable relation player(player)
+mutable relation tournament(tournament)
+mutable relation active(tournament)
+mutable relation participant(player, tournament)
+mutable function budget(player): int
+mutable function nrPlayers(tournament): int
+
+init !enrolled(P,T)
+init !player(P)
+init !tournament(T)
+init !active(T)
+init !participant(P,T)
+init budget(P) = 0
+init nrPlayers(T) = 0
+
+transition addPlayer(p: player)
+  modifies player
+  new(player(P)) <-> player(P) | P = p
+
+transition removePlayer(p: player)
+  modifies player
+  & (forall T. !enrolled(P, T))  # pre
+  & (forall P. new(player(P)) <-> player(P) & P != p)
+
+transition addTournament(t: tournament)
+  modifies tournament
+  new(tournament(T)) <-> tournament(T) | T = t
+
+transition removeTournament(t: tournament)
+  modifies tournament
+  & (forall P. !enrolled(P, T))  # pre
+  & (forall T. new(tournament(T)) <-> tournament(T) & T != t)
+
+transition enrollTournament(p: player, t: tournament)
+  modifies enrolled, participant, nrPlayers, budget
+  & budget(P) > 0  # pre
+  & player(P)  # pre
+  & tournament(T)  # pre
+  & nrPlayers(T) + 1 < capacity  # pre
+  & !active(t)  # pre
+  & (forall P, T. new(enrolled(P, T)) <-> enrolled(P, T) | P = p & T = t)
+  & (forall P, T. new(participant(P, T)) <-> participant(P, T) & !(P = p & T = t))
+  & (forall T. new(nrPlayers(T)) = nrPlayers(T) + 1)
+  & (forall P. new(budget(P)) = budget(P) - 1)
+
+transition beginTournament(t: tournament)
+  modifies active, participant
+  & nrPlayers(t) >= 1  # pre
+  & (forall T. new(active(T)) <-> active(T) | T = t)
+  & (forall P, T. new(participant(P, T)) <-> participant(P,T) | T = t)  # note that P is unconstrained in the final disjunct
+
+transition endTournament(t: tournament)
+  modifies active
+  new(active(T)) <-> active(T) & T != t
+
+transition addFunds(p: player, amount: int)
+  modifies budget
+  & amount >= 0  # pre
+  & (forall P. new(budget(P)) = if P = p then budget(p) + amount else budget(P))
+
+invariant enrolled(P,T) -> player(P) & tournament(T)
+invariant budget(P) >= 0
+invariant nrPlayers(T) <= capacity
+invariant active(T) -> nrPlayers(T) >= 1
+invariant active(T) & enrolled(P, T) -> participant(P, T)

@@ -58,7 +58,8 @@ def do_updr(s: Solver) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
 
-    logic.check_init(s, safety_only=True)
+    if logic.check_init(s, safety_only=True, verbose=True) is not None:
+        return
 
     if not utils.args.checkpoint_in:
         fs = updr.Frames(s)

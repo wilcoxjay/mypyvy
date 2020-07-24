@@ -43,6 +43,8 @@ reserved = {
     'sat': 'SAT',
     'unsat': 'UNSAT',
     'distinct': 'DISTINCT',
+    'bool': 'BOOL',
+    'int': 'INT',
 }
 
 tokens = [
@@ -64,11 +66,18 @@ tokens = [
     'EQUAL',
     'NOTEQ',
     'NOTEQ2',
+    'GE',
+    'GT',
+    'LE',
+    'LT',
+    'PLUS',
+    'SUB',
     'COMMA',
     'AMPERSAND',
     'STAR',
     'ANNOT',
-    'ID'
+    'ID',
+    'INTLIT'
 ] + list(reserved.values())
 
 
@@ -79,6 +88,10 @@ def t_ID(t: Any) -> Any:
 
 def t_ANNOT(t: Any) -> Any:
     r'@[-a-zA-Z_0-9]+'
+    return t
+
+def t_INTLIT(t: Any) -> Any:
+    r'[0-9]+'
     return t
 
 t_LPAREN = r'\('
@@ -99,6 +112,12 @@ t_PIPE = r'\|'
 t_EQUAL = r'='
 t_NOTEQ = r'\!='
 t_NOTEQ2 = r'~='
+t_GE = r'>='
+t_GT = r'>'
+t_LE = r'<='
+t_LT = r'<'
+t_PLUS = r'\+'
+t_SUB = r'-'
 t_COMMA = r','
 t_AMPERSAND = r'&'
 t_STAR = r'\*'
@@ -135,7 +154,8 @@ precedence = (
     ('right', 'IMPLIES'),
     ('left', 'PIPE'),
     ('left', 'AMPERSAND'),
-    ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2'),
+    ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2', 'GE', 'GT', 'LE', 'LT'),
+    ('left', 'PLUS', 'SUB'),
     ('right', 'BANG', 'TILDE')
 )
 
@@ -292,7 +312,17 @@ def p_arity_nonempty_more(p: Any) -> None:
     'arity_nonempty : arity_nonempty COMMA sort'
     p[0] = p[1] + [p[3]]
 
-def p_sort(p: Any) -> None:
+def p_sort_bool(p: Any) -> None:
+    'sort : BOOL'
+    tok: Token = p.slice[1]
+    p[0] = syntax._BoolSort(span=span_from_tok(tok))
+
+def p_sort_int(p: Any) -> None:
+    'sort : INT'
+    tok: Token = p.slice[1]
+    p[0] = syntax._IntSort(span=span_from_tok(tok))
+
+def p_sort_uninterp(p: Any) -> None:
     'sort : id'
     tok: Token = p[1]
     p[0] = syntax.UninterpretedSort(tok.value, span=span_from_tok(tok))
@@ -447,6 +477,10 @@ def p_sortedvars_more(p: Any) -> None:
     'sortedvars : sortedvars COMMA sortedvar'
     p[0] = p[1] + [p[3]]
 
+def p_expr_intlit(p: Any) -> None:
+    'expr : INTLIT'
+    p[0] = syntax.Int(int(p[1]), span=span_from_tok(p.slice[1]))
+
 def p_expr_true(p: Any) -> None:
     'expr : TRUE'
     p[0] = syntax.Bool(True, span=span_from_tok(p.slice[1]))
@@ -531,6 +565,48 @@ def p_expr_noteq(p: Any) -> None:
     r: syntax.Expr = p[3]
     span = loc_join(l.span, r.span)
     p[0] = syntax.BinaryExpr('NOTEQ', l, r, span=span)
+
+def p_expr_ge(p: Any) -> None:
+    'expr : expr GE expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('GE', l, r, span=span)
+
+def p_expr_gt(p: Any) -> None:
+    'expr : expr GT expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('GT', l, r, span=span)
+
+def p_expr_le(p: Any) -> None:
+    'expr : expr LE expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('LE', l, r, span=span)
+
+def p_expr_lt(p: Any) -> None:
+    'expr : expr LT expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('LT', l, r, span=span)
+
+def p_expr_plus(p: Any) -> None:
+    'expr : expr PLUS expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('PLUS', l, r, span=span)
+
+def p_expr_sub(p: Any) -> None:
+    'expr : expr SUB expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('SUB', l, r, span=span)
 
 
 def p_expr_old(p: Any) -> None:
