@@ -1,12 +1,8 @@
-#!/Library/Frameworks/Python.framework/Versions/3.8/bin/python3.8
-
+#! /usr/bin/env python3
 from __future__ import annotations
 import os
-# print(os.environ)
+import numpy
 import sys
-#print(sys.path)
-open('test.py','a+').write(f'path_{os.getpid()} = {repr(sys.path)}\n\n')
-#assert False
 
 import argparse
 from datetime import datetime
