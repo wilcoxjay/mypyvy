@@ -13,6 +13,7 @@ import resource
 import logic
 from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE, Trace
 import parser
+import resolver
 import syntax
 from syntax import Expr, Program, InvariantDecl
 import updr
@@ -41,7 +42,7 @@ def get_safety() -> List[Expr]:
                 oldcount = utils.error_count
                 e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
                 with prog.scope.n_states(1):
-                    e.resolve(prog.scope, syntax.BoolSort)
+                    resolver.resolve_expr(prog.scope, e, syntax.BoolSort)
                 assert oldcount == utils.error_count, 'errors in parsing or typechecking'
                 safety = [e]
             except Exception as e:
@@ -269,7 +270,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
-            diagram.resolve(prog.scope, syntax.BoolSort)
+            resolver.resolve_expr(prog.scope, diagram, syntax.BoolSort)
             assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
             active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
 
@@ -293,7 +294,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
 
             diagram_active = syntax.Exists(diagram.vs(),
                                            syntax.And(diagram.body, *active_clauses))
-            diagram_active.resolve(prog.scope, syntax.BoolSort)
+            resolver.resolve_expr(prog.scope, diagram_active, syntax.BoolSort)
 
             components.append(syntax.AssertDecl(expr=diagram_active))
         elif elm.tagName == 'action':
@@ -340,7 +341,7 @@ def sandbox(s: Solver) -> None:
                                  mutable=True, derived=def_axiom, annotations=[])
 
     # TODO: this irreversibly adds the relation to the context, wrap
-    derrel.resolve(syntax.the_program.scope)
+    resolver.resolve_statedecl(syntax.the_program.scope, derrel)
     syntax.the_program.decls.append(derrel)  # TODO: hack! because RelationDecl.resolve only adds to prog.scope
     s.mutable_axioms.extend([def_axiom])  # TODO: hack! currently we register these axioms only on solver init
 
@@ -349,7 +350,7 @@ def sandbox(s: Solver) -> None:
     # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
     new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program, fresh=False)
     new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
-    new_prog.resolve()
+    resolver.resolve_program(new_prog)
     print(new_prog)
 
     syntax.the_program = new_prog
@@ -711,7 +712,7 @@ def main() -> None:
             end = ''
         elif utils.args.print_program == 'refactor-old-to-new':
             pre_vocab_resolution_error_count = utils.error_count
-            prog.resolve_vocab()
+            resolver.resolve_program_vocab(prog)
             if utils.error_count > pre_vocab_resolution_error_count:
                 print('program has resolution errors')
                 utils.exit(1)
@@ -729,7 +730,7 @@ def main() -> None:
 
     pre_resolve_error_count = utils.error_count
 
-    prog.resolve()
+    resolver.resolve_program(prog)
     if utils.error_count > pre_resolve_error_count:
         utils.logger.always_print('program has resolution errors.')
         utils.exit(1)
