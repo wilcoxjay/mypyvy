@@ -71,9 +71,7 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
 
 def relativize_decl(d: syntax.DefinitionDecl, actives: Dict[syntax.SortDecl, syntax.RelationDecl],
                     scope: syntax.Scope, inline_relax_actives: bool) -> syntax.DefinitionDecl:
-    assert not isinstance(d.body, syntax.BlockStatement), \
-        "relax does not support transitions written in imperative syntax"
-    mods, expr = d.body
+    mods, expr = d.mods, d.expr
     expr = syntax.relativize_quantifiers(actives, expr)
     if d.is_public_transition:
         guard = syntax.relativization_guard_for_binder(actives, d.binder)
@@ -85,7 +83,7 @@ def relativize_decl(d: syntax.DefinitionDecl, actives: Dict[syntax.SortDecl, syn
         expr = syntax.And(expr, *new_conjs)
 
     relativized_def = syntax.DefinitionDecl(d.is_public_transition, d.num_states, d.name,
-                                            params=d.binder.vs, body=(mods, expr))
+                                            params=d.binder.vs, mods=mods, expr=expr)
     return relativized_def
 
 
@@ -149,7 +147,7 @@ def relaxation_action_def(
                                                   syntax.Iff(syntax.New(ap_rel), ap_rel))))
 
     return syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=decrease_name,
-                                 params=[], body=(mods, syntax.And(*conjs)))
+                                 params=[], mods=mods, expr=syntax.And(*conjs))
 
 
 def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDecl, syntax.RelationDecl]) \

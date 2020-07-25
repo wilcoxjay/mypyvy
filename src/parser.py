@@ -30,7 +30,6 @@ reserved = {
     'twostate': 'TWOSTATE',
     'theorem': 'THEOREM',
     'definition': 'DEFINITION',
-    'assume': 'ASSUME',
     'assert': 'ASSERT',
     'safety': 'SAFETY',
     'any': 'ANY',
@@ -56,8 +55,6 @@ tokens = [
     'RBRACE',
     'DOT',
     'COLON',
-    'COLONEQUALS',
-    'SEMI',
     'BANG',
     'TILDE',
     'IFF',
@@ -102,8 +99,6 @@ t_LBRACE = r'{'
 t_RBRACE = r'}'
 t_DOT = r'\.'
 t_COLON = r':'
-t_COLONEQUALS = r':='
-t_SEMI = r';'
 t_BANG = r'\!'
 t_TILDE = r'~'
 t_IMPLIES = r'->'
@@ -683,11 +678,12 @@ def p_mods(p: Any) -> None:
 def p_decl_transition(p: Any) -> None:
     'decl : TRANSITION id LPAREN params RPAREN definition_body'
     id_tok: Token = p[2]
-    body: Union[Tuple[List[syntax.ModifiesClause], syntax.Expr], syntax.BlockStatement] = p[6]
-    body_span = body[1].span if isinstance(body, tuple) else body.span
+    mods: List[syntax.ModifiesClause]
+    expr: syntax.Expr
+    mods, expr = p[6]
     p[0] = syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=id_tok.value,
-                                 params=p[4], body=p[6],
-                                 span=loc_join(p.slice[1], body_span))
+                                 params=p[4], mods=mods, expr=expr,
+                                 span=loc_join(p.slice[1], expr.span))
 
 def p_decl_definition_body_mods_expr(p: Any) -> None:
     'definition_body : mods expr'
@@ -696,38 +692,6 @@ def p_decl_definition_body_mods_expr(p: Any) -> None:
 def p_decl_definition_body_expr(p: Any) -> None:
     'definition_body : EQUAL expr'
     p[0] = ([], p[2])
-
-def p_decl_definition_body_block(p: Any) -> None:
-    'definition_body : blockstmt'
-    p[0] = p[1]
-
-def p_blockstmt(p: Any) -> None:
-    'blockstmt : LBRACE stmts RBRACE'
-    p[0] = syntax.BlockStatement(p[2], span=loc_join(p.slice[1], p.slice[3]))
-
-def p_stmts_empty(p: Any) -> None:
-    'stmts : empty'
-    p[0] = []
-
-def p_stmts_more(p: Any) -> None:
-    'stmts : stmts stmt'
-    p[0] = p[1] + [p[2]]
-
-def p_stmt_assume(p: Any) -> None:
-    'stmt : ASSUME expr SEMI'
-    p[0] = syntax.AssumeStatement(p[2], span=loc_join(p.slice[1], p.slice[3]))
-
-def p_assignment_lhs_empty(p: Any) -> None:
-    'assignment_lhs : empty'
-    p[0] = []
-
-def p_assignment_lhs_nonempty(p: Any) -> None:
-    'assignment_lhs : LPAREN args RPAREN'
-    p[0] = p[2]
-
-def p_stmt_assignment(p: Any) -> None:
-    'stmt : id assignment_lhs COLONEQUALS expr SEMI'
-    p[0] = syntax.AssignmentStatement(p[1].value, p[2], p[4], span=loc_join(p[1], p.slice[5]))
 
 def kstate_int(kstate: str) -> int:
     if kstate == 'zerostate':
@@ -759,23 +723,18 @@ def p_decl_theorem(p: Any) -> None:
 def p_decl_definition(p: Any) -> None:
     'decl : kstate DEFINITION id LPAREN params RPAREN definition_body'
     k_tok, num_states = p[1]
-    body: Union[Tuple[List[syntax.ModifiesClause], syntax.Expr], syntax.BlockStatement] = p[7]
-    body_span = body[1].span if isinstance(body, tuple) else body.span
-    if isinstance(body, syntax.BlockStatement):
-        if num_states == 1:
-            utils.print_error(body.span, "syntax error: imperative body of definition cannot be declared 'onestate'")
-            return
+    mods: List[syntax.ModifiesClause]
+    expr: syntax.Expr
+    mods, expr = p[7]
 
-    if num_states != 2 and isinstance(body, tuple):
-        mods, _ = body
-        if mods:
-            utils.print_error(mods[0].span,
-                              "syntax error: modifies clause only allowed on twostate definitions or transitions")
-            return
+    if num_states != 2 and mods:
+        utils.print_error(mods[0].span,
+                          "syntax error: modifies clause only allowed on twostate definitions or transitions")
+        return
 
     p[0] = syntax.DefinitionDecl(is_public_transition=False, num_states=num_states,
-                                 name=p[3].value, params=p[5], body=body,
-                                 span=loc_join(k_tok, loc_join(p.slice[2], body_span)))
+                                 name=p[3].value, params=p[5], mods=mods, expr=expr,
+                                 span=loc_join(k_tok, loc_join(p.slice[2], expr.span)))
 
 def p_trace_transition_any(p: Any) -> None:
     'trace_transition : ANY TRANSITION'
