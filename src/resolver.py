@@ -79,9 +79,6 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
             check_constraint(e.span, sort, BoolSort)
             resolve_expr(scope, e.arg, BoolSort)
             return BoolSort
-        elif e.op == 'OLD':
-            utils.print_error(e.span, "old() is deprecated and is not supported by the resolver; ignoring...")
-            return sort  # bogus
         else:
             assert False
     elif isinstance(e, syntax.BinaryExpr):
@@ -276,21 +273,6 @@ def resolve_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
         resolve_expr(scope, d.expr, BoolSort)
     elif isinstance(d, syntax.TheoremDecl):
-        if d.num_states == 2:
-            if utils.args.accept_old and not syntax.uses_old(d.expr) and not syntax.uses_new(d.expr):
-                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); '
-                                  'cannot automatically detect whether it needs to be translated')
-
-            if syntax.uses_old(d.expr):
-                if utils.args.accept_old:
-                    utils.print_warning(d.span, 'old() is deprecated; please use new(). as a temporary convenience, '
-                                        'mypyvy will now attempt to automatically translate from old() to new()...')
-
-                    utils.logger.info(f'translating theorem {d.name}')
-                    d.expr = syntax.translate_old_to_new_expr(scope, d.expr)
-                else:
-                    utils.print_error(d.span, 'old() is disallowed by --no-accept-old')
-
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
         with scope.n_states(d.num_states):
             resolve_expr(scope, d.expr, BoolSort)
@@ -303,22 +285,6 @@ def resolve_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr
 
         for mod in d.mods:
             mod.resolve(scope)
-
-        if d.num_states == 2:
-            if utils.args.accept_old and not syntax.uses_old(d.expr) and not syntax.uses_new(d.expr):
-                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); '
-                                  'cannot automatically detect whether it needs to be translated')
-
-            if syntax.uses_old(d.expr):
-                if utils.args.accept_old:
-                    utils.print_warning(d.span, 'old() is deprecated; please use new(). as a temporary convenience, '
-                                        'mypyvy will now attempt to automatically translate from old() to new()...')
-
-                    utils.logger.info(f'translating transition {d.name}')
-                    with scope.in_scope(d.binder, [v.sort for v in d.binder.vs]):
-                        d.expr = syntax.translate_old_to_new_expr(scope, d.expr)
-                else:
-                    utils.print_error(d.span, 'old() is disallowed by --no-accept-old')
 
         d.expr = syntax.close_free_vars(d.expr, in_scope=[v.name for v in d.binder.vs], span=d.span,)
 

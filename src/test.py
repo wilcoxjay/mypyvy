@@ -112,24 +112,6 @@ class SyntaxTests(unittest.TestCase):
         s2 = syntax.SortDecl('foo', [])
         self.assertEqual(s1, s2)
 
-    def test_translate_old_to_new_expr(self) -> None:
-        vocab = '''
-            sort A
-            mutable relation R(A)
-        '''
-        prog = mypyvy.parse_program(vocab)
-        resolver.resolve_program(prog)
-
-        ios = [
-            ('forall X. R(X) <-> old(R(X))',
-             'forall X. new(R(X)) <-> R(X)')
-        ]
-        for expr, expected in ios:
-            with self.subTest(expr=expr):
-                expr2 = syntax.translate_old_to_new_expr(prog.scope, parser.parse_expr(expr))
-                # print(clause)
-                self.assertEqual(expr2, parser.parse_expr(expected))
-
 def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3.8'
     return [python, str((utils.PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]

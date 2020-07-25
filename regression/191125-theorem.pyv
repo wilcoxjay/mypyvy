@@ -1,4 +1,4 @@
-# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code --accept-old
+# MYPYVY: theorem --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
 
 sort A
 immutable relation lt(A,A)
@@ -20,16 +20,6 @@ twostate theorem [MyFalseTheorem]
   forall X.
     foo(X) ->
     lt(new(a), a)
-
-twostate theorem [MyTrueTheoremOld]
-  forall X.
-    foo(X) ->
-    lt(old(a), a)
-
-twostate theorem [MyFalseTheoremOld]
-  forall X.
-    foo(X) ->
-    lt(a, old(a))
 
 zerostate definition le(x: A, y: A) =
   lt(x, y) | x = y

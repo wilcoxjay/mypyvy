@@ -114,7 +114,6 @@ class MypyvyArgs(object):
     max_quantifiers: Optional[int]
     cvc4: bool
     cvc4_minimize_models: bool
-    accept_old: bool
     push: bool
     decrease_depth: bool
     forward_depth: int

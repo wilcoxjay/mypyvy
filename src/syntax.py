@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from copy import copy
 from dataclasses import dataclass
 import functools
 import itertools
@@ -380,9 +379,8 @@ def span_endlexpos(x: Union[Span, HasSpan]) -> Optional[int]:
     return s[1].lexpos + len(s[1].value)
 
 class FaithfulPrinter(object):
-    def __init__(self, prog: Program, ignore_old: bool = False, skip_invariants: bool = False) -> None:
+    def __init__(self, prog: Program, skip_invariants: bool = False) -> None:
         self.prog = prog
-        self.ignore_old = ignore_old
         self.skip_invariants = skip_invariants
         self.pos = 0
         self.buf: List[str] = []
@@ -469,26 +467,8 @@ class FaithfulPrinter(object):
             self.move_and_process_expr(e.body)
             self.move_to_end(e)
         elif isinstance(e, UnaryExpr):
-            if self.ignore_old and e.op == 'OLD':
-                assert e.span is not None
-                needs_parens = not (isinstance(e.arg, (AppExpr, Id, UnaryExpr)) or
-                                    (isinstance(e.arg, BinaryExpr) and e.arg.op in ('EQUAL', 'NOTEQ')))
-                self.skip_expect('old(')
-                if needs_parens:
-                    self.buf.append('(')
-                self.move_to_start(e.arg)
-                self.process_expr(e.arg)
-                self.move_to(e.span[1].lexpos)  # include whitespace/comments inside close paren
-                self.skip_expect(')')
-                if needs_parens:
-                    self.buf.append(')')
-            elif e.op == 'NEW' and e.span is None:
-                self.buf.append('new(')
-                self.move_and_process_expr(e.arg)
-                self.buf.append(')')
-            else:
-                self.move_and_process_expr(e.arg)
-                self.move_to_end(e)
+            self.move_and_process_expr(e.arg)
+            self.move_to_end(e)
         elif isinstance(e, BinaryExpr):
             self.process_expr(e.arg1)
             self.move_and_process_expr(e.arg2)
@@ -510,11 +490,8 @@ class FaithfulPrinter(object):
 
 # Use prog.input to print prog as similarly as possible to the input. In particular,
 # whitespace and comments are preserved where possible.
-#
-# If ignore_old is True, then do not print any old() expressions. This is useful
-# in conjunction with strip_old=False in translate_old_to_new_prog.
-def faithful_print_prog(prog: Program, ignore_old: bool = False, skip_invariants: bool = False) -> str:
-    return FaithfulPrinter(prog, ignore_old, skip_invariants).process()
+def faithful_print_prog(prog: Program, skip_invariants: bool = False) -> str:
+    return FaithfulPrinter(prog, skip_invariants).process()
 
 @functools.total_ordering
 class Expr(Denotable):
@@ -609,7 +586,7 @@ UNOPS = {
 class UnaryExpr(Expr):
     def __init__(self, op: str, arg: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
-        assert op in UNOPS or op == 'OLD'  # TODO: remove 'OLD'
+        assert op in UNOPS
         self.op = op
         self.arg = arg
 
@@ -624,8 +601,6 @@ class UnaryExpr(Expr):
             return PREC_NOT
         elif self.op == 'NEW':
             return PREC_BOT
-        elif self.op == 'OLD':  # TODO: remove old
-            return PREC_BOT
         else:
             assert False
 
@@ -635,10 +610,6 @@ class UnaryExpr(Expr):
             self.arg.pretty(buf, PREC_NOT, 'NONE')
         elif self.op == 'NEW':
             buf.append('new(')
-            self.arg.pretty(buf, PREC_TOP, 'NONE')
-            buf.append(')')
-        elif self.op == 'OLD':  # TODO: remove old
-            buf.append('old(')
             self.arg.pretty(buf, PREC_TOP, 'NONE')
             buf.append(')')
         else:
@@ -1309,170 +1280,6 @@ def uses_new(e: Expr) -> bool:
         return uses_new(e.val) or uses_new(e.body)
     else:
         assert False, e
-
-def uses_old(e: Expr) -> bool:
-    if isinstance(e, Bool) or isinstance(e, Int):
-        return False
-    elif isinstance(e, UnaryExpr):
-        return e.op == 'OLD' or uses_old(e.arg)
-    elif isinstance(e, BinaryExpr):
-        return uses_old(e.arg1) or uses_old(e.arg2)
-    elif isinstance(e, NaryExpr):
-        return any(uses_old(x) for x in e.args)
-    elif isinstance(e, AppExpr):
-        return any(uses_old(x) for x in e.args)
-    elif isinstance(e, QuantifierExpr):
-        return uses_old(e.body)
-    elif isinstance(e, Id):
-        return False
-    elif isinstance(e, IfThenElse):
-        return uses_old(e.branch) or uses_old(e.then) or uses_old(e.els)
-    elif isinstance(e, Let):
-        return uses_old(e.val) or uses_old(e.body)
-    else:
-        assert False, e
-
-class OldToNewTranslator(object):
-    def __init__(self, scope: Scope, strip_old: bool = True) -> None:
-        self.scope = scope
-        self.strip_old = strip_old
-
-        self.in_old = False
-        self.out_new = False
-        self.mutable_callee: Optional[Span] = None
-
-    @contextmanager
-    def set_in_old(self) -> Iterator[None]:
-        assert not self.in_old
-        self.in_old = True
-        yield None
-        self.in_old = False
-
-    @contextmanager
-    def set_out_new(self) -> Iterator[None]:
-        assert not self.out_new
-        self.out_new = True
-        yield None
-        self.out_new = False
-
-    @contextmanager
-    def set_mutable_callee(self, span: Optional[Span]) -> Iterator[None]:
-        old_val = self.mutable_callee
-        self.mutable_callee = span
-        yield None
-        self.mutable_callee = old_val
-
-    def translate(self, e: Expr) -> Expr:
-        assert not (self.in_old and self.out_new)
-
-        if isinstance(e, Bool) or isinstance(e, Int):
-            return e
-        elif isinstance(e, UnaryExpr):
-            if e.op == 'OLD':
-                if self.out_new:
-                    err_msg = ('this use of old() is nested within a reference to a mutable '
-                               'symbol in the new state. the old-to-new translator does not '
-                               'currently support this case. please lift the use of old() above '
-                               'the mutable reference using a let expression and try again.')
-                    utils.print_error(e.span, err_msg)
-                    if self.mutable_callee is not None:
-                        info_msg = 'here is the mutable symbol reference in the new state.'
-                        utils.print_info(self.mutable_callee, info_msg)
-                    # bogus return value, just keep going to potentially report more errors
-                    # see NOTE(resolving-malformed-programs)
-                    return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
-                else:
-                    with self.set_in_old():
-                        if self.strip_old:
-                            return self.translate(e.arg)
-                        else:
-                            return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
-            elif e.op == 'NEW':
-                err_msg = 'old-to-new translator does not support mixing calls to new and old!'
-                utils.print_error(e.span, err_msg)
-                # bogus return value, just keep going to potentially report more errors
-                # see NOTE(resolving-malformed-programs)
-                return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
-            elif e.op == 'NOT':
-                return UnaryExpr(e.op, self.translate(e.arg), span=e.span)
-            else:
-                assert False, (e.op, e)
-        elif isinstance(e, BinaryExpr):
-            return BinaryExpr(e.op, self.translate(e.arg1), self.translate(e.arg2), span=e.span)
-        elif isinstance(e, NaryExpr):
-            return NaryExpr(e.op, [self.translate(arg) for arg in e.args], span=e.span)
-        elif isinstance(e, AppExpr):
-            d = self.scope.get(e.callee)
-            assert d is not None
-            if isinstance(d, (RelationDecl, FunctionDecl)) and d.mutable and not self.in_old and not self.out_new:
-                with self.set_out_new():
-                    with self.set_mutable_callee(e.span):
-                        t_args = [self.translate(arg) for arg in e.args]
-                        return New(AppExpr(e.callee, t_args, span=e.span))
-            else:
-                t_args = [self.translate(arg) for arg in e.args]
-                return AppExpr(e.callee, t_args, span=e.span)
-        elif isinstance(e, QuantifierExpr):
-            with self.scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
-                return QuantifierExpr(e.quant, e.binder.vs, self.translate(e.body), span=e.span)
-        elif isinstance(e, Id):
-            d = self.scope.get(e.name)
-            if isinstance(d, (RelationDecl, ConstantDecl)) and d.mutable and not self.in_old and not self.out_new:
-                return New(Id(e.name, span=e.span))
-            else:
-                return e
-        elif isinstance(e, IfThenElse):
-            return IfThenElse(
-                self.translate(e.branch),
-                self.translate(e.then),
-                self.translate(e.els),
-                span=e.span)
-        elif isinstance(e, Let):
-            with self.scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
-                return Let(e.binder.vs[0],
-                           self.translate(e.val),
-                           self.translate(e.body),
-                           span=e.span)
-        else:
-            assert False, e
-
-def translate_old_to_new_expr(scope: Scope, e: Expr, strip_old: bool = True) -> Expr:
-    return OldToNewTranslator(scope, strip_old=strip_old).translate(e)
-
-# Translate all double-vocabulary formulas in prog from old() syntax to new() syntax.
-# If strip_old is False, then leave the old() expressions in place, but also introduce
-# new() expressions. (This is useful if the consumer plans to manually ignore old(),
-# but wishes to retain source-level information on where old() operations used to be.)
-def translate_old_to_new_prog(prog: Program, strip_old: bool = True) -> Program:
-    scope = prog.scope
-    ds: List[Decl] = []
-    for d in prog.decls:
-        if isinstance(d, DefinitionDecl) and d.num_states == 2:
-            if not uses_old(d.expr) and not uses_new(d.expr):
-                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); '
-                                  'cannot automatically detect whether it needs refactoring')
-            if uses_old(d.expr):
-                dd = copy(d)
-                with scope.in_scope(d.binder, [v.sort for v in d.binder.vs]):
-                    dd.expr = translate_old_to_new_expr(scope, dd.expr, strip_old=strip_old)
-                ds.append(dd)
-            else:
-                ds.append(d)
-        elif isinstance(d, TheoremDecl) and d.num_states == 2:
-            if not uses_old(d.expr) and not uses_new(d.expr):
-                utils.print_error(d.span, 'twostate expression uses neither old() nor new(); '
-                                  'cannot automatically detect whether it needs refactoring')
-            if uses_old(d.expr):
-                t = copy(d)
-                t.expr = translate_old_to_new_expr(scope, t.expr, strip_old=strip_old)
-                ds.append(t)
-            else:
-                ds.append(d)
-        else:
-            ds.append(d)
-    new_prog = Program(ds)
-    new_prog.input = prog.input
-    return new_prog
 
 class DefinitionDecl(Decl):
     def __init__(self, is_public_transition: bool, num_states: int,

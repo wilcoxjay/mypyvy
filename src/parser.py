@@ -20,7 +20,6 @@ reserved = {
     'sketch': 'SKETCH',
     'axiom': 'AXIOM',
     'new': 'NEW',
-    'old': 'OLD',
     'forall': 'FORALL',
     'exists': 'EXISTS',
     'true': 'TRUE',
@@ -603,17 +602,10 @@ def p_expr_sub(p: Any) -> None:
     span = loc_join(l.span, r.span)
     p[0] = syntax.BinaryExpr('SUB', l, r, span=span)
 
-
-def p_expr_old(p: Any) -> None:
-    'expr : OLD LPAREN expr RPAREN'
-    e: syntax.Expr = p[3]
-    p[0] = syntax.UnaryExpr('OLD', e, span=loc_join(p.slice[1], p.slice[4]))
-
 def p_expr_new(p: Any) -> None:
     'expr : NEW LPAREN expr RPAREN'
     e: syntax.Expr = p[3]
     p[0] = syntax.UnaryExpr('NEW', e, span=loc_join(p.slice[1], p.slice[4]))
-
 
 def p_args_empty(p: Any) -> None:
     'args : empty'
