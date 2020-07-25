@@ -148,25 +148,29 @@ def check_init(
                     return inv, res
     return None
 
-def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool = True) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
-    t = s.get_translator((KEY_OLD, KEY_NEW))
+def check_transitions(
+        s: Solver,
+        minimize: Optional[bool] = None,
+        verbose: bool = True
+) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
+    lator = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
     with s.new_frame():
         for inv in prog.invs():
-            s.add(t.translate_expr(inv.expr))
+            s.add(lator.translate_expr(inv.expr))
 
-        for trans in prog.transitions():
+        for ition in prog.transitions():
             if 'check_transition' in utils.args and \
                utils.args.check_transition is not None and \
-               trans.name not in utils.args.check_transition:
+               ition.name not in utils.args.check_transition:
                 continue
 
             if verbose:
-                utils.logger.always_print('checking translation %s:' % (trans.name,))
+                utils.logger.always_print('checking transition %s:' % (ition.name,))
 
             with s.new_frame():
-                s.add(t.translate_transition(trans))
+                s.add(lator.translate_transition(ition))
                 for inv in prog.invs():
                     if 'check_invariant' in utils.args and \
                        utils.args.check_invariant is not None and \
@@ -174,7 +178,7 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool 
                         continue
 
                     with s.new_frame():
-                        s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
+                        s.add(z3.Not(lator.translate_expr(inv.expr, index=1)))
 
                         if inv.name is not None:
                             msg = ' ' + inv.name
@@ -187,8 +191,8 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool 
                             sys.stdout.flush()
 
                         res = check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s'
-                                            % (msg, trans.name)),
-                                           (trans.span, 'this transition may not preserve invariant%s'
+                                            % (msg, ition.name)),
+                                           (ition.span, 'this transition may not preserve invariant%s'
                                             % (msg,))],
                                           s, (KEY_OLD, KEY_NEW), minimize=minimize, verbose=verbose)
                         if res is not None:
@@ -214,7 +218,7 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool 
                                     msg = f'bad transition counterexample for invariant {inv.expr} in post state'
                                     assert False, msg
 
-                            return inv, res, trans
+                            return inv, res, ition
     return None
 
 def check_implication(
