@@ -1,13 +1,14 @@
-import syntax
 import logic
 from logic import Solver, Expr
+import syntax
+import translator
 import utils
 import z3
 
 from typing import Callable, List, Optional, Tuple
 
 def translate_transition_call(
-        s: Solver, lator: syntax.Z3Translator, key_index: int, c: syntax.TransitionCall
+        s: Solver, lator: translator.Z3Translator, key_index: int, c: syntax.TransitionCall
 ) -> z3.ExprRef:
     prog = syntax.the_program
     ition = prog.scope.get_definition(c.target)

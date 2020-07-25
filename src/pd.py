@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from syntax import *
 from logic import *
+from translator import Z3Translator
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 

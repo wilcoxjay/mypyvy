@@ -13,17 +13,15 @@ import re
 import sexp
 import subprocess
 import sys
-import typing
-from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
-    cast, TypeVar, Callable
-from types import TracebackType
+from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
+from typing import cast, TypeVar, Callable
 import z3
 
 import utils
-from utils import MySet
 import syntax
-from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, DefinitionDecl, Program
+from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
+from syntax import FunctionDecl, DefinitionDecl
+import translator
 
 z3.Forall = z3.ForAll
 
@@ -263,7 +261,7 @@ def check_two_state_implication_all_transitions(
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
-def assert_any_transition(s: Solver, t: syntax.Z3Translator,
+def assert_any_transition(s: Solver, t: translator.Z3Translator,
                           key_index: int, allow_stutter: bool = False) -> None:
     prog = syntax.the_program
     uid = str(key_index)
@@ -282,8 +280,8 @@ def assert_any_transition(s: Solver, t: syntax.Z3Translator,
     s.add(z3.Or(*tids))
 
 
-def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
-              minimize: Optional[bool]=None) -> Optional[Trace]:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None,
+              minimize: Optional[bool] = None) -> Optional[Trace]:
     keys = tuple('state%02d' % i for i in range(depth + 1))
     prog = syntax.the_program
 
@@ -520,18 +518,23 @@ class CVC4Model(object):
 
         return ans
 
+LatorFactory = Callable[[syntax.Scope, Tuple[str, ...]], translator.Z3Translator]
 class Solver(object):
-    def __init__(self, include_program: bool = True, use_cvc4: bool = False,
-                 translator_factory: Optional[Callable[[syntax.Scope, Tuple[str, ...]], syntax.Z3Translator]]=None,
-                 reassert_axioms: bool=False, additional_mutable_axioms: List[Expr]=[]) \
-            -> None:
+    def __init__(
+            self,
+            include_program: bool = True,
+            use_cvc4: bool = False,
+            translator_factory: Optional[LatorFactory] = None,
+            reassert_axioms: bool = False,
+            additional_mutable_axioms: List[Expr] = []
+    ) -> None:
         self.z3solver = z3.Solver()
         prog = syntax.the_program
         assert prog.scope is not None
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
         self.translator_factory = translator_factory
-        self.translators: Dict[Tuple[str, ...], syntax.Z3Translator] = {}
+        self.translators: Dict[Tuple[str, ...], translator.Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
         self.known_keys: Set[str] = set()
@@ -603,14 +606,14 @@ class Solver(object):
             for a in self.mutable_axioms:
                 self.add(t.translate_expr(a))
 
-    def get_translator(self, keys: Tuple[str, ...] = ()) -> syntax.Z3Translator:
+    def get_translator(self, keys: Tuple[str, ...] = ()) -> translator.Z3Translator:
         assert self.include_program
         t = tuple(keys)
         if t not in self.translators:
             for k in keys:
                 self._initialize_key(k)
             if not self.translator_factory:
-                lator = syntax.Z3Translator(self.scope, keys)
+                lator = translator.Z3Translator(self.scope, keys)
             else:
                 lator = self.translator_factory(self.scope, keys)
             self.translators[t] = lator
@@ -1013,7 +1016,7 @@ class Diagram(object):
     def vs(self) -> List[syntax.SortedVar]:
         return self.binder.vs
 
-    def to_z3(self, t: syntax.Z3Translator, state_index: int = 0) -> z3.ExprRef:
+    def to_z3(self, t: translator.Z3Translator, state_index: int = 0) -> z3.ExprRef:
         bs = t.bind(self.binder)
         with t.scope.in_scope(self.binder, bs):
             z3conjs = []
@@ -1113,7 +1116,7 @@ class Diagram(object):
             yield
             S -= j
 
-    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool], order: Optional[int]=None) -> None:
+    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool], order: Optional[int] = None) -> None:
         'drop conjuncts of this diagram subject to the constraint returning true'
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
@@ -1122,7 +1125,7 @@ class Diagram(object):
         F: Iterable[_RelevantDecl] = self.funcs
 
         assert constraint(self)
-        
+
         generalization_order = list(itertools.chain(I, R, C, F))
         generalization_order = reorder(generalization_order, order)
 
