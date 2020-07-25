@@ -1,17 +1,18 @@
-import syntax
-import utils
 import logic
 from logic import Trace, Diagram, Solver
+import syntax
 from syntax import Expr
-from utils import Set
-from updr import RelaxedTrace
 from trace import bmc_trace
-import copy
+import translator
+from updr import RelaxedTrace
+import utils
+from utils import Set
 
+import copy
 import z3
 import itertools
 import networkx  # type: ignore
-from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable, Iterator
+from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable
 
 T = TypeVar('T')
 
@@ -262,7 +263,7 @@ def closing_qa_cycle(
         prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl],
         existentially_quantified_sorts: List[syntax.SortDecl]
 ) -> bool:
-    qa_graph = prog.decls_quantifier_alternation_graph([])
+    qa_graph = translator.decls_quantifier_alternation_graph(prog, [])
     assert networkx.is_directed_acyclic_graph(qa_graph)
 
     for asort in free_vars_sorts:
@@ -476,7 +477,7 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
         assert False
 
 
-class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
+class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
     def __init__(self, scope: syntax.Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
         self._active_rels_mapping: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
         self._generate_active_rels(scope)
@@ -485,7 +486,7 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
         for active_rel in self._active_rels_mapping.values():
             self._active_scope.add_relation(active_rel)
 
-        self._t = syntax.Z3Translator(self._active_scope, keys)
+        self._t = translator.Z3Translator(self._active_scope, keys)
         self._prog = syntax.the_program
 
     def _generate_active_rels(self, scope: syntax.Scope) -> None:
@@ -560,8 +561,8 @@ def relaxed_semantics_solver(prog: syntax.Program) -> logic.Solver:
                         reassert_axioms=True,
                         additional_mutable_axioms=consts_exist_axioms(prog) + functions_total_axioms(prog))
 
-def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
-                      minimize: Optional[bool]=None) -> Optional[Trace]:
+def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None,
+                      minimize: Optional[bool] = None) -> Optional[Trace]:
     prog = syntax.the_program
     return logic.check_bmc(relaxed_semantics_solver(prog),
                            safety, depth, preconds, minimize)

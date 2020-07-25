@@ -11,7 +11,7 @@ import z3
 import resource
 
 import logic
-from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE
+from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE, Trace
 import parser
 import syntax
 from syntax import Expr, Program, InvariantDecl
@@ -200,9 +200,13 @@ def bmc(s: Solver) -> None:
     utils.logger.always_print('  ' + str(safety))
 
     if not utils.args.relax:
-        bmcer = lambda bound: logic.check_bmc(s, safety, bound)
+        def bmc_normal(bound: int) -> Optional[Trace]:
+            return logic.check_bmc(s, safety, bound)
+        bmcer = bmc_normal
     else:
-        bmcer = lambda bound: relaxed_traces.check_relaxed_bmc(safety, bound)
+        def bmc_relaxed(bound: int) -> Optional[Trace]:
+            return relaxed_traces.check_relaxed_bmc(safety, bound)
+        bmcer = bmc_relaxed
 
     for k in range(0, n + 1):
         if (m := bmcer(k)) is not None:
@@ -582,7 +586,6 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
 
         s.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
                        help='(for debugging mypyvy itself) double check countermodels by evaluation')
-
 
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
