@@ -4,7 +4,8 @@ A language for symbolic transition systems, inspired by Ivy.
 
 ## Dependencies
 
-You need python version 3.8. Any version of the form 3.8.X should work.
+You need python version 3.8 because we like to use shiny things. 
+Any version of the form 3.8.X should work.
 
 ```
 python3.8 --version
