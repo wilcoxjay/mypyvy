@@ -21,7 +21,7 @@ import utils
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl
-import translator
+from translator import Z3Translator
 
 z3.Forall = z3.ForAll
 
@@ -261,7 +261,7 @@ def check_two_state_implication_all_transitions(
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
-def assert_any_transition(s: Solver, t: translator.Z3Translator,
+def assert_any_transition(s: Solver, t: Z3Translator,
                           key_index: int, allow_stutter: bool = False) -> None:
     prog = syntax.the_program
     uid = str(key_index)
@@ -518,7 +518,7 @@ class CVC4Model(object):
 
         return ans
 
-LatorFactory = Callable[[syntax.Scope, Tuple[str, ...]], translator.Z3Translator]
+LatorFactory = Callable[[syntax.Scope, Tuple[str, ...]], Z3Translator]
 class Solver(object):
     def __init__(
             self,
@@ -534,7 +534,7 @@ class Solver(object):
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
         self.translator_factory = translator_factory
-        self.translators: Dict[Tuple[str, ...], translator.Z3Translator] = {}
+        self.translators: Dict[Tuple[str, ...], Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
         self.known_keys: Set[str] = set()
@@ -606,14 +606,14 @@ class Solver(object):
             for a in self.mutable_axioms:
                 self.add(t.translate_expr(a))
 
-    def get_translator(self, keys: Tuple[str, ...] = ()) -> translator.Z3Translator:
+    def get_translator(self, keys: Tuple[str, ...] = ()) -> Z3Translator:
         assert self.include_program
         t = tuple(keys)
         if t not in self.translators:
             for k in keys:
                 self._initialize_key(k)
             if not self.translator_factory:
-                lator = translator.Z3Translator(self.scope, keys)
+                lator = Z3Translator(self.scope, keys)
             else:
                 lator = self.translator_factory(self.scope, keys)
             self.translators[t] = lator
@@ -798,7 +798,7 @@ class Solver(object):
             minimize = utils.args.minimize_models
         if minimize:
             if sorts_to_minimize is None:
-                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values()
+                sorts_to_minimize = [Z3Translator.sort_to_z3(s) for s in self.scope.sorts.values()
                                      if not syntax.has_annotation(s, 'no_minimize')]
             if relations_to_minimize is None:
                 m = self._solver_model()
@@ -808,14 +808,14 @@ class Solver(object):
                     if r.is_derived() or syntax.has_annotation(r, 'no_minimize'):
                         continue
                     if not r.mutable:
-                        z3r = r.to_z3(None)
+                        z3r = Z3Translator.relation_to_z3(r, None)
                         if isinstance(z3r, z3.ExprRef):
                             rels_to_minimize.append(z3r.decl())
                         else:
                             rels_to_minimize.append(z3r)
                     else:
                         for k in self.known_keys:
-                            z3r = r.to_z3(k)
+                            z3r = Z3Translator.relation_to_z3(r, k)
                             if isinstance(z3r, z3.ExprRef):
                                 z3r = z3r.decl()
                             if str(z3r) in ds:
@@ -1016,7 +1016,7 @@ class Diagram(object):
     def vs(self) -> List[syntax.SortedVar]:
         return self.binder.vs
 
-    def to_z3(self, t: translator.Z3Translator, state_index: int = 0) -> z3.ExprRef:
+    def to_z3(self, t: Z3Translator, state_index: int = 0) -> z3.ExprRef:
         bs = t.bind(self.binder)
         with t.scope.in_scope(self.binder, bs):
             z3conjs = []
