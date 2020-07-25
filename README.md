@@ -48,7 +48,7 @@ style.
 
 For users who are familiar with Ivy, the syntax of mypyvy is broadly similar to
 Ivy.  The primary difference is that transitions are specified directly as a
-double-vocabulary formula, using `old(R(x))` to refer to the pre-state version
+double-vocabulary formula, using `new(R(x))` to refer to the post-state version
 of relation `R`.
 
 The mypyvy command line tool has several modes, all of which take a single `.pyv`
