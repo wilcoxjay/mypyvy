@@ -453,7 +453,7 @@ class FaithfulPrinter(object):
         assert d.span is not None
         assert self.pos == d.span[0].lexpos
 
-        if isinstance(d, DefinitionDecl) and isinstance(d.body, tuple):
+        if isinstance(d, DefinitionDecl):
             self.move_and_process_expr(d.expr)
         else:
             self.move_to_end(d)
@@ -1348,65 +1348,6 @@ def get_decl_from_sort(s: InferenceSort) -> SortDecl:
     assert s.decl is not None
     return s.decl
 
-class AssumeStatement(object):
-    def __init__(self, expr: Expr, *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.expr = expr
-
-    def __repr__(self) -> str:
-        return 'AssumeStatement(expr=%s)' % self.expr
-
-class AssignmentStatement(object):
-    def __init__(self, assignee: str, args: List[Expr], rhs: Expr, *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.assignee = assignee
-        self.args = args
-        self.rhs = rhs
-
-    def __repr__(self) -> str:
-        return 'AssignmentStatement(assignee=%s, args=%s, rhs=%s)' % (self.assignee, self.args, self.rhs)
-
-Statement = Union[AssumeStatement, AssignmentStatement]
-
-class BlockStatement(object):
-    def __init__(self, stmts: List[Statement], *, span: Optional[Span] = None) -> None:
-        self.span = span
-        self.stmts = stmts
-
-    def __repr__(self) -> str:
-        return 'BlockStatement(stmts=%s)' % self.stmts
-
-def translate_block(block: BlockStatement) -> Tuple[List[ModifiesClause], Expr]:
-    mods_str_list: List[str] = []
-    conjuncts = []
-    for stmt in block.stmts:
-        if isinstance(stmt, AssumeStatement):
-            conjuncts.append(stmt.expr)
-        elif isinstance(stmt, AssignmentStatement):
-            assert stmt.assignee not in mods_str_list, 'block statements may only assign to a component once!'
-            mods_str_list.append(stmt.assignee)
-            if not stmt.args:
-                conjuncts.append(Eq(New(Id(stmt.assignee)), stmt.rhs))
-            else:
-                assert isinstance(stmt.rhs, Bool)
-                if stmt.rhs.val:
-                    def my_or(x: Expr, y: Expr) -> Expr:
-                        return Or(x, y)
-                    f = my_or
-                else:
-                    def my_and_not(x: Expr, y: Expr) -> Expr:
-                        return And(x, Not(y))
-                    f = my_and_not
-                vs = ['X%s' % i for i, _ in enumerate(stmt.args)]
-                c = And(*(Eq(Id(X), arg) for X, arg in zip(vs, stmt.args)))
-
-                conjuncts.append(Forall([SortedVar(v, None) for v in vs],
-                                        Iff(New(Apply(stmt.assignee, [Id(v) for v in vs])),
-                                            f(Apply(stmt.assignee, [Id(v) for v in vs]), c))))
-        else:
-            assert False
-    return ([ModifiesClause(name) for name in mods_str_list], And(*conjuncts))
-
 class Decl(Denotable):
     def __init__(self, span: Optional[Span]) -> None:
         super().__init__()
@@ -1822,14 +1763,15 @@ def translate_old_to_new_prog(prog: Program, strip_old: bool = True) -> Program:
 class DefinitionDecl(Decl):
     def __init__(self, is_public_transition: bool, num_states: int,
                  name: str, params: List[SortedVar],
-                 body: Union[BlockStatement, Tuple[List[ModifiesClause], Expr]],
+                 mods: List[ModifiesClause],
+                 expr: Expr,
                  *, span: Optional[Span] = None) -> None:
         def implies(a: bool, b: bool) -> bool:
             return not a or b
         # these asserts are enforced by the parser
         assert num_states in (0, 1, 2)
         assert implies(is_public_transition, num_states == 2)
-        assert isinstance(body, BlockStatement) or len(body[0]) == 0 or num_states == 2
+        assert len(mods) == 0 or num_states == 2
 
         super().__init__(span)
         self.span = span
@@ -1839,14 +1781,11 @@ class DefinitionDecl(Decl):
         self.binder = Binder(params)
         self.arity = [sv.sort for sv in params]
         self.sort = BoolSort
-        self.body = body
-        if isinstance(self.body, BlockStatement):
-            self.mods, self.expr = translate_block(self.body)
-        else:
-            self.mods, self.expr = self.body
+        self.mods = mods
+        self.expr = expr
 
     def _denote(self) -> Tuple:
-        return (self.is_public_transition, self.num_states, self.name, self.binder, self.body)
+        return (self.is_public_transition, self.num_states, self.name, self.binder, self.mods, self.expr)
 
     def resolve(self, scope: Scope) -> None:
         assert len(scope.stack) == 0
