@@ -163,7 +163,7 @@ def check_transitions(s: Solver, minimize: Optional[bool] = None, verbose: bool 
                 continue
 
             if verbose:
-                utils.logger.always_print('checking transation %s:' % (trans.name,))
+                utils.logger.always_print('checking translation %s:' % (trans.name,))
 
             with s.new_frame():
                 s.add(t.translate_transition(trans))
