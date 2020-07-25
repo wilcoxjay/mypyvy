@@ -18,6 +18,7 @@ from typing import cast, TypeVar, Callable
 import z3
 
 import utils
+import resolver
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl
@@ -1004,14 +1005,14 @@ class Diagram(object):
         )
 
     def resolve(self, scope: Scope) -> None:
-        self.binder.pre_resolve(scope)
+        resolver.pre_resolve_binder(scope, self.binder)
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             with scope.n_states(1):
                 for _, _, c in self.conjuncts():
-                    c.resolve(scope, syntax.BoolSort)
+                    resolver.resolve_expr(scope, c, syntax.BoolSort)
 
-        self.binder.post_resolve()
+        resolver.post_resolve_binder(self.binder)
 
     def vs(self) -> List[syntax.SortedVar]:
         return self.binder.vs
@@ -1628,7 +1629,7 @@ class Trace(object):
                 ))))
             assert prog.scope is not None
             with prog.scope.n_states(1):
-                e.resolve(prog.scope, None)
+                resolver.resolve_expr(prog.scope, e, None)
             self.onestate_formula_cache[index] = e
         return self.onestate_formula_cache[index]
 
