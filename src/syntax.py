@@ -56,9 +56,6 @@ class Sort(Denotable):
     def resolve(self, scope: Scope[B]) -> None:
         raise Exception('Unexpected sort %s does not implement resolve method' % repr(self))
 
-    def to_z3(self) -> z3.SortRef:
-        raise Exception('Unexpected sort %s does not implement to_z3 method' % repr(self))
-
     def __ne__(self, other: object) -> bool:
         return not (self == other)
 
@@ -1304,11 +1301,6 @@ class UninterpretedSort(Sort):
     def __str__(self) -> str:
         return self.name
 
-    def to_z3(self) -> z3.SortRef:
-        assert self.decl is not None, str(self)
-
-        return self.decl.to_z3()
-
     def _denote(self) -> Tuple:
         return ('uninterpreted', self.name,)
 
@@ -1325,9 +1317,6 @@ class _BoolSort(Sort):
 
     def resolve(self, scope: Scope) -> None:
         pass
-
-    def to_z3(self) -> z3.SortRef:
-        return z3.BoolSort()
 
     def _denote(self) -> Tuple:
         return ('bool', )
@@ -1347,9 +1336,6 @@ class _IntSort(Sort):
 
     def resolve(self, scope: Scope) -> None:
         pass
-
-    def to_z3(self) -> z3.SortRef:
-        return z3.IntSort()
 
     def _denote(self) -> Tuple:
         return ('int',)
@@ -1459,12 +1445,6 @@ class SortDecl(Decl):
     def __str__(self) -> str:
         return 'sort %s' % self.name
 
-    def to_z3(self) -> z3.SortRef:
-        if self.z3 is None:
-            self.z3 = z3.DeclareSort(self.name)
-
-        return self.z3
-
 class FunctionDecl(Decl):
     def __init__(
             self, name: str, arity: Arity, sort: Sort, mutable: bool, annotations: List[Annotation], *,
@@ -1512,21 +1492,6 @@ class FunctionDecl(Decl):
             ', '.join([str(s) for s in self.arity]),
             self.sort
         )
-
-    def to_z3(self, key: Optional[str]) -> z3.FuncDeclRef:
-        if self.mutable:
-            assert key is not None
-            if key not in self.mut_z3:
-                a = [s.to_z3() for s in self.arity] + [self.sort.to_z3()]
-                self.mut_z3[key] = z3.Function(key + '_' + self.name, *a)
-
-            return self.mut_z3[key]
-        else:
-            if self.immut_z3 is None:
-                a = [s.to_z3() for s in self.arity] + [self.sort.to_z3()]
-                self.immut_z3 = z3.Function(self.name, *a)
-
-            return self.immut_z3
 
 
 class RelationDecl(Decl):
@@ -1577,27 +1542,6 @@ class RelationDecl(Decl):
                                          '' if not self.derived_axiom
                                          else (': %s' % str(self.derived_axiom)))
 
-    def to_z3(self, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
-        if self.mutable:
-            assert key is not None
-            if key not in self.mut_z3:
-                if self.arity:
-                    a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
-                    self.mut_z3[key] = z3.Function(key + '_' + self.name, *a)
-                else:
-                    self.mut_z3[key] = z3.Const(key + '_' + self.name, z3.BoolSort())
-
-            return self.mut_z3[key]
-        else:
-            if self.immut_z3 is None:
-                if self.arity:
-                    a = [s.to_z3() for s in self.arity] + [z3.BoolSort()]
-                    self.immut_z3 = z3.Function(self.name, *a)
-                else:
-                    self.immut_z3 = z3.Const(self.name, z3.BoolSort())
-
-            return self.immut_z3
-
     def is_derived(self) -> bool:
         return self.derived_axiom is not None
 
@@ -1635,19 +1579,6 @@ class ConstantDecl(Decl):
     def resolve(self, scope: Scope) -> None:
         self.sort.resolve(scope)
         scope.add_constant(self)
-
-    def to_z3(self, key: Optional[str]) -> z3.ExprRef:
-        if self.mutable:
-            assert key is not None
-            if key not in self.mut_z3:
-                self.mut_z3[key] = z3.Const(key + '_' + self.name, self.sort.to_z3())
-
-            return self.mut_z3[key]
-        else:
-            if self.immut_z3 is None:
-                self.immut_z3 = z3.Const(self.name, self.sort.to_z3())
-
-            return self.immut_z3
 
 def close_free_vars(expr: Expr, in_scope: List[str] = [], span: Optional[Span] = None) -> Expr:
     vs = [s for s in expr.free_ids() if s not in in_scope and s.isupper()]

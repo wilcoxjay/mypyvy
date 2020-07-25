@@ -7,6 +7,7 @@ from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, Sta
 from syntax import Program, SortDecl
 
 from typing import Any, Callable, cast, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Union
 
 import itertools
 import z3
@@ -51,7 +52,7 @@ class Z3Translator(object):
             n = sv.name + '_%s' % (self.counter,)
             self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
-            bs.append(z3.Const(n, sv.sort.to_z3()))
+            bs.append(z3.Const(n, Z3Translator.sort_to_z3(sv.sort)))
         return bs
 
     def get_key_opt(self, index: int) -> Optional[str]:
@@ -94,10 +95,10 @@ class Z3Translator(object):
                 assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
                 k = self.get_key_opt(index)
                 assert not d.mutable or k is not None
-                R = d.to_z3(k)
-                assert isinstance(R, z3.FuncDeclRef)
+                callee = Z3Translator.statedecl_to_z3(d, k)
+                assert isinstance(callee, z3.FuncDeclRef)
                 app_translated_args = [self.translate_expr(arg, index) for arg in expr.args]
-                translated_app = R(*app_translated_args)
+                translated_app = callee(*app_translated_args)
                 return translated_app
         elif isinstance(expr, QuantifierExpr):
             bs = self.bind(expr.binder)
@@ -109,19 +110,20 @@ class Z3Translator(object):
             d = self.scope.get(expr.name)
             assert d is not None, expr.name
             if isinstance(d, RelationDecl) or \
-               isinstance(d, ConstantDecl) or \
-               isinstance(d, FunctionDecl):
+               isinstance(d, ConstantDecl):
                 k = self.get_key_opt(index)
                 assert not d.mutable or k is not None
-                x = d.to_z3(k)
-                assert isinstance(x, z3.ExprRef)
-                return x
+                z3sym = Z3Translator.statedecl_to_z3(d, k)
+                assert isinstance(z3sym, z3.ExprRef)
+                e = z3sym
+                return e
             elif isinstance(d, DefinitionDecl):
                 # checked in resolver; see NOTE(calling-stateful-definitions)
                 assert index + d.num_states <= len(self.keys)
                 with self.scope.fresh_stack():
                     return self.translate_expr(d.expr, index)
             else:
+                assert not isinstance(d, FunctionDecl)  # impossible since functions have arity > 0
                 e, = d
                 return e
         elif isinstance(expr, IfThenElse):
@@ -151,19 +153,19 @@ class Z3Translator(object):
             assert k_old is not None
 
             if isinstance(d, ConstantDecl) or len(d.arity) == 0:
-                lhs = d.to_z3(k_new)
-                rhs = d.to_z3(k_old)
+                lhs = Z3Translator.statedecl_to_z3(d, k_new)
+                rhs = Z3Translator.statedecl_to_z3(d, k_old)
                 assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
                 e = lhs == rhs
             else:
                 cs: List[z3.ExprRef] = []
                 i = 0
                 for s in d.arity:
-                    cs.append(z3.Const('x' + str(i), s.to_z3()))
+                    cs.append(z3.Const('x' + str(i), Z3Translator.sort_to_z3(s)))
                     i += 1
 
-                lhs = d.to_z3(k_new)
-                rhs = d.to_z3(k_old)
+                lhs = Z3Translator.statedecl_to_z3(d, k_new)
+                rhs = Z3Translator.statedecl_to_z3(d, k_old)
                 assert isinstance(lhs, z3.FuncDeclRef) and isinstance(rhs, z3.FuncDeclRef)
 
                 e = z3.Forall(cs, lhs(*cs) == rhs(*cs))
@@ -184,6 +186,86 @@ class Z3Translator(object):
                 return z3.Exists(bs, body)
             else:
                 return body
+
+    @staticmethod
+    def sort_to_z3(s: Union[syntax.Sort, syntax.SortDecl]) -> z3.SortRef:
+        if isinstance(s, syntax.UninterpretedSort):
+            assert s.decl is not None, str(s)
+            s = s.decl
+
+        if isinstance(s, syntax.SortDecl):
+            if s.z3 is None:
+                s.z3 = z3.DeclareSort(s.name)
+            return s.z3
+        elif isinstance(s, syntax._BoolSort):
+            return z3.BoolSort()
+        elif isinstance(s, syntax._IntSort):
+            return z3.IntSort()
+        else:
+            assert False
+
+    @staticmethod
+    def function_to_z3(f: syntax.FunctionDecl, key: Optional[str]) -> z3.FuncDeclRef:
+        if f.mutable:
+            assert key is not None
+            if key not in f.mut_z3:
+                a = [Z3Translator.sort_to_z3(s) for s in f.arity] + [Z3Translator.sort_to_z3(f.sort)]
+                f.mut_z3[key] = z3.Function(key + '_' + f.name, *a)
+
+            return f.mut_z3[key]
+        else:
+            if f.immut_z3 is None:
+                a = [Z3Translator.sort_to_z3(s) for s in f.arity] + [Z3Translator.sort_to_z3(f.sort)]
+                f.immut_z3 = z3.Function(f.name, *a)
+
+            return f.immut_z3
+
+    @staticmethod
+    def relation_to_z3(r: syntax.RelationDecl, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
+        if r.mutable:
+            assert key is not None
+            if key not in r.mut_z3:
+                if r.arity:
+                    a = [Z3Translator.sort_to_z3(s) for s in r.arity] + [z3.BoolSort()]
+                    r.mut_z3[key] = z3.Function(key + '_' + r.name, *a)
+                else:
+                    r.mut_z3[key] = z3.Const(key + '_' + r.name, z3.BoolSort())
+
+            return r.mut_z3[key]
+        else:
+            if r.immut_z3 is None:
+                if r.arity:
+                    a = [Z3Translator.sort_to_z3(s) for s in r.arity] + [z3.BoolSort()]
+                    r.immut_z3 = z3.Function(r.name, *a)
+                else:
+                    r.immut_z3 = z3.Const(r.name, z3.BoolSort())
+
+            return r.immut_z3
+
+    @staticmethod
+    def constant_to_z3(c: syntax.ConstantDecl, key: Optional[str]) -> z3.ExprRef:
+        if c.mutable:
+            assert key is not None
+            if key not in c.mut_z3:
+                c.mut_z3[key] = z3.Const(key + '_' + c.name, Z3Translator.sort_to_z3(c.sort))
+
+            return c.mut_z3[key]
+        else:
+            if c.immut_z3 is None:
+                c.immut_z3 = z3.Const(c.name, Z3Translator.sort_to_z3(c.sort))
+
+            return c.immut_z3
+
+    @staticmethod
+    def statedecl_to_z3(d: syntax.StateDecl, key: Optional[str]) -> Union[z3.FuncDeclRef, z3.ExprRef]:
+        if isinstance(d, syntax.RelationDecl):
+            return Z3Translator.relation_to_z3(d, key)
+        elif isinstance(d, syntax.ConstantDecl):
+            return Z3Translator.constant_to_z3(d, key)
+        else:
+            assert isinstance(d, syntax.FunctionDecl)
+            return Z3Translator.function_to_z3(d, key)
+
 
 def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> SortDecl:
     return prog.scope.get_sort_checked(str(z3sort))
