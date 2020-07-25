@@ -544,7 +544,7 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
         s.add_argument('--print-program',
-                       choices=['str', 'repr', 'faithful', 'refactor-old-to-new', 'without-invariants'],
+                       choices=['str', 'repr', 'faithful', 'without-invariants'],
                        help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -579,8 +579,6 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
                        help='print the exit code before exiting (good for regression testing)')
-        s.add_argument('--accept-old', action=utils.YesNoAction, default=False,
-                       help='allow deprecated syntax using old()')
 
         s.add_argument('--cvc4', action='store_true',
                        help='use CVC4 as the backend solver. this is not very well supported.')
@@ -710,19 +708,6 @@ def main() -> None:
                 return syntax.faithful_print_prog(prog, skip_invariants=True)
             to_str = p
             end = ''
-        elif utils.args.print_program == 'refactor-old-to-new':
-            pre_vocab_resolution_error_count = utils.error_count
-            resolver.resolve_program_vocab(prog)
-            if utils.error_count > pre_vocab_resolution_error_count:
-                print('program has resolution errors')
-                utils.exit(1)
-            pre_translation_error_count = utils.error_count
-            new_prog = syntax.translate_old_to_new_prog(prog, strip_old=False)
-            if utils.error_count > pre_translation_error_count:
-                print('errors during old->new translation')
-                utils.exit(1)
-            print(syntax.faithful_print_prog(new_prog, ignore_old=True), end='')
-            utils.exit(0)
         else:
             assert False
 
