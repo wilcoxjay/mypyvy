@@ -90,7 +90,8 @@ def sep_main(solver: Solver) -> str:
     seen: Set[str] = set() # used to ensure we don't declare conflicting z3 symbols
     n_total_cex = 1
     for i, p in enumerate(invs):
-        print(f'\n\n\nLearning Invariant {i}: {p}\n')
+        print(f'\n\n\n[{datetime.now()}] Learning invariant {i}: {p}\n')
+        solver = Solver(use_cvc4=utils.args.cvc4) # reusing the same solver too much results in unknowns
         prefix: List[str] = []
         prefix_sorts: List[UninterpretedSort] = []
         vs: List[SortedVar] = []
@@ -108,7 +109,7 @@ def sep_main(solver: Solver) -> str:
 
         terms: Dict[str, List[Expr]] = defaultdict(list)
         def print_terms(msg: str = 'terms') -> None:
-            print(f'{msg} ({sum(len(ts) for ts in terms.values())}):')
+            print(f'[{datetime.now()}] {msg} ({sum(len(ts) for ts in terms.values())}):')
             for k in sorted(terms.keys()):
                 print(f'{k:10} ({len(terms[k]):4}): ' + ' '.join(sorted(str(t) for t in terms[k])))
             print()
@@ -144,9 +145,9 @@ def sep_main(solver: Solver) -> str:
                 atoms.append(Apply(r.name, list(ts)))
         atoms.extend(Eq(x, y) for ts in terms.values() for x, y in combinations(ts, 2))
         atoms = sorted(atoms)
-        print(f'atoms ({len(atoms)}):\n' + ''.join(f'    {a}\n' for a in atoms))
+        print(f'[{datetime.now()}] atoms ({len(atoms)}):\n' + ''.join(f'    {a}\n' for a in atoms))
         literals = [lit for a in atoms for lit in [a, Not(a)]]
-        print(f'literals ({len(literals)}):\n' + ''.join(f'{i:8}: {lit}\n' for i, lit in enumerate(literals)))
+        print(f'[{datetime.now()}] literals ({len(literals)}):\n' + ''.join(f'{i:8}: {lit}\n' for i, lit in enumerate(literals)))
 
         n_clauses = 1
         xs: Dict[Tuple[int, Expr], z3.ExprRef] = {
@@ -281,7 +282,7 @@ def sep_main(solver: Solver) -> str:
             m0,
             f'm0_{i}',
         )
-        print(f'Assertions for m0 are:')
+        print(f'[{datetime.now()}] Assertions for m0 are:')
         with z3_full_print():
             for a in assertions:
                 print(a)
@@ -307,11 +308,11 @@ def sep_main(solver: Solver) -> str:
                 Or(*(lit for lit in literals if assignment[i, lit]))
                 for i in range(n_clauses)
             )))
-            print(f'Candidate separator is: {sep}\n')
+            print(f'[{datetime.now()}] Candidate separator is: {sep}\n')
             z3cex = check_implication(solver, [p], [sep], minimize=True)
             if z3cex is not None:
                 cex = Trace.from_z3((KEY_ONE,), z3cex).as_state(0)
-                print(f'Got positive counterexample:\n\n{cex}\n')
+                print(f'[{datetime.now()}] Got positive counterexample:\n\n{cex}\n')
                 assertions, cex_models_sep = eval_sep(cex)
                 for a in assertions:
                     z3sep.add(a)
@@ -321,7 +322,7 @@ def sep_main(solver: Solver) -> str:
             z3cex = check_implication(solver, [sep], [p], minimize=True)
             if z3cex is not None:
                 cex = Trace.from_z3((KEY_ONE,), z3cex).as_state(0)
-                print(f'Got negative counterexample:\n\n{cex}\n')
+                print(f'[{datetime.now()}] Got negative counterexample:\n\n{cex}\n')
                 assertions, cex_models_sep = eval_sep(cex)
                 for a in assertions:
                     z3sep.add(a)
@@ -330,7 +331,7 @@ def sep_main(solver: Solver) -> str:
                 continue
             break
         n_total_cex += n_cex
-        print(f'Success! Learned after {n_cex} counterexamples:\n    {sep}\n    <=>\n    {p}\n\n')
+        print(f'[{datetime.now()}] Success! Learned invariant {i} after {n_cex} counterexamples:\n    {sep}\n    <=>\n    {p}\n\n')
 
         # # This is a version that scales very poorly, and does not use
         # # any additional solver symbols. After very preliminary
@@ -422,7 +423,7 @@ def sep_main(solver: Solver) -> str:
         #
         # assert False
 
-    print(f'Successfully learned all {len(invs)} invariants one by one using a total of {n_total_cex} examples.')
+    print(f'[{datetime.now()}] Successfully learned all {len(invs)} invariants one by one using a total of {n_total_cex} examples.')
 
     return 'yo'
 
