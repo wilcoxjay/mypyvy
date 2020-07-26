@@ -86,10 +86,11 @@ def sep_main(solver: Solver) -> str:
         m0 = Trace.from_z3((KEY_ONE,), solver.model(minimize=True)).as_state(0)
         print(f'Using the following model:\n\n{m0}\n')
 
-    print(f'Learning {len(invs)} invariants one by one')
+    print(f'[{datetime.now()}] Learning {len(invs)} invariants one by one')
     seen: Set[str] = set() # used to ensure we don't declare conflicting z3 symbols
     n_total_cex = 1
-    for i, p in enumerate(invs):
+    n_learned = 0
+    for i, p in reversed(list(enumerate(invs))):
         print(f'\n\n\n[{datetime.now()}] Learning invariant {i}: {p}\n')
         solver = Solver(use_cvc4=utils.args.cvc4) # reusing the same solver too much results in unknowns
         prefix: List[str] = []
@@ -297,7 +298,9 @@ def sep_main(solver: Solver) -> str:
             res = z3sep.check()
             assert res in (z3.sat, z3.unsat), f'{res}\n\n{z3sep}'
             if res == z3.unsat:
-                assert False, 'unsep? here?'
+                n_total_cex += n_cex
+                print(f'[{datetime.now()}] Failure! Cannot learn invariant {i} after {n_cex} counterexamples. Maybe it has function depth more than 1?\n    {p}\n\n')
+                break
             model = z3sep.model()
             # bias toward strongest separator, but no minimization for now
             assignment: Dict[Tuple[int, Expr], bool] = {
@@ -329,9 +332,10 @@ def sep_main(solver: Solver) -> str:
                 z3sep.add(z3.Not(cex_models_sep))
                 n_cex += 1
                 continue
+            n_total_cex += n_cex
+            n_learned += 1
+            print(f'[{datetime.now()}] Success! Learned invariant {i} after {n_cex} counterexamples:\n    {sep}\n    <=>\n    {p}\n\n')
             break
-        n_total_cex += n_cex
-        print(f'[{datetime.now()}] Success! Learned invariant {i} after {n_cex} counterexamples:\n    {sep}\n    <=>\n    {p}\n\n')
 
         # # This is a version that scales very poorly, and does not use
         # # any additional solver symbols. After very preliminary
@@ -423,7 +427,7 @@ def sep_main(solver: Solver) -> str:
         #
         # assert False
 
-    print(f'[{datetime.now()}] Successfully learned all {len(invs)} invariants one by one using a total of {n_total_cex} examples.')
+    print(f'[{datetime.now()}] Successfully learned a total of {n_learned} out of {len(invs)} invariants one by one using a total of {n_total_cex} examples.')
 
     return 'yo'
 

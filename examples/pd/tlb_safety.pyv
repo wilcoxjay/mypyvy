@@ -244,7 +244,7 @@ transition initiator14(p:processor)
   modifies error, plock, pc
     & pc(p) = i14
     & (if !plock(writepmap(p))
-       then 
+       then
          new(error)
        else
          (new(error) <-> error))
@@ -311,7 +311,7 @@ transition responder6(p:processor)
   modifies actionneeded, pc
     & pc(p) = r6
     & (forall P. P != p -> (new(actionneeded(P)) <-> actionneeded(P)))
-    & !new(actionneeded(p)) 
+    & !new(actionneeded(p))
     & (forall P. P != p -> new(pc(P)) = pc(P))
     & new(pc(p)) = r7
 
@@ -341,7 +341,7 @@ transition main2(p:processor)
   modifies error, pc
     & pc(p) = m2
     & (new(error) <-> error | tlb(p) != pentry(userpmap(p)))
-    & (forall P. P != p -> new(pc(P)) = pc(P)) 
+    & (forall P. P != p -> new(pc(P)) = pc(P))
     & new(pc(p)) = m3
 
 # # m3:    if (*)
@@ -349,13 +349,13 @@ transition main2(p:processor)
 transition main3a(p:processor)
   modifies pc
     & pc(p) = m3
-    & (forall P. P != p -> new(pc(P)) = pc(P)) 
+    & (forall P. P != p -> new(pc(P)) = pc(P))
     & new(pc(p)) = i1
 
 transition main3b(p:processor)
   modifies pc
     & pc(p) = m3
-    & (forall P. P != p -> new(pc(P)) = pc(P)) 
+    & (forall P. P != p -> new(pc(P)) = pc(P))
     & new(pc(p)) = m5
 
 # # m5:    if (interrupt)
@@ -364,13 +364,13 @@ transition main5(p:processor)
   modifies interrupt, pc
     & pc(p)=m5
     & if interrupt(p)
-      then 
+      then
         & (forall P. new(interrupt(P)) <-> interrupt(P) & P != p)
-        & (forall P. P != p -> new(pc(P)) = pc(P)) 
+        & (forall P. P != p -> new(pc(P)) = pc(P))
         & new(pc(p)) = r1
      else
         & (forall P. new(interrupt(P)) <-> interrupt(P))
-        & (forall P. P != p -> new(pc(P)) = pc(P)) 
+        & (forall P. P != p -> new(pc(P)) = pc(P))
         & new(pc(p)) = m2
 
 # # b1: pid := ++n  // create process
@@ -385,11 +385,11 @@ transition main5(p:processor)
 #   modifies userpmap, tlb, pc
 #     & old(pc(p)) = b1
 #     & !old(plock(m))
-#     & (forall P. P != p -> userpmap(P) = old(userpmap(P))) 
+#     & (forall P. P != p -> userpmap(P) = old(userpmap(P)))
 #     & userpmap(p) = m
-#     & (forall P. P != p -> tlb(P) = old(tlb(P))) 
+#     & (forall P. P != p -> tlb(P) = old(tlb(P)))
 #     & tlb(p) = old(pentry(m))
-#     & (forall P. P != p -> pc(P) = old(pc(P))) 
+#     & (forall P. P != p -> pc(P) = old(pc(P)))
 #     & pc(p) = m2
 
 # show safety
@@ -438,7 +438,9 @@ invariant (pc(P)=i9 | pc(P)=i11) & pc(C) != b1 & userpmap(C) = writepmap(P) -> (
 
 # When the tlb(P) is incorrect actionneded(P) is still set (unless we changed our own tlb, but then
 # we are in i12 where we fix it in the next step)
-invariant pc(P) != b1 & tlb(P) != pentry(userpmap(P)) -> (actionneeded(P) & pc(P)!=r6) | (pc(P)=i12 & userpmap(P) = writepmap(P))
+# invariant pc(P) != b1 & tlb(P) != pentry(userpmap(P)) -> (actionneeded(P) & pc(P)!=r6) | (pc(P)=i12 & userpmap(P) = writepmap(P))
+# rewritten to use function depth 1:
+invariant pc(P) != b1 & M = userpmap(P) & tlb(P) != pentry(M) -> (actionneeded(P) & pc(P)!=r6) | (pc(P)=i12 & M = writepmap(P))
 
 # If we already iterated over a process C in the i3-i8 loop of P and userpmap(C) = writepmap(P) then
 # we set the interrupt flag, so it is still set or C is in the interrupt routine
@@ -446,12 +448,17 @@ invariant (pc(P)=i3) & !todo(P,C) & pc(C) != b1 & userpmap(C) = writepmap(P) -> 
 invariant (pc(P)=i4 | pc(P)=i5 | pc(P)=i6 | pc(P)=i7 | pc(P)=i8) & !todo(P,C) & pc(C) != b1 & !currentcpu(P,C) & userpmap(C) = writepmap(P) -> interrupt(C) | P = C | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3)
 invariant (pc(P)=i9 | pc(P)=i11) & pc(C) != b1 & userpmap(C) = writepmap(P) -> interrupt(C) | P = C | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3)
 # When the tlb(C) is incorrect the process must be interrupted
-invariant tlb(C) != pentry(userpmap(C)) & pc(C) != b1 -> interrupt(C) | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3 | pc(C) = r5) | (pc(C)=i12 & writepmap(C) = userpmap(C))
+# invariant tlb(C) != pentry(userpmap(C)) & pc(C) != b1 -> interrupt(C) | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3 | pc(C) = r5) | (pc(C)=i12 & writepmap(C) = userpmap(C))
+# rewritten to use function depth 1:
+invariant M = userpmap(C) & tlb(C) != pentry(M) & pc(C) != b1 -> interrupt(C) | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3 | pc(C) = r5) | (pc(C)=i12 & writepmap(C) = userpmap(C))
 
 # We wait for a process in the i9 loop at least until it leaves m2 and it cannot enter m2 again before i11
 invariant ((pc(P)=i9 & !todo(P,C)) | pc(P)=i11) & userpmap(C) = writepmap(P) -> pc(C)!=m2
 # When the tlb(C) is incorrect the process is not in m2
-invariant tlb(P) != pentry(userpmap(P)) -> pc(P)!=m2
+# invariant tlb(P) != pentry(userpmap(P)) -> pc(P)!=m2
+# rewritten to use function depth 1:
+invariant M = userpmap(P) & tlb(P) != pentry(M) -> pc(P)!=m2
+
 
 safety !error
 
@@ -461,4 +468,3 @@ safety !error
 # invariant forall P:pmap. !plock(P)
 # invariant forall P:processor. !actionlock(P) & !actionneeded(P) & !interrupt(P) & active(P)
 # invariant !error
-

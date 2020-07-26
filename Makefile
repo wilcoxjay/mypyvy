@@ -99,13 +99,13 @@ pd:
 
 sep:
 	time $(PYTHON) src/mypyvy.py sep examples/pd/ring.pyv > ring.sep.log
-	grep "Successfully learned all" ring.sep.log
+	grep "Successfully learned a total" ring.sep.log
 	time $(PYTHON) src/mypyvy.py sep examples/pd/ring-id.pyv > ring-id.sep.log
-	grep "Successfully learned all" ring-id.sep.log
+	grep "Successfully learned a total" ring-id.sep.log
 	time $(PYTHON) src/mypyvy.py sep examples/pd/lockserv.pyv > lockserv.sep.log
-	grep "Successfully learned all" lockserv.sep.log
+	grep "Successfully learned a total" lockserv.sep.log
 	time $(PYTHON) src/mypyvy.py sep examples/pd/consensus_forall.pyv > consensus_forall.sep.log
-	grep "Successfully learned all" consensus_forall.sep.log
+	grep "Successfully learned a total" consensus_forall.sep.log
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
