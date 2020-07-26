@@ -216,58 +216,67 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
         assert False
 
 
-def xor(b1: bool, b2: bool) -> bool:
-    return b1 != b2
-
-def as_clause_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
+def as_clauses_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
+    '''
+    Convert a quantifier-free formula to CNF
+    '''
     if isinstance(expr, Bool):
-        return [[Bool(xor(expr.val, negated))]]
+        return [[Bool(expr.val != negated)]]
     elif isinstance(expr, UnaryExpr):
         assert expr.op == 'NOT'
-        return as_clause_body(expr.arg, not negated)
+        return as_clauses_body(expr.arg, not negated)
     elif isinstance(expr, BinaryExpr):
         if expr.op in ['EQUAL', 'NOTEQ']:
-            op = 'NOTEQ' if xor(expr.op == 'NOTEQ', negated) else 'EQUAL'
+            op = 'NOTEQ' if (expr.op == 'NOTEQ') != negated else 'EQUAL'
             return [[BinaryExpr(op, expr.arg1, expr.arg2)]]
+        elif expr.op == 'IMPLIES':
+            return as_clauses_body(Or(Not(expr.arg1), expr.arg2), negated=negated)
+        elif expr.op == 'IFF':
+            return as_clauses_body(
+                And(Or(Not(expr.arg1), expr.arg2),
+                    Or(expr.arg1, Not(expr.arg2))),
+                negated=negated
+            )
         else:
-            assert expr.op == 'IMPLIES'
-            return as_clause_body(Or(Not(expr.arg1), expr.arg2), negated=negated)
+            assert False, f'{expr.op}\n{expr}'
     elif isinstance(expr, NaryExpr):
         assert expr.op != 'DISTINCT', 'CNF normalization does not support "distinct" expressions'
-
+        assert expr.op in ('AND', 'OR'), expr
         if negated:
             other_op = 'AND' if expr.op == 'OR' else 'OR'
-            return as_clause_body(NaryExpr(other_op, [Not(arg) for arg in expr.args]), negated=False)
+            return as_clauses_body(NaryExpr(other_op, [Not(arg) for arg in expr.args]), negated=False)
         elif expr.op == 'AND':
-            return list(itertools.chain(*(as_clause_body(arg, negated=False) for arg in expr.args)))
-        else:
-            assert expr.op == 'OR'
+            return list(itertools.chain(*(as_clauses_body(arg, negated=False) for arg in expr.args)))
+        elif expr.op == 'OR':
             return [list(itertools.chain(*tup))
-                    for tup in itertools.product(*(as_clause_body(arg, negated=False) for arg in expr.args))]
+                    for tup in itertools.product(*(as_clauses_body(arg, negated=False) for arg in expr.args))]
+        else:
+            assert False, expr
     elif isinstance(expr, AppExpr) or isinstance(expr, Id):
         if negated:
             return [[Not(expr)]]
         else:
             return [[expr]]
     else:
-        assert False, "unsupported expressions %s in as_clause_body" % expr
+        assert False, f'unsupported expressions in as_clauses_body: {expr}'
 
-def as_quant_clauses(expr: Expr, negated: bool = False) -> Tuple[List[SortedVar], List[List[Expr]]]:
+def as_clauses_quant(expr: Expr, negated: bool = False) -> Tuple[List[SortedVar], List[List[Expr]]]:
     if isinstance(expr, QuantifierExpr):
         if negated:
             other_quant = 'EXISTS' if expr.quant == 'FORALL' else 'FORALL'
-            return as_quant_clauses(QuantifierExpr(other_quant, expr.binder.vs, Not(expr.body)), negated=False)
+            return as_clauses_quant(QuantifierExpr(other_quant, expr.binder.vs, Not(expr.body)), negated=False)
         else:
             assert expr.quant == 'FORALL'
-            new_vs, new_body = as_quant_clauses(expr.body, negated=False)
+            new_vs, new_body = as_clauses_quant(expr.body, negated=False)
             return expr.binder.vs + new_vs, new_body
     elif isinstance(expr, UnaryExpr) and expr.op == 'NOT':
-        return as_quant_clauses(expr.arg, not negated)
+        return as_clauses_quant(expr.arg, not negated)
     else:
-        return [], as_clause_body(expr, negated)
+        return [], as_clauses_body(expr, negated)
 
 def as_clauses(expr: Expr) -> List[Expr]:
-    vs, clauses = as_quant_clauses(expr)
+    '''Conver expr to CNF (must be universally quantified, see as_clauses_quant'''
+    vs, clauses = as_clauses_quant(expr)
     ans = []
     for clause in clauses:
         if len(clause) == 1:
