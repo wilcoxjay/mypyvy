@@ -10,7 +10,7 @@ style:
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
 
-test: check check-imports unit typecheck verify verify-pd trace updr pd-old pd
+test: check check-imports unit typecheck verify verify-pd trace updr pd-old pd sep
 
 unit: check
 	$(PYTHON) -m unittest discover -s src -v
@@ -96,6 +96,16 @@ pd:
 	# time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --cache-only $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_cache_only.log # TODO: this currently fails, should debug
 	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/ring.pyv > ring.primal_dual_houdini_1_clear_cache.log
 	grep "Proved safety!" ring.primal_dual_houdini_1_clear_cache.log
+
+sep:
+	time $(PYTHON) src/mypyvy.py sep examples/pd/ring.pyv > ring.sep.log
+	grep "Successfully learned all" ring.sep.log
+	time $(PYTHON) src/mypyvy.py sep examples/pd/ring-id.pyv > ring-id.sep.log
+	grep "Successfully learned all" ring-id.sep.log
+	time $(PYTHON) src/mypyvy.py sep examples/pd/lockserv.pyv > lockserv.sep.log
+	grep "Successfully learned all" lockserv.sep.log
+	time $(PYTHON) src/mypyvy.py sep examples/pd/consensus_forall.pyv > consensus_forall.sep.log
+	grep "Successfully learned all" consensus_forall.sep.log
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 

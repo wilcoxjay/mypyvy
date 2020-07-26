@@ -78,17 +78,17 @@ def sep_main(solver: Solver) -> str:
     # just for testing, get a model of invs that violates every init predicate
     t = solver.get_translator((KEY_ONE,))
     with solver.new_frame():
-        for e in inits:
-            solver.add(t.translate_expr(Not(e)))
+        solver.add(t.translate_expr(Not(And(*inits))))
         for e in chain(safety, invs):
             solver.add(t.translate_expr(e))
         res = solver.check()
-        assert res == z3.sat, solver.z3solver
+        assert res == z3.sat, f'{res}\n{solver.z3solver}'
         m0 = Trace.from_z3((KEY_ONE,), solver.model(minimize=True)).as_state(0)
         print(f'Using the following model:\n\n{m0}\n')
 
     print(f'Learning {len(invs)} invariants one by one')
     seen: Set[str] = set() # used to ensure we don't declare conflicting z3 symbols
+    n_total_cex = 1
     for i, p in enumerate(invs):
         print(f'\n\n\nLearning Invariant {i}: {p}\n')
         prefix: List[str] = []
@@ -204,7 +204,7 @@ def sep_main(solver: Solver) -> str:
             }
             for r, ri in state.rel_interp().items():
                 if len(r.arity) == 0:
-                    assert len(ri) == 1 and ri[0][0] == ()
+                    assert len(ri) == 1 and len(ri[0][0]) == 0, (r, ri)
                     a = relations[r.name]
                     assert isinstance(a, z3.ExprRef)
                     assertions.append(lit(a, ri[0][1]))
@@ -243,17 +243,14 @@ def sep_main(solver: Solver) -> str:
                         return z3_vs[var_names.index(e.name)]
                     elif e.name in constants:
                         return constants[e.name]
-                    elif e.name in relations:
-                        r = relations[e.name]
-                        assert isinstance(r, z3.ExprRef), r
+                    elif e.name in relations and isinstance(r := relations[e.name], z3.ExprRef):
                         return r
                     else:
                         assert False, e
                 elif isinstance(e, AppExpr) and e.callee in functions:
                     return functions[e.callee](*(map(to_z3, e.args)))
-                elif isinstance(e, AppExpr) and e.callee in relations:
-                    r = relations[e.callee]
-                    assert isinstance(r, z3.FuncDeclRef)
+                elif (isinstance(e, AppExpr) and e.callee in relations and
+                      isinstance(r := relations[e.callee], z3.FuncDeclRef)):
                     return r(*(map(to_z3, e.args)))
                 elif isinstance(e, UnaryExpr) and e.op == 'NOT':
                     return z3.Not(to_z3(e.arg))
@@ -294,7 +291,7 @@ def sep_main(solver: Solver) -> str:
         for a in assertions:
             z3sep.add(a)
         z3sep.add(m0_models_sep)
-        n_cex = 1
+        n_cex = 0
         while True:
             res = z3sep.check()
             assert res in (z3.sat, z3.unsat), f'{res}\n\n{z3sep}'
@@ -310,7 +307,7 @@ def sep_main(solver: Solver) -> str:
                 Or(*(lit for lit in literals if assignment[i, lit]))
                 for i in range(n_clauses)
             )))
-            print(f'Candidate separator is: {sep}')
+            print(f'Candidate separator is: {sep}\n')
             z3cex = check_implication(solver, [p], [sep], minimize=True)
             if z3cex is not None:
                 cex = Trace.from_z3((KEY_ONE,), z3cex).as_state(0)
@@ -332,6 +329,7 @@ def sep_main(solver: Solver) -> str:
                 n_cex += 1
                 continue
             break
+        n_total_cex += n_cex
         print(f'Success! Learned after {n_cex} counterexamples:\n    {sep}\n    <=>\n    {p}\n\n')
 
         # # This is a version that scales very poorly, and does not use
@@ -423,6 +421,8 @@ def sep_main(solver: Solver) -> str:
         # ))
         #
         # assert False
+
+    print(f'Successfully learned all {len(invs)} invariants one by one using a total of {n_total_cex} examples.')
 
     return 'yo'
 
