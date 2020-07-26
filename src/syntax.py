@@ -16,7 +16,7 @@ Span = Tuple[Token, Token]
 
 B = TypeVar('B')
 
-class Denotable(object):
+class Denotable:
     def __init__(self) -> None:
         self._hash: Optional[int] = None
 
@@ -59,7 +59,7 @@ class Sort(Denotable):
 class HasSortField(Protocol):
     sort: InferenceSort
 
-class SortInferencePlaceholder(object):
+class SortInferencePlaceholder:
     def __init__(self, d: Optional[HasSortField] = None) -> None:
         self.backpatches: List[HasSortField] = []
         self.sort: Optional[Sort] = None
@@ -390,7 +390,7 @@ def span_endlexpos(x: Union[Span, HasSpan]) -> Optional[int]:
 
     return s[1].lexpos + len(s[1].value)
 
-class FaithfulPrinter(object):
+class FaithfulPrinter:
     def __init__(self, prog: Program, skip_invariants: bool = False) -> None:
         self.prog = prog
         self.skip_invariants = skip_invariants
@@ -1257,7 +1257,7 @@ class InitDecl(Decl):
         return 'init %s%s' % (('[%s] ' % self.name) if self.name is not None else '',
                               self.expr)
 
-class ModifiesClause(object):
+class ModifiesClause:
     def __init__(self, name: str, *, span: Optional[Span] = None) -> None:
         self.span = span
         self.name = name
@@ -1504,7 +1504,7 @@ class TraceDecl(Decl):
                 yield c
 
 @dataclass
-class Annotation(object):
+class Annotation:
     span: Optional[Span]
     name: str
     args: List[str]
@@ -1684,7 +1684,7 @@ class Scope(Generic[B]):
 StateDecl = Union[RelationDecl, ConstantDecl, FunctionDecl]
 DeclContainingExpr = Union[InitDecl, DefinitionDecl, InvariantDecl, AxiomDecl, TheoremDecl]
 
-class Program(object):
+class Program:
     def __init__(self, decls: List[Decl]) -> None:
         self.decls = decls
         self.scope: Scope[InferenceSort]

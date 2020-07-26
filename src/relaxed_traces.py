@@ -167,7 +167,7 @@ def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDec
     return new_mods, new_conjs
 
 
-class RelationFact(object):
+class RelationFact:
     def __init__(self, rel: syntax.RelationDecl, els: List[str], polarity: bool):
         self._rel = rel
         self._els = els
@@ -191,7 +191,7 @@ class RelationFact(object):
     def __str__(self) -> str:
         return "%s(%s) = %s" % (self._rel.name, self._els, str(self._polarity))
 
-class FunctionFact(object):
+class FunctionFact:
     def __init__(self, func: syntax.FunctionDecl, param_els: List[str], res_elm: str):
         self._func = func
         self._params_els = param_els
@@ -210,7 +210,7 @@ class FunctionFact(object):
     def __str__(self) -> str:
         return "%s(%s) = %s" % (self._func.name, self._params_els, self._res_elm)
 
-class InequalityFact(object):
+class InequalityFact:
     def __init__(self, lhs: str, rhs: str):
         self._lhs = lhs
         self._rhs = rhs

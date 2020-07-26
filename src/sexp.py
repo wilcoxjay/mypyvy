@@ -7,7 +7,7 @@ import string
 from typing import Iterable, Iterator, List, Mapping, Optional, Set, Union, overload
 
 @dataclass
-class SList(object):
+class SList:
     contents: List[Sexp]
 
     def __str__(self) -> str:
@@ -27,14 +27,14 @@ class SList(object):
         return self.contents[i]
 
 @dataclass
-class Atom(object):
+class Atom:
     name: str
 
     def __str__(self) -> str:
         return self.name
 
 @dataclass
-class Comment(object):
+class Comment:
     contents: str
 
     def __str__(self) -> str:
@@ -71,11 +71,11 @@ def symbols_used(e: Sexp, into: Optional[Set[str]] = None) -> Set[str]:
 
 
 @dataclass
-class EOF(object):
+class EOF:
     pass
 
 @dataclass
-class CharBuffer(object):
+class CharBuffer:
     contents: str
     pos: int = dataclasses.field(default=0)
 
@@ -96,7 +96,7 @@ class CharBuffer(object):
         return c
 
 @dataclass
-class SexpLexer(object):
+class SexpLexer:
     buffer: CharBuffer
 
     def add_input(self, new_input: str) -> None:
@@ -135,7 +135,7 @@ class SexpLexer(object):
                 yield Atom(''.join(tok))
 
 @dataclass
-class SexpParser(object):
+class SexpParser:
     lexer: SexpLexer
     stack: List[List[Sexp]] = dataclasses.field(default_factory=list)
 

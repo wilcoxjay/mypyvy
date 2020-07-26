@@ -125,7 +125,7 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         return 'Some(%s)' % (logic.print_element(state, elt_sort, the_value))
 
 @dataclass
-class LogEntry(object):
+class LogEntry:
     index: str
     # Contents of the different fields of this log entry.
     # Each element of the list is itself a list because

@@ -894,7 +894,7 @@ def check_dual_edge(
 #
 
 @dataclass(frozen=True)
-class HoareQuery(object):
+class HoareQuery:
     '''Class that represents a check during check_dual_edge_optimize'''
     p: FrozenSet[int]
     q_pre: Tuple[FrozenSet[int],...]
@@ -1271,7 +1271,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
         print(f'[{datetime.now()}] {greeting}: finished and joined q1, returning')
 
 @dataclass
-class RunningProcess(object):
+class RunningProcess:
     process: multiprocessing.Process
     q1: CheckDualEdgeOptimizeJoinableQueue
     q2: CheckDualEdgeOptimizeQueue
@@ -1845,7 +1845,7 @@ def check_k_state_implication(
         return states
 
 
-class MapSolver(object):
+class MapSolver:
     def __init__(self, n: int):
         """Initialization.
              Args:
@@ -2229,7 +2229,7 @@ def map_clause_state_interaction_instantiate(
 
 
 
-class SubclausesMapTurbo(object):
+class SubclausesMapTurbo:
     '''
     Class used to store a map of subclauses of a certain clause, and
     obtain subclauses that are positive and negative on some given
@@ -2432,7 +2432,7 @@ class SubclausesMapTurbo(object):
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
-class MultiSubclausesMapICE(object):
+class MultiSubclausesMapICE:
     '''Class used to store a map of subclauses of several clauses, and
     obtain a conjunction of subclauses that satisfy positive,
     negative, and implication constraints on some given states.
@@ -2832,7 +2832,7 @@ def forward_explore_marco(solver: Solver,
     # inits = tuple(init.expr for init in prog.inits())
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
-    class SubclausesMap(object):
+    class SubclausesMap:
         def __init__(self, top_clause: Expr):
             # TODO: why can't top_clause be quantifier free?
             assert isinstance(top_clause, QuantifierExpr)
@@ -6571,7 +6571,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             dump_caches()
             return 'UNPROVABLE'
 
-# class DualEdgeFinder(object):
+# class DualEdgeFinder:
 #     '''Class used to store a map of subclauses of several clauses, and
 #     obtain a conjunction of subclauses that satisfy positive,
 #     negative, and implication constraints on some given states.
@@ -6670,7 +6670,7 @@ Constraint = Union[
     None, # no constraint
 ]
 # a constraint for a set some elements to be there or not, and a constraint for NatInf is an upper bound
-class MonotoneFunction(object):
+class MonotoneFunction:
     '''This class represents information about a monotone function to
     {0,1}. The domain of the function is D_1 x ... x D_n, where each
     D_i is either the powerset domain of some (finite or countably
@@ -7096,7 +7096,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
         return to_clause(current)
 
 # This class was made obsolete by SubclausesMapTurbo
-# class SeparabilitySubclausesMap(object):
+# class SeparabilitySubclausesMap:
 #     '''
 #     Class used to store a map of subclauses of a certain clause, and
 #     obtain subclauses that are positive and negative on some given
@@ -7220,7 +7220,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
 #         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
-class SeparabilityMap(object):
+class SeparabilityMap:
     '''
     Marco map for function sep: 2^states x 2^states -> {0,1}
     0 means they can be separated, 1 means they cannot.
@@ -7720,7 +7720,7 @@ def cdcl_invariant(solver: Solver) -> str:
 # dual algorithm using monotone functions:
 #
 # Primal Dual Algorithm (WIP)
-# class PrimalDualBoundsAlgorithm(object):
+# class PrimalDualBoundsAlgorithm:
 #
 #
 #     '''

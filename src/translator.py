@@ -40,7 +40,7 @@ z3_NOPS: Any = {
 }
 
 
-class Z3Translator(object):
+class Z3Translator:
     def __init__(self, scope: Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
         self.scope = scope
         self.keys = keys

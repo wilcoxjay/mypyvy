@@ -67,7 +67,7 @@ MySet = OrderedSet
 
 # Dummy class that is not used at run time. Allows us to statically declare and check
 # which options are available.
-class MypyvyArgs(object):
+class MypyvyArgs:
     forbid_parser_rebuild: bool
     log: str
     log_time: bool
@@ -169,7 +169,7 @@ def print_info(loc: Optional[Location], msg: str) -> None:
     print_located_msg('info', loc, msg)
 
 
-class MyLogger(object):
+class MyLogger:
     ALWAYS_PRINT = 35
 
     def __init__(self, logger: logging.Logger, start: datetime) -> None:
@@ -217,7 +217,7 @@ class MyLogger(object):
     def rawlog(self, lvl: int, msg: str, end: str = '\n') -> None:
         self.logger.log(lvl, msg + end)
 
-class LogTag(object):
+class LogTag:
     def __init__(self, logger: MyLogger, name: str, lvl: int = MyLogger.ALWAYS_PRINT, **kwargs: str) -> None:
         self.logger = logger
         self.name = name

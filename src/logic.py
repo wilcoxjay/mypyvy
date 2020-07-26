@@ -336,14 +336,14 @@ def cvc4_postprocess(cvc4line: str) -> str:
 # the corresponding z3 function. Reader beware!!
 
 @dataclass
-class CVC4Sort(object):
+class CVC4Sort:
     name: str
 
     def __str__(self) -> str:
         return self.name
 
 @dataclass
-class CVC4UniverseElement(object):
+class CVC4UniverseElement:
     name: str
     sort: CVC4Sort
 
@@ -354,24 +354,24 @@ class CVC4UniverseElement(object):
         return CVC4UniverseElementDecl(self)
 
 @dataclass
-class CVC4UniverseElementDecl(object):
+class CVC4UniverseElementDecl:
     elt: CVC4UniverseElement
 
     def name(self) -> str:
         return self.elt.name
 
 @dataclass
-class CVC4AppExpr(object):
+class CVC4AppExpr:
     func: CVC4FuncDecl
     args: List[CVC4UniverseElement]
 
 @dataclass
-class CVC4VarDecl(object):
+class CVC4VarDecl:
     name: str
     sort: CVC4Sort
 
 @dataclass
-class CVC4FuncDecl(object):
+class CVC4FuncDecl:
     name: str
     var_decls: dataclasses.InitVar[sexp.SList]
     return_sort: str
@@ -401,7 +401,7 @@ class CVC4FuncDecl(object):
         return cast(z3.ExprRef, CVC4AppExpr(self, cast(List[CVC4UniverseElement], list(args))))
 
 @dataclass
-class CVC4Model(object):
+class CVC4Model:
     sexpr: dataclasses.InitVar[sexp.Sexp]
 
     def __post_init__(self, sexpr: sexp.Sexp) -> None:
@@ -520,7 +520,7 @@ class CVC4Model(object):
         return ans
 
 LatorFactory = Callable[[syntax.Scope, Tuple[str, ...]], Z3Translator]
-class Solver(object):
+class Solver:
     def __init__(
             self,
             include_program: bool = True,
@@ -910,7 +910,7 @@ class Solver(object):
 
 _RelevantDecl = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
 
-class Diagram(object):
+class Diagram:
     # This class represents a formula of the form
     #
     #     exists X1, ..., X_k.
@@ -1283,7 +1283,7 @@ RelationInterp = Dict[RelationDecl, List[Tuple[List[str], bool]]]
 ConstantInterp = Dict[ConstantDecl, str]
 FunctionInterp = Dict[FunctionDecl, List[Tuple[List[str], str]]]
 
-class Trace(object):
+class Trace:
     def __init__(
             self,
             keys: Tuple[str, ...],
