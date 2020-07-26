@@ -21,15 +21,20 @@ verify: examples/lockserv.verify examples/consensus.verify examples/sharded-kv.v
 
 verify-pd: \
 	examples/pd/cache.verify \
-	examples/pd/consensus.verify \
+	examples/pd/consensus_epr.verify \
+	examples/pd/consensus_forall.verify \
 	examples/pd/lockserv.verify \
+	examples/pd/paxos_epr.verify \
 	examples/pd/paxos_forall.verify \
 	examples/pd/paxos_forall_choosable.verify \
-	examples/pd/stoppable_paxos_forall.verify \
-	examples/pd/stoppable_paxos_forall_choosable.verify \
+	examples/pd/ring-id.verify \
 	examples/pd/ring.verify \
 	examples/pd/sharded-kv-retransmit.verify \
-	examples/pd/sharded-kv.verify
+	examples/pd/sharded-kv.verify \
+	examples/pd/stoppable_paxos_epr.verify \
+	examples/pd/stoppable_paxos_forall.verify \
+	examples/pd/stoppable_paxos_forall_choosable.verify \
+	examples/pd/tlb_safety.verify \
 
 trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
 
