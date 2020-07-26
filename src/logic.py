@@ -546,6 +546,7 @@ class Solver(object):
         self.cvc4_proc: Optional[subprocess.Popen] = None
         self.cvc4_last_query: Optional[str] = None
         self.cvc4_last_model_response: Optional[str] = None
+        self.cvc4_model: Optional[CVC4Model] = None # model of the last check(), only used with cvc4 models
 
         self._init_axioms(prog, include_program, reassert_axioms, additional_mutable_axioms)
 
@@ -650,12 +651,14 @@ class Solver(object):
 
     def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.CheckSatResult:
         # logger.debug('solver.check')
+        self.cvc4_model = None
         if assumptions is None:
             assert not self.assumptions_necessary
             assumptions = []
         self.nqueries += 1
 
-        if self.use_cvc4:
+        def check_with_cvc4() -> z3.CheckSatResult:
+            assert assumptions is None or len(assumptions) == 0, 'assumptions not supported in cvc4'
             cvc4script = cvc4_preprocess(self.z3solver.to_smt2())
             self.cvc4_last_query = cvc4script
             proc = self.get_cvc4_proc()
@@ -677,7 +680,36 @@ class Solver(object):
                 'unsat': z3.unsat
             }
             assert ans in ans_map, repr(ans)
-            return ans_map[ans]
+            res = ans_map[ans]
+            if res == z3.sat:
+                # get model and store it in self.cvc4_model
+                print('(get-model)', file=proc.stdin)
+                parser = sexp.get_parser('')
+                lines = []
+                for s in parser.parse():
+                    if isinstance(s, sexp.EOF):
+                        # print('got intermediate EOF')
+                        line = cvc4_postprocess(proc.stdout.readline())
+                        lines.append(line)
+                        if line == '':
+                            assert False, 'unexpected underlying EOF'
+                        else:
+                            line = line.strip()
+                            # print(f'got new data line: {line}')
+                            parser.add_input(line)
+                    else:
+                        self.cvc4_last_model_response = ''.join(lines)
+                        # print('got s-expression. not looking for any more input.')
+                        assert isinstance(s, sexp.SList), s
+                        # for sub in s:
+                        #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
+                        self.cvc4_model = CVC4Model(s)
+                else:
+                    assert False
+            return res
+
+        if self.use_cvc4:
+            return check_with_cvc4()
 
         def luby() -> Iterable[int]:
             l: List[int] = [1]
@@ -701,10 +733,12 @@ class Solver(object):
                 print(f'[{datetime.now()}] Solver.check: assumptions:')
                 for e in assumptions:
                     print(e)
-                print(f'[{datetime.now()}] Solver.check: self.z3solver stats:')
+                print()
+                print(f'[{datetime.now()}] Solver.check: self.z3solver stats and smt2:')
                 print(self.z3solver.statistics())
-                print(f'[{datetime.now()}] Solver.check: self.z3solver to_smt2:')
+                print()
                 print(self.z3solver.to_smt2())
+                print()
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh solver')
                 s2 = z3.Solver()
@@ -715,9 +749,11 @@ class Solver(object):
                     s2.add(e)
 
                 print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
-                print(f'[{datetime.now()}] Solver.check: s2 stats:')
+                print(f'[{datetime.now()}] Solver.check: s2 stats and smt2:')
                 print(s2.statistics())
+                print()
                 print(s2.to_smt2())
+                print()
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh context')
                 ctx = z3.Context()
@@ -726,12 +762,17 @@ class Solver(object):
                     s3.add(lator.translate_expr(a.expr).translate(ctx))
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
-
                 print(f'[{datetime.now()}] Solver.check: s3.check()',
                       s3.check(*(e.translate(ctx) for e in assumptions)))
-                print(f'[{datetime.now()}] Solver.check: s3 stats:')
+                print(f'[{datetime.now()}] Solver.check: s3 stats and smt2:')
                 print(s3.statistics())
+                print()
                 print(s3.to_smt2())
+                print()
+
+                print(f'[{datetime.now()}] Solver.check: trying cvc4')
+                res = check_with_cvc4()
+                print(f'[{datetime.now()}] Solver.check: cvc4 result: {res}')
 
             assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
                                                if res == z3.unknown else None)
@@ -759,33 +800,10 @@ class Solver(object):
         assert False
 
     def _solver_model(self) -> z3.ModelRef:
-        if self.use_cvc4:
-            proc = self.get_cvc4_proc()
-            assert proc.stdout is not None
-            print('(get-model)', file=proc.stdin)
-            parser = sexp.get_parser('')
-            lines = []
-            for s in parser.parse():
-                if isinstance(s, sexp.EOF):
-                    # print('got intermediate EOF')
-                    line = cvc4_postprocess(proc.stdout.readline())
-                    lines.append(line)
-                    if line == '':
-                        assert False, 'unexpected underlying EOF'
-                    else:
-                        line = line.strip()
-                        # print(f'got new data line: {line}')
-                        parser.add_input(line)
-                else:
-                    self.cvc4_last_model_response = ''.join(lines)
-                    # print('got s-expression. not looking for any more input.')
-                    assert isinstance(s, sexp.SList), s
-                    # for sub in s:
-                    #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
-                    return cast(z3.ModelRef, CVC4Model(s))
-            else:
-                assert False
+        if self.cvc4_model is not None:
+            return cast(z3.ModelRef, self.cvc4_model)
         else:
+            assert not self.use_cvc4, 'using cvc4 but self.cvc4_model is None!'
             return self.z3solver.model()
 
     def model(
