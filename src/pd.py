@@ -6333,7 +6333,9 @@ def primal_dual_houdini(solver: Solver) -> str:
             # TODO: use unsat cores
             soft_neg = ctis - pos
             for i in sorted(ctis - pos):
-               if i in ctis and len(find_fixpoint(ctis - {i})) == 0 is None:  # TODO(jrw): this line makes no sense; it compares `0 is None` to an int...
+               # if i in ctis and len(find_fixpoint(ctis - {i})) == 0 is None:  # TODO(jrw): this line makes no sense; it compares `0 is None` to an int...
+               # oded: I fixed it, but haven't tested it and it seems before this if was never taken, so it may be buggy
+               if i in ctis and len(find_fixpoint(ctis - {i})) == 0:  # TODO(jrw): this line makes no sense; it compares `0 is None` to an int...
                    ctis -= {i}
             #production# assert len(find_fixpoint(ctis)) == 0
             to_eliminate = ctis - pos
