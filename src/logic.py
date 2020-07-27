@@ -704,6 +704,7 @@ class Solver:
                         # for sub in s:
                         #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
                         self.cvc4_model = CVC4Model(s)
+                        break
                 else:
                     assert False
             return res
@@ -799,13 +800,6 @@ class Solver:
 
         assert False
 
-    def _solver_model(self) -> z3.ModelRef:
-        if self.cvc4_model is not None:
-            return cast(z3.ModelRef, self.cvc4_model)
-        else:
-            assert not self.use_cvc4, 'using cvc4 but self.cvc4_model is None!'
-            return self.z3solver.model()
-
     def model(
             self,
             assumptions: Optional[Sequence[z3.ExprRef]] = None,
@@ -813,6 +807,9 @@ class Solver:
             sorts_to_minimize: Optional[Iterable[z3.SortRef]] = None,
             relations_to_minimize: Optional[Iterable[z3.FuncDeclRef]] = None,
     ) -> z3.ModelRef:
+        if self.cvc4_model is not None:
+            return cast(z3.ModelRef, self.cvc4_model)
+        assert not self.use_cvc4, 'using cvc4 but self.cvc4_model is None!'
         if minimize is None:
             minimize = utils.args.minimize_models
         if minimize:
@@ -820,7 +817,7 @@ class Solver:
                 sorts_to_minimize = [Z3Translator.sort_to_z3(s) for s in self.scope.sorts.values()
                                      if not syntax.has_annotation(s, 'no_minimize')]
             if relations_to_minimize is None:
-                m = self._solver_model()
+                m = self.z3solver.model()
                 ds = {str(d) for d in m.decls()}
                 rels_to_minimize = []
                 for r in self.scope.relations.values():
@@ -842,7 +839,7 @@ class Solver:
 
             return self._minimal_model(assumptions, sorts_to_minimize, rels_to_minimize)
         else:
-            return self._solver_model()
+            return self.z3solver.model()
 
     def _cardinality_constraint(self, x: Union[z3.SortRef, z3.FuncDeclRef], n: int) -> z3.ExprRef:
         if isinstance(x, z3.SortRef):
@@ -883,6 +880,7 @@ class Solver:
             sorts_to_minimize: Iterable[z3.SortRef],
             relations_to_minimize: Iterable[z3.FuncDeclRef],
     ) -> z3.ModelRef:
+        assert not self.use_cvc4, 'minimizing models is only for z3'
         with self.new_frame():
             for x in itertools.chain(
                     cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
@@ -896,7 +894,7 @@ class Solver:
                 self.add(self._cardinality_constraint(x, n))
 
             assert self.check(assumptions) == z3.sat
-            return self._solver_model()
+            return self.z3solver.model()
 
     def assertions(self) -> Sequence[z3.ExprRef]:
         asserts = self.z3solver.assertions()
