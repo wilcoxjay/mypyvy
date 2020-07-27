@@ -98,12 +98,13 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
             resolve_expr(scope, e.arg1, IntSort)
             resolve_expr(scope, e.arg2, IntSort)
             ans = BoolSort
-        else:
+        elif e.op in ['PLUS', 'SUB', 'MULT']:
             check_constraint(e.span, sort, IntSort)
-            assert e.op in ['PLUS', 'SUB']
             resolve_expr(scope, e.arg1, IntSort)
             resolve_expr(scope, e.arg2, IntSort)
             ans = IntSort
+        else:
+            assert False, e.op
         return ans
     elif isinstance(e, syntax.NaryExpr):
         check_constraint(e.span, sort, BoolSort)

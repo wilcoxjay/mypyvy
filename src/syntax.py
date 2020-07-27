@@ -101,18 +101,21 @@ InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
 PREC_BOT = 0
 PREC_NOT = 1
-PREC_PLUS = 2
-PREC_EQ = 3
-PREC_AND = 4
-PREC_OR = 5
-PREC_IMPLIES = 6
-PREC_IFF = 7
-PREC_QUANT = 8
-PREC_TOP = 9
+PREC_MULT = 2
+PREC_PLUS = 3
+PREC_EQ = 4
+PREC_AND = 5
+PREC_OR = 6
+PREC_IMPLIES = 7
+PREC_IFF = 8
+PREC_QUANT = 9
+PREC_TOP = 10
 
 PREC_ASSOC = {
     PREC_BOT: 'NONE',
     PREC_NOT: 'NONE',
+    PREC_MULT: 'LEFT',
+    PREC_PLUS: 'LEFT',
     PREC_EQ: 'NONE',
     PREC_AND: 'LEFT',
     PREC_OR: 'LEFT',
@@ -644,6 +647,7 @@ BINOPS = {
     'LT',
     'PLUS',
     'SUB',
+    'MULT'
 }
 
 class BinaryExpr(Expr):
@@ -672,6 +676,8 @@ class BinaryExpr(Expr):
             return PREC_EQ
         elif self.op in ['PLUS', 'SUB']:
             return PREC_PLUS
+        elif self.op in ['MULT']:
+            return PREC_MULT
         else:
             assert False
 
@@ -690,6 +696,7 @@ class BinaryExpr(Expr):
             'LT': '<',
             'PLUS': '+',
             'SUB': '-',
+            'MULT': '*',
         }
 
         assert self.op in pretties

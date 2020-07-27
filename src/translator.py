@@ -30,6 +30,7 @@ z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
     'LT': lambda x, y: x < y,
     'PLUS': lambda x, y: x + y,
     'SUB': lambda x, y: x - y,
+    'MULT': lambda x, y: x * y,
 }
 
 z3_NOPS: Any = {

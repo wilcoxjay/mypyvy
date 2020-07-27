@@ -150,6 +150,7 @@ precedence = (
     ('left', 'AMPERSAND'),
     ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2', 'GE', 'GT', 'LE', 'LT'),
     ('left', 'PLUS', 'SUB'),
+    ('left', 'STAR'),
     ('right', 'BANG', 'TILDE')
 )
 
@@ -601,6 +602,13 @@ def p_expr_sub(p: Any) -> None:
     r: syntax.Expr = p[3]
     span = loc_join(l.span, r.span)
     p[0] = syntax.BinaryExpr('SUB', l, r, span=span)
+
+def p_expr_mult(p: Any) -> None:
+    'expr : expr STAR expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('MULT', l, r, span=span)
 
 def p_expr_new(p: Any) -> None:
     'expr : NEW LPAREN expr RPAREN'
