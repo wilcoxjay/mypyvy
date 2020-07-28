@@ -21,7 +21,7 @@ import utils
 import resolver
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
-from syntax import FunctionDecl, DefinitionDecl
+from syntax import FunctionDecl, DefinitionDecl, Not, New
 from translator import Z3Translator
 
 
@@ -111,7 +111,7 @@ def check_init(
 
         for inv in (prog.invs() if not safety_only else prog.safeties()):
             with s.new_frame():
-                s.add(z3.Not(t.translate_expr(inv.expr)))
+                s.add(t.translate_expr(Not(inv.expr)))
 
                 if inv.name is not None:
                     msg = ' ' + inv.name
@@ -176,7 +176,7 @@ def check_transitions(
                         continue
 
                     with s.new_frame():
-                        s.add(z3.Not(lator.translate_expr(inv.expr, index=1)))
+                        s.add(lator.translate_expr(New(Not(inv.expr))))
 
                         if inv.name is not None:
                             msg = ' ' + inv.name
@@ -231,7 +231,7 @@ def check_implication(
             s.add(t.translate_expr(e))
         for e in concs:
             with s.new_frame():
-                s.add(z3.Not(t.translate_expr(e)))
+                s.add(t.translate_expr(Not(e)))
                 if s.check() != z3.unsat:
                     return s.model(minimize=minimize)
 
@@ -248,7 +248,7 @@ def check_two_state_implication_all_transitions(
     with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
-        s.add(z3.Not(t.translate_expr(new_conc, index=1)))
+        s.add(t.translate_expr(New(Not(new_conc))))
         for trans in prog.transitions():
             with s.new_frame():
                 s.add(t.translate_transition(trans))
