@@ -1643,13 +1643,13 @@ class Scope(Generic[B]):
         self.stack = stack
 
     @contextmanager
-    def next_state_index(self) -> Iterator[None]:
-        if self.current_state_index + 1 < self.num_states:
-            self.current_state_index += 1
+    def next_state_index(self, k: int = 1) -> Iterator[None]:
+        if (i := self.current_state_index + k) < self.num_states or i == 0:
+            self.current_state_index += k
             yield None
-            self.current_state_index -= 1
+            self.current_state_index -= k
         else:
-            assert utils.error_count > 0
+            assert utils.error_count > 0, (self.current_state_index, k, self.num_states)
             yield None
 
     @contextmanager

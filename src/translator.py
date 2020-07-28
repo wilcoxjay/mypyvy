@@ -70,26 +70,30 @@ class Z3Translator:
         return self._translate_expr(expr, 0)
 
     def _translate_expr(self, expr: Expr, index: int) -> z3.ExprRef:
+        with self.scope.n_states(len(self.keys)):
+            with self.scope.next_state_index(index):
+                return self.__translate_expr(expr, index)
+
+    def __translate_expr(self, expr: Expr, index: int) -> z3.ExprRef:
+        assert self.scope.current_state_index == index, (self.scope.current_state_index, index)
+        assert self.scope.num_states == len(self.keys), (self.scope.num_states, self.keys)
         if isinstance(expr, Bool):
             return z3.BoolVal(expr.val)
         elif isinstance(expr, Int):
             return z3.IntVal(expr.val)
         elif isinstance(expr, UnaryExpr) and expr.op in self.z3_UNOPS:
-            return self.z3_UNOPS[expr.op](self._translate_expr(expr.arg, index))
+            return self.z3_UNOPS[expr.op](self.__translate_expr(expr.arg, index))
         elif isinstance(expr, UnaryExpr) and expr.op == 'NEW':
-            assert index + 1 < len(self.keys)
-            return self._translate_expr(expr.arg, index=index + 1)
-            # ODED: the following does not work because self.scope has num_states == 0
-            # assert self.scope.new_allowed()
-            # with self.scope.next_state_index():
-            #     return self._translate_expr(expr.arg, index=index + 1)
+            assert self.scope.new_allowed()
+            with self.scope.next_state_index():
+                return self.__translate_expr(expr.arg, index=index + 1)
         elif isinstance(expr, BinaryExpr) and expr.op in self.z3_BINOPS:
             return self.z3_BINOPS[expr.op](
-                self._translate_expr(expr.arg1, index),
-                self._translate_expr(expr.arg2, index)
+                self.__translate_expr(expr.arg1, index),
+                self.__translate_expr(expr.arg2, index)
             )
         elif isinstance(expr, NaryExpr) and expr.op in self.z3_NOPS:
-            return self.z3_NOPS[expr.op]([self._translate_expr(arg, index) for arg in expr.args])
+            return self.z3_NOPS[expr.op]([self.__translate_expr(arg, index) for arg in expr.args])
         elif isinstance(expr, AppExpr):
             d = self.scope.get(expr.callee)
             if isinstance(d, DefinitionDecl):
@@ -97,17 +101,17 @@ class Z3Translator:
                 # checked by resolver; see NOTE(calling-stateful-definitions)
                 assert index + d.num_states <= len(self.keys), f'{d}\n{expr}'
                 # now translate args in the scope of caller
-                translated_args = [self._translate_expr(arg, index) for arg in expr.args]
+                translated_args = [self.__translate_expr(arg, index) for arg in expr.args]
                 with self.scope.fresh_stack():
                     with self.scope.in_scope(d.binder, translated_args):
-                        return self._translate_expr(d.expr, index)  # translate body of def in fresh scope
+                        return self.__translate_expr(d.expr, index)  # translate body of def in fresh scope
             elif isinstance(d, (RelationDecl, FunctionDecl)):
                 k = self.get_key_opt(index)
                 assert not d.mutable or k is not None
                 callee = Z3Translator.statedecl_to_z3(d, k)
                 assert isinstance(callee, z3.FuncDeclRef), f'{callee}\n{expr}'
                 return callee(*(
-                    self._translate_expr(arg, index)
+                    self.__translate_expr(arg, index)
                     for arg in expr.args
                 ))
             else:
@@ -115,7 +119,7 @@ class Z3Translator:
         elif isinstance(expr, QuantifierExpr) and expr.quant in self.z3_QUANT:
             bs = self.bind(expr.binder)
             with self.scope.in_scope(expr.binder, bs):
-                e = self._translate_expr(expr.body, index)
+                e = self.__translate_expr(expr.body, index)
             return self.z3_QUANT[expr.quant](bs, e)
         elif isinstance(expr, Id):
             d = self.scope.get(expr.name)
@@ -130,19 +134,19 @@ class Z3Translator:
                 # checked in resolver; see NOTE(calling-stateful-definitions)
                 assert index + d.num_states <= len(self.keys)
                 with self.scope.fresh_stack():
-                    return self._translate_expr(d.expr, index)
+                    return self.__translate_expr(d.expr, index)
             else:
                 assert not isinstance(d, FunctionDecl)  # impossible since functions have arity > 0
                 e, = d
                 return e
         elif isinstance(expr, IfThenElse):
-            return z3.If(self._translate_expr(expr.branch, index),
-                         self._translate_expr(expr.then, index),
-                         self._translate_expr(expr.els, index))
+            return z3.If(self.__translate_expr(expr.branch, index),
+                         self.__translate_expr(expr.then, index),
+                         self.__translate_expr(expr.els, index))
         elif isinstance(expr, Let):
-            val = self._translate_expr(expr.val, index)
+            val = self.__translate_expr(expr.val, index)
             with self.scope.in_scope(expr.binder, [val]):
-                return self._translate_expr(expr.body, index)
+                return self.__translate_expr(expr.body, index)
         else:
             assert False, expr
 
