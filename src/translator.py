@@ -174,7 +174,7 @@ class Z3Translator:
                 rhs = Z3Translator.statedecl_to_z3(d, k_old)
                 assert isinstance(lhs, z3.FuncDeclRef) and isinstance(rhs, z3.FuncDeclRef)
 
-                e = z3.Forall(cs, lhs(*cs) == rhs(*cs))
+                e = z3.ForAll(cs, lhs(*cs) == rhs(*cs))
 
             frame.append(e)
 

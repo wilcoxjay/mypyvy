@@ -24,7 +24,6 @@ from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl
 from translator import Z3Translator
 
-z3.Forall = z3.ForAll
 
 KEY_ONE = 'one'
 KEY_NEW = 'new'
@@ -854,7 +853,7 @@ class Solver:
             c = z3.Const(f'card$_{s.name()}_{i}', s)
             disjs.append(x == c)
 
-        return z3.Forall(x, z3.Or(*disjs))
+        return z3.ForAll(x, z3.Or(*disjs))
 
     def _relational_cardinality_constraint(self, relation: z3.FuncDeclRef, n: int) -> z3.ExprRef:
         if relation.arity() == 0:
@@ -866,7 +865,7 @@ class Solver:
 
         vs = [z3.Const(f'x$_{relation}_{j}', relation.domain(j)) for j in range(relation.arity())]
 
-        result = z3.Forall(vs, z3.Implies(relation(*vs), z3.Or(*(
+        result = z3.ForAll(vs, z3.Implies(relation(*vs), z3.Or(*(
             z3.And(*(
                 c == v for c, v in zip(cs, vs)
             ))
