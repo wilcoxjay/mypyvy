@@ -7,7 +7,7 @@ from utils import MySet
 import logic
 from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, State
 import syntax
-from syntax import Expr, TrueExpr, DefinitionDecl
+from syntax import Expr, TrueExpr, DefinitionDecl, New
 import pickle
 from typing import List, Optional, Tuple, Union, Sequence
 
@@ -322,7 +322,7 @@ class Frames:
             if isinstance(diag_or_expr, Diagram):
                 return diag_or_expr.to_z3(t, state_index=1)
             else:
-                return t.translate_expr(diag_or_expr, index=1)
+                return t.translate_expr(New(diag_or_expr))
 
         def trackers() -> List[z3.ExprRef]:
             if isinstance(diag_or_expr, Diagram):
@@ -332,7 +332,7 @@ class Frames:
 
         with solver.new_frame(), solver.mark_assumptions_necessary():
             for f in pre_frame.summary():
-                solver.add(t.translate_expr(f, index=0))
+                solver.add(t.translate_expr(f))
             solver.add(to_z3())
             for ition in prog.transitions():
                 with solver.new_frame():

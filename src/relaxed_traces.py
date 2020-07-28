@@ -500,7 +500,7 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
 
     def translate_expr(self, expr: Expr, index: int = 0) -> z3.ExprRef:
         rel_expr = syntax.relativize_quantifiers(self._active_rels_mapping, expr)
-        res = self._t.translate_expr(rel_expr, index)
+        res = self._t._translate_expr(rel_expr, index)  # TODO: eliminate using index in translation
         return res
 
     def translate_transition(self, t: syntax.DefinitionDecl, index: int = 0) -> z3.ExprRef:

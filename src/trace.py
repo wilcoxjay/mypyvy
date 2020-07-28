@@ -18,7 +18,7 @@ def translate_transition_call(
     if c.args is not None:
         for j, a in enumerate(c.args):
             if isinstance(a, Expr):
-                bs[j] = lator.translate_expr(a, index=key_index)
+                bs[j] = lator._translate_expr(a, index=key_index)  # TODO: eliminate using index in translation
                 qs[j] = None
             else:
                 assert isinstance(a, syntax.Star)
@@ -47,7 +47,7 @@ def bmc_trace(
     with s.new_frame():
         if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
             for init in prog.inits():
-                s.add(lator.translate_expr(init.expr, index=0))
+                s.add(lator.translate_expr(init.expr))
 
         i = 0
         for c in trace.components:
@@ -56,9 +56,9 @@ def bmc_trace(
                     if i != 0:
                         utils.print_error_and_exit(c.span, 'assert init is only allowed in the first state')
                     for init in prog.inits():
-                        s.add(lator.translate_expr(init.expr, index=i))
+                        s.add(lator._translate_expr(init.expr, index=i))  # TODO: eliminate using index in translation
                 else:
-                    s.add(lator.translate_expr(c.expr, index=i))
+                    s.add(lator._translate_expr(c.expr, index=i))  # TODO: eliminate using index in translation
             else:
                 te: syntax.TransitionExpr = c.transition
                 if isinstance(te, syntax.AnyTransition):

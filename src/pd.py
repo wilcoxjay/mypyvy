@@ -572,13 +572,13 @@ def check_dual_edge_multiprocessing_helper(
     s.z3solver.set(random_seed=seed) # type: ignore
     t = s.get_translator((KEY_OLD, KEY_NEW))
     for q in qs:
-        s.add(t.translate_expr(q, index=0))
+        s.add(t.translate_expr(q))
     s.add(t.translate_transition(trans))
     for i, p in enumerate(ps):
-        s.add(t.translate_expr(p, index=0))
-        s.add(t.translate_expr(p, index=1))
+        s.add(t.translate_expr(p))
+        s.add(t.translate_expr(New(p)))
     q = qs[i_q]
-    s.add(z3.Not(t.translate_expr(q, index=1)))
+    s.add(z3.Not(t.translate_expr(New(q))))
     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: checking')
     if save_smt2:
         smt2 = s.z3solver.to_smt2()
@@ -786,15 +786,15 @@ def check_dual_edge(
                 _cti_solver = Solver()
                 t = _cti_solver.get_translator((KEY_OLD, KEY_NEW))
                 for q in qs:
-                    _cti_solver.add(t.translate_expr(q, index=0))
+                    _cti_solver.add(t.translate_expr(q))
                 _cti_solver.add(t.translate_transition(trans))
                 p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
                 for i, p in enumerate(ps):
-                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, index=0)))
-                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, index=1)))
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(New(p))))
                 q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
                 for i, q in enumerate(qs):
-                    _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, index=1))))
+                    _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(New(q)))))
                 cti_solvers.append(_cti_solver)
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
                 if True:
@@ -1090,15 +1090,15 @@ def check_dual_edge_optimize_multiprocessing_helper(
             s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
             # add ps
             for i in sorted(hq.p):
-                s.add(t.translate_expr(ps[i], index=0))
-                s.add(t.translate_expr(ps[i], index=1))
+                s.add(t.translate_expr(ps[i]))
+                s.add(t.translate_expr(New(ps[i])))
             # add precondition constraints
             for k in range(mp.m):
-                s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), index=0))
+                s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k])))
             # add postcondition constraints, note we must violate all clauses (the selection of which one to violate is represented by making the others empty
             for k in range(mp.m):
                 if len(hq.q_post[k]) > 0:
-                    s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), index=1)))
+                    s.add(z3.Not(t.translate_expr(New(mp.to_clause(k, hq.q_post[k])))))
             return s, t
         s, t = get_solver(hq)
         if save_smt2:
@@ -1199,7 +1199,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 if known_to_be_unsat(hq_try):
                     continue
                 s.push()
-                s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq_try.q_post[k]), index=1)))
+                s.add(z3.Not(t.translate_expr(New(mp.to_clause(k, hq_try.q_post[k])))))
                 # print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, d={sorted(d)}')
                 z3res = s.check()
                 # print(f'[{datetime.now()}] {greeting}: got {z3res}')
@@ -1223,7 +1223,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
             # print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {sorted(hq.q_post[k])}')
-            s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), index=1)))
+            s.add(z3.Not(t.translate_expr(New(mp.to_clause(k, hq.q_post[k])))))
             assert s.check() == z3.sat
         # print(f'[{datetime.now()}] {greeting}: optimizing precondition')
         for k in range(mp.m):  # TODO: random shuffle?
@@ -1239,7 +1239,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 if known_to_be_unsat(hq_try):
                     continue
                 s.push()
-                s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), index=0))
+                s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k])))
                 # print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, d={sorted(d)}')
                 z3res = s.check()
                 # print(f'[{datetime.now()}] {greeting}: got {z3res}')
@@ -1263,7 +1263,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
             # print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {sorted(hq.q_pre[k])}')
-            s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), index=0))
+            s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k])))
             assert s.check() == z3.sat
         # print(f'[{datetime.now()}] {greeting}: found optimal cti')
     finally:
@@ -5899,7 +5899,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 with (t.scope.in_scope(top_clause.binder, bs)
                       if isinstance(top_clause, QuantifierExpr) else nullcontext()):
                     body = z3.Or(*(
-                        z3.And(z3.Not(lit_indicators_pre[k][i]), t.translate_expr(lit, index=0)) # NB: polarity
+                        z3.And(z3.Not(lit_indicators_pre[k][i]), t.translate_expr(lit)) # NB: polarity
                         for i, lit in enumerate(mp.literals[k])
                     ))
                 e = z3.ForAll(bs, body) if len(bs) > 0 else body
@@ -5908,7 +5908,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 with (t.scope.in_scope(top_clause.binder, bs)
                       if isinstance(top_clause, QuantifierExpr) else nullcontext()):
                     body = z3.Or(*(
-                        z3.And(lit_indicators_post[k][i], t.translate_expr(lit, index=1))
+                        z3.And(lit_indicators_post[k][i], t.translate_expr(New(lit)))
                         for i, lit in enumerate(mp.literals[k])
                     ))
                 e = z3.ForAll(bs, body) if len(bs) > 0 else body
@@ -5923,8 +5923,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 i = len(p_indicators)
                 assert ps[i] == p
                 p_indicators.append(z3.Bool(f'@p_{i}'))
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, index=0)))
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, index=1)))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(New(p))))
             for p in ps:
                 cti_solver_add_p(p)
             def add_p(p: Predicate) -> None:
@@ -6196,10 +6196,10 @@ def primal_dual_houdini(solver: Solver) -> str:
         # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
         # add the cube defined by q_indicators_pre to the prestate
         for indicator, q in zip(q_indicators_pre, qs):
-            cti_solver.add(z3.Implies(indicator, t.translate_expr(q, index=0))) # NB: polarity
+            cti_solver.add(z3.Implies(indicator, t.translate_expr(q))) # NB: polarity
         # each q_indicator implies q has to be violated in the poststate
         for indicator, q in zip(q_indicators_post, qs):
-            cti_solver.add(z3.Implies(indicator, z3.Not(t.translate_expr(q, index=1)))) # NB: polarity
+            cti_solver.add(z3.Implies(indicator, z3.Not(t.translate_expr(New(q))))) # NB: polarity
         # add transition indicators
         transition_indicators: List[z3.ExprRef] = []
         for i, trans in enumerate(prog.transitions()):
@@ -6211,8 +6211,8 @@ def primal_dual_houdini(solver: Solver) -> str:
             i = len(ps)
             ps.append(p)
             p_indicators.append(z3.Bool(f'@p_{i}'))
-            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, index=0)))
-            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, index=1)))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(New(p))))
         def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[PDState, PDState]]:
             for q_post_i, transition_indicator in product(sorted(qs_seed), transition_indicators):
                 q_indicator = q_indicators_post[q_post_i]
@@ -7857,7 +7857,7 @@ def enumerate_reachable_states(s: Solver) -> None:
 
             index = len(t.keys) - 1
             # s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), index=index)))
-            s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0), index=index)))
+            s.add(z3.Not(t._translate_expr(m.as_onestate_formula(0), index=index)))  # TODO: eliminate using index in translation
 
         print('looking for initial states')
         with s.new_frame():
@@ -7890,7 +7890,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                 state, ition = worklist.pop()
                 new_states = []
                 with s.new_frame():
-                    s.add(t.translate_expr(state.as_onestate_formula(0), index=0))
+                    s.add(t.translate_expr(state.as_onestate_formula(0)))
                     s.add(t.translate_transition(ition))
 
                     while True:

@@ -292,13 +292,13 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
     with s.new_frame():
         for precond in preconds:
-            s.add(t.translate_expr(precond, index=0))
+            s.add(t.translate_expr(precond))
 
-        s.add(t.translate_expr(syntax.Not(safety), index=len(keys) - 1))
+        s.add(t._translate_expr(syntax.Not(safety), index=len(keys) - 1))  # TODO: eliminate using index in translation
 
         for i in range(depth):
             if i != len(keys) - 1:
-                s.add(t.translate_expr(safety, index=i))
+                s.add(t._translate_expr(safety, index=i))  # TODO: eliminate using index in translation
             assert_any_transition(s, t, i, allow_stutter=False)
 
         res = s.check()
@@ -1044,7 +1044,7 @@ class Diagram:
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
                 self.reverse_map.append((d, j))
-                z3conjs.append(p == t.translate_expr(c, index=state_index))
+                z3conjs.append(p == t._translate_expr(c, index=state_index))  # TODO: eliminate using index in translation
                 i += 1
 
         if bs:

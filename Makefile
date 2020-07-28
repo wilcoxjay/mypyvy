@@ -92,10 +92,29 @@ pd-old:
 
 pd:
 	# primal-dual-houdini
-	# time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_clear_cache.log
-	# time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --cache-only $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_cache_only.log # TODO: this currently fails, should debug
+
+	# should take about 1 minute
 	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/ring.pyv > ring.primal_dual_houdini_1_clear_cache.log
 	grep "Proved safety!" ring.primal_dual_houdini_1_clear_cache.log
+
+	# should take about 2 minutes
+	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/sharded-kv.pyv > sharded-kv.primal_dual_houdini_1_clear_cache.log
+	grep "Fixed point of induction width reached without a safety proof!" sharded-kv.primal_dual_houdini_1_clear_cache.log
+
+pd-long:
+	# primal-dual-houdini for problems that take a long time
+
+	# should take about 6 minutes
+	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/ring-id.pyv > ring-id.primal_dual_houdini_1_clear_cache.log
+	grep "Proved safety!" ring-id.primal_dual_houdini_1_clear_cache.log
+
+	# can take upto 2 hours
+	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/consensus_forall.pyv > consensus_forall.primal_dual_houdini_1_clear_cache.log
+	grep "Proved safety!" consensus_forall.primal_dual_houdini_1_clear_cache.log
+
+	# can take a few hours
+	time $(PYTHON) src/mypyvy.py pd-primal-dual-houdini --clear-cache $(MYPYVY_OPTS) --no-restarts --no-all-subclauses --induction-width=1 --cpus 2 examples/pd/lockserv.pyv > lockserv.primal_dual_houdini_1_clear_cache.log
+	grep -P "Proved safety\!$|Fixed point of induction width reached without a safety proof\!$" lockserv.primal_dual_houdini_1_clear_cache.log
 
 sep:
 	time $(PYTHON) src/mypyvy.py sep examples/pd/ring.pyv > ring.sep.log
@@ -118,4 +137,4 @@ nightly:
 clear-cache:
 	rm -iv examples/*.cache examples/*/*.cache
 
-.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old unit check-imports clear-cache nightly
+.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old pd-long unit check-imports clear-cache nightly
