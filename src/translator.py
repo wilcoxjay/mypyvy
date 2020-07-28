@@ -1,46 +1,50 @@
 from __future__ import annotations
 
+from itertools import chain
+
+from typing import Any, Callable, cast, Dict, Iterable, Iterator, List, Optional, Tuple, Union
+
+import z3
+from networkx import DiGraph  # type: ignore
+
 import syntax
 from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryExpr
 from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse, ModifiesClause
 from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, StateDecl
 from syntax import Program, SortDecl
-
-from typing import Any, Callable, cast, Dict, Iterable, Iterator, List, Optional, Tuple
-from typing import Union
-
-import itertools
-import z3
-import z3_utils
-from networkx import DiGraph  # type: ignore
-
-z3_UNOPS: Dict[str, Optional[Callable[[z3.ExprRef], z3.ExprRef]]] = {
-    'NOT': z3.Not,
-    'NEW': None
-}
-
-z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
-    'IMPLIES': z3.Implies,
-    'IFF': lambda x, y: x == y,
-    'EQUAL': lambda x, y: x == y,
-    'NOTEQ': lambda x, y: x != y,
-    'GE': lambda x, y: x >= y,
-    'GT': lambda x, y: x > y,
-    'LE': lambda x, y: x <= y,
-    'LT': lambda x, y: x < y,
-    'PLUS': lambda x, y: x + y,
-    'SUB': lambda x, y: x - y,
-    'MULT': lambda x, y: x * y,
-}
-
-z3_NOPS: Any = {
-    'AND': z3.And,
-    'OR': z3.Or,
-    'DISTINCT': z3.Distinct,
-}
+from z3_utils import z3_quantifier_alternations
 
 
 class Z3Translator:
+    z3_UNOPS: Dict[str, Callable[[z3.ExprRef], z3.ExprRef]] = {
+        'NOT': z3.Not,
+    }
+
+    z3_BINOPS: Dict[str, Callable[[z3.ExprRef, z3.ExprRef], z3.ExprRef]] = {
+        'IMPLIES': z3.Implies,
+        'IFF': lambda x, y: x == y,
+        'EQUAL': lambda x, y: x == y,
+        'NOTEQ': lambda x, y: x != y,
+        'GE': lambda x, y: x >= y,
+        'GT': lambda x, y: x > y,
+        'LE': lambda x, y: x <= y,
+        'LT': lambda x, y: x < y,
+        'PLUS': lambda x, y: x + y,
+        'SUB': lambda x, y: x - y,
+        'MULT': lambda x, y: x * y,
+    }
+
+    z3_NOPS: Dict[str, Callable[[List[z3.ExprRef]], z3.ExprRef]] = {
+        'AND': cast(Callable[[List[z3.ExprRef]], z3.ExprRef], z3.And),
+        'OR': cast(Callable[[List[z3.ExprRef]], z3.ExprRef], z3.Or),
+        'DISTINCT': cast(Callable[[List[z3.ExprRef]], z3.ExprRef], z3.Distinct),
+    }
+
+    z3_QUANT: Dict[str, Callable[[List[z3.ExprRef], z3.ExprRef], z3.ExprRef]] = {
+        'FORALL': z3.ForAll,
+        'EXISTS': z3.Exists,
+    }
+
     def __init__(self, scope: Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
         self.scope = scope
         self.keys = keys
@@ -50,7 +54,7 @@ class Z3Translator:
         bs = []
         for sv in binder.vs:
             # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
-            n = sv.name + '_%s' % (self.counter,)
+            n = f'{sv.name}_{self.counter}'
             self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
             bs.append(z3.Const(n, Z3Translator.sort_to_z3(sv.sort)))
@@ -67,57 +71,58 @@ class Z3Translator:
             return z3.BoolVal(expr.val)
         elif isinstance(expr, Int):
             return z3.IntVal(expr.val)
-        elif isinstance(expr, UnaryExpr):
-            if expr.op == 'NEW':
-                assert index + 1 < len(self.keys)
-                return self.translate_expr(expr.arg, index=index + 1)
-            else:
-                unop = z3_UNOPS[expr.op]
-                assert unop is not None
-                return unop(self.translate_expr(expr.arg, index))
-        elif isinstance(expr, BinaryExpr):
-            binop = z3_BINOPS[expr.op]
-            return binop(self.translate_expr(expr.arg1, index), self.translate_expr(expr.arg2, index))
-        elif isinstance(expr, NaryExpr):
-            nop = z3_NOPS[expr.op]
-            return nop([self.translate_expr(arg, index) for arg in expr.args])
+        elif isinstance(expr, UnaryExpr) and expr.op in self.z3_UNOPS:
+            return self.z3_UNOPS[expr.op](self.translate_expr(expr.arg, index))
+        elif isinstance(expr, UnaryExpr) and expr.op == 'NEW':
+            assert index + 1 < len(self.keys)
+            return self.translate_expr(expr.arg, index=index + 1)
+            # ODED: the following does not work because self.scope has num_states == 0
+            # assert self.scope.new_allowed()
+            # with self.scope.next_state_index():
+            #     return self.translate_expr(expr.arg, index=index + 1)
+        elif isinstance(expr, BinaryExpr) and expr.op in self.z3_BINOPS:
+            return self.z3_BINOPS[expr.op](
+                self.translate_expr(expr.arg1, index),
+                self.translate_expr(expr.arg2, index)
+            )
+        elif isinstance(expr, NaryExpr) and expr.op in self.z3_NOPS:
+            return self.z3_NOPS[expr.op]([self.translate_expr(arg, index) for arg in expr.args])
         elif isinstance(expr, AppExpr):
             d = self.scope.get(expr.callee)
-            assert d is not None
             if isinstance(d, DefinitionDecl):
+                # ODED: should ask James about this case
                 # checked by resolver; see NOTE(calling-stateful-definitions)
-                assert index + d.num_states <= len(self.keys)
+                assert index + d.num_states <= len(self.keys), f'{d}\n{expr}'
                 # now translate args in the scope of caller
                 translated_args = [self.translate_expr(arg, index) for arg in expr.args]
                 with self.scope.fresh_stack():
                     with self.scope.in_scope(d.binder, translated_args):
                         return self.translate_expr(d.expr, index)  # translate body of def in fresh scope
-            else:
-                assert isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)
+            elif isinstance(d, (RelationDecl, FunctionDecl)):
                 k = self.get_key_opt(index)
                 assert not d.mutable or k is not None
                 callee = Z3Translator.statedecl_to_z3(d, k)
-                assert isinstance(callee, z3.FuncDeclRef)
-                app_translated_args = [self.translate_expr(arg, index) for arg in expr.args]
-                translated_app = callee(*app_translated_args)
-                return translated_app
-        elif isinstance(expr, QuantifierExpr):
+                assert isinstance(callee, z3.FuncDeclRef), f'{callee}\n{expr}'
+                return callee(*(
+                    self.translate_expr(arg, index)
+                    for arg in expr.args
+                ))
+            else:
+                assert False, f'{d}\n{expr}'
+        elif isinstance(expr, QuantifierExpr) and expr.quant in self.z3_QUANT:
             bs = self.bind(expr.binder)
             with self.scope.in_scope(expr.binder, bs):
                 e = self.translate_expr(expr.body, index)
-            q = z3.ForAll if expr.quant == 'FORALL' else z3.Exists
-            return q(bs, e)
+            return self.z3_QUANT[expr.quant](bs, e)
         elif isinstance(expr, Id):
             d = self.scope.get(expr.name)
-            assert d is not None, expr.name
-            if isinstance(d, RelationDecl) or \
-               isinstance(d, ConstantDecl):
+            assert d is not None, f'{expr.name}\n{expr}'
+            if isinstance(d, (RelationDecl, ConstantDecl)):
                 k = self.get_key_opt(index)
                 assert not d.mutable or k is not None
                 z3sym = Z3Translator.statedecl_to_z3(d, k)
                 assert isinstance(z3sym, z3.ExprRef)
-                e = z3sym
-                return e
+                return z3sym
             elif isinstance(d, DefinitionDecl):
                 # checked in resolver; see NOTE(calling-stateful-definitions)
                 assert index + d.num_states <= len(self.keys)
@@ -143,7 +148,7 @@ class Z3Translator:
         R: Iterator[StateDecl] = iter(self.scope.relations.values())
         C: Iterator[StateDecl] = iter(self.scope.constants.values())
         F: Iterator[StateDecl] = iter(self.scope.functions.values())
-        for d in itertools.chain(R, C, F):
+        for d in chain(R, C, F):
             if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or \
                any(mc.name == d.name for mc in mods):
                 continue
@@ -267,16 +272,20 @@ class Z3Translator:
             assert isinstance(d, syntax.FunctionDecl)
             return Z3Translator.function_to_z3(d, key)
 
+    @staticmethod
+    def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> SortDecl:
+        return prog.scope.get_sort_checked(str(z3sort))
 
-def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> SortDecl:
-    return prog.scope.get_sort_checked(str(z3sort))
+
+# ODED: I think the functions below should be implemented in logic.py or elsewhere, independent of z3
+
 
 def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[str, str]]:
     lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope))
     z3expr = lator.translate_expr(expr)
-    for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
-        yield (sort_from_z3sort(prog, ssortz3).name,
-               sort_from_z3sort(prog, tsortz3).name)  # TODO: consider overriding equals instead of using the names
+    for (ssortz3, tsortz3) in z3_quantifier_alternations(z3expr):
+        yield (Z3Translator.sort_from_z3sort(prog, ssortz3).name,
+               Z3Translator.sort_from_z3sort(prog, tsortz3).name)  # TODO: consider overriding equals instead of using the names
 
 
 def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
@@ -286,6 +295,7 @@ def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:
         qa_graph.add_edges_from(qa_edges_expr(prog, expr))
 
     return qa_graph
+
 
 def decls_quantifier_alternation_graph(prog: Program, additional: List[Expr]) -> DiGraph:
     res = quantifier_alternation_graph(prog,
