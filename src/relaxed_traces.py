@@ -1,17 +1,19 @@
-import syntax
-import utils
 import logic
 from logic import Trace, Diagram, Solver
+import resolver
+import syntax
 from syntax import Expr
-from utils import Set
-from updr import RelaxedTrace
 from trace import bmc_trace
-import copy
+import translator
+from updr import RelaxedTrace
+import utils
+from utils import Set
 
+import copy
 import z3
 import itertools
 import networkx  # type: ignore
-from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable, Iterator
+from typing import List, Callable, Union, Dict, TypeVar, Tuple, Optional, cast, Mapping, Sequence, Iterable
 
 T = TypeVar('T')
 
@@ -64,15 +66,13 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
     new_decls.append(relaxation_action_def(prog, actives=actives, fresh=True))
 
     res = syntax.Program(new_decls)
-    res.resolve()  # #sorrynotsorry
+    resolver.resolve_program(res)  # #sorrynotsorry
     return res
 
 
 def relativize_decl(d: syntax.DefinitionDecl, actives: Dict[syntax.SortDecl, syntax.RelationDecl],
                     scope: syntax.Scope, inline_relax_actives: bool) -> syntax.DefinitionDecl:
-    assert not isinstance(d.body, syntax.BlockStatement), \
-        "relax does not support transitions written in imperative syntax"
-    mods, expr = d.body
+    mods, expr = d.mods, d.expr
     expr = syntax.relativize_quantifiers(actives, expr)
     if d.is_public_transition:
         guard = syntax.relativization_guard_for_binder(actives, d.binder)
@@ -84,7 +84,7 @@ def relativize_decl(d: syntax.DefinitionDecl, actives: Dict[syntax.SortDecl, syn
         expr = syntax.And(expr, *new_conjs)
 
     relativized_def = syntax.DefinitionDecl(d.is_public_transition, d.num_states, d.name,
-                                            params=d.binder.vs, body=(mods, expr))
+                                            params=d.binder.vs, mods=mods, expr=expr)
     return relativized_def
 
 
@@ -148,7 +148,7 @@ def relaxation_action_def(
                                                   syntax.Iff(syntax.New(ap_rel), ap_rel))))
 
     return syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=decrease_name,
-                                 params=[], body=(mods, syntax.And(*conjs)))
+                                 params=[], mods=mods, expr=syntax.And(*conjs))
 
 
 def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDecl, syntax.RelationDecl]) \
@@ -167,7 +167,7 @@ def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDec
     return new_mods, new_conjs
 
 
-class RelationFact(object):
+class RelationFact:
     def __init__(self, rel: syntax.RelationDecl, els: List[str], polarity: bool):
         self._rel = rel
         self._els = els
@@ -191,7 +191,7 @@ class RelationFact(object):
     def __str__(self) -> str:
         return "%s(%s) = %s" % (self._rel.name, self._els, str(self._polarity))
 
-class FunctionFact(object):
+class FunctionFact:
     def __init__(self, func: syntax.FunctionDecl, param_els: List[str], res_elm: str):
         self._func = func
         self._params_els = param_els
@@ -210,7 +210,7 @@ class FunctionFact(object):
     def __str__(self) -> str:
         return "%s(%s) = %s" % (self._func.name, self._params_els, self._res_elm)
 
-class InequalityFact(object):
+class InequalityFact:
     def __init__(self, lhs: str, rhs: str):
         self._lhs = lhs
         self._rhs = rhs
@@ -262,7 +262,7 @@ def closing_qa_cycle(
         prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl],
         existentially_quantified_sorts: List[syntax.SortDecl]
 ) -> bool:
-    qa_graph = prog.decls_quantifier_alternation_graph([])
+    qa_graph = translator.decls_quantifier_alternation_graph(prog, [])
     assert networkx.is_directed_acyclic_graph(qa_graph)
 
     for asort in free_vars_sorts:
@@ -294,7 +294,7 @@ def is_rel_blocking_relax_step(
 
     with syntax.the_program.scope.fresh_stack():
         with syntax.the_program.scope.n_states(2):
-            diffing_formula.resolve(syntax.the_program.scope, syntax.BoolSort)
+            resolver.resolve_expr(syntax.the_program.scope, diffing_formula, syntax.BoolSort)
 
     res = trns.eval(diffing_formula, idx)
     assert isinstance(res, bool)
@@ -464,10 +464,10 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
 
         end_expr = syntax.Not(syntax.And(*(invd.expr for invd in safety)))
         with syntax.the_program.scope.n_states(1):
-            end_expr.resolve(syntax.the_program.scope, syntax.BoolSort)
+            resolver.resolve_expr(syntax.the_program.scope, end_expr, syntax.BoolSort)
         trace_decl = diagram_trace_to_explicitly_relaxed_trace_decl(trace, end_expr)
         with syntax.the_program.scope.n_states(1):
-            trace_decl.resolve(syntax.the_program.scope)
+            resolver.resolve_tracedecl(syntax.the_program.scope, trace_decl)
 
         print(trace_decl)
 
@@ -476,7 +476,7 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
         assert False
 
 
-class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
+class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
     def __init__(self, scope: syntax.Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
         self._active_rels_mapping: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
         self._generate_active_rels(scope)
@@ -485,7 +485,7 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
         for active_rel in self._active_rels_mapping.values():
             self._active_scope.add_relation(active_rel)
 
-        self._t = syntax.Z3Translator(self._active_scope, keys)
+        self._t = translator.Z3Translator(self._active_scope, keys)
         self._prog = syntax.the_program
 
     def _generate_active_rels(self, scope: syntax.Scope) -> None:
@@ -493,21 +493,21 @@ class Z3RelaxedSemanticsTranslator(syntax.Z3Translator):
             active_name = scope.fresh('active_%s' % sort.name)
             # TODO: is there a better way to get Sort out of SortDecl?
             sort_not_decl = syntax.UninterpretedSort(sort.name)
-            sort_not_decl.resolve(scope)
+            resolver.resolve_sort(scope, sort_not_decl)
             active_rel = syntax.RelationDecl(active_name, arity=[sort_not_decl],
                                              mutable=True, derived=None, annotations=[])
             self._active_rels_mapping[sort] = active_rel
 
     def translate_expr(self, expr: Expr, index: int = 0) -> z3.ExprRef:
         rel_expr = syntax.relativize_quantifiers(self._active_rels_mapping, expr)
-        res = self._t.translate_expr(rel_expr, index)
+        res = self._t._translate_expr(rel_expr, index)  # TODO: eliminate using index in translation
         return res
 
     def translate_transition(self, t: syntax.DefinitionDecl, index: int = 0) -> z3.ExprRef:
         new_decl = relativize_decl(t, self._active_rels_mapping, self._active_scope, inline_relax_actives=True)
         # TODO: hack! relativize_decl doesn't do this, so the expression can be non-closed.
         # TODO: Should it generate & use an extended scope?
-        new_decl.resolve(self._active_scope)
+        resolver.resolve_declcontainingexpr(self._active_scope, new_decl)
         res = self._t.translate_transition(new_decl, index)
         return res
 
@@ -519,7 +519,7 @@ def consts_exist_axioms(prog: syntax.Program) -> List[Expr]:
         ax = syntax.Exists([syntax.SortedVar(name, c.sort)],
                            syntax.Eq(syntax.Id(c.name), syntax.Id(name)))
         with prog.scope.n_states(1):
-            ax.resolve(prog.scope, syntax.BoolSort)
+            resolver.resolve_expr(prog.scope, ax, syntax.BoolSort)
         res.append(ax)
 
     return res
@@ -545,7 +545,7 @@ def functions_total_axioms(prog: syntax.Program) -> List[Expr]:
                            syntax.Exists([syntax.SortedVar(name, func.sort)],
                                          syntax.Eq(syntax.Id(name), ap_func)))
         with prog.scope.n_states(1):
-            ax.resolve(prog.scope, syntax.BoolSort)
+            resolver.resolve_expr(prog.scope, ax, syntax.BoolSort)
 
         res.append(ax)
 
@@ -560,8 +560,8 @@ def relaxed_semantics_solver(prog: syntax.Program) -> logic.Solver:
                         reassert_axioms=True,
                         additional_mutable_axioms=consts_exist_axioms(prog) + functions_total_axioms(prog))
 
-def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
-                      minimize: Optional[bool]=None) -> Optional[Trace]:
+def check_relaxed_bmc(safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None,
+                      minimize: Optional[bool] = None) -> Optional[Trace]:
     prog = syntax.the_program
     return logic.check_bmc(relaxed_semantics_solver(prog),
                            safety, depth, preconds, minimize)

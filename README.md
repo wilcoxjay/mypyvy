@@ -4,7 +4,8 @@ A language for symbolic transition systems, inspired by Ivy.
 
 ## Dependencies
 
-You need python version 3.8. Any version of the form 3.8.X should work.
+You need python version 3.8 because we like to use shiny things. 
+Any version of the form 3.8.X should work.
 
 ```
 python3.8 --version
@@ -13,11 +14,11 @@ Python 3.8.2
 
 Make sure z3 is installed and on your `PYTHONPATH`. Basic functionality should
 work with any version from the past few years, but for best results, use a recent
-release, such as 4.8.7.
+release, such as 4.8.8.
 
 ```
 z3 --version
-Z3 version 4.8.7 - 64 bit
+Z3 version 4.8.8 - 64 bit
 ```
 
 Importing z3 should work (not report any errors) as follows.
@@ -47,7 +48,7 @@ style.
 
 For users who are familiar with Ivy, the syntax of mypyvy is broadly similar to
 Ivy.  The primary difference is that transitions are specified directly as a
-double-vocabulary formula, using `old(R(x))` to refer to the pre-state version
+double-vocabulary formula, using `new(R(x))` to refer to the post-state version
 of relation `R`.
 
 The mypyvy command line tool has several modes, all of which take a single `.pyv`

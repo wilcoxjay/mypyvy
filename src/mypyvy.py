@@ -9,13 +9,14 @@ from datetime import datetime
 import json
 import logging
 import sys
-from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Union, Sequence
+from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Union, Sequence, Set
 import z3
 import resource
 
 import logic
-from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE
+from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE, Trace
 import parser
+import resolver
 import syntax
 from syntax import Expr, Program, InvariantDecl
 import updr
@@ -25,7 +26,11 @@ from trace import bmc_trace
 
 import pd
 import rethink
+<<<<<<< HEAD
 import kod
+=======
+import sep
+>>>>>>> master
 
 T = TypeVar('T')
 
@@ -44,7 +49,7 @@ def get_safety() -> List[Expr]:
                 oldcount = utils.error_count
                 e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
                 with prog.scope.n_states(1):
-                    e.resolve(prog.scope, syntax.BoolSort)
+                    resolver.resolve_expr(prog.scope, e, syntax.BoolSort)
                 assert oldcount == utils.error_count, 'errors in parsing or typechecking'
                 safety = [e]
             except Exception as e:
@@ -62,7 +67,8 @@ def do_updr(s: Solver) -> None:
     if utils.args.use_z3_unsat_cores:
         z3.set_param('smt.core.minimize', True)
 
-    logic.check_init(s, safety_only=True)
+    if logic.check_init(s, safety_only=True, verbose=True) is not None:
+        return
 
     if not utils.args.checkpoint_in:
         fs = updr.Frames(s)
@@ -202,9 +208,13 @@ def bmc(s: Solver) -> None:
     utils.logger.always_print('  ' + str(safety))
 
     if not utils.args.relax:
-        bmcer = lambda bound: logic.check_bmc(s, safety, bound)
+        def bmc_normal(bound: int) -> Optional[Trace]:
+            return logic.check_bmc(s, safety, bound)
+        bmcer = bmc_normal
     else:
-        bmcer = lambda bound: relaxed_traces.check_relaxed_bmc(safety, bound)
+        def bmc_relaxed(bound: int) -> Optional[Trace]:
+            return relaxed_traces.check_relaxed_bmc(safety, bound)
+        bmcer = bmc_relaxed
 
     for k in range(0, n + 1):
         if (m := bmcer(k)) is not None:
@@ -267,7 +277,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
-            diagram.resolve(prog.scope, syntax.BoolSort)
+            resolver.resolve_expr(prog.scope, diagram, syntax.BoolSort)
             assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
             active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
 
@@ -291,7 +301,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
 
             diagram_active = syntax.Exists(diagram.vs(),
                                            syntax.And(diagram.body, *active_clauses))
-            diagram_active.resolve(prog.scope, syntax.BoolSort)
+            resolver.resolve_expr(prog.scope, diagram_active, syntax.BoolSort)
 
             components.append(syntax.AssertDecl(expr=diagram_active))
         elif elm.tagName == 'action':
@@ -338,7 +348,7 @@ def sandbox(s: Solver) -> None:
                                  mutable=True, derived=def_axiom, annotations=[])
 
     # TODO: this irreversibly adds the relation to the context, wrap
-    derrel.resolve(syntax.the_program.scope)
+    resolver.resolve_statedecl(syntax.the_program.scope, derrel)
     syntax.the_program.decls.append(derrel)  # TODO: hack! because RelationDecl.resolve only adds to prog.scope
     s.mutable_axioms.extend([def_axiom])  # TODO: hack! currently we register these axioms only on solver init
 
@@ -347,7 +357,7 @@ def sandbox(s: Solver) -> None:
     # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
     new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program, fresh=False)
     new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
-    new_prog.resolve()
+    resolver.resolve_program(new_prog)
     print(new_prog)
 
     syntax.the_program = new_prog
@@ -422,6 +432,45 @@ def trace(s: Solver) -> None:
                               (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
 
 
+def check_one_bounded_width_invariant(s: Solver) -> None:
+    prog = syntax.the_program
+    other_decls = [d for d in prog.decls if not isinstance(d, InvariantDecl)]
+    invs = list(prog.invs())
+    R: Set[InvariantDecl] = set()
+
+    def check() -> bool:
+        prog.decls = other_decls + list(R)
+        if logic.check_init(s, minimize=False, verbose=False) is not None:
+            return False
+        if logic.check_transitions(s, minimize=False, verbose=False) is not None:
+            return False
+
+        return True
+
+    while len(R) != len(invs):
+        did_something = False
+        for inv in invs:
+            if inv in R:
+                continue
+            print('trying to add', inv, '...', end='')
+            R.add(inv)
+            if check():
+                print('added')
+                did_something = True
+            else:
+                print('failed to add')
+                R.remove(inv)
+        if not did_something:
+            break
+    result = len(R) == len(invs)
+    if result:
+        print('invariant is 1-provable')
+    else:
+        print('invariant is not 1-provable, but here is the maximal subset that is')
+        for inv in R:
+            print(inv)
+
+
 def relax(s: Solver) -> None:
     print(relaxed_traces.relaxed_program(syntax.the_program))
 
@@ -478,11 +527,20 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     relax_subparser.set_defaults(main=relax)
     all_subparsers.append(relax_subparser)
 
+    check_one_bounded_width_invariant_parser = subparsers.add_parser(
+        'check-one-bounded-width-invariant',
+        help='popl'
+    )
+    check_one_bounded_width_invariant_parser.set_defaults(main=check_one_bounded_width_invariant)
+    all_subparsers.append(check_one_bounded_width_invariant_parser)
+
     all_subparsers += pd.add_argparsers(subparsers)
 
     all_subparsers += kod.add_argparsers(subparsers)
 
     all_subparsers += rethink.add_argparsers(subparsers)
+
+    all_subparsers += sep.add_argparsers(subparsers)
 
     for s in all_subparsers:
         s.add_argument('--forbid-parser-rebuild', action=utils.YesNoAction, default=False,
@@ -494,7 +552,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
         s.add_argument('--log-xml', action=utils.YesNoAction, default=False,
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
-        s.add_argument('--print-program', choices=['str', 'repr', 'faithful', 'refactor-old-to-new'],
+        s.add_argument('--print-program',
+                       choices=['str', 'repr', 'faithful', 'without-invariants'],
                        help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -529,11 +588,12 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
                        help='print the exit code before exiting (good for regression testing)')
-        s.add_argument('--accept-old', action=utils.YesNoAction, default=False,
-                       help='allow deprecated syntax using old()')
 
         s.add_argument('--cvc4', action='store_true',
                        help='use CVC4 as the backend solver. this is not very well supported.')
+
+        s.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
+                       help='(for debugging mypyvy itself) double check countermodels by evaluation')
 
         # for diagrams:
         s.add_argument('--simplify-diagram', action=utils.YesNoAction,
@@ -553,8 +613,6 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                                   help="when verifying inductiveness, check only these invariants")
     verify_subparser.add_argument('--json', action='store_true',
                                   help="output machine-parseable verification results in JSON format")
-    verify_subparser.add_argument('--smoke-test-solver', action=utils.YesNoAction, default=False,
-                                  help='(for debugging mypyvy itself) double check countermodels by evaluation')
 
     updr_subparser.add_argument('--checkpoint-in',
                                 help='start from internal state as stored in given file')
@@ -565,7 +623,7 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
     bmc_subparser.add_argument('--depth', type=int, default=3, metavar='N',
                                help='number of steps to check')
     bmc_subparser.add_argument('--relax', action=utils.YesNoAction, default=False,
-                                help='relaxed semantics (domain can decrease)')
+                               help='relaxed semantics (domain can decrease)')
 
     argparser.add_argument('filename')
 
@@ -654,19 +712,11 @@ def main() -> None:
         elif utils.args.print_program == 'faithful':
             to_str = syntax.faithful_print_prog
             end = ''
-        elif utils.args.print_program == 'refactor-old-to-new':
-            pre_vocab_resolution_error_count = utils.error_count
-            prog.resolve_vocab()
-            if utils.error_count > pre_vocab_resolution_error_count:
-                print('program has resolution errors')
-                utils.exit(1)
-            pre_translation_error_count = utils.error_count
-            new_prog = syntax.translate_old_to_new_prog(prog, strip_old=False)
-            if utils.error_count > pre_translation_error_count:
-                print('errors during old->new translation')
-                utils.exit(1)
-            print(syntax.faithful_print_prog(new_prog, ignore_old=True), end='')
-            utils.exit(0)
+        elif utils.args.print_program == 'without-invariants':
+            def p(prog: Program) -> str:
+                return syntax.faithful_print_prog(prog, skip_invariants=True)
+            to_str = p
+            end = ''
         else:
             assert False
 
@@ -674,7 +724,7 @@ def main() -> None:
 
     pre_resolve_error_count = utils.error_count
 
-    prog.resolve()
+    resolver.resolve_program(prog)
     if utils.error_count > pre_resolve_error_count:
         utils.logger.always_print('program has resolution errors.')
         utils.exit(1)

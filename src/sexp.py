@@ -4,10 +4,10 @@ import dataclasses
 from dataclasses import dataclass
 import string
 
-from typing import Iterable, Iterator, List, Union, overload
+from typing import Iterable, Iterator, List, Mapping, Optional, Set, Union, overload
 
 @dataclass
-class SList(object):
+class SList:
     contents: List[Sexp]
 
     def __str__(self) -> str:
@@ -27,14 +27,14 @@ class SList(object):
         return self.contents[i]
 
 @dataclass
-class Atom(object):
+class Atom:
     name: str
 
     def __str__(self) -> str:
         return self.name
 
 @dataclass
-class Comment(object):
+class Comment:
     contents: str
 
     def __str__(self) -> str:
@@ -42,12 +42,40 @@ class Comment(object):
 
 Sexp = Union[Comment, str, SList]
 
+# note: does not understand variable binding!
+# be careful when substituting into expressions with bound variables.
+def subst(assignment: Mapping[str, Sexp], e: Sexp) -> Sexp:
+    if isinstance(e, Comment):
+        return e
+    elif isinstance(e, str):
+        if e in assignment:
+            return assignment[e]
+        else:
+            return e
+    else:
+        return SList([subst(assignment, x) for x in e.contents])
+
+
+def symbols_used(e: Sexp, into: Optional[Set[str]] = None) -> Set[str]:
+    if into is None:
+        into = set()
+    if isinstance(e, Comment):
+        return into
+    elif isinstance(e, str):
+        into.add(e)
+        return into
+    else:
+        for x in e.contents:
+            symbols_used(x, into=into)
+        return into
+
+
 @dataclass
-class EOF(object):
+class EOF:
     pass
 
 @dataclass
-class CharBuffer(object):
+class CharBuffer:
     contents: str
     pos: int = dataclasses.field(default=0)
 
@@ -68,7 +96,7 @@ class CharBuffer(object):
         return c
 
 @dataclass
-class SexpLexer(object):
+class SexpLexer:
     buffer: CharBuffer
 
     def add_input(self, new_input: str) -> None:
@@ -107,7 +135,7 @@ class SexpLexer(object):
                 yield Atom(''.join(tok))
 
 @dataclass
-class SexpParser(object):
+class SexpParser:
     lexer: SexpLexer
     stack: List[List[Sexp]] = dataclasses.field(default_factory=list)
 

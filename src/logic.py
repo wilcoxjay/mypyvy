@@ -13,19 +13,17 @@ import re
 import sexp
 import subprocess
 import sys
-import typing
-from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator, \
-    cast, TypeVar, Callable
-from types import TracebackType
+from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
+from typing import cast, TypeVar, Callable
 import z3
 
 import utils
-from utils import MySet
+import resolver
 import syntax
-from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl, \
-    FunctionDecl, DefinitionDecl, Program
+from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
+from syntax import FunctionDecl, DefinitionDecl, Not, New
+from translator import Z3Translator
 
-z3.Forall = z3.ForAll
 
 KEY_ONE = 'one'
 KEY_NEW = 'new'
@@ -64,35 +62,45 @@ def check_solver(s: Solver, keys: Tuple[str, ...], minimize: Optional[bool] = No
 def check_unsat(
         errmsgs: List[Tuple[Optional[syntax.Span], str]],
         s: Solver,
-        keys: Tuple[str, ...]
+        keys: Tuple[str, ...],
+        minimize: Optional[bool] = None,
+        verbose: bool = True
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
     #     logger.debug('assertions')
     #     logger.debug(str(s.assertions()))
 
-    if (m := check_solver(s, keys)) is not None:
-        utils.logger.always_print('')
-        if utils.args.print_counterexample:
-            utils.logger.always_print(str(m))
+    if (m := check_solver(s, keys, minimize=minimize)) is not None:
+        if verbose:
+            utils.logger.always_print('')
+            if utils.args.print_counterexample:
+                utils.logger.always_print(str(m))
 
-        for span, msg in errmsgs:
-            utils.print_error(span, msg)
+            for span, msg in errmsgs:
+                utils.print_error(span, msg)
 
         return m
     else:
-        if not utils.args.query_time:
-            time_msg = ''
-        else:
-            time_msg = ' (%s)' % (datetime.now() - start, )
-        utils.logger.always_print('ok.%s' % (time_msg,))
+        if verbose:
+            if not utils.args.query_time:
+                time_msg = ''
+            else:
+                time_msg = ' (%s)' % (datetime.now() - start, )
+            utils.logger.always_print('ok.%s' % (time_msg,))
 
-        sys.stdout.flush()
+            sys.stdout.flush()
         return None
 
 
-def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
-    utils.logger.always_print('checking init:')
+def check_init(
+        s: Solver,
+        safety_only: bool = False,
+        minimize: Optional[bool] = None,
+        verbose: bool = True
+) -> Optional[Tuple[syntax.InvariantDecl, Trace]]:
+    if verbose:
+        utils.logger.always_print('checking init:')
 
     prog = syntax.the_program
     t = s.get_translator((KEY_ONE,))
@@ -103,7 +111,7 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
 
         for inv in (prog.invs() if not safety_only else prog.safeties()):
             with s.new_frame():
-                s.add(z3.Not(t.translate_expr(inv.expr)))
+                s.add(t.translate_expr(Not(inv.expr)))
 
                 if inv.name is not None:
                     msg = ' ' + inv.name
@@ -111,11 +119,12 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                     msg = ' on line %d' % inv.span[0].lineno
                 else:
                     msg = ''
-                utils.logger.always_print('  implies invariant%s... ' % msg, end='')
-                sys.stdout.flush()
+                if verbose:
+                    utils.logger.always_print('  implies invariant%s... ' % msg, end='')
+                    sys.stdout.flush()
 
                 res = check_unsat([(inv.span, 'invariant%s may not hold in initial state' % msg)],
-                                  s, (KEY_ONE,))
+                                  s, (KEY_ONE,), minimize=minimize, verbose=verbose)
                 if res is not None:
                     if utils.args.smoke_test_solver:
                         state = State(res, 0)
@@ -137,30 +146,37 @@ def check_init(s: Solver, safety_only: bool = False) -> Optional[Tuple[syntax.In
                     return inv, res
     return None
 
-def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
-    t = s.get_translator((KEY_OLD, KEY_NEW))
+def check_transitions(
+        s: Solver,
+        minimize: Optional[bool] = None,
+        verbose: bool = True
+) -> Optional[Tuple[syntax.InvariantDecl, Trace, DefinitionDecl]]:
+    lator = s.get_translator((KEY_OLD, KEY_NEW))
     prog = syntax.the_program
 
     with s.new_frame():
         for inv in prog.invs():
-            s.add(t.translate_expr(inv.expr))
+            s.add(lator.translate_expr(inv.expr))
 
-        for trans in prog.transitions():
-            if utils.args.check_transition is not None and \
-               trans.name not in utils.args.check_transition:
+        for ition in prog.transitions():
+            if 'check_transition' in utils.args and \
+               utils.args.check_transition is not None and \
+               ition.name not in utils.args.check_transition:
                 continue
 
-            utils.logger.always_print('checking transation %s:' % (trans.name,))
+            if verbose:
+                utils.logger.always_print('checking transition %s:' % (ition.name,))
 
             with s.new_frame():
-                s.add(t.translate_transition(trans))
+                s.add(lator.translate_transition(ition))
                 for inv in prog.invs():
-                    if utils.args.check_invariant is not None and \
+                    if 'check_invariant' in utils.args and \
+                       utils.args.check_invariant is not None and \
                        inv.name not in utils.args.check_invariant:
                         continue
 
                     with s.new_frame():
-                        s.add(z3.Not(t.translate_expr(inv.expr, index=1)))
+                        s.add(lator.translate_expr(New(Not(inv.expr))))
 
                         if inv.name is not None:
                             msg = ' ' + inv.name
@@ -168,14 +184,15 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                             msg = ' on line %d' % inv.span[0].lineno
                         else:
                             msg = ''
-                        utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
-                        sys.stdout.flush()
+                        if verbose:
+                            utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
+                            sys.stdout.flush()
 
                         res = check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s'
-                                            % (msg, trans.name)),
-                                           (trans.span, 'this transition may not preserve invariant%s'
+                                            % (msg, ition.name)),
+                                           (ition.span, 'this transition may not preserve invariant%s'
                                             % (msg,))],
-                                          s, (KEY_OLD, KEY_NEW))
+                                          s, (KEY_OLD, KEY_NEW), minimize=minimize, verbose=verbose)
                         if res is not None:
                             if utils.args.smoke_test_solver:
                                 pre_state = res.as_state(i=0)
@@ -199,7 +216,7 @@ def check_transitions(s: Solver) -> Optional[Tuple[syntax.InvariantDecl, Trace, 
                                     msg = f'bad transition counterexample for invariant {inv.expr} in post state'
                                     assert False, msg
 
-                            return inv, res, trans
+                            return inv, res, ition
     return None
 
 def check_implication(
@@ -214,7 +231,7 @@ def check_implication(
             s.add(t.translate_expr(e))
         for e in concs:
             with s.new_frame():
-                s.add(z3.Not(t.translate_expr(e)))
+                s.add(t.translate_expr(Not(e)))
                 if s.check() != z3.unsat:
                     return s.model(minimize=minimize)
 
@@ -231,7 +248,7 @@ def check_two_state_implication_all_transitions(
     with s.new_frame():
         for h in old_hyps:
             s.add(t.translate_expr(h))
-        s.add(z3.Not(t.translate_expr(new_conc, index=1)))
+        s.add(t.translate_expr(New(Not(new_conc))))
         for trans in prog.transitions():
             with s.new_frame():
                 s.add(t.translate_transition(trans))
@@ -244,7 +261,7 @@ def check_two_state_implication_all_transitions(
 def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
-def assert_any_transition(s: Solver, t: syntax.Z3Translator,
+def assert_any_transition(s: Solver, t: Z3Translator,
                           key_index: int, allow_stutter: bool = False) -> None:
     prog = syntax.the_program
     uid = str(key_index)
@@ -263,8 +280,8 @@ def assert_any_transition(s: Solver, t: syntax.Z3Translator,
     s.add(z3.Or(*tids))
 
 
-def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]]=None,
-              minimize: Optional[bool]=None) -> Optional[Trace]:
+def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None,
+              minimize: Optional[bool] = None) -> Optional[Trace]:
     keys = tuple('state%02d' % i for i in range(depth + 1))
     prog = syntax.the_program
 
@@ -275,13 +292,13 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 
     with s.new_frame():
         for precond in preconds:
-            s.add(t.translate_expr(precond, index=0))
+            s.add(t.translate_expr(precond))
 
-        s.add(t.translate_expr(syntax.Not(safety), index=len(keys) - 1))
+        s.add(t._translate_expr(syntax.Not(safety), index=len(keys) - 1))  # TODO: eliminate using index in translation
 
         for i in range(depth):
             if i != len(keys) - 1:
-                s.add(t.translate_expr(safety, index=i))
+                s.add(t._translate_expr(safety, index=i))  # TODO: eliminate using index in translation
             assert_any_transition(s, t, i, allow_stutter=False)
 
         res = s.check()
@@ -318,14 +335,14 @@ def cvc4_postprocess(cvc4line: str) -> str:
 # the corresponding z3 function. Reader beware!!
 
 @dataclass
-class CVC4Sort(object):
+class CVC4Sort:
     name: str
 
     def __str__(self) -> str:
         return self.name
 
 @dataclass
-class CVC4UniverseElement(object):
+class CVC4UniverseElement:
     name: str
     sort: CVC4Sort
 
@@ -336,24 +353,24 @@ class CVC4UniverseElement(object):
         return CVC4UniverseElementDecl(self)
 
 @dataclass
-class CVC4UniverseElementDecl(object):
+class CVC4UniverseElementDecl:
     elt: CVC4UniverseElement
 
     def name(self) -> str:
         return self.elt.name
 
 @dataclass
-class CVC4AppExpr(object):
+class CVC4AppExpr:
     func: CVC4FuncDecl
     args: List[CVC4UniverseElement]
 
 @dataclass
-class CVC4VarDecl(object):
+class CVC4VarDecl:
     name: str
     sort: CVC4Sort
 
 @dataclass
-class CVC4FuncDecl(object):
+class CVC4FuncDecl:
     name: str
     var_decls: dataclasses.InitVar[sexp.SList]
     return_sort: str
@@ -383,7 +400,7 @@ class CVC4FuncDecl(object):
         return cast(z3.ExprRef, CVC4AppExpr(self, cast(List[CVC4UniverseElement], list(args))))
 
 @dataclass
-class CVC4Model(object):
+class CVC4Model:
     sexpr: dataclasses.InitVar[sexp.Sexp]
 
     def __post_init__(self, sexpr: sexp.Sexp) -> None:
@@ -501,18 +518,23 @@ class CVC4Model(object):
 
         return ans
 
-class Solver(object):
-    def __init__(self, include_program: bool = True, use_cvc4: bool = False,
-                 translator_factory: Optional[Callable[[syntax.Scope, Tuple[str, ...]], syntax.Z3Translator]]=None,
-                 reassert_axioms: bool=False, additional_mutable_axioms: List[Expr]=[]) \
-            -> None:
+LatorFactory = Callable[[syntax.Scope, Tuple[str, ...]], Z3Translator]
+class Solver:
+    def __init__(
+            self,
+            include_program: bool = True,
+            use_cvc4: bool = False,
+            translator_factory: Optional[LatorFactory] = None,
+            reassert_axioms: bool = False,
+            additional_mutable_axioms: List[Expr] = []
+    ) -> None:
         self.z3solver = z3.Solver()
         prog = syntax.the_program
         assert prog.scope is not None
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
         self.translator_factory = translator_factory
-        self.translators: Dict[Tuple[str, ...], syntax.Z3Translator] = {}
+        self.translators: Dict[Tuple[str, ...], Z3Translator] = {}
         self.nqueries = 0
         self.assumptions_necessary = False
         self.known_keys: Set[str] = set()
@@ -523,6 +545,7 @@ class Solver(object):
         self.cvc4_proc: Optional[subprocess.Popen] = None
         self.cvc4_last_query: Optional[str] = None
         self.cvc4_last_model_response: Optional[str] = None
+        self.cvc4_model: Optional[CVC4Model] = None # model of the last check(), only used with cvc4 models
 
         self._init_axioms(prog, include_program, reassert_axioms, additional_mutable_axioms)
 
@@ -584,14 +607,14 @@ class Solver(object):
             for a in self.mutable_axioms:
                 self.add(t.translate_expr(a))
 
-    def get_translator(self, keys: Tuple[str, ...] = ()) -> syntax.Z3Translator:
+    def get_translator(self, keys: Tuple[str, ...] = ()) -> Z3Translator:
         assert self.include_program
         t = tuple(keys)
         if t not in self.translators:
             for k in keys:
                 self._initialize_key(k)
             if not self.translator_factory:
-                lator = syntax.Z3Translator(self.scope, keys)
+                lator = Z3Translator(self.scope, keys)
             else:
                 lator = self.translator_factory(self.scope, keys)
             self.translators[t] = lator
@@ -627,12 +650,14 @@ class Solver(object):
 
     def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> z3.CheckSatResult:
         # logger.debug('solver.check')
+        self.cvc4_model = None
         if assumptions is None:
             assert not self.assumptions_necessary
             assumptions = []
         self.nqueries += 1
 
-        if self.use_cvc4:
+        def check_with_cvc4() -> z3.CheckSatResult:
+            assert assumptions is None or len(assumptions) == 0, 'assumptions not supported in cvc4'
             cvc4script = cvc4_preprocess(self.z3solver.to_smt2())
             self.cvc4_last_query = cvc4script
             proc = self.get_cvc4_proc()
@@ -654,7 +679,37 @@ class Solver(object):
                 'unsat': z3.unsat
             }
             assert ans in ans_map, repr(ans)
-            return ans_map[ans]
+            res = ans_map[ans]
+            if res == z3.sat:
+                # get model and store it in self.cvc4_model
+                print('(get-model)', file=proc.stdin)
+                parser = sexp.get_parser('')
+                lines = []
+                for s in parser.parse():
+                    if isinstance(s, sexp.EOF):
+                        # print('got intermediate EOF')
+                        line = cvc4_postprocess(proc.stdout.readline())
+                        lines.append(line)
+                        if line == '':
+                            assert False, 'unexpected underlying EOF'
+                        else:
+                            line = line.strip()
+                            # print(f'got new data line: {line}')
+                            parser.add_input(line)
+                    else:
+                        self.cvc4_last_model_response = ''.join(lines)
+                        # print('got s-expression. not looking for any more input.')
+                        assert isinstance(s, sexp.SList), s
+                        # for sub in s:
+                        #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
+                        self.cvc4_model = CVC4Model(s)
+                        break
+                else:
+                    assert False
+            return res
+
+        if self.use_cvc4:
+            return check_with_cvc4()
 
         def luby() -> Iterable[int]:
             l: List[int] = [1]
@@ -678,10 +733,12 @@ class Solver(object):
                 print(f'[{datetime.now()}] Solver.check: assumptions:')
                 for e in assumptions:
                     print(e)
-                print(f'[{datetime.now()}] Solver.check: self.z3solver stats:')
+                print()
+                print(f'[{datetime.now()}] Solver.check: self.z3solver stats and smt2:')
                 print(self.z3solver.statistics())
-                print(f'[{datetime.now()}] Solver.check: self.z3solver to_smt2:')
+                print()
                 print(self.z3solver.to_smt2())
+                print()
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh solver')
                 s2 = z3.Solver()
@@ -692,9 +749,11 @@ class Solver(object):
                     s2.add(e)
 
                 print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
-                print(f'[{datetime.now()}] Solver.check: s2 stats:')
+                print(f'[{datetime.now()}] Solver.check: s2 stats and smt2:')
                 print(s2.statistics())
+                print()
                 print(s2.to_smt2())
+                print()
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh context')
                 ctx = z3.Context()
@@ -703,12 +762,17 @@ class Solver(object):
                     s3.add(lator.translate_expr(a.expr).translate(ctx))
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
-
                 print(f'[{datetime.now()}] Solver.check: s3.check()',
                       s3.check(*(e.translate(ctx) for e in assumptions)))
-                print(f'[{datetime.now()}] Solver.check: s3 stats:')
+                print(f'[{datetime.now()}] Solver.check: s3 stats and smt2:')
                 print(s3.statistics())
+                print()
                 print(s3.to_smt2())
+                print()
+
+                print(f'[{datetime.now()}] Solver.check: trying cvc4')
+                res = check_with_cvc4()
+                print(f'[{datetime.now()}] Solver.check: cvc4 result: {res}')
 
             assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
                                                if res == z3.unknown else None)
@@ -735,36 +799,6 @@ class Solver(object):
 
         assert False
 
-    def _solver_model(self) -> z3.ModelRef:
-        if self.use_cvc4:
-            proc = self.get_cvc4_proc()
-            assert proc.stdout is not None
-            print('(get-model)', file=proc.stdin)
-            parser = sexp.get_parser('')
-            lines = []
-            for s in parser.parse():
-                if isinstance(s, sexp.EOF):
-                    # print('got intermediate EOF')
-                    line = cvc4_postprocess(proc.stdout.readline())
-                    lines.append(line)
-                    if line == '':
-                        assert False, 'unexpected underlying EOF'
-                    else:
-                        line = line.strip()
-                        # print(f'got new data line: {line}')
-                        parser.add_input(line)
-                else:
-                    self.cvc4_last_model_response = ''.join(lines)
-                    # print('got s-expression. not looking for any more input.')
-                    assert isinstance(s, sexp.SList), s
-                    # for sub in s:
-                    #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
-                    return cast(z3.ModelRef, CVC4Model(s))
-            else:
-                assert False
-        else:
-            return self.z3solver.model()
-
     def model(
             self,
             assumptions: Optional[Sequence[z3.ExprRef]] = None,
@@ -772,28 +806,31 @@ class Solver(object):
             sorts_to_minimize: Optional[Iterable[z3.SortRef]] = None,
             relations_to_minimize: Optional[Iterable[z3.FuncDeclRef]] = None,
     ) -> z3.ModelRef:
+        if self.cvc4_model is not None:
+            return cast(z3.ModelRef, self.cvc4_model)
+        assert not self.use_cvc4, 'using cvc4 but self.cvc4_model is None!'
         if minimize is None:
             minimize = utils.args.minimize_models
         if minimize:
             if sorts_to_minimize is None:
-                sorts_to_minimize = [s.to_z3() for s in self.scope.sorts.values()
+                sorts_to_minimize = [Z3Translator.sort_to_z3(s) for s in self.scope.sorts.values()
                                      if not syntax.has_annotation(s, 'no_minimize')]
             if relations_to_minimize is None:
-                m = self._solver_model()
+                m = self.z3solver.model()
                 ds = {str(d) for d in m.decls()}
                 rels_to_minimize = []
                 for r in self.scope.relations.values():
                     if r.is_derived() or syntax.has_annotation(r, 'no_minimize'):
                         continue
                     if not r.mutable:
-                        z3r = r.to_z3(None)
+                        z3r = Z3Translator.relation_to_z3(r, None)
                         if isinstance(z3r, z3.ExprRef):
                             rels_to_minimize.append(z3r.decl())
                         else:
                             rels_to_minimize.append(z3r)
                     else:
                         for k in self.known_keys:
-                            z3r = r.to_z3(k)
+                            z3r = Z3Translator.relation_to_z3(r, k)
                             if isinstance(z3r, z3.ExprRef):
                                 z3r = z3r.decl()
                             if str(z3r) in ds:
@@ -801,7 +838,7 @@ class Solver(object):
 
             return self._minimal_model(assumptions, sorts_to_minimize, rels_to_minimize)
         else:
-            return self._solver_model()
+            return self.z3solver.model()
 
     def _cardinality_constraint(self, x: Union[z3.SortRef, z3.FuncDeclRef], n: int) -> z3.ExprRef:
         if isinstance(x, z3.SortRef):
@@ -816,7 +853,7 @@ class Solver(object):
             c = z3.Const(f'card$_{s.name()}_{i}', s)
             disjs.append(x == c)
 
-        return z3.Forall(x, z3.Or(*disjs))
+        return z3.ForAll(x, z3.Or(*disjs))
 
     def _relational_cardinality_constraint(self, relation: z3.FuncDeclRef, n: int) -> z3.ExprRef:
         if relation.arity() == 0:
@@ -828,7 +865,7 @@ class Solver(object):
 
         vs = [z3.Const(f'x$_{relation}_{j}', relation.domain(j)) for j in range(relation.arity())]
 
-        result = z3.Forall(vs, z3.Implies(relation(*vs), z3.Or(*(
+        result = z3.ForAll(vs, z3.Implies(relation(*vs), z3.Or(*(
             z3.And(*(
                 c == v for c, v in zip(cs, vs)
             ))
@@ -842,6 +879,7 @@ class Solver(object):
             sorts_to_minimize: Iterable[z3.SortRef],
             relations_to_minimize: Iterable[z3.FuncDeclRef],
     ) -> z3.ModelRef:
+        assert not self.use_cvc4, 'minimizing models is only for z3'
         with self.new_frame():
             for x in itertools.chain(
                     cast(Iterable[Union[z3.SortRef, z3.FuncDeclRef]], sorts_to_minimize),
@@ -855,7 +893,7 @@ class Solver(object):
                 self.add(self._cardinality_constraint(x, n))
 
             assert self.check(assumptions) == z3.sat
-            return self._solver_model()
+            return self.z3solver.model()
 
     def assertions(self) -> Sequence[z3.ExprRef]:
         asserts = self.z3solver.assertions()
@@ -869,7 +907,7 @@ class Solver(object):
 
 _RelevantDecl = Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]
 
-class Diagram(object):
+class Diagram:
     # This class represents a formula of the form
     #
     #     exists X1, ..., X_k.
@@ -982,19 +1020,19 @@ class Diagram(object):
         )
 
     def resolve(self, scope: Scope) -> None:
-        self.binder.pre_resolve(scope)
+        resolver.pre_resolve_binder(scope, self.binder)
 
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             with scope.n_states(1):
                 for _, _, c in self.conjuncts():
-                    c.resolve(scope, syntax.BoolSort)
+                    resolver.resolve_expr(scope, c, syntax.BoolSort)
 
-        self.binder.post_resolve()
+        resolver.post_resolve_binder(self.binder)
 
     def vs(self) -> List[syntax.SortedVar]:
         return self.binder.vs
 
-    def to_z3(self, t: syntax.Z3Translator, state_index: int = 0) -> z3.ExprRef:
+    def to_z3(self, t: Z3Translator, state_index: int = 0) -> z3.ExprRef:
         bs = t.bind(self.binder)
         with t.scope.in_scope(self.binder, bs):
             z3conjs = []
@@ -1006,7 +1044,7 @@ class Diagram(object):
                 p = z3.Bool('p%d' % i)
                 self.trackers.append(p)
                 self.reverse_map.append((d, j))
-                z3conjs.append(p == t.translate_expr(c, index=state_index))
+                z3conjs.append(p == t._translate_expr(c, index=state_index))  # TODO: eliminate using index in translation
                 i += 1
 
         if bs:
@@ -1094,7 +1132,7 @@ class Diagram(object):
             yield
             S -= j
 
-    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool], order: Optional[int]=None) -> None:
+    def generalize(self, s: Solver, constraint: Callable[[Diagram], bool], order: Optional[int] = None) -> None:
         'drop conjuncts of this diagram subject to the constraint returning true'
         d: _RelevantDecl
         I: Iterable[_RelevantDecl] = self.ineqs
@@ -1103,7 +1141,7 @@ class Diagram(object):
         F: Iterable[_RelevantDecl] = self.funcs
 
         assert constraint(self)
-        
+
         generalization_order = list(itertools.chain(I, R, C, F))
         generalization_order = reorder(generalization_order, order)
 
@@ -1170,6 +1208,8 @@ def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
 
 def print_element(state: State, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
     if not isinstance(s, SortDecl):
+        if isinstance(s, (syntax._BoolSort, syntax._IntSort)):
+            return elt
         s = syntax.get_decl_from_sort(s)
 
     return try_printed_by(state, s, elt) or elt
@@ -1240,7 +1280,7 @@ RelationInterp = Dict[RelationDecl, List[Tuple[List[str], bool]]]
 ConstantInterp = Dict[ConstantDecl, str]
 FunctionInterp = Dict[FunctionDecl, List[Tuple[List[str], str]]]
 
-class Trace(object):
+class Trace:
     def __init__(
             self,
             keys: Tuple[str, ...],
@@ -1357,16 +1397,26 @@ class Trace(object):
                         g = itertools.product(*domains)
                         for row in g:
                             ans = z3model.eval(z3decl(*row))
-                            fl.append(([rename(str(col)) for col in row],
-                                       rename(ans.decl().name())))
+                            if z3.is_int_value(ans):
+                                ans_str = str(ans.as_long())
+                            else:
+                                ans_str = rename(ans.decl().name())
+
+                            fl.append(([rename(str(col)) for col in row], ans_str))
+
                         assert decl not in F
                         F[decl] = fl
 
                 else:
                     assert isinstance(decl, ConstantDecl)
-                    v = z3model.eval(z3decl()).decl().name()
+                    v = z3model.eval(z3decl())
+                    if z3.is_int_value(v):
+                        v_str = str(v.as_long())
+                    else:
+                        v_str = rename(v.decl().name())
+
                     assert decl not in C
-                    C[decl] = rename(v)
+                    C[decl] = v_str
             else:
                 if name.startswith(TRANSITION_INDICATOR + '_') and z3model.eval(z3decl()):
                     name = name[len(TRANSITION_INDICATOR + '_'):]
@@ -1416,6 +1466,13 @@ class Trace(object):
                     m[r] = get_interp()
 
         def arbitrary_interp_c(c: ConstantDecl) -> str:
+            if isinstance(c.sort, syntax._BoolSort):
+                return 'false'
+            elif isinstance(c.sort, syntax._IntSort):
+                return '0'
+
+            assert isinstance(c.sort, syntax.UninterpretedSort)
+
             sort = c.sort
             return get_univ(syntax.get_decl_from_sort(sort))[0]
 
@@ -1587,7 +1644,7 @@ class Trace(object):
                 ))))
             assert prog.scope is not None
             with prog.scope.n_states(1):
-                e.resolve(prog.scope, None)
+                resolver.resolve_expr(prog.scope, e, None)
             self.onestate_formula_cache[index] = e
         return self.onestate_formula_cache[index]
 

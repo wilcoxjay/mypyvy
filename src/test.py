@@ -2,6 +2,7 @@ import unittest
 
 import utils
 import parser
+import resolver
 import syntax
 import mypyvy
 
@@ -55,7 +56,7 @@ class SyntaxTests(unittest.TestCase):
     def test_as_clauses_lockserv(self) -> None:
         with open(lockserv_path) as f:
             prog = mypyvy.parse_program(f.read())
-        prog.resolve()
+        resolver.resolve_program(prog)
         for inv in prog.invs():
             expr = inv.expr
             with self.subTest(expr=expr):
@@ -67,8 +68,8 @@ class SyntaxTests(unittest.TestCase):
         with open(lockserv_path) as f:
             prog2 = mypyvy.parse_program(f.read())
 
-        prog1.resolve()
-        prog2.resolve()
+        resolver.resolve_program(prog1)
+        resolver.resolve_program(prog2)
         for d1, d2 in zip(prog1.decls_containing_exprs(), prog2.decls_containing_exprs()):
             e1 = d1.expr
             e2 = d2.expr
@@ -85,7 +86,7 @@ class SyntaxTests(unittest.TestCase):
             mutable relation active_quorum(quorum)
         '''
         prog = mypyvy.parse_program(minipaxos)
-        prog.resolve()
+        resolver.resolve_program(prog)
         node = prog.scope.get_sort('node')
         assert node is not None
         quorum = prog.scope.get_sort('quorum')
@@ -97,12 +98,12 @@ class SyntaxTests(unittest.TestCase):
         guards = {node: active_node, quorum: active_quorum}
 
         e = parser.parse_expr('forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)')
-        e.resolve(prog.scope, None)
+        resolver.resolve_expr(prog.scope, e, None)
 
         expected = parser.parse_expr('forall Q1, Q2. active_quorum(Q1) & active_quorum(Q2) -> '
                                      'exists N. active_node(N) & (member(N, Q1) & member(N, Q2))')
         with prog.scope.n_states(1):
-            expected.resolve(prog.scope, None)
+            resolver.resolve_expr(prog.scope, expected, None)
 
         self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
@@ -110,24 +111,6 @@ class SyntaxTests(unittest.TestCase):
         s1 = syntax.SortDecl('foo', [])
         s2 = syntax.SortDecl('foo', [])
         self.assertEqual(s1, s2)
-
-    def test_translate_old_to_new_expr(self) -> None:
-        vocab = '''
-            sort A
-            mutable relation R(A)
-        '''
-        prog = mypyvy.parse_program(vocab)
-        prog.resolve()
-
-        ios = [
-            ('forall X. R(X) <-> old(R(X))',
-             'forall X. new(R(X)) <-> R(X)')
-        ]
-        for expr, expected in ios:
-            with self.subTest(expr=expr):
-                expr2 = syntax.translate_old_to_new_expr(prog.scope, parser.parse_expr(expr))
-                # print(clause)
-                self.assertEqual(expr2, parser.parse_expr(expected))
 
 def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3.8'

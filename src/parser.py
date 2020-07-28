@@ -20,7 +20,6 @@ reserved = {
     'sketch': 'SKETCH',
     'axiom': 'AXIOM',
     'new': 'NEW',
-    'old': 'OLD',
     'forall': 'FORALL',
     'exists': 'EXISTS',
     'true': 'TRUE',
@@ -30,7 +29,6 @@ reserved = {
     'twostate': 'TWOSTATE',
     'theorem': 'THEOREM',
     'definition': 'DEFINITION',
-    'assume': 'ASSUME',
     'assert': 'ASSERT',
     'safety': 'SAFETY',
     'any': 'ANY',
@@ -43,6 +41,8 @@ reserved = {
     'sat': 'SAT',
     'unsat': 'UNSAT',
     'distinct': 'DISTINCT',
+    'bool': 'BOOL',
+    'int': 'INT',
 }
 
 tokens = [
@@ -54,8 +54,6 @@ tokens = [
     'RBRACE',
     'DOT',
     'COLON',
-    'COLONEQUALS',
-    'SEMI',
     'BANG',
     'TILDE',
     'IFF',
@@ -64,11 +62,18 @@ tokens = [
     'EQUAL',
     'NOTEQ',
     'NOTEQ2',
+    'GE',
+    'GT',
+    'LE',
+    'LT',
+    'PLUS',
+    'SUB',
     'COMMA',
     'AMPERSAND',
     'STAR',
     'ANNOT',
-    'ID'
+    'ID',
+    'INTLIT'
 ] + list(reserved.values())
 
 
@@ -81,6 +86,10 @@ def t_ANNOT(t: Any) -> Any:
     r'@[-a-zA-Z_0-9]+'
     return t
 
+def t_INTLIT(t: Any) -> Any:
+    r'[0-9]+'
+    return t
+
 t_LPAREN = r'\('
 t_RPAREN = r'\)'
 t_LBRACKET = r'\['
@@ -89,8 +98,6 @@ t_LBRACE = r'{'
 t_RBRACE = r'}'
 t_DOT = r'\.'
 t_COLON = r':'
-t_COLONEQUALS = r':='
-t_SEMI = r';'
 t_BANG = r'\!'
 t_TILDE = r'~'
 t_IMPLIES = r'->'
@@ -99,6 +106,12 @@ t_PIPE = r'\|'
 t_EQUAL = r'='
 t_NOTEQ = r'\!='
 t_NOTEQ2 = r'~='
+t_GE = r'>='
+t_GT = r'>'
+t_LE = r'<='
+t_LT = r'<'
+t_PLUS = r'\+'
+t_SUB = r'-'
 t_COMMA = r','
 t_AMPERSAND = r'&'
 t_STAR = r'\*'
@@ -135,7 +148,9 @@ precedence = (
     ('right', 'IMPLIES'),
     ('left', 'PIPE'),
     ('left', 'AMPERSAND'),
-    ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2'),
+    ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2', 'GE', 'GT', 'LE', 'LT'),
+    ('left', 'PLUS', 'SUB'),
+    ('left', 'STAR'),
     ('right', 'BANG', 'TILDE')
 )
 
@@ -292,7 +307,17 @@ def p_arity_nonempty_more(p: Any) -> None:
     'arity_nonempty : arity_nonempty COMMA sort'
     p[0] = p[1] + [p[3]]
 
-def p_sort(p: Any) -> None:
+def p_sort_bool(p: Any) -> None:
+    'sort : BOOL'
+    tok: Token = p.slice[1]
+    p[0] = syntax._BoolSort(span=span_from_tok(tok))
+
+def p_sort_int(p: Any) -> None:
+    'sort : INT'
+    tok: Token = p.slice[1]
+    p[0] = syntax._IntSort(span=span_from_tok(tok))
+
+def p_sort_uninterp(p: Any) -> None:
     'sort : id'
     tok: Token = p[1]
     p[0] = syntax.UninterpretedSort(tok.value, span=span_from_tok(tok))
@@ -447,6 +472,10 @@ def p_sortedvars_more(p: Any) -> None:
     'sortedvars : sortedvars COMMA sortedvar'
     p[0] = p[1] + [p[3]]
 
+def p_expr_intlit(p: Any) -> None:
+    'expr : INTLIT'
+    p[0] = syntax.Int(int(p[1]), span=span_from_tok(p.slice[1]))
+
 def p_expr_true(p: Any) -> None:
     'expr : TRUE'
     p[0] = syntax.Bool(True, span=span_from_tok(p.slice[1]))
@@ -532,17 +561,59 @@ def p_expr_noteq(p: Any) -> None:
     span = loc_join(l.span, r.span)
     p[0] = syntax.BinaryExpr('NOTEQ', l, r, span=span)
 
+def p_expr_ge(p: Any) -> None:
+    'expr : expr GE expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('GE', l, r, span=span)
 
-def p_expr_old(p: Any) -> None:
-    'expr : OLD LPAREN expr RPAREN'
-    e: syntax.Expr = p[3]
-    p[0] = syntax.UnaryExpr('OLD', e, span=loc_join(p.slice[1], p.slice[4]))
+def p_expr_gt(p: Any) -> None:
+    'expr : expr GT expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('GT', l, r, span=span)
+
+def p_expr_le(p: Any) -> None:
+    'expr : expr LE expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('LE', l, r, span=span)
+
+def p_expr_lt(p: Any) -> None:
+    'expr : expr LT expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('LT', l, r, span=span)
+
+def p_expr_plus(p: Any) -> None:
+    'expr : expr PLUS expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('PLUS', l, r, span=span)
+
+def p_expr_sub(p: Any) -> None:
+    'expr : expr SUB expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('SUB', l, r, span=span)
+
+def p_expr_mult(p: Any) -> None:
+    'expr : expr STAR expr'
+    l: syntax.Expr = p[1]
+    r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
+    p[0] = syntax.BinaryExpr('MULT', l, r, span=span)
 
 def p_expr_new(p: Any) -> None:
     'expr : NEW LPAREN expr RPAREN'
     e: syntax.Expr = p[3]
     p[0] = syntax.UnaryExpr('NEW', e, span=loc_join(p.slice[1], p.slice[4]))
-
 
 def p_args_empty(p: Any) -> None:
     'args : empty'
@@ -607,11 +678,12 @@ def p_mods(p: Any) -> None:
 def p_decl_transition(p: Any) -> None:
     'decl : TRANSITION id LPAREN params RPAREN definition_body'
     id_tok: Token = p[2]
-    body: Union[Tuple[List[syntax.ModifiesClause], syntax.Expr], syntax.BlockStatement] = p[6]
-    body_span = body[1].span if isinstance(body, tuple) else body.span
+    mods: List[syntax.ModifiesClause]
+    expr: syntax.Expr
+    mods, expr = p[6]
     p[0] = syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=id_tok.value,
-                                 params=p[4], body=p[6],
-                                 span=loc_join(p.slice[1], body_span))
+                                 params=p[4], mods=mods, expr=expr,
+                                 span=loc_join(p.slice[1], expr.span))
 
 def p_decl_definition_body_mods_expr(p: Any) -> None:
     'definition_body : mods expr'
@@ -620,38 +692,6 @@ def p_decl_definition_body_mods_expr(p: Any) -> None:
 def p_decl_definition_body_expr(p: Any) -> None:
     'definition_body : EQUAL expr'
     p[0] = ([], p[2])
-
-def p_decl_definition_body_block(p: Any) -> None:
-    'definition_body : blockstmt'
-    p[0] = p[1]
-
-def p_blockstmt(p: Any) -> None:
-    'blockstmt : LBRACE stmts RBRACE'
-    p[0] = syntax.BlockStatement(p[2], span=loc_join(p.slice[1], p.slice[3]))
-
-def p_stmts_empty(p: Any) -> None:
-    'stmts : empty'
-    p[0] = []
-
-def p_stmts_more(p: Any) -> None:
-    'stmts : stmts stmt'
-    p[0] = p[1] + [p[2]]
-
-def p_stmt_assume(p: Any) -> None:
-    'stmt : ASSUME expr SEMI'
-    p[0] = syntax.AssumeStatement(p[2], span=loc_join(p.slice[1], p.slice[3]))
-
-def p_assignment_lhs_empty(p: Any) -> None:
-    'assignment_lhs : empty'
-    p[0] = []
-
-def p_assignment_lhs_nonempty(p: Any) -> None:
-    'assignment_lhs : LPAREN args RPAREN'
-    p[0] = p[2]
-
-def p_stmt_assignment(p: Any) -> None:
-    'stmt : id assignment_lhs COLONEQUALS expr SEMI'
-    p[0] = syntax.AssignmentStatement(p[1].value, p[2], p[4], span=loc_join(p[1], p.slice[5]))
 
 def kstate_int(kstate: str) -> int:
     if kstate == 'zerostate':
@@ -683,23 +723,18 @@ def p_decl_theorem(p: Any) -> None:
 def p_decl_definition(p: Any) -> None:
     'decl : kstate DEFINITION id LPAREN params RPAREN definition_body'
     k_tok, num_states = p[1]
-    body: Union[Tuple[List[syntax.ModifiesClause], syntax.Expr], syntax.BlockStatement] = p[7]
-    body_span = body[1].span if isinstance(body, tuple) else body.span
-    if isinstance(body, syntax.BlockStatement):
-        if num_states == 1:
-            utils.print_error(body.span, "syntax error: imperative body of definition cannot be declared 'onestate'")
-            return
+    mods: List[syntax.ModifiesClause]
+    expr: syntax.Expr
+    mods, expr = p[7]
 
-    if num_states != 2 and isinstance(body, tuple):
-        mods, _ = body
-        if mods:
-            utils.print_error(mods[0].span,
-                              "syntax error: modifies clause only allowed on twostate definitions or transitions")
-            return
+    if num_states != 2 and mods:
+        utils.print_error(mods[0].span,
+                          "syntax error: modifies clause only allowed on twostate definitions or transitions")
+        return
 
     p[0] = syntax.DefinitionDecl(is_public_transition=False, num_states=num_states,
-                                 name=p[3].value, params=p[5], body=body,
-                                 span=loc_join(k_tok, loc_join(p.slice[2], body_span)))
+                                 name=p[3].value, params=p[5], mods=mods, expr=expr,
+                                 span=loc_join(k_tok, loc_join(p.slice[2], expr.span)))
 
 def p_trace_transition_any(p: Any) -> None:
     'trace_transition : ANY TRANSITION'
