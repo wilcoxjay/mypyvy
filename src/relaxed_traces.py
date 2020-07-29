@@ -536,6 +536,7 @@ def functions_total_axioms(prog: syntax.Program) -> List[Expr]:
             arg_sort_decl = syntax.get_decl_from_sort(arg_sort)
             name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
                                     also_avoid=names)
+            names.append(name)
             params.append(syntax.SortedVar(name, arg_sort))
         ap_func = syntax.Apply(func.name, [syntax.Id(v.name) for v in params])
 
