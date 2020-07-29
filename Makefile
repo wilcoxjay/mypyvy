@@ -54,26 +54,26 @@ updr: examples/lockserv.updr examples/sharded-kv.updr
 
 pd-old:
 	# enumerate-reachable-states
-	time $(PYTHON) src/mypyvy.py enumerate-reachable-states $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.enumerate_reachable_states.log
+	time $(PYTHON) src/mypyvy.py enumerate-reachable-states --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.enumerate_reachable_states.log
 	grep "found 25 states" lockserv.enumerate_reachable_states.log
 
 	# forward-explore-inv
 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > lockserv_cnf_clear_cache.log
-	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --cache-only $(MYPYVY_OPTS)   examples/lockserv_cnf.pyv > lockserv_cnf_cache_only.log
+	# time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --cache-only $(MYPYVY_OPTS)   examples/lockserv_cnf.pyv > lockserv_cnf_cache_only.log
 	# time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/lockserv_cnf.pyv > lockserv_cnf_only_discovered.log  # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
 
 	# forward-explore-inv with unrolling
-	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.1.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.1.log
 	grep "  X  " lockserv.forward_explore_inv.1.log
-# 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.2.log
+# 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.2.log
 # 	! grep "  X  " lockserv.forward_explore_inv.2.log
-# 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.3.log
+# 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.forward_explore_inv.3.log
 # 	! grep "  X  " lockserv.forward_explore_inv.3.log
-	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 $(MYPYVY_OPTS) examples/pd/paxos_forall.pyv > paxos_forall.forward_explore_inv.1.log
+	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=1 --clear-cache $(MYPYVY_OPTS) examples/pd/paxos_forall.pyv > paxos_forall.forward_explore_inv.1.log
 	grep "  X  " paxos_forall.forward_explore_inv.1.log
-#	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 $(MYPYVY_OPTS) examples/pd/paxos_forall.pyv > paxos_forall.forward_explore_inv.2.log # ~5m
+#	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=2 --clear-cache $(MYPYVY_OPTS) examples/pd/paxos_forall.pyv > paxos_forall.forward_explore_inv.2.log # ~5m
 # 	grep "  X  " paxos_forall.forward_explore_inv.2.log
-# 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 $(MYPYVY_OPTS) examples/pd/paxos_forall.pyv > paxos_forall.forward_explore_inv.3.log # ~5m
+# 	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --unroll-to-depth=3 --clear-cache $(MYPYVY_OPTS) examples/pd/paxos_forall.pyv > paxos_forall.forward_explore_inv.3.log # ~5m
 # 	grep "  X  " paxos_forall.forward_explore_inv.3.log
 
 	# repeated-houdini --sharp
@@ -88,7 +88,7 @@ pd-old:
 
 	# cdcl-invariant
 	time $(PYTHON) src/mypyvy.py pd-cdcl-invariant --clear-cache $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.cdcl_invariant_clear_cache.log
-	time $(PYTHON) src/mypyvy.py pd-cdcl-invariant --cache-only $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.cdcl_invariant_cache_only.log
+	# time $(PYTHON) src/mypyvy.py pd-cdcl-invariant --cache-only $(MYPYVY_OPTS) examples/lockserv.pyv > lockserv.cdcl_invariant_cache_only.log
 
 pd:
 	# primal-dual-houdini
