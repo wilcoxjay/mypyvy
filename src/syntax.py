@@ -9,6 +9,7 @@ from typing import List, Union, Tuple, Optional, Dict, Iterator, \
     Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, cast
 from typing_extensions import Protocol
 import utils
+from utils import OrderedSet
 import z3
 
 Token = ply.lex.LexToken
@@ -1033,9 +1034,9 @@ class Let(Expr):
         buf.append(' in ')
         self.body.pretty(buf, PREC_TOP, 'NONE')
 
-def free_ids(e: Expr, into: Optional[Set[str]] = None) -> Set[str]:
+def free_ids(e: Expr, into: Optional[OrderedSet[str]] = None) -> OrderedSet[str]:
     if into is None:
-        into = set()
+        into = OrderedSet()
     if isinstance(e, (Bool, Int)):
         pass
     elif isinstance(e, UnaryExpr):

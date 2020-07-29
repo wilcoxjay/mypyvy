@@ -56,8 +56,18 @@ class OrderedSet(Generic[T], Iterable[T]):
         return self
 
     def __sub__(self, other: Set[T]) -> OrderedSet[T]:
-        res = OrderedSet(self.__iter__())
+        res = OrderedSet(iter(self))
         res.__isub__(other)
+        return res
+
+    def __ior__(self, other: Iterable[T]) -> OrderedSet[T]:
+        for x in other:
+            self.add(x)
+        return self
+
+    def __or__(self, other: Iterable[T]) -> OrderedSet[T]:
+        res = OrderedSet(iter(self))
+        res.__ior__(other)
         return res
 
     def __iter__(self) -> Iterator[T]:
