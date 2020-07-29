@@ -5,11 +5,12 @@ import z3
 import utils
 from utils import MySet
 import logic
-from logic import Solver, Diagram, Trace, KEY_ONE, KEY_NEW, KEY_OLD, State
+from logic import Solver, Diagram, Trace, State
 import syntax
 from syntax import Expr, TrueExpr, DefinitionDecl, New
 import pickle
 from typing import List, Optional, Tuple, Union, Sequence
+from translator import Z3Translator
 
 RelaxedTrace = List[Tuple[Optional[DefinitionDecl], Union[Diagram, Expr]]]
 
@@ -161,7 +162,7 @@ class Frames:
             utils.logger.info('frontier is safe. nothing new to block either.')
             return None
 
-        state = State(Trace.from_z3((KEY_ONE,), res), 0)
+        state = Z3Translator.model_to_trace(res, 1).as_state(0)
         assert len(self) >= 2
         bstate = BackwardReachableState(len(self.backwards_reachable_states), state, 0)
         bstate.known_absent_until_frame = len(self) - 2
@@ -275,7 +276,7 @@ class Frames:
         if not isinstance(diag := diag_or_expr, Diagram):
             return
 
-        t = self.solver.get_translator((KEY_ONE,))
+        t = self.solver.get_translator(1)
 
         with self.solver.new_frame():
             for init in self.fs[0].summary():
@@ -311,7 +312,7 @@ class Frames:
         pre_frame = self[j]
         prog = syntax.the_program
         solver = self.solver
-        t = self.solver.get_translator((KEY_OLD, KEY_NEW))
+        t = self.solver.get_translator(2)
 
         if utils.args.use_z3_unsat_cores:
             core: Optional[MySet[int]] = MySet()
@@ -320,7 +321,7 @@ class Frames:
 
         def to_z3() -> z3.ExprRef:
             if isinstance(diag_or_expr, Diagram):
-                return diag_or_expr.to_z3(t, state_index=1)
+                return diag_or_expr.to_z3(t, new=True)
             else:
                 return t.translate_expr(New(diag_or_expr))
 
@@ -338,8 +339,8 @@ class Frames:
                 with solver.new_frame():
                     solver.add(t.translate_transition(ition))
                     if (res := solver.check(trackers())) == z3.sat:
-                        m = Trace.from_z3((KEY_OLD, KEY_NEW), solver.model(trackers()))
-                        state = State(m, 0)
+                        m = Z3Translator.model_to_trace(solver.model(trackers()), 2)
+                        state = m.as_state(0)
                         src = self.currently_blocking
                         assert src is not None
                         steps_from_cex = src.known_absent_until_frame + 1 - j + src.num_steps_to_bad

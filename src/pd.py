@@ -38,8 +38,27 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
     return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
 
 
-PDState = Trace
+PDState = Trace  # TODO: change this to logic.State!
 Predicate = Expr
+
+
+def unpack_cti(z3model: z3.ModelRef, *, keep_prestate_in_poststate: bool = False) -> Tuple[PDState, PDState]:
+    '''
+    Unpack a z3model with two states to (prestate, poststate).
+
+    Both prestate and poststate are are currently logic.Trace objects,
+    but in the future they will be logic.State
+    objects. keep_prestate_in_poststate maintains legacy compatability
+    with representing a poststate by a 2-state trace where the first
+    one (index 0) is the poststate and the second one (index 1) is the
+    prestate.
+    '''
+    prestate = Z3Translator.model_to_trace(z3model, 1)
+    if keep_prestate_in_poststate:
+        poststate = Z3Translator.model_to_trace(z3model, 2)._as_trace((1, 0))  # TODO: eliminate Trace._as_trace
+    else:
+        poststate = Z3Translator.model_to_trace(z3model, 2)._as_trace((1,))  # TODO: eliminate Trace._as_trace
+    return prestate, poststate
 
 
 cache_path: Optional[Path] = None
@@ -190,7 +209,7 @@ def cheap_check_implication(
         concs: Iterable[Expr],
 ) -> bool:
     s = get_solver()
-    t = s.get_translator((KEY_ONE,))
+    t = s.get_translator(1)
     with s.new_frame():
         for e in hyps:
             s.add(t.translate_expr(e))
@@ -253,7 +272,7 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
                 print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
                 print(eval_in_state, solver, s, p)
             assert False
-        s = Trace.from_z3((KEY_ONE,), z3m)
+        s = Z3Translator.model_to_trace(z3m, 1)
         _cache_initial.append(s)
         print(f'Found new initial state violating {p}:')
         print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
@@ -312,9 +331,7 @@ def check_two_state_implication_multiprocessing_helper(
         return None
     else:
         z3m, _ = res
-        prestate = Trace.from_z3((KEY_OLD,), z3m)
-        poststate = Trace.from_z3((KEY_NEW, KEY_OLD), z3m)
-        return (prestate, poststate)
+        return unpack_cti(z3m, keep_prestate_in_poststate=True)
 def check_two_state_implication_multiprocessing(
         s: Solver,
         old_hyps: Iterable[Expr],
@@ -506,10 +523,7 @@ def check_dual_edge_old(
             if res is not None:
                 if utils.args.cache_only_discovered:
                     assert False
-                z3m, _ = res
-                prestate = Trace.from_z3((KEY_OLD,), z3m)
-                # poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
-                poststate = Trace.from_z3((KEY_NEW,), z3m) # TODO: can we do this? this seems better than dragging the prestate along
+                prestate, poststate = unpack_cti(res[0], keep_prestate_in_poststate=True)
                 print(f'check_dual_edge_old: found new {msg} violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
@@ -570,7 +584,7 @@ def check_dual_edge_multiprocessing_helper(
     z3.set_param('sat.random_seed',seed)
     s.z3solver.set(seed=seed) # type: ignore
     s.z3solver.set(random_seed=seed) # type: ignore
-    t = s.get_translator((KEY_OLD, KEY_NEW))
+    t = s.get_translator(2)
     for q in qs:
         s.add(t.translate_expr(q))
     s.add(t.translate_transition(trans))
@@ -591,9 +605,7 @@ def check_dual_edge_multiprocessing_helper(
     if z3res == z3.unsat:
         return None
     else:
-        z3model = s.model(minimize=minimize)
-        prestate = Trace.from_z3((KEY_OLD,), z3model)
-        poststate = Trace.from_z3((KEY_NEW,), z3model)
+        prestate, poststate = unpack_cti(s.model(minimize=minimize))
         print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: found model')
         return prestate, poststate
 def check_dual_edge_multiprocessing(
@@ -784,7 +796,7 @@ def check_dual_edge(
             cti_solvers: List[Solver] = []
             for trans in prog.transitions():
                 _cti_solver = Solver()
-                t = _cti_solver.get_translator((KEY_OLD, KEY_NEW))
+                t = _cti_solver.get_translator(2)
                 for q in qs:
                     _cti_solver.add(t.translate_expr(q))
                 _cti_solver.add(t.translate_transition(trans))
@@ -826,9 +838,7 @@ def check_dual_edge(
                         print(f'[{datetime.now()}] check_dual_edge: {z3res}')
                         if z3res == z3.unsat:
                             continue
-                        z3model = cti_solver.model(indicators, minimize)
-                        prestate = Trace.from_z3((KEY_OLD,), z3model)
-                        poststate = Trace.from_z3((KEY_NEW,), z3model)
+                        prestate, poststate = unpack_cti(cti_solver.model(indicators, minimize))
                         if minimize:
                             # TODO: should we put it in the cache anyway? for now not
                             _cache_transitions.append((prestate, poststate))
@@ -1085,7 +1095,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             else:
                 # print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
                 pass
-            t = s.get_translator((KEY_OLD, KEY_NEW))
+            t = s.get_translator(2)
             # add transition relation
             s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
             # add ps
@@ -1151,9 +1161,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             return
 
         # get model
-        z3model = s.model(minimize=minimize)
-        prestate = Trace.from_z3((KEY_OLD,), z3model)
-        poststate = Trace.from_z3((KEY_NEW,), z3model)
+        prestate, poststate = unpack_cti(s.model(minimize=minimize))
         validate_cti(prestate, poststate)
 
         if not optimize:
@@ -1209,9 +1217,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 else:
                     # print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
                     hq = hq_try
-                    z3model = s.model(minimize=minimize)
-                    prestate = Trace.from_z3((KEY_OLD,), z3model)
-                    poststate = Trace.from_z3((KEY_NEW,), z3model)
+                    prestate, poststate = unpack_cti(s.model(minimize=minimize))
                     validate_cti(prestate, poststate)
                     for dd in to_try:
                         if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | dd)):
@@ -1249,9 +1255,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 else:
                     # print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
                     hq = hq_try
-                    z3model = s.model(minimize=minimize)
-                    prestate = Trace.from_z3((KEY_OLD,), z3model)
-                    poststate = Trace.from_z3((KEY_NEW,), z3model)
+                    prestate, poststate = unpack_cti(s.model(minimize=minimize))
                     validate_cti(prestate, poststate)
                     for dd in to_try:
                         if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - dd)):
@@ -2060,7 +2064,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
     n = len(literals)
     all_n = frozenset(range(n))
     solver = Solver()
-    t = solver.get_translator((KEY_ONE,))
+    t = solver.get_translator(1)
     solver.add(t.translate_expr(
         state_or_predicate if isinstance(state_or_predicate, Expr) else
         state_or_predicate.as_onestate_formula(0)
@@ -2948,7 +2952,7 @@ def forward_explore_marco(solver: Solver,
     # should bring this back at some point
     #
     # wp_valid_solver = Solver()
-    # t = wp_valid_solver.get_translator((KEY_OLD, KEY_NEW))
+    # t = wp_valid_solver.get_translator(2)
     # mp_indicators: Dict[SubclausesMap, z3.ExprRef] = {mp: z3.Bool(f'@mp_{i}') for i, mp in enumerate(maps)}
     # lit_indicators: Sequence[z3.ExprRef] = tuple(z3.Bool(f'@lit_{i}') for i in range(max(mp.n for mp in maps)))
     # for mp in maps:
@@ -3183,9 +3187,9 @@ def forward_explore(s: Solver,
 
         # check for 1 transition from an initial state or a state in states
         preconditions = chain(
-            (s for s in states if len(s.keys) == 1), # discovered initial states
+            (s for s in states if s.num_states == 1), # discovered initial states
             [None], # general initial state
-            (s for s in states if len(s.keys) > 1) # discovered non-initial states
+            (s for s in states if s.num_states > 1) # discovered non-initial states
         )
         label = lambda s: 'init' if s is None else 'initial state' if len(s.keys) == 1 else 'state'
         for precondition, p in product(preconditions, a):
@@ -3218,9 +3222,9 @@ def forward_explore(s: Solver,
 
         # check for k-transition from an initial state or a state in states
         preconditions = chain(
-            (s for s in states if len(s.keys) == 1), # discovered initial states
+            (s for s in states if s.num_states == 1), # discovered initial states
             [None], # general initial state
-            (s for s in states if len(s.keys) > 1) # discovered non-initial states
+            (s for s in states if s.num_states > 1) # discovered non-initial states
         )
         for k, precondition, p in product(range(2, utils.args.unroll_to_depth + 1), preconditions, a):
             print(f'Checking if {label(precondition)} satisfies WP_{k} of {p}... ',end='')
@@ -5878,7 +5882,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             # set up a cti_solver for fast and greedy discovery of ctis (alternative to check_dual_edge)
             # TODO: share this across different worklist items
             cti_solver = Solver() # TODO: maybe solver per transition
-            t = cti_solver.get_translator((KEY_OLD, KEY_NEW))
+            t = cti_solver.get_translator(2)
             lit_indicators_pre =[[z3.Bool(f'@lit_pre_{k}_{i}') for i in range(mp.n[k])] for k in range(mp.m)]
             lit_indicators_post =[[z3.Bool(f'@lit_post_{k}_{i}') for i in range(mp.n[k])] for k in range(mp.m)]
             q_indicators_post = [z3.Bool(f'@q_post_{k}') for k in range(mp.m)]
@@ -5959,9 +5963,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                                 print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): adding extra: {extra}')
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
-                    z3model = cti_solver.model(indicators)
-                    prestate = Trace.from_z3((KEY_OLD,), z3model)
-                    poststate = Trace.from_z3((KEY_NEW,), z3model) # TODO: is this ok?
+                    prestate, poststate = unpack_cti(cti_solver.model(indicators))
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
@@ -6190,7 +6192,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         changes = True
             return x
         cti_solver = Solver() # TODO: maybe solver per transition
-        t = cti_solver.get_translator((KEY_OLD, KEY_NEW))
+        t = cti_solver.get_translator(2)
         q_indicators_pre = tuple(z3.Bool(f'@q_pre_{i}') for i in range(n)) # NB: polarity
         q_indicators_post = tuple(z3.Bool(f'@q_post_{i}') for i in range(n)) # NB: polarity
         # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
@@ -6242,9 +6244,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                             indicators += (extra,)
                     z3res = cti_solver.check(indicators) # note, this check is important, not just an assertion
                     assert z3res == z3.sat
-                z3model = cti_solver.model(indicators)
-                prestate = Trace.from_z3((KEY_OLD,), z3model)
-                poststate = Trace.from_z3((KEY_NEW,), z3model) # TODO: is this ok?
+                prestate, poststate = unpack_cti(cti_solver.model(indicators))
                 print(f'[{datetime.now()}] check_qs: found new cti violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
@@ -7855,13 +7855,11 @@ def enumerate_reachable_states(s: Solver) -> None:
             # beyond initial states with 2 of everything). we should
             # collect states by the sizes of their universe
 
-            index = len(t.keys) - 1
-            # s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), index=index)))
-            s.add(z3.Not(t._translate_expr(m.as_onestate_formula(0), index=index)))  # TODO: eliminate using index in translation
+            s.add(t.translate_expr(New(Not(m.as_onestate_formula(0)), t.num_states - 1)))
 
         print('looking for initial states')
         with s.new_frame():
-            t = s.get_translator((KEY_ONE,))
+            t = s.get_translator(1)
             for init in prog.inits():
                 s.add(t.translate_expr(init.expr))
             while True:
@@ -7873,14 +7871,14 @@ def enumerate_reachable_states(s: Solver) -> None:
                     unknown = True
                     break
                 else:
-                    m = Trace.from_z3((KEY_ONE,), s.model(minimize=False))
+                    m = Z3Translator.model_to_trace(s.model(minimize=False), 1)
                     states.append(m)
                     block_state(t, m)
         print(f'done finding initial states! found {len(states)} states')
 
         print('looking for transitions to new states')
         with s.new_frame():
-            t = s.get_translator((KEY_OLD, KEY_NEW))
+            t = s.get_translator(2)
             for state in states:
                 block_state(t, m)
 
@@ -7892,7 +7890,6 @@ def enumerate_reachable_states(s: Solver) -> None:
                 with s.new_frame():
                     s.add(t.translate_expr(state.as_onestate_formula(0)))
                     s.add(t.translate_transition(ition))
-
                     while True:
                         res = s.check()
                         if res == z3.unsat:
@@ -7900,8 +7897,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                         elif res == z3.unknown:
                             unknown = True
                             break
-
-                        m = Trace.from_z3((KEY_NEW, KEY_OLD), s.model(minimize=False))
+                        _, m = unpack_cti(s.model(minimize=False), keep_prestate_in_poststate=True)
                         new_states.append(m)
                         block_state(t, m)
                 for state in new_states:

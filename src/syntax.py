@@ -684,8 +684,12 @@ class UnaryExpr(Expr):
 def Not(e: Expr) -> Expr:
     return UnaryExpr('NOT', e)
 
-def New(e: Expr) -> Expr:
-    return UnaryExpr('NEW', e)
+def New(e: Expr, n: int = 1) -> Expr:
+    # TODO: rename New -> Next
+    assert n >= 0, 'are you trying to resurrect old()?'
+    for i in range(n):
+        e = UnaryExpr('NEW', e)
+    return e
 
 BINOPS = {
     'IMPLIES',
@@ -1678,13 +1682,13 @@ class Scope(Generic[B]):
         self.stack = stack
 
     @contextmanager
-    def next_state_index(self, k: int = 1) -> Iterator[None]:
-        if (i := self.current_state_index + k) < self.num_states or i == 0:
-            self.current_state_index += k
+    def next_state_index(self) -> Iterator[None]:
+        if self.current_state_index + 1 < self.num_states:
+            self.current_state_index += 1
             yield None
-            self.current_state_index -= k
+            self.current_state_index -= 1
         else:
-            assert utils.error_count > 0, (self.current_state_index, k, self.num_states)
+            assert utils.error_count > 0, (self.current_state_index, self.num_states)
             yield None
 
     @contextmanager

@@ -238,13 +238,13 @@ def dict_val_from_rel_name(name: str, m: Dict[syntax.RelationDecl, T]) -> T:
 def first_relax_step_idx(trns: Trace) -> int:
     first_relax_idx = trns.transitions.index('decrease_domain')
     assert first_relax_idx != -1, trns.transitions
-    assert first_relax_idx + 1 < len(trns.keys)
+    assert first_relax_idx + 1 < trns.num_states
     return first_relax_idx
 
 def all_relax_step_idx(trns: Trace) -> List[int]:
     res = [i for (i, x) in enumerate(trns.transitions) if x == 'decrease_domain']
     assert len(res) > 0
-    assert all(i + 1 < len(trns.keys) for i in res)
+    assert all(i + 1 < trns.num_states for i in res)
     return res
 
 def active_rel(sort: syntax.SortDecl) -> syntax.RelationDecl:
@@ -477,7 +477,8 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
 
 
 class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
-    def __init__(self, scope: syntax.Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
+    # ODED: talk to James about it. There should be another way to implement relaxed traces other than inheriting from Z3Translator...
+    def __init__(self, scope: syntax.Scope[z3.ExprRef], num_states: int) -> None:
         self._active_rels_mapping: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
         self._generate_active_rels(scope)
 
@@ -485,7 +486,7 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
         for active_rel in self._active_rels_mapping.values():
             self._active_scope.add_relation(active_rel)
 
-        self._t = translator.Z3Translator(self._active_scope, keys)
+        self._t = translator.Z3Translator(self._active_scope, num_states)
         self._prog = syntax.the_program
 
     def _generate_active_rels(self, scope: syntax.Scope) -> None:
@@ -498,9 +499,9 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
                                              mutable=True, derived=None, annotations=[])
             self._active_rels_mapping[sort] = active_rel
 
-    def translate_expr(self, expr: Expr, index: int = 0) -> z3.ExprRef:
+    def translate_expr(self, expr: Expr) -> z3.ExprRef:
         rel_expr = syntax.relativize_quantifiers(self._active_rels_mapping, expr)
-        res = self._t._translate_expr(rel_expr, index)  # TODO: eliminate using index in translation
+        res = self._t.translate_expr(rel_expr)
         return res
 
     def translate_transition(self, t: syntax.DefinitionDecl, index: int = 0) -> z3.ExprRef:
