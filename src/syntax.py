@@ -218,6 +218,69 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
         print(expr)
         assert False
 
+# NOTE(capture-avoiding-substitution)
+# This function is carefully written to avoid capture by following a strategy taught in CSE 490P.
+# See the first 10 slides here: https://drive.google.com/file/d/1jFGF3snnC2_4N7cqpH_c0D_S6NPFknWg/view
+# When going under a binding form, we avoid clashes with three kinds of names:
+#     - names otherwise free in the body of the binding form
+#     - names in the domain of the substitution gamma
+#     - names free in expressions in the codomain of the substitution gamma
+# This strategy has undergone substantial testing and trial and error in the context of the course.
+# Deviation is not recommended.
+def subst(scope: Scope, e: Expr, gamma: Mapping[Id, Expr]) -> Expr:
+    if isinstance(e, (Bool, Int)):
+        return e
+    elif isinstance(e, UnaryExpr):
+        return UnaryExpr(e.op, subst(scope, e.arg, gamma))
+    elif isinstance(e, BinaryExpr):
+        return BinaryExpr(e.op, subst(scope, e.arg1, gamma), subst(scope, e.arg2, gamma))
+    elif isinstance(e, NaryExpr):
+        return NaryExpr(e.op, [subst(scope, arg, gamma) for arg in e.args])
+    elif isinstance(e, AppExpr):
+        return AppExpr(e.callee, [subst(scope, arg, gamma) for arg in e.args])
+    elif isinstance(e, QuantifierExpr):
+        # luv too avoid capture
+        avoid = free_ids(e)
+        avoid |= set(v.name for v in gamma)
+        for v in gamma:
+            avoid |= free_ids(gamma[v])
+
+        renaming: Dict[Id, Expr] = {}
+        fresh_svs = []
+        for sv in e.binder.vs:
+            fresh_name = scope.fresh(sv.name, also_avoid=list(avoid))
+            renaming[Id(sv.name)] = Id(fresh_name)
+            assert not isinstance(sv.sort, SortInferencePlaceholder)
+            fresh_svs.append(SortedVar(fresh_name, sv.sort))
+
+        fresh_body = subst(scope, e.body, renaming)
+
+        return QuantifierExpr(e.quant, fresh_svs, subst(scope, fresh_body, gamma))
+    elif isinstance(e, Id):
+        if e in gamma:
+            return gamma[e]
+        else:
+            return e
+    elif isinstance(e, IfThenElse):
+        return IfThenElse(subst(scope, e.branch, gamma), subst(scope, e.then, gamma), subst(scope, e.els, gamma))
+    elif isinstance(e, Let):
+        # luv too avoid capture
+        avoid = free_ids(e)
+        avoid |= set(v.name for v in gamma)
+        for v in gamma:
+            avoid |= free_ids(gamma[v])
+
+        assert len(e.binder.vs) == 1
+        sv = e.binder.vs[0]
+        fresh_name = scope.fresh(sv.name, also_avoid=list(avoid))
+        assert not isinstance(sv.sort, SortInferencePlaceholder)
+        fresh_sv = SortedVar(fresh_name, sv.sort)
+
+        fresh_body = subst(scope, e.body, {Id(sv.name): Id(fresh_name)})
+
+        return Let(fresh_sv, subst(scope, e.val, gamma), subst(scope, fresh_body, gamma))
+    else:
+        assert False, (type(e), e)
 
 def as_clauses_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
     '''
