@@ -1822,3 +1822,42 @@ def prog_context(prog: Program) -> Iterator[None]:
     the_program = prog
     yield None
     the_program = backup_prog
+
+def expand_macros(scope: Scope, e: Expr) -> Expr:
+    if isinstance(e, (Bool, Int)):
+        return e
+    elif isinstance(e, UnaryExpr):
+        return UnaryExpr(e.op, expand_macros(scope, e.arg))
+    elif isinstance(e, BinaryExpr):
+        return BinaryExpr(e.op, expand_macros(scope, e.arg1), expand_macros(scope, e.arg2))
+    elif isinstance(e, NaryExpr):
+        return NaryExpr(e.op, [expand_macros(scope, arg) for arg in e.args])
+    elif isinstance(e, AppExpr):
+        new_args = [expand_macros(scope, arg) for arg in e.args]
+        d = scope.get(e.callee)
+        if isinstance(d, DefinitionDecl):
+            assert len(e.args) == len(d.binder.vs)  # checked by resolver
+            gamma = {Id(v.name): arg for v, arg in zip(d.binder.vs, new_args)}
+            return expand_macros(scope, subst(scope, d.expr, gamma))
+        else:
+            return AppExpr(e.callee, new_args)
+    elif isinstance(e, QuantifierExpr):
+        with scope.in_scope(e.binder, [() for v in e.binder.vs]):
+            new_body = expand_macros(scope, e.body)
+        return QuantifierExpr(e.quant, e.binder.vs, new_body)
+    elif isinstance(e, Id):
+        d = scope.get(e.name)
+        if isinstance(d, DefinitionDecl):
+            return d.expr
+        else:
+            return e
+    elif isinstance(e, IfThenElse):
+        return IfThenElse(expand_macros(scope, e.branch), expand_macros(scope, e.then), expand_macros(scope, e.els))
+    elif isinstance(e, Let):
+        assert len(e.binder.vs) == 1
+        new_val = expand_macros(scope, e.val)
+        with scope.in_scope(e.binder, [()]):
+            new_body = expand_macros(scope, e.body)
+        return Let(e.binder.vs[0], new_val, new_body)
+    else:
+        assert False, (type(e), e)
