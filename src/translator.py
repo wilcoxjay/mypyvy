@@ -54,6 +54,7 @@ class Z3Translator:
         bs = []
         for sv in binder.vs:
             # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
+            # ODED: it seems that after definitions are refactored out of Z3Translator, we could just use sv.name as the Z3 name, without adding a counter, and let Z3 handle the shadowing
             n = f'{sv.name}_{self.counter}'
             self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
@@ -98,7 +99,7 @@ class Z3Translator:
         elif isinstance(expr, AppExpr):
             d = self.scope.get(expr.callee)
             if isinstance(d, DefinitionDecl):
-                # ODED: should ask James about this case
+                # TODO: handling definitions should be refactored out of Z3Translator
                 # checked by resolver; see NOTE(calling-stateful-definitions)
                 assert self.scope.current_state_index + d.num_states <= self.scope.num_states, f'{d}\n{expr}'
                 # now translate args in the scope of caller
@@ -128,8 +129,8 @@ class Z3Translator:
                 assert isinstance(z3sym, z3.ExprRef)
                 return z3sym
             elif isinstance(d, DefinitionDecl):
+                # TODO: handling definitions should be refactored out of Z3Translator
                 # checked in resolver; see NOTE(calling-stateful-definitions)
-                # ODED: ask James about this
                 assert self.scope.current_state_index + d.num_states <= self.scope.num_states
                 with self.scope.fresh_stack():
                     return self.__translate_expr(d.expr)
