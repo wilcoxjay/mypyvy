@@ -543,10 +543,6 @@ class Expr(Denotable):
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
-    def free_ids(self) -> List[str]:
-        raise Exception('Unexpected expr %s does not implement contains_var method' %
-                        repr(self))
-
 class Bool(Expr):
     def __init__(self, val: bool, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -563,9 +559,6 @@ class Bool(Expr):
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append('true' if self.val else 'false')
-
-    def free_ids(self) -> List[str]:
-        return []
 
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
@@ -586,9 +579,6 @@ class Int(Expr):
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(str(self.val))
-
-    def free_ids(self) -> List[str]:
-        return []
 
 UNOPS = {
     'NOT',
@@ -626,9 +616,6 @@ class UnaryExpr(Expr):
             buf.append(')')
         else:
             assert False
-
-    def free_ids(self) -> List[str]:
-        return self.arg.free_ids()
 
 def Not(e: Expr) -> Expr:
     return UnaryExpr('NOT', e)
@@ -706,11 +693,6 @@ class BinaryExpr(Expr):
 
         self.arg2.pretty(buf, p, 'RIGHT')
 
-    def free_ids(self) -> List[str]:
-        x = self.arg1.free_ids()
-        s = set(x)
-        return x + [y for y in self.arg2.free_ids() if y not in s]
-
 NOPS = {
     'AND',
     'OR',
@@ -771,18 +753,6 @@ class NaryExpr(Expr):
 
         if self.op == 'DISTINCT':
             buf.append(')')
-
-    def free_ids(self) -> List[str]:
-        l = []
-        s: Set[str] = set()
-
-        for arg in self.args:
-            for x in arg.free_ids():
-                if x not in s:
-                    s.add(x)
-                    l.append(x)
-
-        return l
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
     if not vs:
@@ -852,16 +822,6 @@ class AppExpr(Expr):
             started = True
             arg.pretty(buf, PREC_TOP, 'NONE')
         buf.append(')')
-
-    def free_ids(self) -> List[str]:
-        l = []
-        s: Set[str] = set()
-        for arg in self.args:
-            for x in arg.free_ids():
-                if x not in s:
-                    l.append(x)
-                    s.add(x)
-        return l
 
 class SortedVar(Denotable):
     def __init__(self, name: str, sort: Optional[Sort], *, span: Optional[Span] = None) -> None:
@@ -941,9 +901,6 @@ class QuantifierExpr(Expr):
 
         self.body.pretty(buf, PREC_QUANT, 'NONE')
 
-    def free_ids(self) -> List[str]:
-        return [x for x in self.body.free_ids() if not any(v.name == x for v in self.binder.vs)]
-
     def vs(self) -> List[SortedVar]:
         return self.binder.vs
 
@@ -964,9 +921,6 @@ class Id(Expr):
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(self.name)
-
-    def free_ids(self) -> List[str]:
-        return [self.name]
 
 class IfThenElse(Expr):
     def __init__(self, branch: Expr, then: Expr, els: Expr, *, span: Optional[Span] = None) -> None:
@@ -992,14 +946,6 @@ class IfThenElse(Expr):
         buf.append(' else ')
         self.els.pretty(buf, PREC_TOP, 'NONE')
 
-    def free_ids(self) -> List[str]:
-        l1 = self.branch.free_ids()
-        s1 = set(l1)
-        l2 = [x for x in self.then.free_ids() if x not in s1]
-        s2 = set(l2)
-        l3 = [x for x in self.els.free_ids() if x not in s1 and x not in s2]
-        return l1 + l2 + l3
-
 class Let(Expr):
     def __init__(self, var: SortedVar, val: Expr, body: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -1024,10 +970,36 @@ class Let(Expr):
         buf.append(' in ')
         self.body.pretty(buf, PREC_TOP, 'NONE')
 
-    def free_ids(self) -> List[str]:
-        l1 = self.val.free_ids()
-        l2 = [x for x in self.body.free_ids() if x != self.binder.vs[0].name]
-        return l1 + l2
+def free_ids(e: Expr, into: Optional[Set[str]] = None) -> Set[str]:
+    if into is None:
+        into = set()
+    if isinstance(e, (Bool, Int)):
+        pass
+    elif isinstance(e, UnaryExpr):
+        free_ids(e.arg, into)
+    elif isinstance(e, BinaryExpr):
+        free_ids(e.arg1, into)
+        free_ids(e.arg2, into)
+    elif isinstance(e, (NaryExpr, AppExpr)):
+        for arg in e.args:
+            free_ids(arg, into)
+    elif isinstance(e, QuantifierExpr):
+        bound_vars = set(v.name for v in e.binder.vs)
+        into |= free_ids(e.body) - bound_vars
+    elif isinstance(e, Id):
+        into.add(e.name)
+    elif isinstance(e, IfThenElse):
+        free_ids(e.branch, into)
+        free_ids(e.then, into)
+        free_ids(e.els, into)
+    elif isinstance(e, Let):
+        free_ids(e.val, into)
+        bound_vars = set(v.name for v in e.binder.vs)
+        into |= free_ids(e.body) - bound_vars
+    else:
+        assert False, (type(e), e)
+
+    return into
 
 Arity = List[Sort]
 
@@ -1078,7 +1050,6 @@ class _IntSort(Sort):
         return ('int',)
 
 IntSort = _IntSort()
-
 
 def get_decl_from_sort(s: InferenceSort) -> SortDecl:
     assert isinstance(s, UninterpretedSort)
@@ -1232,7 +1203,7 @@ class ConstantDecl(Decl):
                                        self.name, self.sort)
 
 def close_free_vars(expr: Expr, in_scope: List[str] = [], span: Optional[Span] = None) -> Expr:
-    vs = [s for s in expr.free_ids() if s not in in_scope and s.isupper()]
+    vs = [s for s in free_ids(expr) if s not in in_scope and s.isupper()]
     if vs == []:
         return expr
     else:

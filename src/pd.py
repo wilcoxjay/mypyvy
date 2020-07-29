@@ -1920,7 +1920,7 @@ def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_claus
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
-    #assert set(top_clause.body.free_ids()) == set(v.name for v in top_clause.binder.vs)
+    #assert free_ids(top_clause.body) == set(v.name for v in top_clause.binder.vs)
     literals = tuple(top_clause.body.args) # TODO: cannot sort sorted(top_clause.body.args)
     variables = tuple(top_clause.binder.vs)
     assert len(set(literals)) == len(literals)
@@ -1929,7 +1929,7 @@ def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_claus
 
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
-        vs = [v for v in variables if v.name in set(n for lit in lits for n in lit.free_ids())]
+        vs = [v for v in variables if v.name in set(n for lit in lits for n in free_ids(lit))]
         if len(vs) > 0:
             return Forall(vs, Or(*lits))
         else:
@@ -1955,7 +1955,7 @@ def subclauses(top_clause: Expr) -> Iterable[Expr]:
     print(f'subclauses: the powerset is of size {2**n}')
     assert n**2 < 10**6, f'{2**n}, really??'
     for lits in powerset(literals):
-        free = set(chain(*(lit.free_ids() for lit in lits)))
+        free = set(chain(*(free_ids(lit) for lit in lits)))
         vs = [v for v in variables if v.name in free]
         yield Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -1964,7 +1964,7 @@ def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
-    #assert set(top_clause.body.free_ids()) == set(v.name for v in top_clause.binder.vs)
+    #assert free_ids(top_clause.body) == set(v.name for v in top_clause.binder.vs)
     literals = top_clause.body.args
     assert len(set(literals)) == len(literals)
 
@@ -1978,7 +1978,7 @@ def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr
         if any(s <= set(lits) for s in implied):
             continue
         vs = [v for v in top_clause.binder.vs
-             if v.name in set(n for lit in lits for n in lit.free_ids())]
+             if v.name in set(n for lit in lits for n in free_ids(lit))]
         if len(vs) > 0:
             clause : Expr = Forall(vs, Or(*lits))
         else:
@@ -2053,7 +2053,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
 
     def to_clause(s: Iterable[int]) -> Expr:
         lits = [literals[i] for i in sorted(s)]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
+        free = set(chain(*(free_ids(lit) for lit in lits)))
         vs = [v for v in variables if v.name in free]
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -2427,7 +2427,7 @@ class SubclausesMapTurbo:
 
     def to_clause(self, s: Iterable[int]) -> Expr:
         lits = [self.literals[i] for i in sorted(s)]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
+        free = set(chain(*(free_ids(lit) for lit in lits)))
         vs = [v for v in self.variables if v.name in free]
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -2475,7 +2475,7 @@ class MultiSubclausesMapICE:
                 for i, v in enumerate(self.variables[k])
             }
             for i, l in enumerate(self.literals[k]):
-                for name in sorted(set(l.free_ids())):
+                for name in sorted(free_ids(l)):
                     if name in d:
                         self.solver.add(z3.Implies(self.lit_vs[k][i], self.var_vs[k][d[name]]))
 
@@ -2503,7 +2503,7 @@ class MultiSubclausesMapICE:
 
         def domain_independent_literals_for_var(lits: Tuple[Expr, ...], v: str) -> Iterable[int]:
             for j, lit in enumerate(lits):
-                if v in lit.free_ids() and destruct_variable_equality(lit) is None:
+                if v in free_ids(lit) and destruct_variable_equality(lit) is None:
                     yield j
 
         for k in range(self.m):
@@ -2709,7 +2709,7 @@ class MultiSubclausesMapICE:
 
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
         lits = [self.literals[k][i] for i in sorted(s)]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
+        free = set(chain(*(free_ids(lit) for lit in lits)))
         vs = [v for v in self.variables[k] if v.name in free]
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -2904,7 +2904,7 @@ def forward_explore_marco(solver: Solver,
 
         def to_clause(self, s: Set[int]) -> Expr:
             lits = [self.literals[i] for i in sorted(s)]
-            free = set(chain(*(lit.free_ids() for lit in lits)))
+            free = set(chain(*(free_ids(lit) for lit in lits)))
             vs = [v for v in self.variables if v.name in free]
             return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -6656,7 +6656,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 
 #     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
 #         lits = [self.literals[k][i] for i in sorted(s)]
-#         free = set(chain(*(lit.free_ids() for lit in lits)))
+#         free = set(chain(*(free_ids(lit) for lit in lits)))
 #         vs = [v for v in self.variables[k] if v.name in free]
 #         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -7076,7 +7076,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
 
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
+        free = set(chain(*(free_ids(lit) for lit in lits)))
         vs = [v for v in variables if v.name in free]
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -7215,7 +7215,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
 
 #     def to_clause(self, s: Iterable[int]) -> Expr:
 #         lits = [self.literals[i] for i in sorted(s)]
-#         free = set(chain(*(lit.free_ids() for lit in lits)))
+#         free = set(chain(*(free_ids(lit) for lit in lits)))
 #         vs = [v for v in self.variables if v.name in free]
 #         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 

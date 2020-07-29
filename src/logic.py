@@ -545,7 +545,7 @@ class Solver:
         self.cvc4_proc: Optional[subprocess.Popen] = None
         self.cvc4_last_query: Optional[str] = None
         self.cvc4_last_model_response: Optional[str] = None
-        self.cvc4_model: Optional[CVC4Model] = None # model of the last check(), only used with cvc4 models
+        self.cvc4_model: Optional[CVC4Model] = None  # model of the last check(), only used with cvc4 models
 
         self._init_axioms(prog, include_program, reassert_axioms, additional_mutable_axioms)
 
@@ -1110,7 +1110,7 @@ class Diagram:
 
     def prune_unused_vars(self) -> None:
         self.binder.vs = [v for v in self.binder.vs
-                          if any(v.name in c.free_ids() for _, _, c in self.conjuncts())]
+                          if any(v.name in syntax.free_ids(c) for _, _, c in self.conjuncts())]
 
     @contextmanager
     def without(self, d: _RelevantDecl, j: Union[int, Set[int], None] = None) -> Iterator[None]:
