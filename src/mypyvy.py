@@ -725,9 +725,6 @@ def main() -> None:
 
     s = Solver(use_cvc4=utils.args.cvc4)
 
-    # initialize first two states (shouldn't be needed)
-    s.get_translator(2) # TODO: remove
-
     utils.args.main(s)
 
     if utils.args.ipython:

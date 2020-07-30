@@ -603,6 +603,9 @@ class Solver:
 
     def get_translator(self, num_states: int) -> Z3Translator:
         assert self.include_program
+        assert self.z3solver.num_scopes() == 0, (
+            'get_translator must be called with no scopes pushed on the Z3 stack!'
+        )
         if num_states > self.num_states:
             self.add_states(num_states)
         return self.translator_factory(self.scope, num_states)

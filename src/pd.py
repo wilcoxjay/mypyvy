@@ -7836,6 +7836,8 @@ def enumerate_reachable_states(s: Solver) -> None:
     # TODO: this does not use caches at all
     prog = syntax.the_program
     states: List[Trace] = []
+    t1 = s.get_translator(1)
+    t2 = s.get_translator(2)
     with s.new_frame():
         for sort in prog.sorts():
             b = 2
@@ -7859,9 +7861,8 @@ def enumerate_reachable_states(s: Solver) -> None:
 
         print('looking for initial states')
         with s.new_frame():
-            t = s.get_translator(1)
             for init in prog.inits():
-                s.add(t.translate_expr(init.expr))
+                s.add(t1.translate_expr(init.expr))
             while True:
                 print(f'{len(states)} total states so far')
                 res = s.check()
@@ -7873,14 +7874,13 @@ def enumerate_reachable_states(s: Solver) -> None:
                 else:
                     m = Z3Translator.model_to_trace(s.model(minimize=False), 1)
                     states.append(m)
-                    block_state(t, m)
+                    block_state(t1, m)
         print(f'done finding initial states! found {len(states)} states')
 
         print('looking for transitions to new states')
         with s.new_frame():
-            t = s.get_translator(2)
             for state in states:
-                block_state(t, m)
+                block_state(t2, m)
 
             worklist = list(product(states, prog.transitions()))
             while len(worklist) > 0:
@@ -7888,8 +7888,8 @@ def enumerate_reachable_states(s: Solver) -> None:
                 state, ition = worklist.pop()
                 new_states = []
                 with s.new_frame():
-                    s.add(t.translate_expr(state.as_onestate_formula(0)))
-                    s.add(t.translate_transition(ition))
+                    s.add(t2.translate_expr(state.as_onestate_formula(0)))
+                    s.add(t2.translate_transition(ition))
                     while True:
                         res = s.check()
                         if res == z3.unsat:
@@ -7899,10 +7899,10 @@ def enumerate_reachable_states(s: Solver) -> None:
                             break
                         _, m = unpack_cti(s.model(minimize=False), keep_prestate_in_poststate=True)
                         new_states.append(m)
-                        block_state(t, m)
+                        block_state(t2, m)
                 for state in new_states:
                     worklist.extend([(state, x) for x in prog.transitions()])
-                    block_state(t, m)
+                    block_state(t2, m)
                 states.extend(new_states)
                 if len(new_states) > 0:
                     print(f'found {len(new_states)} new states via transition {ition.name}')
