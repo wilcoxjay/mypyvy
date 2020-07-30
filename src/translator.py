@@ -217,11 +217,6 @@ class Z3Translator:
         Convert z3 model to Trace with given number of states.
 
         If allow_undefined is True, the resulting trace may leave some symbols undefined.
-
-        If _reversed is True, the resulting trace has 0 as the
-        "newest" state and num_states-1 as the "oldest" state. This
-        feature is for pd.py and backward compatability, and should
-        not be used in new code.
         '''
         from logic import Trace, TRANSITION_INDICATOR
         trace = Trace(num_states)
