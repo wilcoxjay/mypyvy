@@ -1,8 +1,9 @@
 import logic
-from logic import Solver, Diagram, Trace, KEY_NEW, KEY_OLD
+from logic import Solver, Diagram, Trace
 import syntax
 from syntax import Expr
 import relaxed_traces
+from translator import Z3Translator
 import utils
 import copy
 
@@ -15,9 +16,7 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     res = logic.check_two_state_implication_all_transitions(s, [candidate], candidate, minimize=True)
     if res is None:
         return None
-
-    z3m: z3.ModelRef = res[0]
-    mod = Trace.from_z3((KEY_OLD, KEY_NEW), z3m)
+    mod = Z3Translator.model_to_trace(res[0], 2)
     return (mod.as_diagram(index=0), mod.as_diagram(index=1))
 
 def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]]=None,

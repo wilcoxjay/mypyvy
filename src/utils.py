@@ -56,8 +56,18 @@ class OrderedSet(Generic[T], Iterable[T]):
         return self
 
     def __sub__(self, other: Set[T]) -> OrderedSet[T]:
-        res = OrderedSet(self.__iter__())
+        res = OrderedSet(iter(self))
         res.__isub__(other)
+        return res
+
+    def __ior__(self, other: Iterable[T]) -> OrderedSet[T]:
+        for x in other:
+            self.add(x)
+        return self
+
+    def __or__(self, other: Iterable[T]) -> OrderedSet[T]:
+        res = OrderedSet(iter(self))
+        res.__ior__(other)
         return res
 
     def __iter__(self) -> Iterator[T]:
@@ -150,6 +160,12 @@ def print_located_msg(header: str, loc: Optional[Location], msg: str) -> None:
     loc_str = ' ' + loc_to_string(loc) if loc is not None else ''
     print('%s%s: %s' % (header, loc_str, msg))
 
+# NOTE(error-reporting)
+# Despite it's benign-sounding name, this function is actually essential to
+# maintaining invariants in mypyvy. The fact that it prints a message to the terminal is actually
+# secondary. It's primary purpose is actually to increment the error_count. For example, the
+# resolver maintains several invariants of the form "error_count = 0 -> good stuff".
+# See NOTE(resolving-malformed-programs).
 def print_error(loc: Optional[Location], msg: str) -> None:
     global error_count
     error_count += 1

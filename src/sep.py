@@ -76,14 +76,14 @@ def sep_main(solver: Solver) -> str:
     print()
 
     # just for testing, get a model of invs that violates every init predicate
-    t = solver.get_translator((KEY_ONE,))
+    t = solver.get_translator(1)
     with solver.new_frame():
         solver.add(t.translate_expr(Not(And(*inits))))
         for e in chain(safety, invs):
             solver.add(t.translate_expr(e))
         res = solver.check()
         assert res == z3.sat, f'{res}\n{solver.z3solver}'
-        m0 = Trace.from_z3((KEY_ONE,), solver.model(minimize=True)).as_state(0)
+        m0 = Z3Translator.model_to_trace(solver.model(minimize=True), 1).as_state(0)
         print(f'Using the following model:\n\n{m0}\n')
 
     print(f'[{datetime.now()}] Learning {len(invs)} invariants one by one')
@@ -314,7 +314,7 @@ def sep_main(solver: Solver) -> str:
             print(f'[{datetime.now()}] Candidate separator is: {sep}\n')
             z3cex = check_implication(solver, [p], [sep], minimize=True)
             if z3cex is not None:
-                cex = Trace.from_z3((KEY_ONE,), z3cex).as_state(0)
+                cex = Z3Translator.model_to_trace(z3cex, 1).as_state(0)
                 print(f'[{datetime.now()}] Got positive counterexample:\n\n{cex}\n')
                 assertions, cex_models_sep = eval_sep(cex)
                 for a in assertions:
@@ -324,7 +324,7 @@ def sep_main(solver: Solver) -> str:
                 continue
             z3cex = check_implication(solver, [sep], [p], minimize=True)
             if z3cex is not None:
-                cex = Trace.from_z3((KEY_ONE,), z3cex).as_state(0)
+                cex = Z3Translator.model_to_trace(z3cex, 1).as_state(0)
                 print(f'[{datetime.now()}] Got negative counterexample:\n\n{cex}\n')
                 assertions, cex_models_sep = eval_sep(cex)
                 for a in assertions:

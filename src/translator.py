@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from itertools import chain
+from itertools import chain, product
 
 from typing import Any, Callable, cast, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
@@ -11,7 +11,7 @@ import syntax
 from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryExpr
 from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse, ModifiesClause
 from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, StateDecl
-from syntax import Program, SortDecl
+from syntax import Program, SortDecl, New
 from z3_utils import z3_quantifier_alternations
 
 
@@ -45,15 +45,30 @@ class Z3Translator:
         'EXISTS': z3.Exists,
     }
 
-    def __init__(self, scope: Scope[z3.ExprRef], keys: Tuple[str, ...] = ()) -> None:
+    def __init__(self, scope: Scope[z3.ExprRef], num_states: int) -> None:
+        assert num_states >= 0
+        self.num_states = num_states
         self.scope = scope
-        self.keys = keys
         self.counter = 0
+
+    @staticmethod
+    def _get_keys(num_states: int) -> Tuple[str, ...]:
+        # TODO: eliminate this
+        return tuple(f'_{i}_' for i in range(num_states))
+
+    def get_key(self, i: int) -> str:
+        '''
+        Return key for state i, i.e., i applications of new()
+        '''
+        # TODO: maybe have special key for immutables and for indicator variables
+        assert 0 <= i < self.num_states
+        return f'_{i}_'
 
     def bind(self, binder: Binder) -> List[z3.ExprRef]:
         bs = []
         for sv in binder.vs:
             # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
+            # ODED: it seems that after definitions are refactored out of Z3Translator, we could just use sv.name as the Z3 name, without adding a counter, and let Z3 handle the shadowing
             n = f'{sv.name}_{self.counter}'
             self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
@@ -61,19 +76,15 @@ class Z3Translator:
         return bs
 
     def translate_expr(self, expr: Expr) -> z3.ExprRef:
-        return self._translate_expr(expr, 0)
-
-    def _translate_expr(self, expr: Expr, index: int) -> z3.ExprRef:
         assert self.scope.num_states == 0, self.scope.num_states
         assert self.scope.current_state_index == 0, self.scope.current_state_index
-        with self.scope.n_states(len(self.keys)):
-            with self.scope.next_state_index(index):
-                return self.__translate_expr(expr)
+        with self.scope.n_states(self.num_states):
+            return self.__translate_expr(expr)
 
     def _decl_to_z3(self, d: syntax.StateDecl) -> Union[z3.FuncDeclRef, z3.ExprRef]:
         return Z3Translator.statedecl_to_z3(
             d,
-            self.keys[self.scope.current_state_index]
+            self.get_key(self.scope.current_state_index)
             if d.mutable else None
         )
 
@@ -98,7 +109,7 @@ class Z3Translator:
         elif isinstance(expr, AppExpr):
             d = self.scope.get(expr.callee)
             if isinstance(d, DefinitionDecl):
-                # ODED: should ask James about this case
+                # TODO: handling definitions should be refactored out of Z3Translator
                 # checked by resolver; see NOTE(calling-stateful-definitions)
                 assert self.scope.current_state_index + d.num_states <= self.scope.num_states, f'{d}\n{expr}'
                 # now translate args in the scope of caller
@@ -128,8 +139,8 @@ class Z3Translator:
                 assert isinstance(z3sym, z3.ExprRef)
                 return z3sym
             elif isinstance(d, DefinitionDecl):
+                # TODO: handling definitions should be refactored out of Z3Translator
                 # checked in resolver; see NOTE(calling-stateful-definitions)
-                # ODED: ask James about this
                 assert self.scope.current_state_index + d.num_states <= self.scope.num_states
                 with self.scope.fresh_stack():
                     return self.__translate_expr(d.expr)
@@ -158,8 +169,8 @@ class Z3Translator:
                any(mc.name == d.name for mc in mods):
                 continue
 
-            k_new = self.keys[index + 1]
-            k_old = self.keys[index]
+            k_new = self.get_key(index + 1)
+            k_old = self.get_key(index)
 
             if isinstance(d, ConstantDecl) or len(d.arity) == 0:
                 lhs = Z3Translator.statedecl_to_z3(d, k_new)
@@ -184,10 +195,12 @@ class Z3Translator:
         return frame
 
     def translate_transition_body(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
-        return z3.And(self._translate_expr(t.expr, index=index),
+        # ODED: talk to James about this
+        return z3.And(self.translate_expr(New(t.expr, index)),
                       *self.frame(t.mods, index=index))
 
     def translate_transition(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
+        # ODED: talk to James about this
         bs = self.bind(t.binder)
         with self.scope.in_scope(t.binder, bs):
             body = self.translate_transition_body(t, index=index)
@@ -195,6 +208,219 @@ class Z3Translator:
                 return z3.Exists(bs, body)
             else:
                 return body
+
+    @staticmethod
+    def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Any:
+        # ODED: this should return logic.Trace, but there was a
+        # problem with cyclic imports. TODO: fix it.
+        '''
+        Convert z3 model to Trace with given number of states.
+
+        If allow_undefined is True, the resulting trace may leave some symbols undefined.
+        '''
+        from logic import Trace, TRANSITION_INDICATOR
+        trace = Trace(num_states)
+        keys = Z3Translator._get_keys(num_states)
+
+        def rename(s: str) -> str:
+            return s.replace('!val!', '').replace('@uc_', '')
+
+        def _eval(expr: z3.ExprRef) -> z3.ExprRef:
+            ans = z3model.eval(expr, model_completion=True)
+            assert bool(ans) is True or bool(ans) is False, (expr, ans)
+            return ans
+
+        prog = syntax.the_program
+
+        for z3sort in sorted(z3model.sorts(), key=str):
+            sort = prog.scope.get_sort(str(z3sort))
+            assert sort is not None
+            univ = z3model.get_universe(z3sort)
+            trace.univs[sort] = list(sorted(rename(str(x)) for x in univ))
+
+        model_decls = z3model.decls()
+        all_decls = model_decls
+        for z3decl in sorted(all_decls, key=str):
+            z3name = str(z3decl)
+            for i, k in enumerate(keys):
+                if z3name.startswith(k):
+                    name = z3name[len(k + '_'):]
+                    R = trace.rel_interps[i]
+                    C = trace.const_interps[i]
+                    F = trace.func_interps[i]
+                    break
+            else:
+                name = z3name
+                R = trace.immut_rel_interps
+                C = trace.immut_const_interps
+                F = trace.immut_func_interps
+
+            decl = prog.scope.get(name)
+            assert not isinstance(decl, syntax.Sort) and \
+                not isinstance(decl, syntax.SortInferencePlaceholder)
+            if decl is not None:
+                if isinstance(decl, RelationDecl):
+                    if decl.arity:
+                        rl = []
+                        domains = [z3model.get_universe(z3decl.domain(i))
+                                   for i in range(z3decl.arity())]
+                        if not any(x is None for x in domains):
+                            # Note: if any domain is None, we silently drop this symbol.
+                            # It's not entirely clear that this is an ok thing to do.
+                            g = product(*domains)
+                            for row in g:
+                                relation_expr = z3decl(*row)
+                                ans = _eval(relation_expr)
+                                rl.append(([rename(str(col)) for col in row], bool(ans)))
+                            assert decl not in R
+                            R[decl] = rl
+                    else:
+                        ans = z3model.eval(z3decl())
+                        assert decl not in R
+                        R[decl] = [([], bool(ans))]
+                elif isinstance(decl, FunctionDecl):
+                    fl = []
+                    domains = [z3model.get_universe(z3decl.domain(i))
+                               for i in range(z3decl.arity())]
+                    if not any(x is None for x in domains):
+                        # Note: if any domain is None, we silently drop this symbol.
+                        # It's not entirely clear that this is an ok thing to do.
+                        g = product(*domains)
+                        for row in g:
+                            ans = z3model.eval(z3decl(*row))
+                            if z3.is_int_value(ans):
+                                ans_str = str(ans.as_long())
+                            else:
+                                ans_str = rename(ans.decl().name())
+
+                            fl.append(([rename(str(col)) for col in row], ans_str))
+
+                        assert decl not in F
+                        F[decl] = fl
+
+                else:
+                    assert isinstance(decl, ConstantDecl)
+                    v = z3model.eval(z3decl())
+                    if z3.is_int_value(v):
+                        v_str = str(v.as_long())
+                    else:
+                        v_str = rename(v.decl().name())
+
+                    assert decl not in C
+                    C[decl] = v_str
+            else:
+                if name.startswith(TRANSITION_INDICATOR + '_') and z3model.eval(z3decl()):
+                    name = name[len(TRANSITION_INDICATOR + '_'):]
+                    istr, name = name.split('_', maxsplit=1)
+                    i = int(istr)
+                    if i < len(trace.transitions):
+                        trace.transitions[i] = name
+                    else:
+                        # TODO: not sure what's going on here with check_bmc and pd.check_k_state_implication
+                        # assert False
+                        pass
+
+        if allow_undefined:
+            return trace
+
+        def get_univ(d: SortDecl) -> List[str]:
+            if d not in trace.univs:
+                trace.univs[d] = [d.name + '0']
+            return trace.univs[d]
+
+        def arbitrary_interp_r(r: RelationDecl) -> List[Tuple[List[str], bool]]:
+            doms = [get_univ(syntax.get_decl_from_sort(s)) for s in r.arity]
+
+            l = []
+            tup: Tuple[str, ...]
+            for tup in product(*doms):
+                l.append((list(tup), False))
+
+            return l
+
+        def ensure_defined_r(r: RelationDecl) -> None:
+            R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
+            if not r.mutable:
+                R = [trace.immut_rel_interps]
+            else:
+                R = trace.rel_interps
+            interp: Optional[List[Tuple[List[str], bool]]] = None
+
+            def get_interp() -> List[Tuple[List[str], bool]]:
+                nonlocal interp
+                if interp is None:
+                    interp = arbitrary_interp_r(r)
+                return interp
+
+            for m in R:
+                if r not in m:
+                    m[r] = get_interp()
+
+        def arbitrary_interp_c(c: ConstantDecl) -> str:
+            if isinstance(c.sort, syntax._BoolSort):
+                return 'false'
+            elif isinstance(c.sort, syntax._IntSort):
+                return '0'
+
+            assert isinstance(c.sort, syntax.UninterpretedSort)
+
+            sort = c.sort
+            return get_univ(syntax.get_decl_from_sort(sort))[0]
+
+        def ensure_defined_c(c: ConstantDecl) -> None:
+            R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
+            if not c.mutable:
+                C = [trace.immut_const_interps]
+            else:
+                C = trace.const_interps
+
+            interp: str = arbitrary_interp_c(c)
+
+            for m in C:
+                if c not in m:
+                    m[c] = interp
+
+        def arbitrary_interp_f(f: FunctionDecl) -> List[Tuple[List[str], str]]:
+            doms = [get_univ(syntax.get_decl_from_sort(s)) for s in f.arity]
+
+            interp = get_univ(syntax.get_decl_from_sort(f.sort))[0]
+
+            l = []
+            tup: Tuple[str, ...]
+            for tup in product(*doms):
+                l.append((list(tup), interp))
+
+            return l
+
+        def ensure_defined_f(f: FunctionDecl) -> None:
+            F: List[Dict[FunctionDecl, List[Tuple[List[str], str]]]]
+            if not f.mutable:
+                F = [trace.immut_func_interps]
+            else:
+                F = trace.func_interps
+
+            interp: Optional[List[Tuple[List[str], str]]] = None
+
+            def get_interp() -> List[Tuple[List[str], str]]:
+                nonlocal interp
+                if interp is None:
+                    interp = arbitrary_interp_f(f)
+                return interp
+
+            for m in F:
+                if f not in m:
+                    m[f] = get_interp()
+
+        for decl in prog.relations_constants_and_functions():
+            if isinstance(decl, RelationDecl):
+                ensure_defined_r(decl)
+            elif isinstance(decl, ConstantDecl):
+                ensure_defined_c(decl)
+            else:
+                assert isinstance(decl, FunctionDecl)
+                ensure_defined_f(decl)
+
+        return trace
 
     @staticmethod
     def sort_to_z3(s: Union[syntax.Sort, syntax.SortDecl]) -> z3.SortRef:
@@ -285,7 +511,7 @@ class Z3Translator:
 
 
 def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[str, str]]:
-    lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope))
+    lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope), 0)
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_quantifier_alternations(z3expr):
         yield (Z3Translator.sort_from_z3sort(prog, ssortz3).name,

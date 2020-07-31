@@ -1,6 +1,7 @@
 import logic
 from logic import Solver, Expr
 import syntax
+from syntax import New
 import translator
 import utils
 import z3
@@ -18,7 +19,7 @@ def translate_transition_call(
     if c.args is not None:
         for j, a in enumerate(c.args):
             if isinstance(a, Expr):
-                bs[j] = lator._translate_expr(a, index=key_index)  # TODO: eliminate using index in translation
+                bs[j] = lator.translate_expr(New(a, key_index))
                 qs[j] = None
             else:
                 assert isinstance(a, syntax.Star)
@@ -33,16 +34,14 @@ def translate_transition_call(
 
 def bmc_trace(
         prog: syntax.Program, trace: syntax.TraceDecl,
-        s: Solver, sat_checker: Callable[[Solver, Tuple[str, ...]], Optional[logic.Trace]],
+        s: Solver, sat_checker: Callable[[Solver, int], Optional[logic.Trace]],
         log: bool = False
 ) -> Optional[logic.Trace]:
     n_states = len(list(trace.transitions())) + 1
     if log:
         print('%s states' % (n_states,))
 
-    keys = tuple('state%02d' % i for i in range(n_states))
-
-    lator = s.get_translator(keys)
+    lator = s.get_translator(n_states)
 
     with s.new_frame():
         if len(trace.components) > 0 and not isinstance(trace.components[0], syntax.AssertDecl):
@@ -56,9 +55,10 @@ def bmc_trace(
                     if i != 0:
                         utils.print_error_and_exit(c.span, 'assert init is only allowed in the first state')
                     for init in prog.inits():
-                        s.add(lator._translate_expr(init.expr, index=i))  # TODO: eliminate using index in translation
+                        assert i == 0
+                        s.add(lator.translate_expr(init.expr))
                 else:
-                    s.add(lator._translate_expr(c.expr, index=i))  # TODO: eliminate using index in translation
+                    s.add(lator.translate_expr(New(c.expr, i)))
             else:
                 te: syntax.TransitionExpr = c.transition
                 if isinstance(te, syntax.AnyTransition):
@@ -73,4 +73,4 @@ def bmc_trace(
 
                 i += 1
 
-        return sat_checker(s, keys)
+        return sat_checker(s, n_states)

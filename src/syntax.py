@@ -9,6 +9,7 @@ from typing import List, Union, Tuple, Optional, Dict, Iterator, \
     Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, cast
 from typing_extensions import Protocol
 import utils
+from utils import OrderedSet
 import z3
 
 Token = ply.lex.LexToken
@@ -218,6 +219,69 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
         print(expr)
         assert False
 
+# NOTE(capture-avoiding-substitution)
+# This function is carefully written to avoid capture by following a strategy taught in CSE 490P.
+# See the first 10 slides here: https://drive.google.com/file/d/1jFGF3snnC2_4N7cqpH_c0D_S6NPFknWg/view
+# When going under a binding form, we avoid clashes with three kinds of names:
+#     - names otherwise free in the body of the binding form
+#     - names in the domain of the substitution gamma
+#     - names free in expressions in the codomain of the substitution gamma
+# This strategy has undergone substantial testing and trial and error in the context of the course.
+# Deviation is not recommended.
+def subst(scope: Scope, e: Expr, gamma: Mapping[Id, Expr]) -> Expr:
+    if isinstance(e, (Bool, Int)):
+        return e
+    elif isinstance(e, UnaryExpr):
+        return UnaryExpr(e.op, subst(scope, e.arg, gamma))
+    elif isinstance(e, BinaryExpr):
+        return BinaryExpr(e.op, subst(scope, e.arg1, gamma), subst(scope, e.arg2, gamma))
+    elif isinstance(e, NaryExpr):
+        return NaryExpr(e.op, [subst(scope, arg, gamma) for arg in e.args])
+    elif isinstance(e, AppExpr):
+        return AppExpr(e.callee, [subst(scope, arg, gamma) for arg in e.args])
+    elif isinstance(e, QuantifierExpr):
+        # luv too avoid capture
+        avoid = free_ids(e)
+        avoid |= set(v.name for v in gamma)
+        for v in gamma:
+            avoid |= free_ids(gamma[v])
+
+        renaming: Dict[Id, Expr] = {}
+        fresh_svs = []
+        for sv in e.binder.vs:
+            fresh_name = scope.fresh(sv.name, also_avoid=list(avoid))
+            renaming[Id(sv.name)] = Id(fresh_name)
+            assert not isinstance(sv.sort, SortInferencePlaceholder)
+            fresh_svs.append(SortedVar(fresh_name, sv.sort))
+
+        fresh_body = subst(scope, e.body, renaming)
+
+        return QuantifierExpr(e.quant, fresh_svs, subst(scope, fresh_body, gamma))
+    elif isinstance(e, Id):
+        if e in gamma:
+            return gamma[e]
+        else:
+            return e
+    elif isinstance(e, IfThenElse):
+        return IfThenElse(subst(scope, e.branch, gamma), subst(scope, e.then, gamma), subst(scope, e.els, gamma))
+    elif isinstance(e, Let):
+        # luv too avoid capture
+        avoid = free_ids(e)
+        avoid |= set(v.name for v in gamma)
+        for v in gamma:
+            avoid |= free_ids(gamma[v])
+
+        assert len(e.binder.vs) == 1
+        sv = e.binder.vs[0]
+        fresh_name = scope.fresh(sv.name, also_avoid=list(avoid))
+        assert not isinstance(sv.sort, SortInferencePlaceholder)
+        fresh_sv = SortedVar(fresh_name, sv.sort)
+
+        fresh_body = subst(scope, e.body, {Id(sv.name): Id(fresh_name)})
+
+        return Let(fresh_sv, subst(scope, e.val, gamma), subst(scope, fresh_body, gamma))
+    else:
+        assert False, (type(e), e)
 
 def as_clauses_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
     '''
@@ -543,10 +607,6 @@ class Expr(Denotable):
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
-    def free_ids(self) -> List[str]:
-        raise Exception('Unexpected expr %s does not implement contains_var method' %
-                        repr(self))
-
 class Bool(Expr):
     def __init__(self, val: bool, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -563,9 +623,6 @@ class Bool(Expr):
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append('true' if self.val else 'false')
-
-    def free_ids(self) -> List[str]:
-        return []
 
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
@@ -586,9 +643,6 @@ class Int(Expr):
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(str(self.val))
-
-    def free_ids(self) -> List[str]:
-        return []
 
 UNOPS = {
     'NOT',
@@ -627,14 +681,15 @@ class UnaryExpr(Expr):
         else:
             assert False
 
-    def free_ids(self) -> List[str]:
-        return self.arg.free_ids()
-
 def Not(e: Expr) -> Expr:
     return UnaryExpr('NOT', e)
 
-def New(e: Expr) -> Expr:
-    return UnaryExpr('NEW', e)
+def New(e: Expr, n: int = 1) -> Expr:
+    # TODO: rename New -> Next
+    assert n >= 0, 'are you trying to resurrect old()?'
+    for i in range(n):
+        e = UnaryExpr('NEW', e)
+    return e
 
 BINOPS = {
     'IMPLIES',
@@ -706,11 +761,6 @@ class BinaryExpr(Expr):
 
         self.arg2.pretty(buf, p, 'RIGHT')
 
-    def free_ids(self) -> List[str]:
-        x = self.arg1.free_ids()
-        s = set(x)
-        return x + [y for y in self.arg2.free_ids() if y not in s]
-
 NOPS = {
     'AND',
     'OR',
@@ -771,18 +821,6 @@ class NaryExpr(Expr):
 
         if self.op == 'DISTINCT':
             buf.append(')')
-
-    def free_ids(self) -> List[str]:
-        l = []
-        s: Set[str] = set()
-
-        for arg in self.args:
-            for x in arg.free_ids():
-                if x not in s:
-                    s.add(x)
-                    l.append(x)
-
-        return l
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
     if not vs:
@@ -852,16 +890,6 @@ class AppExpr(Expr):
             started = True
             arg.pretty(buf, PREC_TOP, 'NONE')
         buf.append(')')
-
-    def free_ids(self) -> List[str]:
-        l = []
-        s: Set[str] = set()
-        for arg in self.args:
-            for x in arg.free_ids():
-                if x not in s:
-                    l.append(x)
-                    s.add(x)
-        return l
 
 class SortedVar(Denotable):
     def __init__(self, name: str, sort: Optional[Sort], *, span: Optional[Span] = None) -> None:
@@ -941,9 +969,6 @@ class QuantifierExpr(Expr):
 
         self.body.pretty(buf, PREC_QUANT, 'NONE')
 
-    def free_ids(self) -> List[str]:
-        return [x for x in self.body.free_ids() if not any(v.name == x for v in self.binder.vs)]
-
     def vs(self) -> List[SortedVar]:
         return self.binder.vs
 
@@ -964,9 +989,6 @@ class Id(Expr):
 
     def _pretty(self, buf: List[str], prec: int, side: str) -> None:
         buf.append(self.name)
-
-    def free_ids(self) -> List[str]:
-        return [self.name]
 
 class IfThenElse(Expr):
     def __init__(self, branch: Expr, then: Expr, els: Expr, *, span: Optional[Span] = None) -> None:
@@ -992,14 +1014,6 @@ class IfThenElse(Expr):
         buf.append(' else ')
         self.els.pretty(buf, PREC_TOP, 'NONE')
 
-    def free_ids(self) -> List[str]:
-        l1 = self.branch.free_ids()
-        s1 = set(l1)
-        l2 = [x for x in self.then.free_ids() if x not in s1]
-        s2 = set(l2)
-        l3 = [x for x in self.els.free_ids() if x not in s1 and x not in s2]
-        return l1 + l2 + l3
-
 class Let(Expr):
     def __init__(self, var: SortedVar, val: Expr, body: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -1024,10 +1038,36 @@ class Let(Expr):
         buf.append(' in ')
         self.body.pretty(buf, PREC_TOP, 'NONE')
 
-    def free_ids(self) -> List[str]:
-        l1 = self.val.free_ids()
-        l2 = [x for x in self.body.free_ids() if x != self.binder.vs[0].name]
-        return l1 + l2
+def free_ids(e: Expr, into: Optional[OrderedSet[str]] = None) -> OrderedSet[str]:
+    if into is None:
+        into = OrderedSet()
+    if isinstance(e, (Bool, Int)):
+        pass
+    elif isinstance(e, UnaryExpr):
+        free_ids(e.arg, into)
+    elif isinstance(e, BinaryExpr):
+        free_ids(e.arg1, into)
+        free_ids(e.arg2, into)
+    elif isinstance(e, (NaryExpr, AppExpr)):
+        for arg in e.args:
+            free_ids(arg, into)
+    elif isinstance(e, QuantifierExpr):
+        bound_vars = set(v.name for v in e.binder.vs)
+        into |= free_ids(e.body) - bound_vars
+    elif isinstance(e, Id):
+        into.add(e.name)
+    elif isinstance(e, IfThenElse):
+        free_ids(e.branch, into)
+        free_ids(e.then, into)
+        free_ids(e.els, into)
+    elif isinstance(e, Let):
+        free_ids(e.val, into)
+        bound_vars = set(v.name for v in e.binder.vs)
+        into |= free_ids(e.body) - bound_vars
+    else:
+        assert False, (type(e), e)
+
+    return into
 
 Arity = List[Sort]
 
@@ -1078,7 +1118,6 @@ class _IntSort(Sort):
         return ('int',)
 
 IntSort = _IntSort()
-
 
 def get_decl_from_sort(s: InferenceSort) -> SortDecl:
     assert isinstance(s, UninterpretedSort)
@@ -1232,7 +1271,7 @@ class ConstantDecl(Decl):
                                        self.name, self.sort)
 
 def close_free_vars(expr: Expr, in_scope: List[str] = [], span: Optional[Span] = None) -> Expr:
-    vs = [s for s in expr.free_ids() if s not in in_scope and s.isupper()]
+    vs = [s for s in free_ids(expr) if s not in in_scope and s.isupper()]
     if vs == []:
         return expr
     else:
@@ -1643,13 +1682,13 @@ class Scope(Generic[B]):
         self.stack = stack
 
     @contextmanager
-    def next_state_index(self, k: int = 1) -> Iterator[None]:
-        if (i := self.current_state_index + k) < self.num_states or i == 0:
-            self.current_state_index += k
+    def next_state_index(self) -> Iterator[None]:
+        if self.current_state_index + 1 < self.num_states:
+            self.current_state_index += 1
             yield None
-            self.current_state_index -= k
+            self.current_state_index -= 1
         else:
-            assert utils.error_count > 0, (self.current_state_index, k, self.num_states)
+            assert utils.error_count > 0, (self.current_state_index, self.num_states)
             yield None
 
     @contextmanager
@@ -1787,3 +1826,42 @@ def prog_context(prog: Program) -> Iterator[None]:
     the_program = prog
     yield None
     the_program = backup_prog
+
+def expand_macros(scope: Scope, e: Expr) -> Expr:
+    if isinstance(e, (Bool, Int)):
+        return e
+    elif isinstance(e, UnaryExpr):
+        return UnaryExpr(e.op, expand_macros(scope, e.arg))
+    elif isinstance(e, BinaryExpr):
+        return BinaryExpr(e.op, expand_macros(scope, e.arg1), expand_macros(scope, e.arg2))
+    elif isinstance(e, NaryExpr):
+        return NaryExpr(e.op, [expand_macros(scope, arg) for arg in e.args])
+    elif isinstance(e, AppExpr):
+        new_args = [expand_macros(scope, arg) for arg in e.args]
+        d = scope.get(e.callee)
+        if isinstance(d, DefinitionDecl):
+            assert len(e.args) == len(d.binder.vs)  # checked by resolver
+            gamma = {Id(v.name): arg for v, arg in zip(d.binder.vs, new_args)}
+            return expand_macros(scope, subst(scope, d.expr, gamma))
+        else:
+            return AppExpr(e.callee, new_args)
+    elif isinstance(e, QuantifierExpr):
+        with scope.in_scope(e.binder, [() for v in e.binder.vs]):
+            new_body = expand_macros(scope, e.body)
+        return QuantifierExpr(e.quant, e.binder.vs, new_body)
+    elif isinstance(e, Id):
+        d = scope.get(e.name)
+        if isinstance(d, DefinitionDecl):
+            return d.expr
+        else:
+            return e
+    elif isinstance(e, IfThenElse):
+        return IfThenElse(expand_macros(scope, e.branch), expand_macros(scope, e.then), expand_macros(scope, e.els))
+    elif isinstance(e, Let):
+        assert len(e.binder.vs) == 1
+        new_val = expand_macros(scope, e.val)
+        with scope.in_scope(e.binder, [()]):
+            new_body = expand_macros(scope, e.body)
+        return Let(e.binder.vs[0], new_val, new_body)
+    else:
+        assert False, (type(e), e)

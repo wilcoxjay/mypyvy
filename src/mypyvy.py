@@ -13,8 +13,9 @@ from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Un
 import z3
 import resource
 
+import translator
 import logic
-from logic import Solver, KEY_NEW, KEY_OLD, KEY_ONE, Trace
+from logic import Solver, Trace
 import parser
 import resolver
 import syntax
@@ -166,7 +167,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
                                   trace.immut_func_interps)
 
     muts = []
-    for i in range(len(trace.keys)):
+    for i in range(trace.num_states):
         muts.append(state_json(trace.rel_interps[i],
                                trace.const_interps[i],
                                trace.func_interps[i]))
@@ -231,13 +232,13 @@ def theorem(s: Solver) -> None:
     prog = syntax.the_program
     for th in prog.theorems():
         if th.num_states == 2:
-            keys: Tuple[str, ...] = (KEY_OLD, KEY_NEW)
+            num_states = 2
         elif th.num_states == 1:
-            keys = (KEY_ONE,)
+            num_states = 1
         else:
-            keys = ()
+            num_states = 0
 
-        t = s.get_translator(keys)
+        t = s.get_translator(num_states)
 
         if th.name is not None:
             msg = ' ' + th.name
@@ -252,7 +253,7 @@ def theorem(s: Solver) -> None:
         with s.new_frame():
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            logic.check_unsat([(th.span, 'theorem%s may not hold' % msg)], s, keys)
+            logic.check_unsat([(th.span, 'theorem%s may not hold' % msg)], s, num_states)
 
 def nop(s: Solver) -> None:
     pass
@@ -424,7 +425,7 @@ def trace(s: Solver) -> None:
         utils.logger.always_print('finding traces:')
 
     for trace in traces:
-        res = bmc_trace(prog, trace, s, lambda s, keys: logic.check_unsat([], s, keys), log=True)
+        res = bmc_trace(prog, trace, s, lambda s, n: logic.check_unsat([], s, n), log=True)
         if (res is not None) != trace.sat:
             def bool_to_sat(b: bool) -> str:
                 return 'sat' if b else 'unsat'
@@ -732,11 +733,6 @@ def main() -> None:
     syntax.the_program = prog
 
     s = Solver(use_cvc4=utils.args.cvc4)
-
-    # initialize common keys
-    s.get_translator((KEY_ONE,))
-    s.get_translator((KEY_NEW,))
-    s.get_translator((KEY_OLD,))
 
     utils.args.main(s)
 
