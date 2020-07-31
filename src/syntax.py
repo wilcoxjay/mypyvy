@@ -1406,7 +1406,7 @@ class DefinitionDecl(Decl):
         return frame
 
     def _framed_body(self, scope: Scope) -> Expr:
-        return And(New(self.expr), *DefinitionDecl._frame(scope, self.mods))
+        return And(self.expr, *DefinitionDecl._frame(scope, self.mods))
 
     def as_twostate_formula(self, scope: Scope) -> Expr:
         return Exists(self.binder.vs, self._framed_body(scope))
