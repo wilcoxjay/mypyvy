@@ -246,7 +246,7 @@ def theorem(s: Solver) -> None:
         with s.new_frame():
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            logic.check_unsat([(th.span, 'theorem%s may not hold' % msg)], s, num_states)
+            logic.check_unsat([(th.span, 'theorem%s does not hold' % msg)], s, num_states)
 
 def nop(s: Solver) -> None:
     pass

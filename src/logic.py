@@ -121,7 +121,7 @@ def check_init(
                     utils.logger.always_print('  implies invariant%s... ' % msg, end='')
                     sys.stdout.flush()
 
-                res = check_unsat([(inv.span, 'invariant%s may not hold in initial state' % msg)],
+                res = check_unsat([(inv.span, 'invariant%s does not hold in initial state' % msg)],
                                   s, 1, minimize=minimize, verbose=verbose)
                 if res is not None:
                     if utils.args.smoke_test_solver:
@@ -186,9 +186,9 @@ def check_transitions(
                             utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
                             sys.stdout.flush()
 
-                        res = check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s'
+                        res = check_unsat([(inv.span, 'invariant%s is not preserved by transition %s'
                                             % (msg, ition.name)),
-                                           (ition.span, 'this transition may not preserve invariant%s'
+                                           (ition.span, 'this transition does not preserve invariant%s'
                                             % (msg,))],
                                           s, 2, minimize=minimize, verbose=verbose)
                         if res is not None:
