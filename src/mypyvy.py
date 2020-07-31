@@ -10,7 +10,6 @@ from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Un
 import z3
 import resource
 
-import translator
 import logic
 from logic import Solver, Trace
 import parser

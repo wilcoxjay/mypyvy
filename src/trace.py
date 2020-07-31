@@ -6,7 +6,7 @@ import translator
 import utils
 import z3
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional
 
 def translate_transition_call(
         s: Solver, lator: translator.Z3Translator, key_index: int, c: syntax.TransitionCall

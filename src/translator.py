@@ -68,7 +68,8 @@ class Z3Translator:
         bs = []
         for sv in binder.vs:
             # in the presence of shadowing, we need to make sure every call to z3.Const is for a unique name
-            # ODED: it seems that after definitions are refactored out of Z3Translator, we could just use sv.name as the Z3 name, without adding a counter, and let Z3 handle the shadowing
+            # ODED: it seems that after definitions are refactored out of Z3Translator, we could just use sv.name
+            #       as the Z3 name, without adding a counter, and let Z3 handle the shadowing
             n = f'{sv.name}_{self.counter}'
             self.counter += 1
             assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
@@ -514,8 +515,9 @@ def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[str, str]]:
     lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope), 0)
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_quantifier_alternations(z3expr):
+        # TODO: consider overriding equals instead of using the names
         yield (Z3Translator.sort_from_z3sort(prog, ssortz3).name,
-               Z3Translator.sort_from_z3sort(prog, tsortz3).name)  # TODO: consider overriding equals instead of using the names
+               Z3Translator.sort_from_z3sort(prog, tsortz3).name)
 
 
 def quantifier_alternation_graph(prog: Program, exprs: List[Expr]) -> DiGraph:

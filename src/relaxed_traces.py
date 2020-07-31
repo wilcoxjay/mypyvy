@@ -477,7 +477,8 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
 
 
 class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
-    # ODED: talk to James about it. There should be another way to implement relaxed traces other than inheriting from Z3Translator...
+    # ODED: talk to James about it. There should be another way to implement relaxed traces other than
+    #       inheriting from Z3Translator...
     def __init__(self, scope: syntax.Scope[z3.ExprRef], num_states: int) -> None:
         self._active_rels_mapping: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
         self._generate_active_rels(scope)

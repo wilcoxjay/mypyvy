@@ -13,7 +13,7 @@ import re
 import sexp
 import subprocess
 import sys
-from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
+from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
 from typing import cast, TypeVar, Callable
 import z3
 
@@ -530,7 +530,7 @@ class Solver:
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
         self.translator_factory: LatorFactory = translator_factory if translator_factory is not None else Z3Translator
-        self.num_states = 0 # number of states for which axioms are assumed so far
+        self.num_states = 0  # number of states for which axioms are assumed so far
         self.nqueries = 0
         self.assumptions_necessary = False
         self.mutable_axioms: List[Expr] = []
