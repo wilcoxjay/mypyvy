@@ -1,6 +1,6 @@
 checking theorems:
  theorem on line 7... 
-error 190516-theorem-boundvar.pyv:7:1: theorem on line 7 may not hold
+error 190516-theorem-boundvar.pyv:7:1: theorem on line 7 does not hold
  theorem on line 8... 
-error 190516-theorem-boundvar.pyv:8:1: theorem on line 8 may not hold
+error 190516-theorem-boundvar.pyv:8:1: theorem on line 8 does not hold
 mypyvy exiting with status 1
