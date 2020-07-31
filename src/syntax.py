@@ -1376,6 +1376,42 @@ class DefinitionDecl(Decl):
              ', '.join([str(m) for m in self.mods]),
              self.expr)
 
+    @staticmethod
+    def _frame(scope: Scope, mods: List[ModifiesClause]) -> List[Expr]:
+        frame = []
+        R: Iterator[StateDecl] = iter(scope.relations.values())
+        C: Iterator[StateDecl] = iter(scope.constants.values())
+        F: Iterator[StateDecl] = iter(scope.functions.values())
+        for d in itertools.chain(R, C, F):
+            if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or \
+               any(mc.name == d.name for mc in mods):
+                continue
+
+            if isinstance(d, ConstantDecl) or len(d.arity) == 0:
+                e = Eq(New(Id(d.name)), Id(d.name))
+            else:
+                names: List[str] = []
+                svs: List[SortedVar] = []
+                ids: List[Id] = []
+                for i, s in enumerate(d.arity):
+                    name = scope.fresh('x' + str(i), also_avoid=names)
+                    names.append(name)
+                    svs.append(SortedVar(name, s))
+                    ids.append(Id(name))
+
+                e = Forall(svs, Eq(New(AppExpr(d.name, list(ids))), AppExpr(d.name, list(ids))))
+
+            frame.append(e)
+
+        return frame
+
+    def _framed_body(self, scope: Scope) -> Expr:
+        return And(New(self.expr), *DefinitionDecl._frame(scope, self.mods))
+
+    def as_twostate_formula(self, scope: Scope) -> Expr:
+        return Exists(self.binder.vs, self._framed_body(scope))
+
+
 class InvariantDecl(Decl):
     def __init__(
             self, name: Optional[str], expr: Expr, is_safety: bool, is_sketch: bool, *, span: Optional[Span] = None

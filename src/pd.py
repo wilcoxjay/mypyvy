@@ -587,7 +587,7 @@ def check_dual_edge_multiprocessing_helper(
     t = s.get_translator(2)
     for q in qs:
         s.add(t.translate_expr(q))
-    s.add(t.translate_transition(trans))
+    s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
     for i, p in enumerate(ps):
         s.add(t.translate_expr(p))
         s.add(t.translate_expr(New(p)))
@@ -799,7 +799,7 @@ def check_dual_edge(
                 t = _cti_solver.get_translator(2)
                 for q in qs:
                     _cti_solver.add(t.translate_expr(q))
-                _cti_solver.add(t.translate_transition(trans))
+                _cti_solver.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
                 p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
                 for i, p in enumerate(ps):
                     _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
@@ -1097,7 +1097,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 pass
             t = s.get_translator(2)
             # add transition relation
-            s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
+            s.add(t.translate_expr(list(prog.transitions())[hq.i_transition].as_twostate_formula(prog.scope)))
             # add ps
             for i in sorted(hq.p):
                 s.add(t.translate_expr(ps[i]))
@@ -2985,7 +2985,7 @@ def forward_explore_marco(solver: Solver,
     # transition_indicators = []
     # for i, trans in enumerate(prog.transitions()):
     #     transition_indicators.append(z3.Bool(f'@transition_{i}'))
-    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
     # wp_checked_valid: Set[Tuple[Optional[PDState], SubclausesMap, Tuple[int,...]]] = set()
     # def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
     #     # return True iff wp(clause) is implied by init and valid in all states
@@ -5921,7 +5921,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             transition_indicators: List[z3.ExprRef] = []
             for i, trans in enumerate(prog.transitions()):
                 transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
             p_indicators: List[z3.ExprRef] = []
             def cti_solver_add_p(p: Predicate) -> None:
                 i = len(p_indicators)
@@ -6206,7 +6206,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         transition_indicators: List[z3.ExprRef] = []
         for i, trans in enumerate(prog.transitions()):
             transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
         p_indicators: List[z3.ExprRef] = []
         def add_p(p: Predicate) -> None:
             assert len(p_indicators) == len(ps)
@@ -7889,7 +7889,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                 new_states = []
                 with s.new_frame():
                     s.add(t2.translate_expr(state.as_onestate_formula(0)))
-                    s.add(t2.translate_transition(ition))
+                    s.add(t2.translate_expr(ition.as_twostate_formula(prog.scope)))
                     while True:
                         res = s.check()
                         if res == z3.unsat:

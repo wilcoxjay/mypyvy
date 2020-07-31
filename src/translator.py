@@ -160,56 +160,6 @@ class Z3Translator:
         else:
             assert False, expr
 
-    def frame(self, mods: Iterable[ModifiesClause], index: int = 0) -> List[z3.ExprRef]:
-        frame = []
-        R: Iterator[StateDecl] = iter(self.scope.relations.values())
-        C: Iterator[StateDecl] = iter(self.scope.constants.values())
-        F: Iterator[StateDecl] = iter(self.scope.functions.values())
-        for d in chain(R, C, F):
-            if not d.mutable or (isinstance(d, RelationDecl) and d.is_derived()) or \
-               any(mc.name == d.name for mc in mods):
-                continue
-
-            k_new = self.get_key(index + 1)
-            k_old = self.get_key(index)
-
-            if isinstance(d, ConstantDecl) or len(d.arity) == 0:
-                lhs = Z3Translator.statedecl_to_z3(d, k_new)
-                rhs = Z3Translator.statedecl_to_z3(d, k_old)
-                assert isinstance(lhs, z3.ExprRef) and isinstance(rhs, z3.ExprRef)
-                e = lhs == rhs
-            else:
-                cs: List[z3.ExprRef] = []
-                i = 0
-                for s in d.arity:
-                    cs.append(z3.Const('x' + str(i), Z3Translator.sort_to_z3(s)))
-                    i += 1
-
-                lhs = Z3Translator.statedecl_to_z3(d, k_new)
-                rhs = Z3Translator.statedecl_to_z3(d, k_old)
-                assert isinstance(lhs, z3.FuncDeclRef) and isinstance(rhs, z3.FuncDeclRef)
-
-                e = z3.ForAll(cs, lhs(*cs) == rhs(*cs))
-
-            frame.append(e)
-
-        return frame
-
-    def translate_transition_body(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
-        # ODED: talk to James about this
-        return z3.And(self.translate_expr(New(t.expr, index)),
-                      *self.frame(t.mods, index=index))
-
-    def translate_transition(self, t: DefinitionDecl, index: int = 0) -> z3.ExprRef:
-        # ODED: talk to James about this
-        bs = self.bind(t.binder)
-        with self.scope.in_scope(t.binder, bs):
-            body = self.translate_transition_body(t, index=index)
-            if bs:
-                return z3.Exists(bs, body)
-            else:
-                return body
-
     @staticmethod
     def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Any:
         # ODED: this should return logic.Trace, but there was a

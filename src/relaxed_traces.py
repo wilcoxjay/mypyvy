@@ -505,12 +505,14 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
         res = self._t.translate_expr(rel_expr)
         return res
 
+    # TODO(james): I'm pretty sure I broke this function because of refactoring the superclass.
+    #              In the words of a wise man, sorry!
     def translate_transition(self, t: syntax.DefinitionDecl, index: int = 0) -> z3.ExprRef:
         new_decl = relativize_decl(t, self._active_rels_mapping, self._active_scope, inline_relax_actives=True)
         # TODO: hack! relativize_decl doesn't do this, so the expression can be non-closed.
         # TODO: Should it generate & use an extended scope?
         resolver.resolve_declcontainingexpr(self._active_scope, new_decl)
-        res = self._t.translate_transition(new_decl, index)
+        res = self._t.translate_expr(syntax.New(new_decl.as_twostate_formula(self._active_scope), index))
         return res
 
 def consts_exist_axioms(prog: syntax.Program) -> List[Expr]:

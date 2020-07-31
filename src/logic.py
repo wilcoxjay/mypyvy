@@ -166,7 +166,7 @@ def check_transitions(
                 utils.logger.always_print('checking transition %s:' % (ition.name,))
 
             with s.new_frame():
-                s.add(lator.translate_transition(ition))
+                s.add(lator.translate_expr(ition.as_twostate_formula(prog.scope)))
                 for inv in prog.invs():
                     if 'check_invariant' in utils.args and \
                        utils.args.check_invariant is not None and \
@@ -249,7 +249,7 @@ def check_two_state_implication_all_transitions(
         s.add(t.translate_expr(New(Not(new_conc))))
         for trans in prog.transitions():
             with s.new_frame():
-                s.add(t.translate_transition(trans))
+                s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
                 res = s.check()
                 assert res in (z3.sat, z3.unsat), res
                 if res != z3.unsat:
@@ -260,20 +260,21 @@ def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
 def assert_any_transition(s: Solver, t: Z3Translator,
-                          key_index: int, allow_stutter: bool = False) -> None:
+                          state_index: int, allow_stutter: bool = False) -> None:
     prog = syntax.the_program
-    uid = str(key_index)
+    uid = str(state_index)
 
     tids = []
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
         tids.append(tid)
-        s.add(z3.Implies(tid, t.translate_transition(transition, index=key_index)))
+        s.add(z3.Implies(tid, t.translate_expr(New(transition.as_twostate_formula(prog.scope), state_index))))
 
     if allow_stutter:
         tid = z3.Bool(get_transition_indicator(uid, '$stutter'))
         tids.append(tid)
-        s.add(z3.Implies(tid, z3.And(*t.frame([], index=key_index))))
+        frame = syntax.And(*DefinitionDecl._frame(prog.scope, mods=[]))
+        s.add(z3.Implies(tid, t.translate_expr(New(frame, state_index))))
 
     s.add(z3.Or(*tids))
 

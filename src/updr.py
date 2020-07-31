@@ -337,7 +337,7 @@ class Frames:
             solver.add(to_z3())
             for ition in prog.transitions():
                 with solver.new_frame():
-                    solver.add(t.translate_transition(ition))
+                    solver.add(t.translate_expr(ition.as_twostate_formula(prog.scope)))
                     if (res := solver.check(trackers())) == z3.sat:
                         m = Z3Translator.model_to_trace(solver.model(trackers()), 2)
                         state = m.as_state(0)
