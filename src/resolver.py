@@ -38,6 +38,18 @@ def check_constraint(span: Optional[Span], expected: InferenceSort, actual: Infe
 
 def pre_resolve_binder(scope: syntax.Scope, binder: syntax.Binder) -> None:
     for sv in binder.vs:
+        existing = scope.get(sv.name)
+        if existing is not None and not isinstance(existing, tuple):
+            if isinstance(existing, ConstantDecl):
+                thing = 'constant'
+            elif isinstance(existing, RelationDecl):
+                thing = 'relation'
+            elif isinstance(existing, FunctionDecl):
+                thing = 'function'
+            else:
+                assert False
+            utils.print_error(sv.span, f'{sv.name} is already globally declared as a {thing}. '
+                              'shadowing global declarations is not allowed.')
         if sv.sort is None:
             sv.sort = SortInferencePlaceholder(sv)
         else:
