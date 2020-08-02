@@ -1878,6 +1878,10 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
         if isinstance(d, DefinitionDecl):
             assert len(e.args) == len(d.binder.vs)  # checked by resolver
             gamma = {Id(v.name): arg for v, arg in zip(d.binder.vs, new_args)}
+            # note we recurse in the same scope, as we know the only
+            # free variables in a macro definition are global symbols,
+            # and such symbols cannot be shadowed, so they cannot be
+            # recaptured by the current scope
             return expand_macros(scope, subst(scope, d.expr, gamma))
         else:
             return AppExpr(e.callee, new_args)
@@ -1888,6 +1892,7 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
     elif isinstance(e, Id):
         d = scope.get(e.name)
         if isinstance(d, DefinitionDecl):
+            # ODED: how come we don't recurse?
             return d.expr
         else:
             return e
