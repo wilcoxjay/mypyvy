@@ -175,7 +175,7 @@ def sep_main(solver: Solver) -> str:
             # create z3 symbols for all relations, functions, and constants, and assert their meaning
 
             # create universe unary relations
-            scope = max(len(elems) for elems in state.univs().values())
+            scope = max(len(elems) for elems in state.univs.values())
             V = z3.Datatype(p('elements'))
             def e(i: int) -> str:
                 return f'e{i}'
@@ -186,9 +186,9 @@ def sep_main(solver: Solver) -> str:
                 return getattr(V, 'is_' + e(i))
             def ee(i: int) -> z3.ExprRef:
                 return getattr(V, e(i))
-            universes = {s.name: z3.Function(p(s.name), V, z3.BoolSort()) for s in state.univs()}
+            universes = {s.name: z3.Function(p(s.name), V, z3.BoolSort()) for s in state.univs}
             elem_to_z3: Dict[str, z3.ExprRef] = {}
-            for s, elems in state.univs().items():
+            for s, elems in state.univs.items():
                 assertions.extend(universes[s.name](ee(i)) for i in range(len(elems)))
                 assertions.extend(z3.Not(universes[s.name](ee(i))) for i in range(len(elems), scope))
                 for i, elem in enumerate(elems):
@@ -202,39 +202,39 @@ def sep_main(solver: Solver) -> str:
                 r.name:
                 z3.Function(p(r.name), *repeat(V, len(r.arity)), z3.BoolSort()) if len(r.arity) > 0 else
                 z3.Bool(p(r.name))
-                for r in state.rel_interp()
+                for r in state.rel_interps
             }
-            for r, ri in state.rel_interp().items():
+            for r, ri in state.rel_interps.items():
                 if len(r.arity) == 0:
-                    assert len(ri) == 1 and len(ri[0][0]) == 0, (r, ri)
+                    assert len(ri) == 1 and () in ri, (r, ri)
                     a = relations[r.name]
                     assert isinstance(a, z3.ExprRef)
-                    assertions.append(lit(a, ri[0][1]))
+                    assertions.append(lit(a, ri[()]))
                 else:
-                    for tup, polarity in ri:
+                    for tup, polarity in ri.items():
                         a = relations[r.name]
                         assert isinstance(a, z3.FuncDeclRef)
                         args = [elem_to_z3[x] for x in tup]
                         assertions.append(lit(a(*args), polarity))
 
             # create functions
-            assert all(len(f.arity) > 0 for f in state.func_interp())
+            assert all(len(f.arity) > 0 for f in state.func_interps)
             functions: Dict[str, z3.FuncDeclRef] = {
                 f.name:
                 z3.Function(p(f.name), *repeat(V, len(f.arity)), V)
-                for f in state.func_interp()
+                for f in state.func_interps
             }
-            for f, fi in state.func_interp().items():
-                for tup, img in fi:
+            for f, fi in state.func_interps.items():
+                for tup, img in fi.items():
                     args = [elem_to_z3[x] for x in tup]
                     assertions.append(functions[f.name](*args) == elem_to_z3[img])
 
             # create constants
             constants: Dict[str, z3.ExprRef] = {
                 c.name: z3.Const(p(c.name), V)
-                for c in state.const_interp()
+                for c in state.const_interps
             }
-            for c, ci in state.const_interp().items():
+            for c, ci in state.const_interps.items():
                 assertions.append(constants[c.name] == elem_to_z3[ci])
 
             # now force state_models_sep

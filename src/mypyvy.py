@@ -16,6 +16,7 @@ import parser
 import resolver
 import syntax
 from syntax import Expr, Program, InvariantDecl
+from semantics import RelationInterps, ConstantInterps, FunctionInterps
 import updr
 import utils
 import relaxed_traces
@@ -88,10 +89,6 @@ def debug_tokens(filename: str) -> None:
 JSON = Dict[str, Any]
 def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
                                    Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> JSON:
-    RT = Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]
-    CT = Dict[syntax.ConstantDecl, str]
-    FT = Dict[syntax.FunctionDecl, List[Tuple[List[str], str]]]
-
     inv = res[0]
     trace = res[1]
     if len(res) == 3:
@@ -121,7 +118,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
         univs.append(u)
     obj['universes'] = univs
 
-    def state_json(r: RT, c: CT, f: FT) -> JSON:
+    def state_json(r: RelationInterps, c: ConstantInterps, f: FunctionInterps) -> JSON:
         obj: JSON = {}
 
         rels = []
@@ -129,7 +126,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
             r_obj: JSON = {}
             r_obj['name'] = rd.name
             tuples = []
-            for t, b in r_interp:
+            for t, b in r_interp.items():
                 if b:
                     tuples.append(t)
             r_obj['interpretation'] = tuples
@@ -148,7 +145,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
         for fd, f_interp in f.items():
             f_obj: JSON = {}
             f_obj['name'] = fd.name
-            f_obj['interpretation'] = f_interp
+            f_obj['interpretation'] = list(f_interp.items())
             funcs.append(f_obj)
         obj['functions'] = funcs
 

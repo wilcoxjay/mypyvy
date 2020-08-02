@@ -115,7 +115,7 @@ class Frames:
         while bstate := self.find_something_to_block():
             self.currently_blocking = bstate
             if isinstance(state := bstate.state_or_expr, State):
-                diag_or_expr: Union[Diagram, Expr] = state.as_diagram()
+                diag_or_expr: Union[Diagram, Expr] = Diagram(state)
             else:
                 assert isinstance(expr := bstate.state_or_expr, Expr)
                 diag_or_expr = expr
@@ -238,7 +238,7 @@ class Frames:
                 break
             assert isinstance(x, tuple), (res, x)
             trans, cti = x
-            pre_diag = cti.as_diagram(index=0)
+            pre_diag = Diagram(cti.as_state(0))
 
             trace.append((trans, pre_diag))
             self.block(pre_diag, j - 1, trace)

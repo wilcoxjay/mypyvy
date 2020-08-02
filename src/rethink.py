@@ -17,7 +17,7 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
     if res is None:
         return None
     mod = Z3Translator.model_to_trace(res[0], 2)
-    return (mod.as_diagram(index=0), mod.as_diagram(index=1))
+    return Diagram(mod.as_state(0)), Diagram(mod.as_state(1))
 
 def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]]=None,
                    minimize: Optional[bool]=None, relaxed_semantics: bool=False) -> Optional[logic.Trace]:
@@ -120,7 +120,7 @@ def brat_next_frame(s: Solver, prev_frame: List[Expr],
 
     while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize,
                                        relaxed_semantics=utils.args.relax_backwards)) is not None:
-        bad_model = bad_trace.as_diagram(0)
+        bad_model = Diagram(bad_trace.as_state(0))
         utils.logger.debug("Example to block: %s" % str(bad_model))
         bad_cache.add(bad_model)
         learned_clause = post_image_prime_consequence(s, prev_frame, inits, bad_model,
@@ -173,7 +173,7 @@ def oneshot_compute_inv(s: Solver,
 
     while (bad_trace := bmc_upto_bound(s, safety, bound, preconds=current_frame, minimize=minimize,
                                        relaxed_semantics=utils.args.relax_backwards)) is not None:
-        bad_model = bad_trace.as_diagram(0)
+        bad_model = Diagram(bad_trace.as_state(0))
         learned_clause = bmc_prime_consequence(s, utils.args.forward_depth, inits, bad_model,
                                                utils.args.relax_forwards,
                                                utils.args.generalization_order)

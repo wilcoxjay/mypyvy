@@ -290,8 +290,8 @@ def is_substructure(s: PDState, t: PDState) -> bool:
     )
     if not cheap_check:
         return False
-    diag_s = s.as_diagram(0).to_ast()
-    diag_t = t.as_diagram(0).to_ast()
+    diag_s = Diagram(s.as_state(0)).to_ast()
+    diag_t = Diagram(t.as_state(0)).to_ast()
     if diag_s == diag_t:
         return True
     return cheap_check_implication([diag_t], [diag_s])
@@ -2170,16 +2170,13 @@ def map_clause_state_interaction_instantiate(
         assert len(variables) == len(values)
         consts_and_vars: Dict[str, str] = dict(chain(
             ((var.name, val) for var, val in zip(variables, values)),
-            ((d.name, val) for d, val in state.immut_const_interps.items()),
-            ((d.name, val) for d, val in state.const_interps[0].items()),
+            ((d.name, val) for d, val in state.as_state(0).const_interps.items())
         ))
         functions: Dict[str, Dict[Tuple[str,...], str]] = dict(
-            (d.name, dict((tuple(args), val) for args, val in func))
-            for d, func in chain(state.immut_func_interps.items(), state.func_interps[0].items())
+            (d.name, v) for d, v in state.as_state(0).func_interps.items()
         )
         relations: Dict[str, Dict[Tuple[str,...], bool]] = dict(
-            (d.name, dict((tuple(args), val) for args, val in func))
-            for d, func in chain(state.immut_rel_interps.items(), state.rel_interps[0].items())
+            (d.name, v) for d, v in state.as_state(0).rel_interps.items()
         )
         def get_term(t: Expr) -> str:
             if isinstance(t, Id):
@@ -3385,7 +3382,7 @@ def repeated_houdini(s: Solver) -> str:
         else:
             new_clauses = []
             for m in unreachable:
-                cs = as_clauses(Not(m.as_diagram(0).to_ast()))
+                cs = as_clauses(Not(Diagram(m.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
                 if c not in clauses:
@@ -3442,7 +3439,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 substructure.append((j, i))
             if is_substructure(t, s):
                 substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
         assert len(cs) == 1
         c = cs[0]
         maps.append(SubclausesMapTurbo(c, states, predicates_of_state[i], True))
@@ -4006,7 +4003,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     substructure.append((j, i))
                 if is_substructure(t, s):
                     substructure.append((i, j))
-            cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+            cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
             assert len(cs) == 1
             c = cs[0]
             maps.append(SubclausesMapTurbo(c, states, [], True))
@@ -4623,7 +4620,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                 substructure.append((j, i))
             if is_substructure(t, s):
                 substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
         assert len(cs) == 1
         c = cs[0]
         maps.append(SubclausesMapTurbo(c, states, [], True))
@@ -5156,7 +5153,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     substructure.append((i, j))
                 for j in sorted(superstructures):
                     substructure.append((j, i))
-                cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+                cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
                 maps.append(MultiSubclausesMapICE([c], states, init_ps))
@@ -6906,7 +6903,7 @@ class MonotoneFunction:
 #     # true on A, and then does set cover using z3.
 #     top_clauses: List[Predicate] = []
 #     for s in B:
-#         cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+#         cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
 #         assert len(cs) == 1
 #         c = cs[0]
 #         if c not in top_clauses:
@@ -7237,7 +7234,7 @@ class SeparabilityMap:
     def _new_states(self) -> None:
         # create new SubclausesMapTurbo's
         for i in range(len(self.maps), len(self.states)):
-            cs = as_clauses(Not(self.states[i].as_diagram(0).to_ast()))
+            cs = as_clauses(Not(Diagram(self.states[i].as_state(0)).to_ast()))
             assert len(cs) == 1
             c = cs[0]
             self.maps.append(SubclausesMapTurbo(c, self.states, self.predicates))

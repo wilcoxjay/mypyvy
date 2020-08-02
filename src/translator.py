@@ -12,7 +12,11 @@ from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryEx
 from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse, ModifiesClause
 from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, StateDecl
 from syntax import Program, SortDecl, New
+from semantics import Trace, Element, RelationInterp, FunctionInterp, RelationInterps, FunctionInterps
 from z3_utils import z3_quantifier_alternations
+
+
+TRANSITION_INDICATOR = 'tid'
 
 
 class Z3Translator:
@@ -161,7 +165,7 @@ class Z3Translator:
             assert False, expr
 
     @staticmethod
-    def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Any:
+    def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Trace:
         # ODED: this should return logic.Trace, but there was a
         # problem with cyclic imports. TODO: fix it.
         '''
@@ -169,7 +173,6 @@ class Z3Translator:
 
         If allow_undefined is True, the resulting trace may leave some symbols undefined.
         '''
-        from logic import Trace, TRANSITION_INDICATOR
         trace = Trace(num_states)
         keys = Z3Translator._get_keys(num_states)
 
@@ -187,7 +190,7 @@ class Z3Translator:
             sort = prog.scope.get_sort(str(z3sort))
             assert sort is not None
             univ = z3model.get_universe(z3sort)
-            trace.univs[sort] = list(sorted(rename(str(x)) for x in univ))
+            trace.univs[sort] = tuple(sorted(rename(str(x)) for x in univ))
 
         model_decls = z3model.decls()
         all_decls = model_decls
@@ -212,7 +215,7 @@ class Z3Translator:
             if decl is not None:
                 if isinstance(decl, RelationDecl):
                     if decl.arity:
-                        rl = []
+                        rl: RelationInterp = {}
                         domains = [z3model.get_universe(z3decl.domain(i))
                                    for i in range(z3decl.arity())]
                         if not any(x is None for x in domains):
@@ -222,15 +225,15 @@ class Z3Translator:
                             for row in g:
                                 relation_expr = z3decl(*row)
                                 ans = _eval(relation_expr)
-                                rl.append(([rename(str(col)) for col in row], bool(ans)))
+                                rl[tuple(rename(str(col)) for col in row)] = bool(ans)
                             assert decl not in R
                             R[decl] = rl
                     else:
                         ans = z3model.eval(z3decl())
                         assert decl not in R
-                        R[decl] = [([], bool(ans))]
+                        R[decl] = {(): bool(ans)}
                 elif isinstance(decl, FunctionDecl):
-                    fl = []
+                    fl: FunctionInterp  = {}
                     domains = [z3model.get_universe(z3decl.domain(i))
                                for i in range(z3decl.arity())]
                     if not any(x is None for x in domains):
@@ -244,11 +247,9 @@ class Z3Translator:
                             else:
                                 ans_str = rename(ans.decl().name())
 
-                            fl.append(([rename(str(col)) for col in row], ans_str))
-
+                            fl[tuple(rename(str(col)) for col in row)]= ans_str
                         assert decl not in F
                         F[decl] = fl
-
                 else:
                     assert isinstance(decl, ConstantDecl)
                     v = z3model.eval(z3decl())
@@ -274,102 +275,60 @@ class Z3Translator:
         if allow_undefined:
             return trace
 
-        def get_univ(d: SortDecl) -> List[str]:
+        def get_univ(d: SortDecl) -> Tuple[Element, ...]:
             if d not in trace.univs:
-                trace.univs[d] = [d.name + '0']
+                trace.univs[d] = (d.name + '0',)
             return trace.univs[d]
 
-        def arbitrary_interp_r(r: RelationDecl) -> List[Tuple[List[str], bool]]:
+        def arbitrary_interp_r(r: RelationDecl) -> RelationInterp:
             doms = [get_univ(syntax.get_decl_from_sort(s)) for s in r.arity]
-
-            l = []
-            tup: Tuple[str, ...]
-            for tup in product(*doms):
-                l.append((list(tup), False))
-
-            return l
+            return dict.fromkeys(product(*doms), False)
 
         def ensure_defined_r(r: RelationDecl) -> None:
-            R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
-            if not r.mutable:
-                R = [trace.immut_rel_interps]
-            else:
-                R = trace.rel_interps
-            interp: Optional[List[Tuple[List[str], bool]]] = None
-
-            def get_interp() -> List[Tuple[List[str], bool]]:
-                nonlocal interp
-                if interp is None:
-                    interp = arbitrary_interp_r(r)
-                return interp
-
-            for m in R:
+            arb_interp: Optional[RelationInterp] = None
+            for m in (trace.rel_interps if r.mutable else [trace.immut_rel_interps]):
                 if r not in m:
-                    m[r] = get_interp()
+                    if arb_interp is None:
+                        arb_interp = arbitrary_interp_r(r)
+                    m[r] = arb_interp
 
-        def arbitrary_interp_c(c: ConstantDecl) -> str:
+        def arbitrary_interp_c(c: ConstantDecl) -> Element:
             if isinstance(c.sort, syntax._BoolSort):
                 return 'false'
             elif isinstance(c.sort, syntax._IntSort):
                 return '0'
-
             assert isinstance(c.sort, syntax.UninterpretedSort)
-
             sort = c.sort
             return get_univ(syntax.get_decl_from_sort(sort))[0]
 
         def ensure_defined_c(c: ConstantDecl) -> None:
-            R: List[Dict[RelationDecl, List[Tuple[List[str], bool]]]]
-            if not c.mutable:
-                C = [trace.immut_const_interps]
-            else:
-                C = trace.const_interps
-
-            interp: str = arbitrary_interp_c(c)
-
-            for m in C:
+            arb_interp = arbitrary_interp_c(c)
+            for m in (trace.const_interps if c.mutable else [trace.immut_const_interps]):
                 if c not in m:
-                    m[c] = interp
+                    m[c] = arb_interp
 
-        def arbitrary_interp_f(f: FunctionDecl) -> List[Tuple[List[str], str]]:
+        def arbitrary_interp_f(f: FunctionDecl) -> FunctionInterp:
             doms = [get_univ(syntax.get_decl_from_sort(s)) for s in f.arity]
-
-            interp = get_univ(syntax.get_decl_from_sort(f.sort))[0]
-
-            l = []
-            tup: Tuple[str, ...]
-            for tup in product(*doms):
-                l.append((list(tup), interp))
-
-            return l
+            image = get_univ(syntax.get_decl_from_sort(f.sort))[0]
+            return dict.fromkeys(product(*doms), image)
 
         def ensure_defined_f(f: FunctionDecl) -> None:
-            F: List[Dict[FunctionDecl, List[Tuple[List[str], str]]]]
-            if not f.mutable:
-                F = [trace.immut_func_interps]
-            else:
-                F = trace.func_interps
-
-            interp: Optional[List[Tuple[List[str], str]]] = None
-
-            def get_interp() -> List[Tuple[List[str], str]]:
-                nonlocal interp
-                if interp is None:
-                    interp = arbitrary_interp_f(f)
-                return interp
-
-            for m in F:
+            arb_interp: Optional[FunctionInterp] = None
+            for m in (trace.func_interps if f.mutable else [trace.immut_func_interps]):
                 if f not in m:
-                    m[f] = get_interp()
+                    if arb_interp is None:
+                        arb_interp = arbitrary_interp_f(f)
+                    m[f] = arb_interp
 
         for decl in prog.relations_constants_and_functions():
             if isinstance(decl, RelationDecl):
                 ensure_defined_r(decl)
             elif isinstance(decl, ConstantDecl):
                 ensure_defined_c(decl)
-            else:
-                assert isinstance(decl, FunctionDecl)
+            elif isinstance(decl, FunctionDecl):
                 ensure_defined_f(decl)
+            else:
+                assert False, decl
 
         return trace
 

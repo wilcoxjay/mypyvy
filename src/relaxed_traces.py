@@ -168,7 +168,7 @@ def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDec
 
 
 class RelationFact:
-    def __init__(self, rel: syntax.RelationDecl, els: List[str], polarity: bool):
+    def __init__(self, rel: syntax.RelationDecl, els: Tuple[str, ...], polarity: bool):
         self._rel = rel
         self._els = els
         self._polarity = polarity
@@ -179,7 +179,7 @@ class RelationFact:
             fact_free_vars = syntax.Not(fact_free_vars)
         return fact_free_vars
 
-    def involved_elms(self) -> List[str]:
+    def involved_elms(self) -> Tuple[str, ...]:
         return self._els
 
     def _is_positive(self) -> bool:
@@ -192,7 +192,7 @@ class RelationFact:
         return "%s(%s) = %s" % (self._rel.name, self._els, str(self._polarity))
 
 class FunctionFact:
-    def __init__(self, func: syntax.FunctionDecl, param_els: List[str], res_elm: str):
+    def __init__(self, func: syntax.FunctionDecl, param_els: Tuple[str, ...], res_elm: str):
         self._func = func
         self._params_els = param_els
         self._res_elm = res_elm
@@ -201,8 +201,8 @@ class FunctionFact:
         e = syntax.AppExpr(self._func.name, [syntax.Id(els_trans(e)) for e in self._params_els])
         return syntax.Eq(e, syntax.Id(els_trans(self._res_elm)))
 
-    def involved_elms(self) -> List[str]:
-        return self._params_els + [self._res_elm]
+    def involved_elms(self) -> Tuple[str, ...]:
+        return self._params_els + (self._res_elm,)
 
     def __repr__(self) -> str:
         return "FunctionFact(func=%s, param_els=%s, res_elm=%s)" % (self._func, self._params_els, self._res_elm)
@@ -307,14 +307,14 @@ def derived_rels_candidates_from_trace(
     first_relax_idx = first_relax_step_idx(trns)
     pre_relax_state = trns.as_state(first_relax_idx)
     post_relax_state = trns.as_state(first_relax_idx + 1)
-    assert pre_relax_state.univs() == post_relax_state.univs()
+    assert pre_relax_state.univs == post_relax_state.univs
 
     # relaxed elements
     relaxed_elements = []
-    for sort, univ in pre_relax_state.univs().items():
+    for sort, univ in pre_relax_state.univs.items():
         active_rel_name = 'active_' + sort.name         # TODO: de-duplicate
-        pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interp())
-        post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interp())
+        pre_active_interp = dict_val_from_rel_name(active_rel_name, pre_relax_state.rel_interps)
+        post_active_interp = dict_val_from_rel_name(active_rel_name, post_relax_state.rel_interps)
         pre_active_elements = [tup[0] for (tup, b) in pre_active_interp if b]
         post_active_elements = [tup[0] for (tup, b) in post_active_interp if b]
         assert set(post_active_elements).issubset(set(pre_active_elements))
@@ -325,22 +325,20 @@ def derived_rels_candidates_from_trace(
     # pre-relaxation step facts concerning at least one relaxed element (other to be found by UPDR)
     relevant_facts: List[Union[RelationFact, FunctionFact, InequalityFact]] = []
 
-    for rel, rintp in pre_relax_state.rel_interp().items():
-        for rfact in rintp:
-            (elms, polarity) = rfact
+    for rel, rintp in pre_relax_state.rel_interps.items():
+        for elms, polarity in rintp.items():
             relation_fact = RelationFact(rel, elms, polarity)
             if set(relation_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append(relation_fact)
 
-    for func, fintp in pre_relax_state.func_interp().items():
-        for ffact in fintp:
-            (els_params, els_res) = ffact
+    for func, fintp in pre_relax_state.func_interps.items():
+        for els_params, els_res in fintp.items():
             function_fact = FunctionFact(func, els_params, els_res)
             if set(function_fact.involved_elms()) & set(ename for (_, ename) in relaxed_elements):
                 relevant_facts.append(function_fact)
 
     for sort, elm in relaxed_elements:  # other inequalities presumably handled by UPDR
-        for other_elm in pre_relax_state.univs()[sort]:
+        for other_elm in pre_relax_state.univs[sort]:
             if other_elm == elm:
                 continue
             relevant_facts.append(InequalityFact(elm, other_elm))

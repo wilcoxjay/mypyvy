@@ -15,6 +15,7 @@ import subprocess
 import sys
 from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
 from typing import cast, TypeVar, Callable
+
 import z3
 
 import utils
@@ -22,10 +23,8 @@ import resolver
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl, Not, New
-from translator import Z3Translator
-
-
-TRANSITION_INDICATOR = 'tid'
+from semantics import Trace, State, FirstOrderStructure
+from translator import Z3Translator, TRANSITION_INDICATOR
 
 
 # useful for debugging
@@ -914,12 +913,9 @@ class Diagram:
 
     def __init__(
             self,
-            vs: List[syntax.SortedVar],
-            ineqs: Dict[SortDecl, List[Expr]],
-            rels: Dict[RelationDecl, List[Expr]],
-            consts: Dict[ConstantDecl, Expr],
-            funcs: Dict[FunctionDecl, List[Expr]]
+            struct: FirstOrderStructure,
     ) -> None:
+        vs, ineqs, rels, consts, funcs = Diagram._read_first_order_structure(struct)
         self.binder = syntax.Binder(vs)
         self.ineqs = ineqs
         self.rels = rels
@@ -927,6 +923,60 @@ class Diagram:
         self.funcs = funcs
         self.trackers: List[z3.ExprRef] = []
         self.tombstones: Dict[_RelevantDecl, Optional[Set[int]]] = defaultdict(set)
+        if utils.args.simplify_diagram:
+            self.simplify_consts()
+        prog = syntax.the_program
+        assert prog.scope is not None
+        self._resolve(prog.scope)
+
+    @staticmethod
+    def _read_first_order_structure(struct: FirstOrderStructure) -> Tuple[
+            List[syntax.SortedVar], # vs
+            Dict[SortDecl, List[Expr]], # ineqs
+            Dict[RelationDecl, List[Expr]], # rels
+            Dict[ConstantDecl, Expr], # consts
+            Dict[FunctionDecl, List[Expr]], # funcs
+    ]:
+        vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = {}
+        ineqs: Dict[SortDecl, List[Expr]] = {}
+        rels: Dict[RelationDecl, List[Expr]] = {}
+        consts: Dict[ConstantDecl, Expr] = {}
+        funcs: Dict[FunctionDecl, List[Expr]] = {}
+        for sort in struct.univs:
+            vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
+                                  for v in struct.univs[sort]]
+            u = [syntax.Id(s) for s in struct.univs[sort]]
+            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+
+        for R, l in struct.rel_interps.items():
+            rels[R] = []
+            for tup, ans in l.items():
+                e: Expr
+                if tup:
+                    args: List[Expr] = []
+                    for (col, col_sort) in zip(tup, R.arity):
+                        assert isinstance(col_sort, syntax.UninterpretedSort)
+                        assert col_sort.decl is not None
+                        args.append(syntax.Id(col))
+                    e = syntax.AppExpr(R.name, args)
+                else:
+                    e = syntax.Id(R.name)
+                e = e if ans else syntax.Not(e)
+                rels[R].append(e)
+        for C, c in struct.const_interps.items():
+            e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
+            consts[C] = e
+        for F, fl in struct.func_interps.items():
+            funcs[F] = []
+            for tup, res in fl.items():
+                e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
+                e = syntax.Eq(e, syntax.Id(res))
+                funcs[F].append(e)
+
+        vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
+
+        return vs, ineqs, rels, consts, funcs
+
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
         for s, l in self.ineqs.items():
@@ -1011,14 +1061,12 @@ class Diagram:
             ' &\n  '.join(str(c) for _, _, c in self.conjuncts())
         )
 
-    def resolve(self, scope: Scope) -> None:
+    def _resolve(self, scope: Scope) -> None:
         resolver.pre_resolve_binder(scope, self.binder)
-
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             with scope.n_states(1):
                 for _, _, c in self.conjuncts():
                     resolver.resolve_expr(scope, c, syntax.BoolSort)
-
         resolver.post_resolve_binder(self.binder)
 
     def vs(self) -> List[syntax.SortedVar]:
@@ -1176,433 +1224,3 @@ def reorder(lst: List[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]]
 
     assert 0 <= order < math.factorial(len(lst))
     return list(utils.generator_element(itertools.permutations(lst), order))
-
-_digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
-
-def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
-    custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
-
-    if custom_printer_annotation is not None:
-        assert len(custom_printer_annotation.args) >= 1
-        import importlib
-        printers = importlib.import_module('printers')
-        printer_name = custom_printer_annotation.args[0]
-        custom_printer = printers.__dict__.get(printer_name)
-        custom_printer_args = custom_printer_annotation.args[1:] \
-            if custom_printer is not None else []
-        if custom_printer is not None:
-            return custom_printer(state, s, elt, custom_printer_args)
-        else:
-            utils.print_warning(custom_printer_annotation.span,
-                                'could not find printer named %s' % (printer_name,))
-    return None
-
-def print_element(state: State, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
-    if not isinstance(s, SortDecl):
-        if isinstance(s, (syntax._BoolSort, syntax._IntSort)):
-            return elt
-        s = syntax.get_decl_from_sort(s)
-
-    return try_printed_by(state, s, elt) or elt
-
-def print_tuple(state: State, arity: List[syntax.Sort], tup: List[str]) -> str:
-    l = []
-    assert len(arity) == len(tup)
-    for s, x in zip(arity, tup):
-        l.append(print_element(state, s, x))
-    return ','.join(l)
-
-
-# The following classes define the semantics of multi-vocabulary
-# formulas in terms of traces. There is also a convenience class
-# representing a single state. (should be moved to semantics.py?)
-#
-# ODED: there is a cyclic import issue here, should discuss with James
-
-Universe = Dict[SortDecl, List[str]]
-RelationInterp = Dict[RelationDecl, List[Tuple[List[str], bool]]]
-ConstantInterp = Dict[ConstantDecl, str]
-FunctionInterp = Dict[FunctionDecl, List[Tuple[List[str], str]]]
-
-
-_K = TypeVar('_K')
-_V = TypeVar('_V')
-def _lookup_assoc(l: Sequence[Tuple[_K, _V]], k: _K) -> _V:
-    for k2, v2 in l:
-        if k == k2:
-            return v2
-    assert False
-
-
-class Trace:
-    def __init__(
-            self,
-            num_states: int,
-    ) -> None:
-        assert num_states >= 0
-        self.num_states = num_states
-
-        self.univs: Universe = OrderedDict()
-
-        self.immut_rel_interps: RelationInterp = OrderedDict()
-        self.immut_const_interps: ConstantInterp = OrderedDict()
-        self.immut_func_interps: FunctionInterp = OrderedDict()
-
-        self.rel_interps: List[RelationInterp] = [OrderedDict() for i in range(self.num_states)]
-        self.const_interps: List[ConstantInterp] = [OrderedDict() for i in range(self.num_states)]
-        self.func_interps: List[FunctionInterp] = [OrderedDict() for i in range(self.num_states)]
-
-        self.transitions: List[str] = ['' for i in range(self.num_states - 1)]
-        self.onestate_formula_cache: Dict[int, Expr] = {}
-        self.diagram_cache: Dict[int, Diagram] = {}
-
-    def _as_trace(self, indices: Tuple[int, ...]) -> Trace:
-        assert all(0 <= i < self.num_states for i in indices)
-        assert indices in [(1, 0), (1,)], 'should only be used in legacy pd.py code'
-        t = Trace(len(indices))
-        t.univs = self.univs.copy()
-        t.immut_rel_interps = self.immut_rel_interps.copy()
-        t.immut_const_interps = self.immut_const_interps.copy()
-        t.immut_func_interps = self.immut_func_interps.copy()
-        t.rel_interps = [self.rel_interps[i].copy() for i in indices]
-        t.const_interps = [self.const_interps[i].copy() for i in indices]
-        t.func_interps = [self.func_interps[i] for i in indices]
-        # no transition labels in permuted trace
-        return t
-
-    def __str__(self) -> str:
-        l = []
-        dummy_state = State(self, None)
-        l.extend(_univ_str(dummy_state))
-        l.append(_state_str(dummy_state))
-        for i in range(self.num_states):
-            if i > 0 and self.transitions[i - 1] != '':
-                l.append('\ntransition %s' % (self.transitions[i - 1],))
-            l.append('\nstate %s:' % (i,))
-            l.append(_state_str(State(self, i), print_immutable=False))
-
-        return '\n'.join(l)
-
-    def as_diagram(self, index: Optional[int] = None) -> Diagram:
-        assert self.num_states == 1 or index is not None, \
-            'to generate a diagram from a multi-state model, you must specify which state you want'
-        assert index is None or (0 <= index and index < self.num_states)
-
-        if index is None:
-            index = 0
-
-        prog = syntax.the_program
-
-        mut_rel_interps = self.rel_interps[index]
-        mut_const_interps = self.const_interps[index]
-        mut_func_interps = self.func_interps[index]
-
-        vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
-        ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
-        rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
-        consts: Dict[ConstantDecl, Expr] = OrderedDict()
-        funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
-        for sort in self.univs:
-            vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
-                                  for v in self.univs[sort]]
-            u = [syntax.Id(s) for s in self.univs[sort]]
-            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
-
-        for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
-            rels[R] = []
-            for tup, ans in l:
-                e: Expr
-                if tup:
-                    args: List[Expr] = []
-                    for (col, col_sort) in zip(tup, R.arity):
-                        assert isinstance(col_sort, syntax.UninterpretedSort)
-                        assert col_sort.decl is not None
-                        args.append(syntax.Id(col))
-                    e = syntax.AppExpr(R.name, args)
-                else:
-                    e = syntax.Id(R.name)
-                e = e if ans else syntax.Not(e)
-                rels[R].append(e)
-        for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-            e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
-            consts[C] = e
-        for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
-            funcs[F] = []
-            for tup, res in fl:
-                e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
-                e = syntax.Eq(e, syntax.Id(res))
-                funcs[F].append(e)
-
-        vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
-        diag = Diagram(vs, ineqs, rels, consts, funcs)
-        if utils.args.simplify_diagram:
-            diag.simplify_consts()
-        assert prog.scope is not None
-        diag.resolve(prog.scope)
-
-        return diag
-
-    def as_onestate_formula(self, index: Optional[int] = None) -> Expr:
-        assert self.num_states == 1 or index is not None, \
-            'to generate a onestate formula from a multi-state model, ' + \
-            'you must specify which state you want'
-        assert index is None or (0 <= index and index < self.num_states)
-
-        if index is None:
-            index = 0
-
-        if index not in self.onestate_formula_cache:
-            prog = syntax.the_program
-
-            mut_rel_interps = self.rel_interps[index]
-            mut_const_interps = self.const_interps[index]
-            mut_func_interps = self.func_interps[index]
-
-            vs: List[syntax.SortedVar] = []
-            ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
-            rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
-            consts: Dict[ConstantDecl, Expr] = OrderedDict()
-            funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
-            for sort in self.univs:
-                vs.extend(syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
-                          for v in self.univs[sort])
-                u = [syntax.Id(v) for v in self.univs[sort]]
-                ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
-            for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
-                rels[R] = []
-                for tup, ans in l:
-                    e = (
-                        syntax.AppExpr(R.name, [syntax.Id(col) for col in tup])
-                        if tup else syntax.Id(R.name)
-                    )
-                    rels[R].append(e if ans else syntax.Not(e))
-            for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-                consts[C] = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
-            for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
-                funcs[F] = [
-                    syntax.Eq(syntax.AppExpr(F.name, [syntax.Id(col) for col in tup]),
-                              syntax.Id(res))
-                    for tup, res in fl
-                ]
-
-            # get a fresh variable, avoiding names of universe elements in vs
-            fresh = prog.scope.fresh('x', [v.name for v in vs])
-
-            e = syntax.Exists(vs, syntax.And(
-                *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
-                    syntax.Forall([syntax.SortedVar(fresh,
-                                                    syntax.UninterpretedSort(sort.name))],
-                                  syntax.Or(*(syntax.Eq(syntax.Id(fresh), syntax.Id(v))
-                                              for v in self.univs[sort])))
-                    for sort in self.univs
-                ))))
-            assert prog.scope is not None
-            with prog.scope.n_states(1):
-                resolver.resolve_expr(prog.scope, e, None)
-            self.onestate_formula_cache[index] = e
-        return self.onestate_formula_cache[index]
-
-    def as_state(self, i: Optional[int]) -> State:
-        assert i is None or (0 <= i and i < self.num_states)
-        return State(self, i)
-
-    def eval(self, full_expr: Expr, starting_index: Optional[int]) -> Union[str, bool]:
-        def go(expr: Expr, index: Optional[int]) -> Union[str, bool]:
-            def current_rels() -> Dict[RelationDecl, List[Tuple[List[str], bool]]]:
-                return dict(itertools.chain(self.immut_rel_interps.items(),
-                                            self.rel_interps[index].items() if index is not None else []))
-
-            def current_consts() -> Dict[ConstantDecl, str]:
-                return dict(itertools.chain(self.immut_const_interps.items(),
-                                            self.const_interps[index].items() if index is not None else []))
-
-            def current_funcs() -> Dict[FunctionDecl, List[Tuple[List[str], str]]]:
-                return dict(itertools.chain(self.immut_func_interps.items(),
-                                            self.func_interps[index].items() if index is not None else []))
-            scope: syntax.Scope[Union[str, bool]] = \
-                cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
-            if isinstance(expr, syntax.Bool):
-                return expr.val
-            elif isinstance(expr, syntax.UnaryExpr):
-                if expr.op == 'NEW':
-                    assert index is not None
-                    return go(expr.arg, index=index + 1)
-                elif expr.op == 'NOT':
-                    return not go(expr.arg, index)
-                assert False, "eval unknown operation %s" % expr.op
-            elif isinstance(expr, syntax.BinaryExpr):
-                if expr.op == 'IMPLIES':
-                    return not go(expr.arg1, index) or go(expr.arg2, index)
-                elif expr.op in ['IFF', 'EQUAL']:
-                    return go(expr.arg1, index) == go(expr.arg2, index)
-                else:
-                    assert expr.op == 'NOTEQ'
-                    return go(expr.arg1, index) != go(expr.arg2, index)
-            elif isinstance(expr, syntax.NaryExpr):
-                assert expr.op in ['AND', 'OR', 'DISTINCT']
-                if expr.op in ['AND', 'OR']:
-                    p = all if expr.op == 'AND' else any
-                    return p(go(arg, index) for arg in expr.args)
-                else:
-                    assert expr.op == 'DISTINCT'
-                    return len(set(go(arg, index) for arg in expr.args)) == len(expr.args)
-            elif isinstance(expr, syntax.AppExpr):
-                d = scope.get(expr.callee)
-                assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
-                table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
-                if isinstance(d, syntax.RelationDecl):
-                    table = current_rels()[d]
-                else:
-                    table = current_funcs()[d]
-                args = []
-                for arg in expr.args:
-                    ans = go(arg, index)
-                    assert isinstance(ans, str)
-                    args.append(ans)
-                return _lookup_assoc(table, args)
-            elif isinstance(expr, syntax.QuantifierExpr):
-                assert expr.quant in ['FORALL', 'EXISTS']
-                p = all if expr.quant == 'FORALL' else any
-                doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
-
-                def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
-                    with scope.in_scope(q.binder, list(tup)):
-                        ans = go(q.body, index)
-                        assert isinstance(ans, bool)
-                        return ans
-                return p(one(expr, t) for t in itertools.product(*doms))
-            elif isinstance(expr, syntax.Id):
-                a = scope.get(expr.name)
-                # definitions are not supported
-                assert not isinstance(a, syntax.DefinitionDecl) and \
-                    not isinstance(a, syntax.FunctionDecl) and a is not None
-                if isinstance(a, syntax.RelationDecl):
-                    return _lookup_assoc(current_rels()[a], [])
-                elif isinstance(a, syntax.ConstantDecl):
-                    return current_consts()[a]
-                elif isinstance(a, tuple):
-                    # bound variable introduced to scope
-                    (bound_elem,) = a
-                    return bound_elem
-                else:
-                    assert isinstance(a, str) or isinstance(a, bool)
-                    return a
-            elif isinstance(expr, syntax.IfThenElse):
-                branch = go(expr.branch, index)
-                assert isinstance(branch, bool)
-                return go(expr.then, index) if branch else go(expr.els, index)
-            elif isinstance(expr, syntax.Let):
-                val = go(expr.val, index)
-                with scope.in_scope(expr.binder, [val]):
-                    return go(expr.body, index)
-            else:
-                assert False, expr
-
-        return go(full_expr, index=starting_index)
-
-
-@dataclass
-class State:
-    trace: Trace
-    index: Optional[int]
-
-    def __repr__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(self, print_negative_tuples=True, print_immutable=True)])
-
-    def __str__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(self, print_immutable=True)])
-
-    def eval(self, e: Expr) -> Union[str, bool]:
-        return self.trace.eval(e, starting_index=self.index)
-
-    def as_diagram(self) -> Diagram:
-        return self.trace.as_diagram(index=self.index)
-
-    def as_onestate_formula(self) -> Expr:
-        return self.trace.as_onestate_formula(index=self.index)
-
-    def univs(self) -> Universe:
-        return self.trace.univs
-
-    def rel_interp(self) -> RelationInterp:
-        if self.index is None:
-            return self.trace.immut_rel_interps
-        else:
-            return dict(itertools.chain(self.trace.immut_rel_interps.items(),
-                                        self.trace.rel_interps[self.index].items()))
-
-    def const_interp(self) -> ConstantInterp:
-        if self.index is None:
-            return self.trace.immut_const_interps
-        else:
-            return dict(itertools.chain(self.trace.immut_const_interps.items(),
-                                        self.trace.const_interps[self.index].items()))
-
-    def func_interp(self) -> FunctionInterp:
-        if self.index is None:
-            return self.trace.immut_func_interps
-        else:
-            return dict(itertools.chain(self.trace.immut_func_interps.items(),
-                                        self.trace.func_interps[self.index].items()))
-
-    def element_sort(self, element_name: str) -> SortDecl:
-        matching_sorts = [sort for (sort, univ) in self.univs().items()
-                          if element_name in univ]
-        assert matching_sorts, "%s unknown element name" % element_name
-        assert len(matching_sorts) == 1, "ambiguous element name %s" % element_name
-        return matching_sorts[0]
-
-
-def _univ_str(state: State) -> List[str]:
-    l = []
-    for s in sorted(state.univs().keys(), key=str):
-        if syntax.has_annotation(s, 'no_print'):
-            continue
-
-        l.append(str(s))
-
-        def key(x: str) -> Tuple[str, int]:
-            ans = print_element(state, s, x)
-            if (m := _digits_re.match(ans)) is not None:
-                return (m['prefix'], int(m['suffix']))
-            else:
-                return (ans, 0)
-        for x in sorted(state.univs()[s], key=key):
-            l.append('  %s' % print_element(state, s, x))
-    return l
-
-
-def _state_str(
-        state: State,
-        print_immutable: bool = True,
-        print_negative_tuples: Optional[bool] = None,
-) -> str:
-    if print_negative_tuples is None:
-        print_negative_tuples = utils.args.print_negative_tuples
-
-    l = []
-
-    Cs = state.const_interp()
-    for C in Cs:
-        if syntax.has_annotation(C, 'no_print') or (not C.mutable and not print_immutable):
-            continue
-        l.append('%s = %s' % (C.name, print_element(state, C.sort, Cs[C])))
-
-    Rs = state.rel_interp()
-    for R in Rs:
-        if syntax.has_annotation(R, 'no_print') or (not R.mutable and not print_immutable):
-            continue
-        for tup, b in sorted(Rs[R], key=lambda x: print_tuple(state, R.arity, x[0])):
-            if b or print_negative_tuples:
-                l.append('%s%s(%s)' % ('' if b else '!', R.name,
-                                       print_tuple(state, R.arity, tup)))
-
-    Fs = state.func_interp()
-    for F in Fs:
-        if syntax.has_annotation(F, 'no_print') or (not F.mutable and not print_immutable):
-            continue
-        for tup, res in sorted(Fs[F], key=lambda x: print_tuple(state, F.arity, x[0])):
-            l.append('%s(%s) = %s' % (F.name, print_tuple(state, F.arity, tup),
-                                      print_element(state, F.sort, res)))
-
-    return '\n'.join(l)

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import syntax
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
 import logic
-from logic import State
+from semantics import print_element, Element, RelationInterp, FunctionInterp, FirstOrderStructure
 
 from typing import List, Dict, Optional, Set, Union
 
@@ -42,27 +42,26 @@ def get_function(name: str) -> FunctionDecl:
     assert isinstance(f, FunctionDecl), (name, f)
     return f
 
-def get_ordinal(state: State, order: RelationDecl, elt: str) -> int:
+def get_ordinal(order: RelationInterp, elt: str) -> int:
     graph: Dict[str, Set[str]] = defaultdict(set)
-    for tup, b in state.rel_interp()[order]:
+    for tup, b in order.items():
         if b:
             assert len(tup) == 2
             lo, hi = tup
             graph[hi].add(lo)
-
     assert elt in graph
     return len(graph[elt]) - 1
 
-def ordered_by_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
+def ordered_by_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1
     order_name = args[0]
     order = get_relation(order_name)
     us = UninterpretedSort(s.name)
     assert order.arity == [us, us] and not order.mutable
+    ordinal = get_ordinal(struct.rel_interps[order], elt)
+    return f'{s.name}{ordinal}'
 
-    return '%s%s' % (s.name, get_ordinal(state, order, elt))
-
-def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
+def set_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1
     member_name = args[0]
     member = get_relation(member_name)
@@ -74,23 +73,23 @@ def set_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     item_sort_decl = syntax.get_decl_from_sort(item_sort)
 
     items: Set[str] = set()
-    for tup, b in state.rel_interp()[member]:
+    for tup, b in struct.rel_interps[member].items():
         assert len(tup) == 2
         item, set_id = tup
         if b and set_id == elt:
             items.add(item)
 
-    return '{%s}' % (','.join(sorted(logic.print_element(state, item_sort_decl, x) for x in items)),)
+    return '{' + ','.join(sorted(print_element(struct, item_sort_decl, x) for x in items)) + '}'
 
-def const_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
+def const_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
     prog = syntax.the_program
     for c in prog.constants():
-        if syntax.get_decl_from_sort(c.sort) == s and state.const_interp()[c] == elt:
+        if syntax.get_decl_from_sort(c.sort) == s and struct.const_interps[c] == elt:
             return c.name
 
     return elt
 
-def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
+def option_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 2
     is_none_name, value_name = args
     is_none = get_relation(is_none_name)
@@ -104,7 +103,7 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     elt_sort = syntax.get_decl_from_sort(value.sort)
 
     none: Optional[str] = None
-    for tup, b in state.rel_interp()[is_none]:
+    for tup, b in struct.rel_interps[is_none].items():
         if b:
             assert none is None and len(tup) == 1
             none = tup[0]
@@ -115,14 +114,14 @@ def option_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         return 'None'
     else:
         the_value: Optional[str] = None
-        for tup, res in state.func_interp()[value]:
+        for tup, res in struct.func_interps[value].items():
             assert len(tup) == 1
             if tup[0] == elt:
                 assert the_value is None
                 the_value = res
         assert the_value is not None
 
-        return 'Some(%s)' % (logic.print_element(state, elt_sort, the_value))
+        return 'Some(%s)' % (print_element(struct, elt_sort, the_value))
 
 @dataclass
 class LogEntry:
@@ -141,7 +140,7 @@ class LogEntry:
 # type r(args[0], some_sort) or functions of type f(args[0]): some_sort.
 # These functions and relations give the elements at each index.
 # This printer assumes that there is a function
-def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
+def log_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
     # args should at least hold an index total order and used relation
     assert len(args) > 1
     n_values = len(args) - 2
@@ -163,7 +162,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
         assert rel_or_func.arity[1].decl == index_sort
 
     entries: Dict[str, LogEntry] = {}
-    for tup, b in state.rel_interp()[index_used]:
+    for tup, b in struct.rel_interps[index_used].items():
         if not b:
             continue
 
@@ -177,7 +176,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
             val_rel = get_relation(name)
             assert_valid_rel_or_func(val_rel)
             value_sorts.append(syntax.get_decl_from_sort(val_rel.arity[2]))
-            for tup, b in state.rel_interp()[val_rel]:
+            for tup, b in struct.rel_interps[val_rel].items():
                 if not b:
                     continue
 
@@ -190,7 +189,7 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
             val_func = get_function(name)
             assert_valid_rel_or_func(val_func)
             value_sorts.append(syntax.get_decl_from_sort(val_func.sort))
-            for tup, res in state.func_interp()[val_func]:
+            for tup, res in struct.func_interps[val_func].items():
                 log, index = tup
                 if log == elt:
                     if index not in entries:
@@ -200,26 +199,26 @@ def log_printer(state: State, s: SortDecl, elt: str, args: List[str]) -> str:
     # The printed value of an index is consistent with index_le, so the log
     # should be ordered in the same way.
     sorted_entries = sorted(entries.values(),
-                            key=lambda e: get_ordinal(state, index_le, e.index))
+                            key=lambda e: get_ordinal(struct.rel_interps[index_le], e.index))
 
     # A log is well-formed if it is empty or
     #  all entries have a single element for each value and the set of indexes
     #  has no gaps starting from zero.
     well_formed = ((not sorted_entries) or
                    (all(all(len(x) == 1 for x in e.values) for e in sorted_entries) and
-                    get_ordinal(state, index_le, sorted_entries[-1].index) ==
+                    get_ordinal(struct.rel_interps[index_le], sorted_entries[-1].index) ==
                     len(sorted_entries) - 1))
 
     def value_to_str(vs: List[str], sort: SortDecl) -> str:
         return '%s |-> %s' % (
             sort.name,
-            logic.print_element(state, sort, vs[0]) if len(vs) == 1 else
-            '[%s]' % (', '.join(logic.print_element(state, sort, v) for v in vs)))
+            print_element(struct, sort, vs[0]) if len(vs) == 1 else
+            '[%s]' % (', '.join(print_element(struct, sort, v) for v in vs)))
 
     def entry_to_str(e: LogEntry, wf: bool) -> str:
         entry_strs = [value_to_str(e.values[idx], sort) for idx, sort in enumerate(value_sorts)]
         if not wf:
-            entry_strs.insert(0, 'index |-> %s' % logic.print_element(state, index_sort, e.index))
+            entry_strs.insert(0, 'index |-> %s' % print_element(struct, index_sort, e.index))
         return '[%s]' % (', '.join(entry_strs))
 
     return '<<%s>>' % (', '.join(entry_to_str(entry, well_formed) for entry in sorted_entries))
