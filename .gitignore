@@ -1,10 +1,10 @@
 *~
 *.pyc
+*.out
 .mypy_cache/
 .z3-trace
 parser.out
 parsetab.py
 lextab.py
 regression/*.output
-lockserv*.log
-examples/*.cache
+*.cache

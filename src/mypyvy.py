@@ -576,6 +576,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
                        help='print the exit code before exiting (good for regression testing)')
+        s.add_argument('--exit-0', action=utils.YesNoAction, default=False,
+                       help='always exit with status 0 (good for testing)')
 
         s.add_argument('--cvc4', action='store_true',
                        help='use CVC4 as the backend solver. this is not very well supported.')

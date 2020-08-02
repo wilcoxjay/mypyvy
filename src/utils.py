@@ -95,6 +95,7 @@ class MypyvyArgs:
     print_negative_tuples: bool
     print_cmdline: bool
     print_exit_code: bool
+    exit_0: bool
     simplify_diagram: bool
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
@@ -324,7 +325,10 @@ class YesNoAction(argparse.Action):
 def exit(returncode: int) -> NoReturn:
     if args.print_exit_code:
         print(f'mypyvy exiting with status {returncode}')
-    sys.exit(returncode)
+    if args.exit_0:
+        sys.exit(0)
+    else:
+        sys.exit(returncode)
 
 def generator_element(gen: Iterator[T], index: int) -> T:
     # https://stackoverflow.com/questions/2300756/get-the-nth-item-of-a-generator-in-python
