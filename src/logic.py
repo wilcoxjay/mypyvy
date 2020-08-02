@@ -717,6 +717,7 @@ class Solver:
             res = self.z3solver.check(*assumptions)
             if res == z3.unknown:
                 print(f'[{datetime.now()}] Solver.check: encountered unknown, printing debug information')
+                print(f'[{datetime.now()}] Solver.check: z3.solver.reason_unknown: {self.z3solver.reason_unknown()}')
                 print(f'[{datetime.now()}] Solver.check: self.assertions:')
                 for e in self.assertions():
                     print(e)
@@ -732,33 +733,42 @@ class Solver:
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh solver')
                 s2 = z3.Solver()
-                lator = self.get_translator(0)
-                for a in syntax.the_program.axioms():
-                    s2.add(lator.translate_expr(a.expr))
+                # ODED: I comment this out, since the axioms are
+                # already supposed to be part of self.assetions():
+                # lator = self.translator_factory(self.scope, 0)
+                # for a in syntax.the_program.axioms():
+                #     s2.add(lator.translate_expr(a.expr))
                 for e in self.assertions():
                     s2.add(e)
-
-                print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
+                res = s2.check(*assumptions)
+                print(f'[{datetime.now()}] Solver.check: s2.check(): {res}')
                 print(f'[{datetime.now()}] Solver.check: s2 stats and smt2:')
                 print(s2.statistics())
                 print()
                 print(s2.to_smt2())
                 print()
+                if res == z3.sat:
+                    # we can't get model, so we still consider this to be unknown
+                    res = z3.unknown
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh context')
                 ctx = z3.Context()
                 s3 = z3.Solver(ctx=ctx)
-                for a in syntax.the_program.axioms():
-                    s3.add(lator.translate_expr(a.expr).translate(ctx))
+                # ODED: see comment above, axioms should already be in self.assertions()
+                # for a in syntax.the_program.axioms():
+                #     s3.add(lator.translate_expr(a.expr).translate(ctx))
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
-                print(f'[{datetime.now()}] Solver.check: s3.check()',
-                      s3.check(*(e.translate(ctx) for e in assumptions)))
+                res = s3.check(*(e.translate(ctx) for e in assumptions))
+                print(f'[{datetime.now()}] Solver.check: s3.check(): {res}')
                 print(f'[{datetime.now()}] Solver.check: s3 stats and smt2:')
                 print(s3.statistics())
                 print()
                 print(s3.to_smt2())
                 print()
+                if res == z3.sat:
+                    # we can't get model, so we still consider this to be unknown
+                    res = z3.unknown
 
                 print(f'[{datetime.now()}] Solver.check: trying cvc4')
                 res = check_with_cvc4()
