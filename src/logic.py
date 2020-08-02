@@ -310,7 +310,7 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
 CVC4EXEC = str(utils.PROJECT_ROOT / 'script' / 'run_cvc4.sh')
 
 def cvc4_preprocess(z3str: str) -> str:
-    lines = ['(set-logic UF)']
+    lines = ['(set-logic UFNIA)']
     for st in z3str.splitlines():
         st = st.strip()
         if st == '' or st.startswith(';') or st.startswith('(set-info '):
