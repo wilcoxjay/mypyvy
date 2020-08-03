@@ -580,7 +580,7 @@ class Expr(Denotable):
 
     def __str__(self) -> str:
         buf: List[str] = []
-        self.pretty(buf, PREC_TOP, 'NONE')
+        pretty(self, buf, PREC_TOP, 'NONE')
         return ''.join(buf)
 
     def __lt__(self, other: object) -> bool:
@@ -588,24 +588,8 @@ class Expr(Denotable):
             return NotImplemented
         return self._denote() < other._denote()
 
-    def pretty(self, buf: List[str], prec: int, side: str) -> None:
-        needs_parens = not no_parens(self.prec(), prec, side)
-
-        if needs_parens:
-            buf.append('(')
-            prec = PREC_TOP
-            side = 'NONE'
-
-        self._pretty(buf, prec, side)
-
-        if needs_parens:
-            buf.append(')')
-
     def prec(self) -> int:
         raise Exception('Unexpected expr %s does not implement prec method' % repr(self))
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        raise Exception('Unexpected expr %s does not implement pretty method' % repr(self))
 
 class Bool(Expr):
     def __init__(self, val: bool, *, span: Optional[Span] = None) -> None:
@@ -620,9 +604,6 @@ class Bool(Expr):
 
     def prec(self) -> int:
         return PREC_BOT
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append('true' if self.val else 'false')
 
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
@@ -640,9 +621,6 @@ class Int(Expr):
 
     def prec(self) -> int:
         return PREC_BOT
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append(str(self.val))
 
 UNOPS = {
     'NOT',
@@ -667,17 +645,6 @@ class UnaryExpr(Expr):
             return PREC_NOT
         elif self.op == 'NEW':
             return PREC_BOT
-        else:
-            assert False
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        if self.op == 'NOT':
-            buf.append('!')
-            self.arg.pretty(buf, PREC_NOT, 'NONE')
-        elif self.op == 'NEW':
-            buf.append('new(')
-            self.arg.pretty(buf, PREC_TOP, 'NONE')
-            buf.append(')')
         else:
             assert False
 
@@ -736,31 +703,6 @@ class BinaryExpr(Expr):
         else:
             assert False
 
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        p = self.prec()
-        self.arg1.pretty(buf, p, 'LEFT')
-
-        pretties = {
-            'IMPLIES': '->',
-            'IFF': '<->',
-            'EQUAL': '==',
-            'NOTEQ': '!=',
-            'GE': '>=',
-            'GT': '>',
-            'LE': '<=',
-            'LT': '<',
-            'PLUS': '+',
-            'SUB': '-',
-            'MULT': '*',
-        }
-
-        assert self.op in pretties
-        s = pretties[self.op]
-
-        buf.append(' %s ' % s)
-
-        self.arg2.pretty(buf, p, 'RIGHT')
-
 NOPS = {
     'AND',
     'OR',
@@ -791,36 +733,6 @@ class NaryExpr(Expr):
             return PREC_BOT
         else:
             assert False
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        assert len(self.args) >= 2
-
-        p = self.prec()
-
-        if self.op == 'AND':
-            sep = ' & '
-        elif self.op == 'OR':
-            sep = ' | '
-        elif self.op == 'DISTINCT':
-            sep = ', '
-        else:
-            assert False
-
-        if self.op == 'DISTINCT':
-            buf.append('distinct(')
-
-        self.args[0].pretty(buf, p, 'LEFT')
-
-        for arg in self.args[1:-1]:
-            buf.append('%s' % sep)
-            arg.pretty(buf, p, 'LEFT')
-
-        buf.append('%s' % sep)
-
-        self.args[-1].pretty(buf, p, 'RIGHT')
-
-        if self.op == 'DISTINCT':
-            buf.append(')')
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
     if not vs:
@@ -879,17 +791,6 @@ class AppExpr(Expr):
 
     def prec(self) -> int:
         return PREC_BOT
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append(self.callee)
-        buf.append('(')
-        started = False
-        for arg in self.args:
-            if started:
-                buf.append(', ')
-            started = True
-            arg.pretty(buf, PREC_TOP, 'NONE')
-        buf.append(')')
 
 class SortedVar(Denotable):
     def __init__(self, name: str, sort: Optional[Sort], *, span: Optional[Span] = None) -> None:
@@ -955,20 +856,6 @@ class QuantifierExpr(Expr):
     def prec(self) -> int:
         return PREC_QUANT
 
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append(self.quant.lower())
-        buf.append(' ')
-
-        started = False
-        for sv in self.binder.vs:
-            if started:
-                buf.append(', ')
-            started = True
-            buf.append(str(sv))
-        buf.append('. ')
-
-        self.body.pretty(buf, PREC_QUANT, 'NONE')
-
     def vs(self) -> List[SortedVar]:
         return self.binder.vs
 
@@ -987,9 +874,6 @@ class Id(Expr):
     def prec(self) -> int:
         return PREC_BOT
 
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append(self.name)
-
 class IfThenElse(Expr):
     def __init__(self, branch: Expr, then: Expr, els: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -1006,14 +890,6 @@ class IfThenElse(Expr):
     def prec(self) -> int:
         return PREC_TOP
 
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append('if ')
-        self.branch.pretty(buf, PREC_TOP, 'NONE')
-        buf.append(' then ')
-        self.then.pretty(buf, PREC_TOP, 'NONE')
-        buf.append(' else ')
-        self.els.pretty(buf, PREC_TOP, 'NONE')
-
 class Let(Expr):
     def __init__(self, var: SortedVar, val: Expr, body: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -1029,14 +905,6 @@ class Let(Expr):
 
     def prec(self) -> int:
         return PREC_TOP
-
-    def _pretty(self, buf: List[str], prec: int, side: str) -> None:
-        buf.append('let ')
-        buf.append(str(self.binder.vs[0]))
-        buf.append(' = ')
-        self.val.pretty(buf, PREC_TOP, 'NONE')
-        buf.append(' in ')
-        self.body.pretty(buf, PREC_TOP, 'NONE')
 
 def free_ids(e: Expr, into: Optional[OrderedSet[str]] = None) -> OrderedSet[str]:
     if into is None:
@@ -1906,3 +1774,125 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
         return Let(e.binder.vs[0], new_val, new_body)
     else:
         assert False, (type(e), e)
+
+def pretty(e: Expr, buf: List[str], prec: int, side: str) -> None:
+    needs_parens = not no_parens(e.prec(), prec, side)
+
+    if needs_parens:
+        buf.append('(')
+        prec = PREC_TOP
+        side = 'NONE'
+
+    pretty_no_parens(e, buf, prec, side)
+
+    if needs_parens:
+        buf.append(')')
+
+
+def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
+    if isinstance(e, Bool):
+        buf.append('true' if e.val else 'false')
+    elif isinstance(e, Int):
+        buf.append(str(e.val))
+    elif isinstance(e, UnaryExpr):
+        if e.op == 'NOT':
+            buf.append('!')
+            pretty(e.arg, buf, PREC_NOT, 'NONE')
+        elif e.op == 'NEW':
+            buf.append('new(')
+            pretty(e.arg, buf, PREC_TOP, 'NONE')
+            buf.append(')')
+        else:
+            assert False
+    elif isinstance(e, BinaryExpr):
+        p = e.prec()
+        pretty(e.arg1, buf, p, 'LEFT')
+
+        pretties = {
+            'IMPLIES': '->',
+            'IFF': '<->',
+            'EQUAL': '==',
+            'NOTEQ': '!=',
+            'GE': '>=',
+            'GT': '>',
+            'LE': '<=',
+            'LT': '<',
+            'PLUS': '+',
+            'SUB': '-',
+            'MULT': '*',
+        }
+
+        assert e.op in pretties
+        s = pretties[e.op]
+
+        buf.append(' %s ' % s)
+
+        pretty(e.arg2, buf, p, 'RIGHT')
+    elif isinstance(e, NaryExpr):
+        assert len(e.args) >= 2
+
+        p = e.prec()
+
+        if e.op == 'AND':
+            sep = ' & '
+        elif e.op == 'OR':
+            sep = ' | '
+        elif e.op == 'DISTINCT':
+            sep = ', '
+        else:
+            assert False
+
+        if e.op == 'DISTINCT':
+            buf.append('distinct(')
+
+        pretty(e.args[0], buf, p, 'LEFT')
+
+        for arg in e.args[1:-1]:
+            buf.append('%s' % sep)
+            pretty(arg, buf, p, 'LEFT')
+
+        buf.append('%s' % sep)
+
+        pretty(e.args[-1], buf, p, 'RIGHT')
+
+        if e.op == 'DISTINCT':
+            buf.append(')')
+    elif isinstance(e, AppExpr):
+        buf.append(e.callee)
+        buf.append('(')
+        started = False
+        for arg in e.args:
+            if started:
+                buf.append(', ')
+            started = True
+            pretty(arg, buf, PREC_TOP, 'NONE')
+        buf.append(')')
+    elif isinstance(e, QuantifierExpr):
+        buf.append(e.quant.lower())
+        buf.append(' ')
+
+        started = False
+        for sv in e.binder.vs:
+            if started:
+                buf.append(', ')
+            started = True
+            buf.append(str(sv))
+        buf.append('. ')
+
+        pretty(e.body, buf, PREC_QUANT, 'NONE')
+    elif isinstance(e, Id):
+        buf.append(e.name)
+    elif isinstance(e, IfThenElse):
+        buf.append('if ')
+        pretty(e.branch, buf, PREC_TOP, 'NONE')
+        buf.append(' then ')
+        pretty(e.then, buf, PREC_TOP, 'NONE')
+        buf.append(' else ')
+        pretty(e.els, buf, PREC_TOP, 'NONE')
+    elif isinstance(e, Let):
+        buf.append('let ')
+        buf.append(str(e.binder.vs[0]))
+        buf.append(' = ')
+        pretty(e.val, buf, PREC_TOP, 'NONE')
+        buf.append(' in ')
+        pretty(e.body, buf, PREC_TOP, 'NONE')
