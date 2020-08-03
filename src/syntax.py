@@ -100,35 +100,6 @@ class SortInferencePlaceholder:
 
 InferenceSort = Union[Sort, SortInferencePlaceholder, None]
 
-PREC_BOT = 0
-PREC_NOT = 1
-PREC_MULT = 2
-PREC_PLUS = 3
-PREC_EQ = 4
-PREC_AND = 5
-PREC_OR = 6
-PREC_IMPLIES = 7
-PREC_IFF = 8
-PREC_QUANT = 9
-PREC_TOP = 10
-
-PREC_ASSOC = {
-    PREC_BOT: 'NONE',
-    PREC_NOT: 'NONE',
-    PREC_MULT: 'LEFT',
-    PREC_PLUS: 'LEFT',
-    PREC_EQ: 'NONE',
-    PREC_AND: 'LEFT',
-    PREC_OR: 'LEFT',
-    PREC_IMPLIES: 'RIGHT',
-    PREC_IFF: 'NONE',
-    PREC_QUANT: 'NONE',
-    PREC_TOP: 'NONE'
-}
-
-def no_parens(ip: int, op: int, side: str) -> bool:
-    return ip < op or (ip == op and side == PREC_ASSOC[ip])
-
 # Returns a set describing the *mutable* symbols used by an expression.
 # Immutable symbols and bound variables are *not* included.
 # In the returned set, each element is a tuple (i, ts, s), where
@@ -588,9 +559,6 @@ class Expr(Denotable):
             return NotImplemented
         return self._denote() < other._denote()
 
-    def prec(self) -> int:
-        raise Exception('Unexpected expr %s does not implement prec method' % repr(self))
-
 class Bool(Expr):
     def __init__(self, val: bool, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -601,9 +569,6 @@ class Bool(Expr):
 
     def _denote(self) -> Tuple:
         return (self.val,)
-
-    def prec(self) -> int:
-        return PREC_BOT
 
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
@@ -618,9 +583,6 @@ class Int(Expr):
 
     def _denote(self) -> Tuple:
         return (self.val,)
-
-    def prec(self) -> int:
-        return PREC_BOT
 
 UNOPS = {
     'NOT',
@@ -639,14 +601,6 @@ class UnaryExpr(Expr):
 
     def __repr__(self) -> str:
         return 'UnaryExpr(op=%s, arg=%s)' % (repr(self.op), repr(self.arg))
-
-    def prec(self) -> int:
-        if self.op == 'NOT':
-            return PREC_NOT
-        elif self.op == 'NEW':
-            return PREC_BOT
-        else:
-            assert False
 
 def Not(e: Expr) -> Expr:
     return UnaryExpr('NOT', e)
@@ -689,20 +643,6 @@ class BinaryExpr(Expr):
             repr(self.arg1),
             repr(self.arg2))
 
-    def prec(self) -> int:
-        if self.op == 'IMPLIES':
-            return PREC_IMPLIES
-        elif self.op == 'IFF':
-            return PREC_IFF
-        elif self.op in ['EQUAL', 'NOTEQ', 'GE', 'GT', 'LE', 'LT']:
-            return PREC_EQ
-        elif self.op in ['PLUS', 'SUB']:
-            return PREC_PLUS
-        elif self.op in ['MULT']:
-            return PREC_MULT
-        else:
-            assert False
-
 NOPS = {
     'AND',
     'OR',
@@ -723,16 +663,6 @@ class NaryExpr(Expr):
 
     def __repr__(self) -> str:
         return 'NaryExpr(op=%s, args=%s)' % (repr(self.op), self.args)
-
-    def prec(self) -> int:
-        if self.op == 'AND':
-            return PREC_AND
-        elif self.op == 'OR':
-            return PREC_OR
-        elif self.op == 'DISTINCT':
-            return PREC_BOT
-        else:
-            assert False
 
 def Forall(vs: List[SortedVar], body: Expr) -> Expr:
     if not vs:
@@ -788,9 +718,6 @@ class AppExpr(Expr):
 
     def __repr__(self) -> str:
         return 'AppExpr(callee=%s, args=%s)' % (repr(self.callee), self.args)
-
-    def prec(self) -> int:
-        return PREC_BOT
 
 class SortedVar(Denotable):
     def __init__(self, name: str, sort: Optional[Sort], *, span: Optional[Span] = None) -> None:
@@ -853,9 +780,6 @@ class QuantifierExpr(Expr):
     def _denote(self) -> Tuple:
         return (self.quant, self.binder, self.body)
 
-    def prec(self) -> int:
-        return PREC_QUANT
-
     def vs(self) -> List[SortedVar]:
         return self.binder.vs
 
@@ -871,9 +795,6 @@ class Id(Expr):
     def __repr__(self) -> str:
         return 'Id(name=%s)' % (repr(self.name),)
 
-    def prec(self) -> int:
-        return PREC_BOT
-
 class IfThenElse(Expr):
     def __init__(self, branch: Expr, then: Expr, els: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -887,9 +808,6 @@ class IfThenElse(Expr):
     def _denote(self) -> Tuple:
         return (self.branch, self.then, self.els)
 
-    def prec(self) -> int:
-        return PREC_TOP
-
 class Let(Expr):
     def __init__(self, var: SortedVar, val: Expr, body: Expr, *, span: Optional[Span] = None) -> None:
         super().__init__(span)
@@ -902,9 +820,6 @@ class Let(Expr):
 
     def _denote(self) -> Tuple:
         return (self.binder, self.val, self.body)
-
-    def prec(self) -> int:
-        return PREC_TOP
 
 def free_ids(e: Expr, into: Optional[OrderedSet[str]] = None) -> OrderedSet[str]:
     if into is None:
@@ -1775,8 +1690,37 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
     else:
         assert False, (type(e), e)
 
+PREC_BOT = 0
+PREC_NOT = 1
+PREC_MULT = 2
+PREC_PLUS = 3
+PREC_EQ = 4
+PREC_AND = 5
+PREC_OR = 6
+PREC_IMPLIES = 7
+PREC_IFF = 8
+PREC_QUANT = 9
+PREC_TOP = 10
+
+PREC_ASSOC = {
+    PREC_BOT: 'NONE',
+    PREC_NOT: 'NONE',
+    PREC_MULT: 'LEFT',
+    PREC_PLUS: 'LEFT',
+    PREC_EQ: 'NONE',
+    PREC_AND: 'LEFT',
+    PREC_OR: 'LEFT',
+    PREC_IMPLIES: 'RIGHT',
+    PREC_IFF: 'NONE',
+    PREC_QUANT: 'NONE',
+    PREC_TOP: 'NONE'
+}
+
+def no_parens(ip: int, op: int, side: str) -> bool:
+    return ip < op or (ip == op and side == PREC_ASSOC[ip])
+
 def pretty(e: Expr, buf: List[str], prec: int, side: str) -> None:
-    needs_parens = not no_parens(e.prec(), prec, side)
+    needs_parens = not no_parens(pretty_precedence(e), prec, side)
 
     if needs_parens:
         buf.append('(')
@@ -1787,7 +1731,6 @@ def pretty(e: Expr, buf: List[str], prec: int, side: str) -> None:
 
     if needs_parens:
         buf.append(')')
-
 
 def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
     if isinstance(e, Bool):
@@ -1805,7 +1748,7 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
         else:
             assert False
     elif isinstance(e, BinaryExpr):
-        p = e.prec()
+        p = pretty_precedence(e)
         pretty(e.arg1, buf, p, 'LEFT')
 
         pretties = {
@@ -1831,7 +1774,7 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
     elif isinstance(e, NaryExpr):
         assert len(e.args) >= 2
 
-        p = e.prec()
+        p = pretty_precedence(e)
 
         if e.op == 'AND':
             sep = ' & '
@@ -1896,3 +1839,50 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
         pretty(e.val, buf, PREC_TOP, 'NONE')
         buf.append(' in ')
         pretty(e.body, buf, PREC_TOP, 'NONE')
+    else:
+        assert False
+
+def pretty_precedence(e: Expr) -> int:
+    if isinstance(e, (Bool, Int)):
+        return PREC_BOT
+    elif isinstance(e, UnaryExpr):
+        if e.op == 'NOT':
+            return PREC_NOT
+        elif e.op == 'NEW':
+            return PREC_BOT
+        else:
+            assert False
+    elif isinstance(e, BinaryExpr):
+        if e.op == 'IMPLIES':
+            return PREC_IMPLIES
+        elif e.op == 'IFF':
+            return PREC_IFF
+        elif e.op in ['EQUAL', 'NOTEQ', 'GE', 'GT', 'LE', 'LT']:
+            return PREC_EQ
+        elif e.op in ['PLUS', 'SUB']:
+            return PREC_PLUS
+        elif e.op in ['MULT']:
+            return PREC_MULT
+        else:
+            assert False
+    elif isinstance(e, NaryExpr):
+        if e.op == 'AND':
+            return PREC_AND
+        elif e.op == 'OR':
+            return PREC_OR
+        elif e.op == 'DISTINCT':
+            return PREC_BOT
+        else:
+            assert False
+    elif isinstance(e, AppExpr):
+        return PREC_BOT
+    elif isinstance(e, QuantifierExpr):
+        return PREC_QUANT
+    elif isinstance(e, Id):
+        return PREC_BOT
+    elif isinstance(e, IfThenElse):
+        return PREC_TOP
+    elif isinstance(e, Let):
+        return PREC_TOP
+    else:
+        assert False
