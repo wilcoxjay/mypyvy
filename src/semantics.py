@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 import z3
 
 import utils
-import resolver
+import typechecker
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl, Not, New
@@ -179,7 +179,7 @@ class Trace:
                 ))))
             assert prog.scope is not None
             with prog.scope.n_states(1):
-                resolver.resolve_expr(prog.scope, e, None)
+                typechecker.typecheck_expr(prog.scope, e, None)
             self.onestate_formula_cache[index] = e
         return self.onestate_formula_cache[index]
 

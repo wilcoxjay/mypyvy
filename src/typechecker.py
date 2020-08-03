@@ -36,7 +36,7 @@ def check_constraint(span: Optional[Span], expected: InferenceSort, actual: Infe
             expected.merge(actual)
             return expected
 
-def pre_resolve_binder(scope: syntax.Scope, binder: syntax.Binder) -> None:
+def pre_typecheck_binder(scope: syntax.Scope, binder: syntax.Binder) -> None:
     for sv in binder.vs:
         existing = scope.get(sv.name)
         if existing is not None and not isinstance(existing, tuple):
@@ -54,9 +54,9 @@ def pre_resolve_binder(scope: syntax.Scope, binder: syntax.Binder) -> None:
             sv.sort = SortInferencePlaceholder(sv)
         else:
             assert not isinstance(sv.sort, SortInferencePlaceholder)
-            resolve_sort(scope, sv.sort)
+            typecheck_sort(scope, sv.sort)
 
-def post_resolve_binder(binder: syntax.Binder) -> None:
+def post_typecheck_binder(binder: syntax.Binder) -> None:
     for sv in binder.vs:
         if isinstance(sv.sort, SortInferencePlaceholder):
             utils.print_error(sv.span, 'Could not infer sort for variable %s' % (sv.name,))
@@ -64,16 +64,16 @@ def post_resolve_binder(binder: syntax.Binder) -> None:
 
 # typecheck expression and destructively infer types for bound variables.
 #
-# NOTE(resolving-malformed-programs)
+# NOTE(typechecking-malformed-programs)
 # mypyvy tries to report as many useful errors as possible about the input program during
 # resolution, by continuing after the point where the first error is detected. This
-# introduces subtleties in the resolver where some invariants are established only assuming
-# no errors have been detected so far. As a rule, if the resolver does not exit/return
+# introduces subtleties in the typechecker where some invariants are established only assuming
+# no errors have been detected so far. As a rule, if the typechecker does not exit/return
 # after detecting an invariant violation, then that invariant should not be relied upon
-# elsewhere in the resolver without first asserting that the program is error free.
-# After the resolver is run, mypyvy exits if any errors are detected, so any other parts
-# of mypyvy can assume all invariants established by the resolver.
-def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> InferenceSort:
+# elsewhere in the typechecker without first asserting that the program is error free.
+# After the typechecker is run, mypyvy exits if any errors are detected, so any other parts
+# of mypyvy can assume all invariants established by the typechecker.
+def typecheck_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> InferenceSort:
     if isinstance(e, syntax.Bool):
         check_constraint(e.span, sort, BoolSort)
         return BoolSort
@@ -86,10 +86,10 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
                 utils.print_error(e.span, f'new is not allowed here because this is a {scope.num_states}-state '
                                   f'environment, and the current state index is {scope.current_state_index}')
             with scope.next_state_index():
-                return resolve_expr(scope, e.arg, sort)
+                return typecheck_expr(scope, e.arg, sort)
         elif e.op == 'NOT':
             check_constraint(e.span, sort, BoolSort)
-            resolve_expr(scope, e.arg, BoolSort)
+            typecheck_expr(scope, e.arg, BoolSort)
             return BoolSort
         else:
             assert False
@@ -97,23 +97,23 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
         ans: InferenceSort = None
         if e.op in ['AND', 'OR', 'IMPLIES', 'IFF']:
             check_constraint(e.span, sort, BoolSort)
-            resolve_expr(scope, e.arg1, BoolSort)
-            resolve_expr(scope, e.arg2, BoolSort)
+            typecheck_expr(scope, e.arg1, BoolSort)
+            typecheck_expr(scope, e.arg2, BoolSort)
             ans = BoolSort
         elif e.op in ['EQUAL', 'NOTEQ']:
             check_constraint(e.span, sort, BoolSort)
-            s = resolve_expr(scope, e.arg1, None)
-            resolve_expr(scope, e.arg2, s)
+            s = typecheck_expr(scope, e.arg1, None)
+            typecheck_expr(scope, e.arg2, s)
             ans = BoolSort
         elif e.op in ['GE', 'GT', 'LE', 'LT']:
             check_constraint(e.span, sort, BoolSort)
-            resolve_expr(scope, e.arg1, IntSort)
-            resolve_expr(scope, e.arg2, IntSort)
+            typecheck_expr(scope, e.arg1, IntSort)
+            typecheck_expr(scope, e.arg2, IntSort)
             ans = BoolSort
         elif e.op in ['PLUS', 'SUB', 'MULT']:
             check_constraint(e.span, sort, IntSort)
-            resolve_expr(scope, e.arg1, IntSort)
-            resolve_expr(scope, e.arg2, IntSort)
+            typecheck_expr(scope, e.arg1, IntSort)
+            typecheck_expr(scope, e.arg2, IntSort)
             ans = IntSort
         else:
             assert False, e.op
@@ -123,12 +123,12 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
 
         if e.op in ['AND', 'OR']:
             for arg in e.args:
-                resolve_expr(scope, arg, BoolSort)
+                typecheck_expr(scope, arg, BoolSort)
         else:
             assert e.op == 'DISTINCT'
             s = None
             for arg in e.args:
-                s = resolve_expr(scope, arg, s)
+                s = typecheck_expr(scope, arg, s)
 
         return BoolSort
     elif isinstance(e, syntax.AppExpr):
@@ -147,7 +147,7 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
             name = 'relation' if isinstance(d, RelationDecl) else 'function'
             utils.print_error(e.span, f'Only immutable {name}s can be referenced in this context')
             # note that we don't return here. typechecking can continue.
-            # see NOTE(resolving-malformed-programs)
+            # see NOTE(typechecking-malformed-programs)
 
         if isinstance(d, DefinitionDecl) and not scope.call_allowed(d):
             utils.print_error(e.span,
@@ -157,7 +157,7 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
         if not d.arity or len(e.args) != len(d.arity):
             utils.print_error(e.span, 'Callee applied to wrong number of arguments')
         for (arg, s) in zip(e.args, d.arity):
-            resolve_expr(scope, arg, s)
+            typecheck_expr(scope, arg, s)
 
         if isinstance(d, RelationDecl):
             check_constraint(e.span, sort, BoolSort)
@@ -168,12 +168,12 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
     elif isinstance(e, syntax.QuantifierExpr):
         check_constraint(e.span, sort, BoolSort)
 
-        pre_resolve_binder(scope, e.binder)
+        pre_typecheck_binder(scope, e.binder)
 
         with scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
-            resolve_expr(scope, e.body, BoolSort)
+            typecheck_expr(scope, e.body, BoolSort)
 
-        post_resolve_binder(e.binder)
+        post_typecheck_binder(e.binder)
 
         return BoolSort
     elif isinstance(e, syntax.Id):
@@ -213,27 +213,27 @@ def resolve_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> In
             vsort = check_constraint(e.span, sort, vsort)
             return vsort
     elif isinstance(e, syntax.IfThenElse):
-        resolve_expr(scope, e.branch, BoolSort)
-        sort = resolve_expr(scope, e.then, sort)
-        return resolve_expr(scope, e.els, sort)
+        typecheck_expr(scope, e.branch, BoolSort)
+        sort = typecheck_expr(scope, e.then, sort)
+        return typecheck_expr(scope, e.els, sort)
     elif isinstance(e, syntax.Let):
-        pre_resolve_binder(scope, e.binder)
+        pre_typecheck_binder(scope, e.binder)
 
-        resolve_expr(scope, e.val, e.binder.vs[0].sort)
+        typecheck_expr(scope, e.val, e.binder.vs[0].sort)
 
         with scope.in_scope(e.binder, [v.sort for v in e.binder.vs]):
-            sort = resolve_expr(scope, e.body, sort)
+            sort = typecheck_expr(scope, e.body, sort)
 
-        post_resolve_binder(e.binder)
+        post_typecheck_binder(e.binder)
 
         return sort
     else:
         assert False
 
-def resolve_sortdecl(scope: syntax.Scope, s: SortDecl) -> None:
+def typecheck_sortdecl(scope: syntax.Scope, s: SortDecl) -> None:
     scope.add_sort(s)
 
-def resolve_sort(scope: syntax.Scope, s: Sort) -> None:
+def typecheck_sort(scope: syntax.Scope, s: Sort) -> None:
     if isinstance(s, syntax.UninterpretedSort):
         s.decl = scope.get_sort(s.name)
         if s.decl is None:
@@ -243,34 +243,41 @@ def resolve_sort(scope: syntax.Scope, s: Sort) -> None:
     else:
         assert False
 
-def resolve_statedecl(scope: syntax.Scope, d: syntax.StateDecl) -> None:
+def typecheck_statedecl(scope: syntax.Scope, d: syntax.StateDecl) -> None:
     if isinstance(d, RelationDecl):
         for sort in d.arity:
-            resolve_sort(scope, sort)
+            typecheck_sort(scope, sort)
 
         scope.add_relation(d)
 
         if d.derived_axiom:
             d.derived_axiom = syntax.close_free_vars(d.derived_axiom, span=d.span)
             with scope.n_states(1):
-                resolve_expr(scope, d.derived_axiom, BoolSort)
+                typecheck_expr(scope, d.derived_axiom, BoolSort)
     elif isinstance(d, ConstantDecl):
-        resolve_sort(scope, d.sort)
+        typecheck_sort(scope, d.sort)
         scope.add_constant(d)
     else:
         assert isinstance(d, FunctionDecl)
         for sort in d.arity:
-            resolve_sort(scope, sort)
+            typecheck_sort(scope, sort)
 
-        resolve_sort(scope, d.sort)
+        typecheck_sort(scope, d.sort)
 
         scope.add_function(d)
 
-def resolve_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr) -> None:
+def typecheck_modifies_clause(scope: syntax.Scope, mod: syntax.ModifiesClause) -> None:
+    d = scope.get(mod.name)
+    assert d is None or isinstance(d, RelationDecl) or \
+        isinstance(d, ConstantDecl) or isinstance(d, FunctionDecl)
+    if d is None:
+        utils.print_error(mod.span, 'Unresolved constant, relation, or function %s' % (mod.name,))
+
+def typecheck_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr) -> None:
     if isinstance(d, syntax.InitDecl):
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
         with scope.n_states(1):
-            resolve_expr(scope, d.expr, BoolSort)
+            typecheck_expr(scope, d.expr, BoolSort)
 
         if syntax.symbols_used(scope, d.expr) == set():
             utils.print_error(d.span, 'this initial condition mentions no mutable symbols. '
@@ -278,34 +285,34 @@ def resolve_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr
     elif isinstance(d, syntax.InvariantDecl):
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
         with scope.n_states(1):
-            resolve_expr(scope, d.expr, BoolSort)
+            typecheck_expr(scope, d.expr, BoolSort)
 
         if syntax.symbols_used(scope, d.expr) == set():
             utils.print_error(d.span, 'this invariant mentions no mutable symbols. it can be deleted.')
     elif isinstance(d, syntax.AxiomDecl):
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
-        resolve_expr(scope, d.expr, BoolSort)
+        typecheck_expr(scope, d.expr, BoolSort)
     elif isinstance(d, syntax.TheoremDecl):
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
         with scope.n_states(d.num_states):
-            resolve_expr(scope, d.expr, BoolSort)
+            typecheck_expr(scope, d.expr, BoolSort)
     elif isinstance(d, DefinitionDecl):
         assert len(scope.stack) == 0
 
         old_error_count = 0
 
-        pre_resolve_binder(scope, d.binder)
+        pre_typecheck_binder(scope, d.binder)
 
         for mod in d.mods:
-            mod.resolve(scope)
+            typecheck_modifies_clause(scope, mod)
 
         d.expr = syntax.close_free_vars(d.expr, in_scope=[v.name for v in d.binder.vs], span=d.span,)
 
         with scope.in_scope(d.binder, [v.sort for v in d.binder.vs]):
             with scope.n_states(d.num_states):
-                resolve_expr(scope, d.expr, BoolSort)
+                typecheck_expr(scope, d.expr, BoolSort)
 
-        post_resolve_binder(d.binder)
+        post_typecheck_binder(d.binder)
 
         if utils.error_count > old_error_count:
             return
@@ -351,13 +358,13 @@ def resolve_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr
     else:
         assert False
 
-def resolve_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
+def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
     for c in d.components:
         if isinstance(c, syntax.AssertDecl):
             if c.expr is not None:
                 c.expr = syntax.close_free_vars(c.expr, span=c.span)
                 with scope.n_states(1):
-                    resolve_expr(scope, c.expr, BoolSort)
+                    typecheck_expr(scope, c.expr, BoolSort)
         elif isinstance(c, syntax.TraceTransitionDecl):
             te = c.transition
             if isinstance(te, syntax.AnyTransition):
@@ -380,32 +387,32 @@ def resolve_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
                         for a, sort in zip(tc.args, (v.sort for v in ition.binder.vs)):
                             if isinstance(a, syntax.Expr):
                                 with scope.n_states(1):
-                                    resolve_expr(scope, a, sort)
+                                    typecheck_expr(scope, a, sort)
             else:
                 assert False
         else:
             assert False
 
 
-def resolve_program_vocab(prog: syntax.Program) -> None:
+def typecheck_program_vocab(prog: syntax.Program) -> None:
     prog.scope = scope = syntax.Scope[InferenceSort]()
 
     for s in prog.sorts():
-        resolve_sortdecl(scope, s)
+        typecheck_sortdecl(scope, s)
 
     for rcf in prog.relations_constants_and_functions():
-        resolve_statedecl(scope, rcf)
+        typecheck_statedecl(scope, rcf)
 
     for d in prog.definitions():
         scope.add_definition(d)
 
-def resolve_program(prog: syntax.Program) -> None:
-    resolve_program_vocab(prog)
+def typecheck_program(prog: syntax.Program) -> None:
+    typecheck_program_vocab(prog)
 
     for d in prog.decls_containing_exprs():
-        resolve_declcontainingexpr(prog.scope, d)
+        typecheck_declcontainingexpr(prog.scope, d)
 
     for tr in prog.traces():
-        resolve_tracedecl(prog.scope, tr)
+        typecheck_tracedecl(prog.scope, tr)
 
     assert len(prog.scope.stack) == 0

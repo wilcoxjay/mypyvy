@@ -19,7 +19,7 @@ from typing import cast, TypeVar, Callable
 import z3
 
 import utils
-import resolver
+import typechecker
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl, Not, New
@@ -682,7 +682,7 @@ class Diagram:
             self.simplify_consts()
         prog = syntax.the_program
         assert prog.scope is not None
-        self._resolve(prog.scope)
+        self._typecheck(prog.scope)
 
     @staticmethod
     def _read_first_order_structure(struct: FirstOrderStructure) -> Tuple[
@@ -816,13 +816,13 @@ class Diagram:
             ' &\n  '.join(str(c) for _, _, c in self.conjuncts())
         )
 
-    def _resolve(self, scope: Scope) -> None:
-        resolver.pre_resolve_binder(scope, self.binder)
+    def _typecheck(self, scope: Scope) -> None:
+        typechecker.pre_typecheck_binder(scope, self.binder)
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             with scope.n_states(1):
                 for _, _, c in self.conjuncts():
-                    resolver.resolve_expr(scope, c, syntax.BoolSort)
-        resolver.post_resolve_binder(self.binder)
+                    typechecker.typecheck_expr(scope, c, syntax.BoolSort)
+        typechecker.post_typecheck_binder(self.binder)
 
     def vs(self) -> List[syntax.SortedVar]:
         return self.binder.vs

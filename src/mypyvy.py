@@ -13,7 +13,7 @@ import resource
 import logic
 from logic import Solver, Trace
 import parser
-import resolver
+import typechecker
 import syntax
 from syntax import Expr, Program, InvariantDecl
 from semantics import RelationInterps, ConstantInterps, FunctionInterps
@@ -43,7 +43,7 @@ def get_safety() -> List[Expr]:
                 oldcount = utils.error_count
                 e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
                 with prog.scope.n_states(1):
-                    resolver.resolve_expr(prog.scope, e, syntax.BoolSort)
+                    typechecker.typecheck_expr(prog.scope, e, syntax.BoolSort)
                 assert oldcount == utils.error_count, 'errors in parsing or typechecking'
                 safety = [e]
             except Exception as e:
@@ -269,7 +269,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
-            resolver.resolve_expr(prog.scope, diagram, syntax.BoolSort)
+            typechecker.typecheck_expr(prog.scope, diagram, syntax.BoolSort)
             assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
             active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
 
@@ -293,7 +293,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
 
             diagram_active = syntax.Exists(diagram.vs(),
                                            syntax.And(diagram.body, *active_clauses))
-            resolver.resolve_expr(prog.scope, diagram_active, syntax.BoolSort)
+            typechecker.typecheck_expr(prog.scope, diagram_active, syntax.BoolSort)
 
             components.append(syntax.AssertDecl(expr=diagram_active))
         elif elm.tagName == 'action':
@@ -340,8 +340,8 @@ def sandbox(s: Solver) -> None:
                                  mutable=True, derived=def_axiom, annotations=[])
 
     # TODO: this irreversibly adds the relation to the context, wrap
-    resolver.resolve_statedecl(syntax.the_program.scope, derrel)
-    syntax.the_program.decls.append(derrel)  # TODO: hack! because RelationDecl.resolve only adds to prog.scope
+    typechecker.typecheck_statedecl(syntax.the_program.scope, derrel)
+    syntax.the_program.decls.append(derrel)  # TODO: hack! because typecheck_statedecl only adds to prog.scope
     s.mutable_axioms.extend([def_axiom])  # TODO: hack! currently we register these axioms only on solver init
 
     print("Trying derived relation:", derrel)
@@ -349,7 +349,7 @@ def sandbox(s: Solver) -> None:
     # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
     new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program, fresh=False)
     new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
-    resolver.resolve_program(new_prog)
+    typechecker.typecheck_program(new_prog)
     print(new_prog)
 
     syntax.the_program = new_prog
@@ -719,10 +719,10 @@ def main() -> None:
 
         utils.logger.always_print(to_str(prog), end=end)
 
-    pre_resolve_error_count = utils.error_count
+    pre_typecheck_error_count = utils.error_count
 
-    resolver.resolve_program(prog)
-    if utils.error_count > pre_resolve_error_count:
+    typechecker.typecheck_program(prog)
+    if utils.error_count > pre_typecheck_error_count:
         utils.logger.always_print('program has resolution errors.')
         utils.exit(1)
 

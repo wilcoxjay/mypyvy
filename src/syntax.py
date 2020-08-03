@@ -320,8 +320,8 @@ def as_clauses(expr: Expr) -> List[Expr]:
         if len(clause) == 1:
             clause += [Bool(False)]
         e = Forall(vs, Or(*clause))
-        # TODO: should we resolve here? Also, can we not add false?
-        # e.resolve(the_program.scope, None)
+        # TODO: should we typecheck here? Also, can we not add false?
+        # typechecker.typecheck_expr(the_program.scope, e, None)
         ans.append(e)
     return ans
 
@@ -1084,13 +1084,6 @@ class ModifiesClause:
         self.span = span
         self.name = name
 
-    def resolve(self, scope: Scope[InferenceSort]) -> None:
-        d = scope.get(self.name)
-        assert d is None or isinstance(d, RelationDecl) or \
-            isinstance(d, ConstantDecl) or isinstance(d, FunctionDecl)
-        if d is None:
-            utils.print_error(self.span, 'Unresolved constant, relation, or function %s' % (self.name,))
-
     def __repr__(self) -> str:
         return 'ModifiesClause(name=%s)' % (repr(self.name),)
 
@@ -1659,7 +1652,7 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
         new_args = [expand_macros(scope, arg) for arg in e.args]
         d = scope.get(e.callee)
         if isinstance(d, DefinitionDecl):
-            assert len(e.args) == len(d.binder.vs)  # checked by resolver
+            assert len(e.args) == len(d.binder.vs)  # checked by typechecker
             gamma = {Id(v.name): arg for v, arg in zip(d.binder.vs, new_args)}
             # note we recurse in the same scope, as we know the only
             # free variables in a macro definition are global symbols,
@@ -1675,8 +1668,7 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
     elif isinstance(e, Id):
         d = scope.get(e.name)
         if isinstance(d, DefinitionDecl):
-            # ODED: how come we don't recurse?
-            return d.expr
+            return expand_macros(scope, d.expr)
         else:
             return e
     elif isinstance(e, IfThenElse):

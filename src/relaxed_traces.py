@@ -1,6 +1,6 @@
 import logic
 from logic import Trace, Diagram, Solver
-import resolver
+import typechecker
 import syntax
 from syntax import Expr
 from trace import bmc_trace
@@ -66,7 +66,7 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
     new_decls.append(relaxation_action_def(prog, actives=actives, fresh=True))
 
     res = syntax.Program(new_decls)
-    resolver.resolve_program(res)  # #sorrynotsorry
+    typechecker.typecheck_program(res)  # #sorrynotsorry
     return res
 
 
@@ -294,7 +294,7 @@ def is_rel_blocking_relax_step(
 
     with syntax.the_program.scope.fresh_stack():
         with syntax.the_program.scope.n_states(2):
-            resolver.resolve_expr(syntax.the_program.scope, diffing_formula, syntax.BoolSort)
+            typechecker.typecheck_expr(syntax.the_program.scope, diffing_formula, syntax.BoolSort)
 
     res = trns.eval(diffing_formula, idx)
     assert isinstance(res, bool)
@@ -462,10 +462,10 @@ def diagram_trace_to_explicitly_relaxed_trace(trace: RelaxedTrace, safety: Seque
 
         end_expr = syntax.Not(syntax.And(*(invd.expr for invd in safety)))
         with syntax.the_program.scope.n_states(1):
-            resolver.resolve_expr(syntax.the_program.scope, end_expr, syntax.BoolSort)
+            typechecker.typecheck_expr(syntax.the_program.scope, end_expr, syntax.BoolSort)
         trace_decl = diagram_trace_to_explicitly_relaxed_trace_decl(trace, end_expr)
         with syntax.the_program.scope.n_states(1):
-            resolver.resolve_tracedecl(syntax.the_program.scope, trace_decl)
+            typechecker.typecheck_tracedecl(syntax.the_program.scope, trace_decl)
 
         print(trace_decl)
 
@@ -493,7 +493,7 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
             active_name = scope.fresh('active_%s' % sort.name)
             # TODO: is there a better way to get Sort out of SortDecl?
             sort_not_decl = syntax.UninterpretedSort(sort.name)
-            resolver.resolve_sort(scope, sort_not_decl)
+            typechecker.typecheck_sort(scope, sort_not_decl)
             active_rel = syntax.RelationDecl(active_name, arity=[sort_not_decl],
                                              mutable=True, derived=None, annotations=[])
             self._active_rels_mapping[sort] = active_rel
@@ -509,7 +509,7 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
         new_decl = relativize_decl(t, self._active_rels_mapping, self._active_scope, inline_relax_actives=True)
         # TODO: hack! relativize_decl doesn't do this, so the expression can be non-closed.
         # TODO: Should it generate & use an extended scope?
-        resolver.resolve_declcontainingexpr(self._active_scope, new_decl)
+        typechecker.typecheck_declcontainingexpr(self._active_scope, new_decl)
         res = self._t.translate_expr(syntax.New(new_decl.as_twostate_formula(self._active_scope), index))
         return res
 
@@ -521,7 +521,7 @@ def consts_exist_axioms(prog: syntax.Program) -> List[Expr]:
         ax = syntax.Exists([syntax.SortedVar(name, c.sort)],
                            syntax.Eq(syntax.Id(c.name), syntax.Id(name)))
         with prog.scope.n_states(1):
-            resolver.resolve_expr(prog.scope, ax, syntax.BoolSort)
+            typechecker.typecheck_expr(prog.scope, ax, syntax.BoolSort)
         res.append(ax)
 
     return res
@@ -548,7 +548,7 @@ def functions_total_axioms(prog: syntax.Program) -> List[Expr]:
                            syntax.Exists([syntax.SortedVar(name, func.sort)],
                                          syntax.Eq(syntax.Id(name), ap_func)))
         with prog.scope.n_states(1):
-            resolver.resolve_expr(prog.scope, ax, syntax.BoolSort)
+            typechecker.typecheck_expr(prog.scope, ax, syntax.BoolSort)
 
         res.append(ax)
 

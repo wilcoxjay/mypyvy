@@ -115,7 +115,7 @@ class Z3Translator:
             d = self.scope.get(expr.callee)
             if isinstance(d, DefinitionDecl):
                 # TODO: handling definitions should be refactored out of Z3Translator
-                # checked by resolver; see NOTE(calling-stateful-definitions)
+                # checked by typechecker; see NOTE(calling-stateful-definitions)
                 assert self.scope.current_state_index + d.num_states <= self.scope.num_states, f'{d}\n{expr}'
                 # now translate args in the scope of caller
                 translated_args = [self.__translate_expr(arg) for arg in expr.args]
@@ -145,7 +145,7 @@ class Z3Translator:
                 return z3sym
             elif isinstance(d, DefinitionDecl):
                 # TODO: handling definitions should be refactored out of Z3Translator
-                # checked in resolver; see NOTE(calling-stateful-definitions)
+                # checked in typechecker; see NOTE(calling-stateful-definitions)
                 assert self.scope.current_state_index + d.num_states <= self.scope.num_states
                 with self.scope.fresh_stack():
                     return self.__translate_expr(d.expr)
