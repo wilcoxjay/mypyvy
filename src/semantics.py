@@ -97,7 +97,7 @@ class Trace:
 
     def _as_trace(self, indices: Tuple[int, ...]) -> Trace:
         assert all(0 <= i < self.num_states for i in indices)
-        assert indices in [(1, 0), (1,)], 'should only be used in legacy pd.py code'
+        assert indices in [(1, 0), (1,), tuple(reversed(range(len(indices))))], 'should only be used in legacy pd.py code'
         t = Trace(len(indices))
         t.univs = self.univs.copy()
         t.immut_rel_interps = self.immut_rel_interps.copy()

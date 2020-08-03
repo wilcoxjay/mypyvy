@@ -1834,19 +1834,29 @@ def check_k_state_implication(
     if om is None:
         return None
     else:
-        # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
-        # this file to use logic.State for its states, this will be easy to re-enable.
-        assert False
-        z3m = om.z3model
-        assert z3m is not None
-        keys = list(om.keys)
+        # ODED: not sure if this is correct (see previous version below)
         states = tuple(
-            Trace.from_z3(keys[i:], z3m)
-            for i in reversed(range(len(keys)))
+            om._as_trace(tuple(reversed(range(i + 1))))
+            for i in range(om.num_states)
         )
         print(f'Found new {k}-{msg} violating {p}:')
         print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
         return states
+
+        # # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
+        # # this file to use logic.State for its states, this will be easy to re-enable.
+        # reveal_type(om)
+        # assert False
+        # z3m = om.z3model
+        # assert z3m is not None
+        # keys = list(om.keys)
+        # states = tuple(
+        #     Trace.from_z3(keys[i:], z3m)
+        #     for i in reversed(range(len(keys)))
+        # )
+        # print(f'Found new {k}-{msg} violating {p}:')
+        # print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
+        # return states
 
 
 class MapSolver:
@@ -3188,7 +3198,8 @@ def forward_explore(s: Solver,
             [None], # general initial state
             (s for s in states if s.num_states > 1) # discovered non-initial states
         )
-        label = lambda s: 'init' if s is None else 'initial state' if len(s.keys) == 1 else 'state'
+        def label(s: Optional[PDState]) -> str:
+            return 'init' if s is None else 'initial state' if s.num_states == 1 else 'state'
         for precondition, p in product(preconditions, a):
             # print(f'Checking if {label(precondition)} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
