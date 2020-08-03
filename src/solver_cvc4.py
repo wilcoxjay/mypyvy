@@ -112,16 +112,18 @@ def cvc4_preprocess(z3str: str) -> str:
         st = st.strip()
         if st == '' or st.startswith(';') or st.startswith('(set-info '):
             continue
-        st = st.replace('member', 'member2')
+        # st = st.replace('member', 'member2')
         assert '@' not in st, st
         if st.startswith('(declare-sort ') and not st.endswith(' 0)'):
+            assert False, st
             assert st.endswith(')'), st
             st = st[:-1] + ' 0)'
         lines.append(st)
     return '\n'.join(lines)
 
 def cvc4_postprocess(cvc4line: str) -> str:
-    return cvc4line.replace('member2', 'member')
+    return cvc4line
+    # return cvc4line.replace('member2', 'member')
 
 # The following classes whose names start with 'CVC4' impersonate various classes from z3 in a
 # duck typing style. Sometimes, they are given intentionally false type annotations to match
