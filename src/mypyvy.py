@@ -71,7 +71,9 @@ def do_updr(s: Solver) -> None:
 
     try:
         fs.search()
+        print('updr found inductive invariant!')
     except updr.AbstractCounterexample:
+        print('updr found abstract counterexample!')
         pass
 
 def debug_tokens(filename: str) -> None:
@@ -412,6 +414,9 @@ def trace(s: Solver) -> None:
     traces = list(prog.traces())
     if traces:
         utils.logger.always_print('finding traces:')
+    else:
+        utils.logger.always_print('no traces found in file')
+        return
 
     for trace in traces:
         res = bmc_trace(prog, trace, s, lambda s, n: logic.check_unsat([], s, n), log=True)
@@ -420,6 +425,8 @@ def trace(s: Solver) -> None:
                 return 'sat' if b else 'unsat'
             utils.print_error(trace.span, 'trace declared %s but was %s!' %
                               (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
+    else:
+        utils.logger.always_print(f'\nchecked {len(traces)} traces and found {utils.error_count} errors')
 
 
 def check_one_bounded_width_invariant(s: Solver) -> None:
