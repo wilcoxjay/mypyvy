@@ -166,8 +166,6 @@ class Z3Translator:
 
     @staticmethod
     def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Trace:
-        # ODED: this should return logic.Trace, but there was a
-        # problem with cyclic imports. TODO: fix it.
         '''
         Convert z3 model to Trace with given number of states.
 
