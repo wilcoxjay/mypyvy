@@ -18,11 +18,10 @@ def translate_transition_call(
     qs: List[Optional[z3.ExprRef]] = [b for b in bs]
     if c.args is not None:
         for j, a in enumerate(c.args):
-            if isinstance(a, Expr):
+            if not isinstance(a, syntax.Star):
                 bs[j] = lator.translate_expr(New(a, state_index))
                 qs[j] = None
-            else:
-                assert isinstance(a, syntax.Star)
+
     qs1 = [q for q in qs if q is not None]
     with lator.scope.in_scope(ition.binder, bs):
         body = lator.translate_expr(New(ition._framed_body(lator.scope), state_index))

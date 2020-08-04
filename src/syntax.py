@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import dataclasses
 from dataclasses import dataclass
-import functools
 import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
@@ -183,7 +183,7 @@ def subst_vars_simple(expr: Expr, subst: Mapping[Id, Expr]) -> Expr:
         return BinaryExpr(op=expr.op, arg1=subst_vars_simple(expr.arg1, subst),
                           arg2=subst_vars_simple(expr.arg2, subst))
     elif isinstance(expr, AppExpr):
-        return AppExpr(callee=expr.callee, args=[subst_vars_simple(a, subst) for a in expr.args])
+        return AppExpr(callee=expr.callee, args=tuple(subst_vars_simple(a, subst) for a in expr.args))
     elif isinstance(expr, Id):
         return subst.get(expr, expr)
     else:
@@ -207,9 +207,9 @@ def subst(scope: Scope, e: Expr, gamma: Mapping[Id, Expr]) -> Expr:
     elif isinstance(e, BinaryExpr):
         return BinaryExpr(e.op, subst(scope, e.arg1, gamma), subst(scope, e.arg2, gamma))
     elif isinstance(e, NaryExpr):
-        return NaryExpr(e.op, [subst(scope, arg, gamma) for arg in e.args])
+        return NaryExpr(e.op, tuple(subst(scope, arg, gamma) for arg in e.args))
     elif isinstance(e, AppExpr):
-        return AppExpr(e.callee, [subst(scope, arg, gamma) for arg in e.args])
+        return AppExpr(e.callee, tuple(subst(scope, arg, gamma) for arg in e.args))
     elif isinstance(e, QuantifierExpr):
         # luv too avoid capture
         avoid = free_ids(e)
@@ -227,7 +227,7 @@ def subst(scope: Scope, e: Expr, gamma: Mapping[Id, Expr]) -> Expr:
 
         fresh_body = subst(scope, e.body, renaming)
 
-        return QuantifierExpr(e.quant, fresh_svs, subst(scope, fresh_body, gamma))
+        return QuantifierExpr(e.quant, tuple(fresh_svs), subst(scope, fresh_body, gamma))
     elif isinstance(e, Id):
         if e in gamma:
             return gamma[e]
@@ -282,7 +282,7 @@ def as_clauses_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
         assert expr.op in ('AND', 'OR'), expr
         if negated:
             other_op = 'AND' if expr.op == 'OR' else 'OR'
-            return as_clauses_body(NaryExpr(other_op, [Not(arg) for arg in expr.args]), negated=False)
+            return as_clauses_body(NaryExpr(other_op, tuple(Not(arg) for arg in expr.args)), negated=False)
         elif expr.op == 'AND':
             return list(itertools.chain(*(as_clauses_body(arg, negated=False) for arg in expr.args)))
         elif expr.op == 'OR':
@@ -298,7 +298,7 @@ def as_clauses_body(expr: Expr, negated: bool = False) -> List[List[Expr]]:
     else:
         assert False, f'unsupported expressions in as_clauses_body: {expr}'
 
-def as_clauses_quant(expr: Expr, negated: bool = False) -> Tuple[List[SortedVar], List[List[Expr]]]:
+def as_clauses_quant(expr: Expr, negated: bool = False) -> Tuple[Tuple[SortedVar, ...], List[List[Expr]]]:
     if isinstance(expr, QuantifierExpr):
         if negated:
             other_quant = 'EXISTS' if expr.quant == 'FORALL' else 'FORALL'
@@ -306,11 +306,11 @@ def as_clauses_quant(expr: Expr, negated: bool = False) -> Tuple[List[SortedVar]
         else:
             assert expr.quant == 'FORALL'
             new_vs, new_body = as_clauses_quant(expr.body, negated=False)
-            return expr.binder.vs + new_vs, new_body
+            return expr.binder.vs + tuple(new_vs), new_body
     elif isinstance(expr, UnaryExpr) and expr.op == 'NOT':
         return as_clauses_quant(expr.arg, not negated)
     else:
-        return [], as_clauses_body(expr, negated)
+        return (), as_clauses_body(expr, negated)
 
 def as_clauses(expr: Expr) -> List[Expr]:
     '''Conver expr to CNF (must be universally quantified, see as_clauses_quant'''
@@ -330,7 +330,7 @@ def as_clauses(expr: Expr) -> List[Expr]:
 def relativization_guard_for_binder(guards: Mapping[SortDecl, RelationDecl], b: Binder) -> Expr:
     conjs = []
     for v in b.vs:
-        guard = Apply(guards[get_decl_from_sort(v.sort)].name, [Id(v.name)])
+        guard = Apply(guards[get_decl_from_sort(v.sort)].name, (Id(v.name),))
         conjs.append(guard)
     return And(*conjs)
 
@@ -361,9 +361,9 @@ def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> 
         elif isinstance(e, BinaryExpr):
             return BinaryExpr(e.op, go(e.arg1), go(e.arg2))
         elif isinstance(e, NaryExpr):
-            return NaryExpr(e.op, [go(arg) for arg in e.args])
+            return NaryExpr(e.op, tuple(go(arg) for arg in e.args))
         elif isinstance(e, AppExpr):
-            return AppExpr(e.callee, [go(arg) for arg in e.args])
+            return AppExpr(e.callee, tuple(go(arg) for arg in e.args))
         elif isinstance(e, QuantifierExpr):
             guard = relativization_guard_for_binder(guards, e.binder)
             return QuantifierExpr(e.quant, e.binder.vs,
@@ -411,10 +411,7 @@ def is_quantifier_free(e: Expr) -> bool:
     else:
         assert False
 
-class HasSpan(Protocol):
-    span: Optional[Span]
-
-def span_endlexpos(x: Union[Span, HasSpan]) -> Optional[int]:
+def span_endlexpos(x: Union[Span, Expr, Decl]) -> Optional[int]:
     if not isinstance(x, tuple):
         s = x.span
     else:
@@ -436,11 +433,11 @@ class FaithfulPrinter:
         if new_pos is not None:
             self.pos = new_pos
 
-    def skip_to_start(self, x: HasSpan) -> None:
+    def skip_to_start(self, x: Union[Expr, Decl]) -> None:
         assert x.span is not None
         self.skip_to(x.span[0].lexpos)
 
-    def skip_to_end(self, x: HasSpan) -> None:
+    def skip_to_end(self, x: Union[Expr, Decl]) -> None:
         self.skip_to(span_endlexpos(x))
 
     def skip_expect(self, expected: str) -> None:
@@ -460,7 +457,7 @@ class FaithfulPrinter:
             self.buf.append(data)
             self.skip_to(new_pos)
 
-    def move_to_start(self, x: HasSpan) -> None:
+    def move_to_start(self, x: Union[Expr, Decl]) -> None:
         if x.span is None:
             assert isinstance(x, UnaryExpr)
             assert x.op == 'NEW'
@@ -469,7 +466,7 @@ class FaithfulPrinter:
 
         self.move_to(x.span[0].lexpos)
 
-    def move_to_end(self, x: HasSpan) -> None:
+    def move_to_end(self, x: Union[Expr, Decl]) -> None:
         self.move_to(span_endlexpos(x))
 
     def process(self) -> str:
@@ -540,65 +537,38 @@ class FaithfulPrinter:
 def faithful_print_prog(prog: Program, skip_invariants: bool = False) -> str:
     return FaithfulPrinter(prog, skip_invariants).process()
 
-@functools.total_ordering
-class Expr(Denotable):
-    def __init__(self, span: Optional[Span]) -> None:
-        super().__init__()
-        self.span = span
-
-    def __repr__(self) -> str:
-        raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
+@dataclass(frozen=True, order=True)
+class Bool:
+    val: bool
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
     def __str__(self) -> str:
-        return ''.join(pretty(self))
-
-    def __lt__(self, other: object) -> bool:
-        if not isinstance(other, Expr):
-            return NotImplemented
-        return self._denote() < other._denote()
-
-class Bool(Expr):
-    def __init__(self, val: bool, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.val = val
-
-    def __repr__(self) -> str:
-        return str(self.val)
-
-    def _denote(self) -> Tuple:
-        return (self.val,)
+        return pretty(self)
 
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
 
-class Int(Expr):
-    def __init__(self, val: int, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.val = val
-
-    def __repr__(self) -> str:
-        return str(self.val)
-
-    def _denote(self) -> Tuple:
-        return (self.val,)
+@dataclass(frozen=True, order=True)
+class Int:
+    val: int
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
 UNOPS = {
     'NOT',
     'NEW'
 }
 
-class UnaryExpr(Expr):
-    def __init__(self, op: str, arg: Expr, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        assert op in UNOPS
-        self.op = op
-        self.arg = arg
+@dataclass(frozen=True, order=True)
+class UnaryExpr:
+    op: str
+    arg: Expr
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-    def _denote(self) -> Tuple:
-        return (self.op, self.arg)
+    def __post_init__(self) -> None:
+        assert self.op in UNOPS
 
-    def __repr__(self) -> str:
-        return 'UnaryExpr(op=%s, arg=%s)' % (repr(self.op), repr(self.arg))
+    def __str__(self) -> str:
+        return pretty(self)
 
 def Not(e: Expr) -> Expr:
     return UnaryExpr('NOT', e)
@@ -624,22 +594,18 @@ BINOPS = {
     'MULT'
 }
 
-class BinaryExpr(Expr):
-    def __init__(self, op: str, arg1: Expr, arg2: Expr, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        assert op in BINOPS
-        self.op = op
-        self.arg1 = arg1
-        self.arg2 = arg2
+@dataclass(frozen=True, order=True)
+class BinaryExpr:
+    op: str
+    arg1: Expr
+    arg2: Expr
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-    def _denote(self) -> Tuple:
-        return (self.op, self.arg1, self.arg2)
+    def __post_init__(self) -> None:
+        assert self.op in BINOPS
 
-    def __repr__(self) -> str:
-        return 'BinaryExpr(op=%s, arg1=%s, arg2=%s)' % (
-            repr(self.op),
-            repr(self.arg1),
-            repr(self.arg2))
+    def __str__(self) -> str:
+        return pretty(self)
 
 NOPS = {
     'AND',
@@ -647,27 +613,24 @@ NOPS = {
     'DISTINCT'
 }
 
-class NaryExpr(Expr):
-    def __init__(self, op: str, args: List[Expr], *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        assert op in NOPS
-        assert len(args) >= 2, (args, span)
+@dataclass(frozen=True, order=True)
+class NaryExpr:
+    op: str
+    args: Tuple[Expr, ...]
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-        self.op = op
-        self.args = args
+    def __post_init__(self) -> None:
+        assert self.op in NOPS
 
-    def _denote(self) -> Tuple:
-        return (self.op, tuple(self.args))
+    def __str__(self) -> str:
+        return pretty(self)
 
-    def __repr__(self) -> str:
-        return 'NaryExpr(op=%s, args=%s)' % (repr(self.op), self.args)
-
-def Forall(vs: List[SortedVar], body: Expr) -> Expr:
+def Forall(vs: Tuple[SortedVar, ...], body: Expr) -> Expr:
     if not vs:
         return body
     return QuantifierExpr('FORALL', vs, body)
 
-def Exists(vs: List[SortedVar], body: Expr) -> Expr:
+def Exists(vs: Tuple[SortedVar, ...], body: Expr) -> Expr:
     if not vs:
         return body
     return QuantifierExpr('EXISTS', vs, body)
@@ -678,7 +641,7 @@ def And(*args: Expr) -> Expr:
     elif len(args) == 1:
         return args[0]
     else:
-        return NaryExpr('AND', list(args))
+        return NaryExpr('AND', tuple(args))
 
 def Or(*args: Expr) -> Expr:
     if not args:
@@ -686,7 +649,7 @@ def Or(*args: Expr) -> Expr:
     elif len(args) == 1:
         return args[0]
     else:
-        return NaryExpr('OR', list(args))
+        return NaryExpr('OR', tuple(args))
 
 def Eq(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr('EQUAL', arg1, arg2)
@@ -700,45 +663,26 @@ def Iff(arg1: Expr, arg2: Expr) -> Expr:
 def Implies(arg1: Expr, arg2: Expr) -> Expr:
     return BinaryExpr('IMPLIES', arg1, arg2)
 
-def Apply(callee: str, args: List[Expr]) -> Expr:
+def Apply(callee: str, args: Tuple[Expr, ...]) -> Expr:
     return AppExpr(callee, args)
 
-class AppExpr(Expr):
-    def __init__(self, callee: str, args: List[Expr], *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        if not (len(args) > 0):
-            utils.print_error(span, "must be applied to at least one argument")
-        self.callee = callee
-        self.args = args
+@dataclass(frozen=True, order=True)
+class AppExpr:
+    callee: str
+    args: Tuple[Expr, ...]
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-    def _denote(self) -> Tuple:
-        return (self.callee, tuple(self.args))
+    def __str__(self) -> str:
+        return pretty(self)
 
-    def __repr__(self) -> str:
-        return 'AppExpr(callee=%s, args=%s)' % (repr(self.callee), self.args)
-
+@dataclass(order=True)
 class SortedVar(Denotable):
-    def __init__(self, name: str, sort: Optional[Sort], *, span: Optional[Span] = None) -> None:
-        super().__init__()
-        self.span = span
-        self.name = name
-        self.sort: InferenceSort = sort
-
-    def _denote(self, allow_untyped: bool = False) -> Tuple:
-        assert allow_untyped or isinstance(self.sort, Sort), \
-            'SortedVar._denote should only be called after type inference'
-        return (self.name, self.sort)
-
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, SortedVar) and
-                type(self) is type(other) and
-                self._denote(allow_untyped=True) == other._denote(allow_untyped=True))
+    name: str
+    sort: InferenceSort
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
     def __hash__(self) -> int:
-        return super().__hash__()
-
-    def __repr__(self) -> str:
-        return 'SortedVar(name=%s, sort=%s)' % (repr(self.name), repr(self.sort))
+        return hash(self.name)
 
     def __str__(self) -> str:
         if self.sort is None:
@@ -750,74 +694,62 @@ def safe_cast_sort(s: InferenceSort) -> Sort:
     assert isinstance(s, Sort)
     return cast(Sort, s)
 
-
+@dataclass(order=True, unsafe_hash=True)
 class Binder(Denotable):
-    def __init__(self, vs: List[SortedVar]) -> None:
-        super().__init__()
-        self.vs = vs
+    vs: Tuple[SortedVar, ...]
 
-    def __repr__(self) -> str:
-        return 'Binder(%s)' % self.vs
+@dataclass(frozen=True, order=True)
+class QuantifierExpr:
+    quant: str
+    vs: dataclasses.InitVar[Tuple[SortedVar, ...]]
+    binder: Binder = dataclasses.field(init=False)
+    body: Expr
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-    def _denote(self) -> Tuple:
-        return tuple(self.vs)
-
-class QuantifierExpr(Expr):
-    def __init__(self, quant: str, vs: List[SortedVar], body: Expr, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        assert quant in ['FORALL', 'EXISTS']
+    def __post_init__(self, vs: Tuple[SortedVar, ...]) -> None:
+        assert self.quant in ['FORALL', 'EXISTS']
         assert len(vs) > 0
+        super().__setattr__('binder', Binder(vs))  # hack around frozen
 
-        self.quant = quant
-        self.binder = Binder(vs)
-        self.body = body
+    def __str__(self) -> str:
+        return pretty(self)
 
-    def __repr__(self) -> str:
-        return 'QuantifierExpr(quant=%s, vs=%s, body=%s)' % (repr(self.quant), self.binder.vs, repr(self.body))
-
-    def _denote(self) -> Tuple:
-        return (self.quant, self.binder, self.body)
-
-    def vs(self) -> List[SortedVar]:
+    def get_vs(self) -> Tuple[SortedVar, ...]:
         return self.binder.vs
 
-class Id(Expr):
+@dataclass(frozen=True, order=True)
+class Id:
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
-    def __init__(self, name: str, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.name = name
+    name: str
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-    def _denote(self) -> Tuple:
-        return (self.name,)
+    def __str__(self) -> str:
+        return pretty(self)
 
-    def __repr__(self) -> str:
-        return 'Id(name=%s)' % (repr(self.name),)
+@dataclass(frozen=True, order=True)
+class IfThenElse:
+    branch: Expr
+    then: Expr
+    els: Expr
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-class IfThenElse(Expr):
-    def __init__(self, branch: Expr, then: Expr, els: Expr, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.branch = branch
-        self.then = then
-        self.els = els
+    def __str__(self) -> str:
+        return pretty(self)
 
-    def __repr__(self) -> str:
-        return 'IfThenElse(%s, %s, %s)' % (self.branch, self.then, self.els)
+@dataclass(frozen=True, order=True)
+class Let:
+    var: dataclasses.InitVar[SortedVar]
+    binder: Binder = dataclasses.field(init=False)
+    val: Expr
+    body: Expr
 
-    def _denote(self) -> Tuple:
-        return (self.branch, self.then, self.els)
+    span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
-class Let(Expr):
-    def __init__(self, var: SortedVar, val: Expr, body: Expr, *, span: Optional[Span] = None) -> None:
-        super().__init__(span)
-        self.binder = Binder([var])
-        self.val = val
-        self.body = body
+    def __post_init__(self, var: SortedVar) -> None:
+        super().__setattr__('binder', Binder((var,)))  # hack around frozen
 
-    def __repr__(self) -> str:
-        return 'Let(%s, %s, %s)' % (self.binder, self.val, self.body)
-
-    def _denote(self) -> Tuple:
-        return (self.binder, self.val, self.body)
+    def __str__(self) -> str:
+        return pretty(self)
 
 def free_ids(e: Expr, into: Optional[OrderedSet[str]] = None) -> OrderedSet[str]:
     if into is None:
@@ -850,7 +782,9 @@ def free_ids(e: Expr, into: Optional[OrderedSet[str]] = None) -> OrderedSet[str]
 
     return into
 
-Arity = List[Sort]
+Expr = Union[Bool, Int, UnaryExpr, BinaryExpr, NaryExpr, AppExpr, Id, QuantifierExpr, IfThenElse, Let]
+
+Arity = Tuple[Sort, ...]
 
 class UninterpretedSort(Sort):
     def __init__(self, name: str, *, span: Optional[Span] = None) -> None:
@@ -918,7 +852,7 @@ class Decl(Denotable):
 
 
 class SortDecl(Decl):
-    def __init__(self, name: str, annotations: List[Annotation], *, span: Optional[Span] = None) -> None:
+    def __init__(self, name: str, *, annotations: Tuple[Annotation, ...] = (), span: Optional[Span] = None) -> None:
         super().__init__(span)
         self.span = span
         self.name = name
@@ -942,8 +876,8 @@ class SortDecl(Decl):
 
 class FunctionDecl(Decl):
     def __init__(
-            self, name: str, arity: Arity, sort: Sort, mutable: bool, annotations: List[Annotation], *,
-            span: Optional[Span] = None
+            self, name: str, arity: Arity, sort: Sort, mutable: bool, *,
+            annotations: Tuple[Annotation, ...] = (), span: Optional[Span] = None
     ) -> None:
         super().__init__(span)
         self.span = span
@@ -982,8 +916,8 @@ class FunctionDecl(Decl):
 
 class RelationDecl(Decl):
     def __init__(
-            self, name: str, arity: Arity, mutable: bool, derived: Optional[Expr], annotations: List[Annotation], *,
-            span: Optional[Span] = None
+            self, name: str, arity: Arity, mutable: bool, derived: Optional[Expr] = None, *,
+            annotations: Tuple[Annotation, ...] = (), span: Optional[Span] = None
     ) -> None:
         super().__init__(span)
         self.span = span
@@ -1022,8 +956,8 @@ class RelationDecl(Decl):
 
 class ConstantDecl(Decl):
     def __init__(
-            self, name: str, sort: Sort, mutable: bool, annotations: List[Annotation], *,
-            span: Optional[Span] = None
+            self, name: str, sort: Sort, mutable: bool, *,
+            annotations: Tuple[Annotation, ...] = (), span: Optional[Span] = None
     ) -> None:
         super().__init__(span)
         self.span = span
@@ -1056,7 +990,7 @@ def close_free_vars(expr: Expr, in_scope: List[str] = [], span: Optional[Span] =
     if vs == []:
         return expr
     else:
-        return QuantifierExpr('FORALL', [SortedVar(v, None, span=span) for v in vs], expr, span=span)
+        return QuantifierExpr('FORALL', tuple(SortedVar(v, None, span=span) for v in vs), expr, span=span)
 
 class InitDecl(Decl):
     def __init__(self, name: Optional[str], expr: Expr, *, span: Optional[Span] = None) -> None:
@@ -1112,8 +1046,8 @@ def uses_new(e: Expr) -> bool:
 
 class DefinitionDecl(Decl):
     def __init__(self, is_public_transition: bool, num_states: int,
-                 name: str, params: List[SortedVar],
-                 mods: List[ModifiesClause],
+                 name: str, params: Tuple[SortedVar, ...],
+                 mods: Tuple[ModifiesClause, ...],
                  expr: Expr,
                  *, span: Optional[Span] = None) -> None:
         def implies(a: bool, b: bool) -> bool:
@@ -1151,7 +1085,7 @@ class DefinitionDecl(Decl):
              self.expr)
 
     @staticmethod
-    def _frame(scope: Scope, mods: List[ModifiesClause]) -> List[Expr]:
+    def _frame(scope: Scope, mods: Tuple[ModifiesClause, ...]) -> Tuple[Expr, ...]:
         frame = []
         R: Iterator[StateDecl] = iter(scope.relations.values())
         C: Iterator[StateDecl] = iter(scope.constants.values())
@@ -1173,11 +1107,11 @@ class DefinitionDecl(Decl):
                     svs.append(SortedVar(name, s))
                     ids.append(Id(name))
 
-                e = Forall(svs, Eq(New(AppExpr(d.name, list(ids))), AppExpr(d.name, list(ids))))
+                e = Forall(tuple(svs), Eq(New(AppExpr(d.name, tuple(ids))), AppExpr(d.name, tuple(ids))))
 
             frame.append(e)
 
-        return frame
+        return tuple(frame)
 
     def _framed_body(self, scope: Scope) -> Expr:
         return And(self.expr, *DefinitionDecl._frame(scope, self.mods))
@@ -1359,7 +1293,7 @@ class Annotation:
     args: List[str]
 
 class HasAnnotations(Protocol):
-    annotations: List[Annotation]
+    annotations: Tuple[Annotation, ...]
 
 def has_annotation(d: HasAnnotations, name: str) -> bool:
     return any(annot.name == name for annot in d.annotations)
@@ -1645,9 +1579,9 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
     elif isinstance(e, BinaryExpr):
         return BinaryExpr(e.op, expand_macros(scope, e.arg1), expand_macros(scope, e.arg2))
     elif isinstance(e, NaryExpr):
-        return NaryExpr(e.op, [expand_macros(scope, arg) for arg in e.args])
+        return NaryExpr(e.op, tuple(expand_macros(scope, arg) for arg in e.args))
     elif isinstance(e, AppExpr):
-        new_args = [expand_macros(scope, arg) for arg in e.args]
+        new_args = tuple(expand_macros(scope, arg) for arg in e.args)
         d = scope.get(e.callee)
         if isinstance(d, DefinitionDecl):
             assert len(e.args) == len(d.binder.vs)  # checked by typechecker

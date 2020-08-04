@@ -182,8 +182,8 @@ class Trace:
             for R, l in chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
                 rels[R] = []
                 for tup, ans in l.items():
-                    e = (
-                        syntax.AppExpr(R.name, [syntax.Id(col) for col in tup])
+                    e: Expr = (
+                        syntax.AppExpr(R.name, tuple(syntax.Id(col) for col in tup))
                         if tup else syntax.Id(R.name)
                     )
                     rels[R].append(e if ans else syntax.Not(e))
@@ -191,7 +191,7 @@ class Trace:
                 consts[C] = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
             for F, fl in chain(mut_func_interps.items(), self.immut_func_interps.items()):
                 funcs[F] = [
-                    syntax.Eq(syntax.AppExpr(F.name, [syntax.Id(col) for col in tup]),
+                    syntax.Eq(syntax.AppExpr(F.name, tuple(syntax.Id(col) for col in tup)),
                               syntax.Id(res))
                     for tup, res in fl.items()
                 ]
@@ -199,10 +199,10 @@ class Trace:
             # get a fresh variable, avoiding names of universe elements in vs
             fresh = prog.scope.fresh('x', [v.name for v in vs])
 
-            e = syntax.Exists(vs, syntax.And(
+            e = syntax.Exists(tuple(vs), syntax.And(
                 *chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
-                    syntax.Forall([syntax.SortedVar(fresh,
-                                                    syntax.UninterpretedSort(sort.name))],
+                    syntax.Forall((syntax.SortedVar(fresh,
+                                                    syntax.UninterpretedSort(sort.name)),),
                                   syntax.Or(*(syntax.Eq(syntax.Id(fresh), syntax.Id(v))
                                               for v in self.univs[sort])))
                     for sort in self.univs
@@ -413,7 +413,7 @@ def print_element(struct: FirstOrderStructure, s: Union[SortDecl, syntax.Sort], 
     return try_printed_by(struct, s, elt) or elt
 
 
-def print_tuple(struct: FirstOrderStructure, arity: List[syntax.Sort], tup: Tuple[Element, ...]) -> str:
+def print_tuple(struct: FirstOrderStructure, arity: Tuple[syntax.Sort, ...], tup: Tuple[Element, ...]) -> str:
     l = []
     assert len(arity) == len(tup)
     for s, x in zip(arity, tup):

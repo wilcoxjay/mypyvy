@@ -204,11 +204,11 @@ def p_optional_annotation_args_nonempty(p: Any) -> None:
 
 def p_annotation_args_one(p: Any) -> None:
     'annotation_args : id'
-    p[0] = [p[1].value]
+    p[0] = (p[1].value,)
 
 def p_annotation_args_more(p: Any) -> None:
     'annotation_args : annotation_args COMMA id'
-    p[0] = p[1] + [p[3].value]
+    p[0] = p[1] + (p[3].value,)
 
 @overload
 def span_from_loc(loc: Location) -> Span:
@@ -266,21 +266,21 @@ def p_annotation(p: Any) -> None:
 
 def p_annotations_empty(p: Any) -> None:
     'annotations : empty'
-    p[0] = []
+    p[0] = ()
 
 def p_annotations_one(p: Any) -> None:
     'annotations : annotations annotation'
-    p[0] = p[1] + [p[2]]
+    p[0] = p[1] + (p[2],)
 
 def p_decl_sort(p: Any) -> None:
     'decl : SORT id annotations'
     start_tok: Token = p.slice[1]
     name_tok: Token = p[2]
     name: str = name_tok.value
-    annots: List[syntax.Annotation] = p[3]
+    annots: Tuple[syntax.Annotation, ...] = p[3]
     toks: List[Optional[Location]] = [start_tok, name_tok]
     span = loc_list(toks + [a.span for a in annots])
-    p[0] = syntax.SortDecl(name, annots, span=span)
+    p[0] = syntax.SortDecl(name, annotations=annots, span=span)
 
 def p_decl_mut(p: Any) -> None:
     '''mut : MUTABLE
@@ -289,11 +289,11 @@ def p_decl_mut(p: Any) -> None:
 
 def p_arity_empty(p: Any) -> None:
     'arity : empty'
-    p[0] = (None, [])
+    p[0] = (None, ())
 
 def p_arity_paren_empty(p: Any) -> None:
     'arity : LPAREN RPAREN'
-    p[0] = ((p.slice[1], p.slice[2]), [])
+    p[0] = ((p.slice[1], p.slice[2]), ())
 
 def p_arity_nonempty(p: Any) -> None:
     'arity : LPAREN arity_nonempty RPAREN'
@@ -301,11 +301,11 @@ def p_arity_nonempty(p: Any) -> None:
 
 def p_arity_nonempty_one(p: Any) -> None:
     'arity_nonempty : sort'
-    p[0] = [p[1]]
+    p[0] = (p[1],)
 
 def p_arity_nonempty_more(p: Any) -> None:
     'arity_nonempty : arity_nonempty COMMA sort'
-    p[0] = p[1] + [p[3]]
+    p[0] = p[1] + (p[3],)
 
 def p_sort_bool(p: Any) -> None:
     'sort : BOOL'
@@ -327,12 +327,12 @@ def p_decl_relation(p: Any) -> None:
     start_tok: Token
     is_mut: bool
     arity_span: Optional[Span]
-    arity: List[syntax.Sort]
+    arity: Tuple[syntax.Sort, ...]
 
     start_tok, is_mut = p[1]
     name_tok: Token = p[3]
     arity_span, arity = p[4]
-    annots: List[syntax.Annotation] = p[5]
+    annots: Tuple[syntax.Annotation, ...] = p[5]
 
     span = loc_list([start_tok, name_tok, arity_span] + [a.span for a in annots])
 
@@ -344,9 +344,9 @@ def p_decl_relation_derived(p: Any) -> None:
     start_tok: Token = p.slice[1]
     name_tok: Token = p[3]
     arity_span: Optional[Span]
-    arity: List[syntax.Sort]
+    arity: Tuple[syntax.Sort, ...]
     arity_span, arity = p[4]
-    annots: List[syntax.Annotation] = p[5]
+    annots: Tuple[syntax.Annotation, ...] = p[5]
     derived_defn: syntax.Expr = p[7]
 
     p[0] = syntax.RelationDecl(name_tok.value, arity, mutable=True, derived=derived_defn,
@@ -359,9 +359,9 @@ def p_constant_decl(p: Any) -> None:
     start_tok, is_mut = p[1]
     name_tok: Token = p[3]
     sort: syntax.UninterpretedSort = p[5]
-    annots: List[syntax.Annotation] = p[6]
+    annots: Tuple[syntax.Annotation, ...] = p[6]
     span = loc_join(start_tok, loc_list([sort.span] + [a.span for a in annots]))
-    p[0] = syntax.ConstantDecl(name_tok.value, sort, is_mut, annots, span=span)
+    p[0] = syntax.ConstantDecl(name_tok.value, sort, is_mut, annotations=annots, span=span)
 
 def p_decl_constant_decl(p: Any) -> None:
     'decl : constant_decl'
@@ -373,11 +373,11 @@ def p_decl_function(p: Any) -> None:
     is_mut: bool
     start_tok, is_mut = p[1]
     name_tok = p[3]
-    arity: List[syntax.Sort] = p[5]
+    arity: Tuple[syntax.Sort, ...] = p[5]
     sort: syntax.UninterpretedSort = p[8]
-    annots: List[syntax.Annotation] = p[9]
+    annots: Tuple[syntax.Annotation, ...] = p[9]
     span = loc_join(start_tok, loc_list([sort.span] + [a.span for a in annots]))
-    p[0] = syntax.FunctionDecl(name_tok.value, arity, sort, is_mut, annots, span=span)
+    p[0] = syntax.FunctionDecl(name_tok.value, arity, sort, is_mut, annotations=annots, span=span)
 
 def p_axiom_decl(p: Any) -> None:
     'axiom_decl : AXIOM opt_name expr'
@@ -440,7 +440,7 @@ def p_quant(p: Any) -> None:
 def p_expr_quantifier(p: Any) -> None:
     'expr : quant sortedvars DOT expr'
     quant_tok: Token = p[1]
-    svs: List[syntax.SortedVar] = p[2]
+    svs: Tuple[syntax.SortedVar, ...] = p[2]
     expr: syntax.Expr = p[4]
     span = loc_join(quant_tok, expr.span)
     p[0] = syntax.QuantifierExpr(quant_tok.type, svs, expr, span=span)
@@ -462,15 +462,15 @@ def p_sortedvars0_one(p: Any) -> None:
 
 def p_sortedvars0_zero(p: Any) -> None:
     'sortedvars0 : empty'
-    p[0] = []
+    p[0] = ()
 
 def p_sortedvars_one(p: Any) -> None:
     'sortedvars : sortedvar'
-    p[0] = [p[1]]
+    p[0] = (p[1],)
 
 def p_sortedvars_more(p: Any) -> None:
     'sortedvars : sortedvars COMMA sortedvar'
-    p[0] = p[1] + [p[3]]
+    p[0] = p[1] + (p[3],)
 
 def p_expr_intlit(p: Any) -> None:
     'expr : INTLIT'
@@ -493,7 +493,7 @@ def p_expr_not(p: Any) -> None:
 def p_expr_app(p: Any) -> None:
     'expr : id LPAREN args RPAREN'
     callee_tok = p[1]
-    args: List[syntax.Expr] = p[3]
+    args: Tuple[syntax.Expr, ...] = p[3]
     p[0] = syntax.AppExpr(callee_tok.value, args, span=loc_join(callee_tok, p.slice[4]))
 
 def p_expr_and1(p: Any) -> None:
@@ -504,13 +504,11 @@ def p_expr_and(p: Any) -> None:
     'expr : expr AMPERSAND expr'
     l: syntax.Expr = p[1]
     r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
     if isinstance(l, syntax.NaryExpr) and l.op == 'AND':
-        l.args.append(r)
-        l.span = loc_join(l.span, r.span)
-        p[0] = l
+        p[0] = syntax.NaryExpr('AND', l.args + (r,), span=span)
     else:
-        span = loc_join(l.span, r.span)
-        p[0] = syntax.NaryExpr('AND', [l, r], span=span)
+        p[0] = syntax.NaryExpr('AND', (l, r), span=span)
 
 def p_expr_or1(p: Any) -> None:
     'expr : PIPE expr'
@@ -520,13 +518,12 @@ def p_expr_or(p: Any) -> None:
     'expr : expr PIPE expr'
     l: syntax.Expr = p[1]
     r: syntax.Expr = p[3]
+    span = loc_join(l.span, r.span)
     if isinstance(l, syntax.NaryExpr) and l.op == 'OR':
-        l.args.append(p[3])
-        l.span = loc_join(l.span, r.span)
-        p[0] = l
+        p[0] = syntax.NaryExpr('OR', l.args + (r,), span=span)
     else:
         span = loc_join(l.span, r.span)
-        p[0] = syntax.NaryExpr('OR', [l, r], span=span)
+        p[0] = syntax.NaryExpr('OR', (l, r), span=span)
 
 def p_expr_distinct(p: Any) -> None:
     'expr : DISTINCT LPAREN args1 RPAREN'
@@ -625,11 +622,11 @@ def p_args_at_least_one(p: Any) -> None:
 
 def p_args1_one(p: Any) -> None:
     'args1 : expr'
-    p[0] = [p[1]]
+    p[0] = (p[1],)
 
 def p_args1_more(p: Any) -> None:
     'args1 : args1 COMMA expr'
-    p[0] = p[1] + [p[3]]
+    p[0] = p[1] + (p[3],)
 
 def p_expr_id(p: Any) -> None:
     'expr : id'
@@ -665,11 +662,11 @@ def p_mod(p: Any) -> None:
 
 def p_modlist_one(p: Any) -> None:
     'modlist : mod'
-    p[0] = [p[1]]
+    p[0] = (p[1],)
 
 def p_modlist_more(p: Any) -> None:
     'modlist : modlist COMMA mod'
-    p[0] = p[1] + [p[3]]
+    p[0] = p[1] + (p[3],)
 
 def p_mods(p: Any) -> None:
     'mods : MODIFIES modlist'
@@ -678,7 +675,7 @@ def p_mods(p: Any) -> None:
 def p_decl_transition(p: Any) -> None:
     'decl : TRANSITION id LPAREN params RPAREN definition_body'
     id_tok: Token = p[2]
-    mods: List[syntax.ModifiesClause]
+    mods: Tuple[syntax.ModifiesClause, ...]
     expr: syntax.Expr
     mods, expr = p[6]
     p[0] = syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=id_tok.value,
@@ -723,7 +720,7 @@ def p_decl_theorem(p: Any) -> None:
 def p_decl_definition(p: Any) -> None:
     'decl : kstate DEFINITION id LPAREN params RPAREN definition_body'
     k_tok, num_states = p[1]
-    mods: List[syntax.ModifiesClause]
+    mods: Tuple[syntax.ModifiesClause, ...]
     expr: syntax.Expr
     mods, expr = p[7]
 

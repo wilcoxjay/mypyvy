@@ -23,16 +23,15 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
     actives: Dict[syntax.SortDecl, syntax.RelationDecl] = {}
     for sort in prog.sorts():
         name = prog.scope.fresh('active_' + sort.name)
-        r = syntax.RelationDecl(name, arity=[syntax.UninterpretedSort(sort.name)],
-                                mutable=True, derived=None, annotations=[])
+        r = syntax.RelationDecl(name, arity=(syntax.UninterpretedSort(sort.name),), mutable=True)
         actives[sort] = r
         new_decls.append(r)
 
     # active relations initial conditions: always true
     for sort in prog.sorts():
         name = prog.scope.fresh(sort.name[0].upper())
-        expr = syntax.Forall([syntax.SortedVar(name, None)],
-                             syntax.Apply(actives[sort].name, [syntax.Id(name)]))
+        expr = syntax.Forall((syntax.SortedVar(name, None),),
+                             syntax.Apply(actives[sort].name, (syntax.Id(name),)))
         new_decls.append(syntax.InitDecl(name=None, expr=expr))
 
     for d in prog.decls:
@@ -42,7 +41,7 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
             if d.derived_axiom is not None:
                 expr = syntax.relativize_quantifiers(actives, d.derived_axiom)
                 new_decls.append(syntax.RelationDecl(d.name, d.arity, d.mutable, expr,
-                                                     d.annotations))
+                                                     annotations=d.annotations))
             else:
                 new_decls.append(d)
         elif isinstance(d, syntax.ConstantDecl):
@@ -94,7 +93,7 @@ def relaxation_action_def(
         fresh: bool = True
 ) -> syntax.DefinitionDecl:
     decrease_name = (prog.scope.fresh('decrease_domain') if fresh else 'decrease_domain')
-    mods = []
+    mods: Tuple[syntax.ModifiesClause, ...] = ()
     conjs: List[Expr] = []
     if actives is None:
         actives = active_rel_by_sort(prog)
@@ -107,7 +106,7 @@ def relaxation_action_def(
     # constants are active
     for const in prog.constants():
         conjs.append(syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(const.sort)].name,
-                                             [syntax.Id(const.name)])))
+                                             (syntax.Id(const.name),))))
 
     # functions map active to active
     for func in prog.functions():
@@ -118,13 +117,13 @@ def relaxation_action_def(
             name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
                                     also_avoid=names)
             names.append(name)
-            func_conjs.append(syntax.New(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(name)])))
-        ap_func = syntax.Apply(func.name, [syntax.Id(name) for name in names])
+            func_conjs.append(syntax.New(syntax.Apply(actives[arg_sort_decl].name, (syntax.Id(name),))))
+        ap_func = syntax.Apply(func.name, tuple(syntax.Id(name) for name in names))
         name = prog.scope.fresh('y', also_avoid=names)
         active_func = syntax.Let(
             syntax.SortedVar(name, func.sort), ap_func,
-            syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, [syntax.Id(name)])))
-        conjs.append(syntax.Forall([syntax.SortedVar(name, None) for name in names],
+            syntax.New(syntax.Apply(actives[syntax.get_decl_from_sort(func.sort)].name, (syntax.Id(name),))))
+        conjs.append(syntax.Forall(tuple(syntax.SortedVar(name, None) for name in names),
                                    syntax.Implies(syntax.And(*func_conjs), active_func)))
 
     # (relativized) axioms hold after relaxation
@@ -141,30 +140,30 @@ def relaxation_action_def(
             name = prog.scope.fresh(arg_sort_decl.name[0].upper(),
                                     also_avoid=names)
             names.append(name)
-            rel_conjs.append(syntax.Apply(actives[arg_sort_decl].name, [syntax.Id(name)]))
-        ap_rel = syntax.Apply(rel.name, [syntax.Id(name) for name in names])
-        conjs.append(syntax.Forall([syntax.SortedVar(name, None) for name in names],
+            rel_conjs.append(syntax.Apply(actives[arg_sort_decl].name, (syntax.Id(name),)))
+        ap_rel = syntax.Apply(rel.name, tuple(syntax.Id(name) for name in names))
+        conjs.append(syntax.Forall(tuple(syntax.SortedVar(name, None) for name in names),
                                    syntax.Implies(syntax.And(*rel_conjs),
                                                   syntax.Iff(syntax.New(ap_rel), ap_rel))))
 
     return syntax.DefinitionDecl(is_public_transition=True, num_states=2, name=decrease_name,
-                                 params=[], mods=mods, expr=syntax.And(*conjs))
+                                 params=(), mods=mods, expr=syntax.And(*conjs))
 
 
 def relax_actives_action_chunk(scope: syntax.Scope, actives: Dict[syntax.SortDecl, syntax.RelationDecl]) \
-        -> Tuple[List[syntax.ModifiesClause], List[Expr]]:
+        -> Tuple[Tuple[syntax.ModifiesClause, ...], List[Expr]]:
     new_mods = []
     new_conjs = []
 
     for sort, active_rel in actives.items():
         name = scope.fresh(sort.name[0].upper())
-        ap = syntax.Apply(active_rel.name, [syntax.Id(name)])
-        expr = syntax.Forall([syntax.SortedVar(name, None)],
+        ap = syntax.Apply(active_rel.name, (syntax.Id(name),))
+        expr = syntax.Forall((syntax.SortedVar(name, None),),
                              syntax.Implies(syntax.New(ap), ap))
         new_conjs.append(expr)
         new_mods.append(syntax.ModifiesClause(actives[sort].name))
 
-    return new_mods, new_conjs
+    return tuple(new_mods), new_conjs
 
 
 class RelationFact:
@@ -174,7 +173,7 @@ class RelationFact:
         self._polarity = polarity
 
     def as_expr(self, els_trans: Callable[[str], str]) -> Expr:
-        fact_free_vars = syntax.Apply(self._rel.name, [syntax.Id(els_trans(e)) for e in self._els])
+        fact_free_vars = syntax.Apply(self._rel.name, tuple(syntax.Id(els_trans(e)) for e in self._els))
         if not self._is_positive():
             fact_free_vars = syntax.Not(fact_free_vars)
         return fact_free_vars
@@ -198,7 +197,7 @@ class FunctionFact:
         self._res_elm = res_elm
 
     def as_expr(self, els_trans: Callable[[str], str]) -> Expr:
-        e = syntax.AppExpr(self._func.name, [syntax.Id(els_trans(e)) for e in self._params_els])
+        e = syntax.AppExpr(self._func.name, tuple(syntax.Id(els_trans(e)) for e in self._params_els))
         return syntax.Eq(e, syntax.Id(els_trans(self._res_elm)))
 
     def involved_elms(self) -> Tuple[str, ...]:
@@ -256,7 +255,7 @@ def active_rel_by_sort(prog: syntax.Program) -> Dict[syntax.SortDecl, syntax.Rel
     return dict((sort, active_rel(sort)) for sort in prog.sorts())
 
 def active_var(name: str, sort_name: str) -> syntax.Expr:
-    return syntax.Apply('active_%s' % sort_name, [syntax.Id(name)])
+    return syntax.Apply('active_%s' % sort_name, (syntax.Id(name),))
 
 def closing_qa_cycle(
         prog: syntax.Program, free_vars_sorts: List[syntax.SortDecl],
@@ -286,7 +285,7 @@ def is_rel_blocking_relax_step(
     free_vars, derived_relation_formula = derived_rel
     free_vars_active_clause = syntax.And(*(active_var(v.name, sort_name) for (v, sort_name) in free_vars))
 
-    diffing_formula = syntax.Exists([v for (v, _) in free_vars],
+    diffing_formula = syntax.Exists(tuple(v for (v, _) in free_vars),
                                     syntax.And(syntax.And(free_vars_active_clause,
                                                           derived_relation_formula),
                                                syntax.New(syntax.And(free_vars_active_clause,
@@ -363,12 +362,12 @@ def derived_rels_candidates_from_trace(
         for elm in relaxed_elements_relevant:
             var = vars_from_elm[elm]
             sort = pre_relax_state.element_sort(elm)
-            active_element_conj = syntax.Apply('active_%s' % sort.name, [syntax.Id(var.name)])
+            active_element_conj = syntax.Apply('active_%s' % sort.name, (syntax.Id(var.name),))
             conjuncts.append(active_element_conj)
 
-        derived_relation_formula = syntax.Exists([vars_from_elm[elm]
-                                                  for (_, elm) in relaxed_elements
-                                                  if elm in vars_from_elm],
+        derived_relation_formula = syntax.Exists(tuple(vars_from_elm[elm]
+                                                       for (_, elm) in relaxed_elements
+                                                       if elm in vars_from_elm),
                                                  syntax.And(*conjuncts))
 
         if str(derived_relation_formula) in candidates_cache:
@@ -420,8 +419,7 @@ def active_rels_mapping() -> Mapping[syntax.SortDecl, syntax.RelationDecl]:
 
     for sort in prog.sorts():
         name = 'active_' + sort.name  # prog.scope.fresh('active_' + sort.name)
-        r = syntax.RelationDecl(name, arity=[syntax.UninterpretedSort(sort.name)],
-                                mutable=True, derived=None, annotations=[])
+        r = syntax.RelationDecl(name, arity=(syntax.UninterpretedSort(sort.name),), mutable=True)
         actives[sort] = r
 
     return actives
@@ -445,8 +443,8 @@ def diagram_trace_to_explicitly_relaxed_trace_decl(trace: RelaxedTrace, ending_p
         actual_transition = transition_decl_from_name(t.name)
         components.append(actual_transition)
 
-        assert len(pre_diag.vs()) >= len(post_diag.vs())
-        if len(pre_diag.vs()) != len(post_diag.vs()):
+        assert len(pre_diag.get_vs()) >= len(post_diag.get_vs())
+        if len(pre_diag.get_vs()) != len(post_diag.get_vs()):
             components.append(transition_decl_from_name('decrease_domain'))  # TODO: make non-hardcoded
 
     # _, last_diag = trace[-1]
@@ -494,8 +492,7 @@ class Z3RelaxedSemanticsTranslator(translator.Z3Translator):
             # TODO: is there a better way to get Sort out of SortDecl?
             sort_not_decl = syntax.UninterpretedSort(sort.name)
             typechecker.typecheck_sort(scope, sort_not_decl)
-            active_rel = syntax.RelationDecl(active_name, arity=[sort_not_decl],
-                                             mutable=True, derived=None, annotations=[])
+            active_rel = syntax.RelationDecl(active_name, arity=(sort_not_decl,), mutable=True)
             self._active_rels_mapping[sort] = active_rel
 
     def translate_expr(self, expr: Expr) -> z3.ExprRef:
@@ -518,7 +515,7 @@ def consts_exist_axioms(prog: syntax.Program) -> List[Expr]:
 
     for c in prog.constants():
         name = prog.scope.fresh('e_%s' % c.name)
-        ax = syntax.Exists([syntax.SortedVar(name, c.sort)],
+        ax = syntax.Exists((syntax.SortedVar(name, c.sort),),
                            syntax.Eq(syntax.Id(c.name), syntax.Id(name)))
         with prog.scope.n_states(1):
             typechecker.typecheck_expr(prog.scope, ax, syntax.BoolSort)
@@ -540,12 +537,12 @@ def functions_total_axioms(prog: syntax.Program) -> List[Expr]:
                                     also_avoid=names)
             names.append(name)
             params.append(syntax.SortedVar(name, arg_sort))
-        ap_func = syntax.Apply(func.name, [syntax.Id(v.name) for v in params])
+        ap_func = syntax.Apply(func.name, tuple(syntax.Id(v.name) for v in params))
 
         name = prog.scope.fresh('y', also_avoid=names)
 
-        ax = syntax.Forall(params,
-                           syntax.Exists([syntax.SortedVar(name, func.sort)],
+        ax = syntax.Forall(tuple(params),
+                           syntax.Exists((syntax.SortedVar(name, func.sort),),
                                          syntax.Eq(syntax.Id(name), ap_func)))
         with prog.scope.n_states(1):
             typechecker.typecheck_expr(prog.scope, ax, syntax.BoolSort)

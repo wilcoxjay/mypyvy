@@ -357,7 +357,7 @@ class Z3Translator:
             z3elems = sorted(z3model.get_universe(z3sort), key=str)
             name = z3sort.name()
             sort = UninterpretedSort(name)
-            sort.decl = SortDecl(name, [])
+            sort.decl = SortDecl(name)
             sorts[sort.name] = sort
             sort_decls[sort] = sort.decl
             struct.univs[sort.decl] = ()
@@ -400,11 +400,11 @@ class Z3Translator:
             rng = sorts[z3decl.range().name()]
             decl: Union[RelationDecl, ConstantDecl, FunctionDecl]
             if rng is BoolSort:
-                decl = RelationDecl(name, list(dom), False, None, [])
+                decl = RelationDecl(name, tuple(dom), mutable=False)
             elif len(dom) == 0:
-                decl = ConstantDecl(name, rng, False, [])
+                decl = ConstantDecl(name, rng, mutable=False)
             else:
-                decl = FunctionDecl(name, list(dom), rng, False, [])
+                decl = FunctionDecl(name, tuple(dom), rng, mutable=False)
 
             _eval: Callable[[z3.ExprRef], Union[bool, int, Element]]
             if rng is BoolSort:
