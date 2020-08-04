@@ -95,6 +95,8 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
                     parser.add_input(line)
             else:
                 _cvc4_last_model_response = ''.join(lines)
+                # print(f'\n\nQUERY:\n{_cvc4_last_query}\n\n')
+                # print(f'\n\nMODEL:\n{_cvc4_last_model_response}\n\n')
                 # print('got s-expression. not looking for any more input.')
                 assert isinstance(s, sexp.SList), s
                 # for sub in s:
@@ -103,7 +105,8 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
         else:
             assert False
     else:
-        assert False, f'cvc4 returned unexpected answer to (check-sat): {ans!r}'
+        assert False, (f'cvc4 returned unexpected answer to (check-sat): {ans!r}'
+                       f'\n\nQUERY:\n{_cvc4_last_query}\n\n')
 
 
 def cvc4_preprocess(z3str: str) -> str:
