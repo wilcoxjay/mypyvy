@@ -4,32 +4,16 @@ multi-vocabulary formulas, and a convenience class State.
 '''
 
 from __future__ import annotations
-from collections import defaultdict
-from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
-import dataclasses
-import time
 from itertools import chain, product, combinations
-import math
-import random
-import io
 import re
-import sexp
-import subprocess
-import sys
-from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
-from typing import cast, TypeVar, Callable
+from typing import List, Optional, Tuple, Union, Dict, cast
 from abc import ABC, abstractmethod
-
-import z3
 
 import utils
 import typechecker
 import syntax
-from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
-from syntax import FunctionDecl, DefinitionDecl, Not, New
-
+from syntax import Expr, ConstantDecl, RelationDecl, FunctionDecl, SortDecl
 
 Element = str
 Universe = Dict[SortDecl, Tuple[Element, ...]]  # ODED: I think this should be Sort or str, rather than SortDecl. The universe does not interpret sorts like Int or Bool (I think).
@@ -90,15 +74,19 @@ class BareFirstOrderStructure(FirstOrderStructure):
     _rel_interps: RelationInterps
     _const_interps: ConstantInterps
     _func_interps: FunctionInterps
+
     @property
     def univs(self) -> Universe:
         return self._univs
+
     @property
     def rel_interps(self) -> RelationInterps:
         return self._rel_interps
+
     @property
     def const_interps(self) -> ConstantInterps:
         return self._const_interps
+
     @property
     def func_interps(self) -> FunctionInterps:
         return self._func_interps
@@ -221,18 +209,21 @@ class Trace:
         # this function assumes expr does not contain macros (i.e., macros have been expanded)
         def go(expr: Expr, index: Optional[int]) -> Union[Element, bool]:
             assert index is None or 0 <= index < self.num_states
+
             def get_rel(d: RelationDecl) -> RelationInterp:
                 if d.mutable:
                     assert index is not None
                     return self.rel_interps[index][d]
                 else:
                     return self.immut_rel_interps[d]
+
             def get_const(d: ConstantDecl) -> Element:
                 if d.mutable:
                     assert index is not None
                     return self.const_interps[index][d]
                 else:
                     return self.immut_const_interps[d]
+
             def get_func(d: FunctionDecl) -> FunctionInterp:
                 if d.mutable:
                     assert index is not None
@@ -286,6 +277,7 @@ class Trace:
                 assert expr.quant in ['FORALL', 'EXISTS']
                 p = all if expr.quant == 'FORALL' else any
                 doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
+
                 def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
                     with scope.in_scope(q.binder, list(tup)):
                         ans = go(q.body, index)
@@ -334,9 +326,11 @@ class State(FirstOrderStructure):
     @property
     def immut_rel_interps(self) -> RelationInterps:
         return self.trace.immut_rel_interps
+
     @property
     def immut_const_interps(self) -> ConstantInterps:
         return self.trace.immut_const_interps
+
     @property
     def immut_func_interps(self) -> FunctionInterps:
         return self.trace.immut_func_interps
@@ -344,9 +338,11 @@ class State(FirstOrderStructure):
     @property
     def mut_rel_interps(self) -> RelationInterps:
         return self.trace.rel_interps[self.index] if self.index is not None else {}
+
     @property
     def mut_const_interps(self) -> ConstantInterps:
         return self.trace.const_interps[self.index] if self.index is not None else {}
+
     @property
     def mut_func_interps(self) -> FunctionInterps:
         return self.trace.func_interps[self.index] if self.index is not None else {}
@@ -357,9 +353,11 @@ class State(FirstOrderStructure):
     @property
     def rel_interps(self) -> RelationInterps:
         return {**self.immut_rel_interps, **self.mut_rel_interps}
+
     @property
     def const_interps(self) -> ConstantInterps:
         return {**self.immut_const_interps, **self.mut_const_interps}
+
     @property
     def func_interps(self) -> FunctionInterps:
         return {**self.immut_func_interps, **self.mut_func_interps}

@@ -1,5 +1,5 @@
 import logic
-from logic import Solver, Expr
+from logic import Solver
 import syntax
 from syntax import New
 import translator

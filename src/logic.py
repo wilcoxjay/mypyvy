@@ -1,20 +1,16 @@
 from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime
-import dataclasses
 import time
 import itertools
 import math
 import random
 import io
-import re
-import sexp
 import subprocess
 import sys
 from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
-from typing import cast, TypeVar, Callable
+from typing import cast, Callable
 
 import z3
 
@@ -686,11 +682,11 @@ class Diagram:
 
     @staticmethod
     def _read_first_order_structure(struct: FirstOrderStructure) -> Tuple[
-            List[syntax.SortedVar], # vs
-            Dict[SortDecl, List[Expr]], # ineqs
-            Dict[RelationDecl, List[Expr]], # rels
-            Dict[ConstantDecl, Expr], # consts
-            Dict[FunctionDecl, List[Expr]], # funcs
+            List[syntax.SortedVar],  # vs
+            Dict[SortDecl, List[Expr]],  # ineqs
+            Dict[RelationDecl, List[Expr]],  # rels
+            Dict[ConstantDecl, Expr],  # consts
+            Dict[FunctionDecl, List[Expr]],  # funcs
     ]:
         vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = {}
         ineqs: Dict[SortDecl, List[Expr]] = {}
@@ -731,7 +727,6 @@ class Diagram:
         vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
 
         return vs, ineqs, rels, consts, funcs
-
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
         for s, l in self.ineqs.items():

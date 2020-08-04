@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from itertools import chain, product
+from itertools import product
 
-from typing import Any, Callable, cast, Dict, Iterable, Iterator, List, Optional, Tuple, Union
+from typing import Callable, cast, Dict, Iterator, List, Optional, Tuple, Union
 
 import z3
 from networkx import DiGraph  # type: ignore
 
 import syntax
 from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryExpr
-from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse, ModifiesClause
-from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, StateDecl
-from syntax import Program, New, SortDecl, Sort, UninterpretedSort, BoolSort, IntSort
-from semantics import Trace, Element, RelationInterp, FunctionInterp, RelationInterps, FunctionInterps, FirstOrderStructure, BareFirstOrderStructure
+from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse
+from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl
+from syntax import Program, SortDecl, Sort, UninterpretedSort, BoolSort, IntSort
+from semantics import Trace, Element, RelationInterp, FunctionInterp, FirstOrderStructure, BareFirstOrderStructure
 from z3_utils import z3_quantifier_alternations
 from solver_cvc4 import CVC4Model
 
@@ -234,7 +234,7 @@ class Z3Translator:
                         assert decl not in R
                         R[decl] = {(): bool(ans)}
                 elif isinstance(decl, FunctionDecl):
-                    fl: FunctionInterp  = {}
+                    fl: FunctionInterp = {}
                     domains = [z3model.get_universe(z3decl.domain(i))
                                for i in range(z3decl.arity())]
                     if not any(x is None for x in domains):
@@ -248,7 +248,7 @@ class Z3Translator:
                             else:
                                 ans_str = rename(ans.decl().name())
 
-                            fl[tuple(rename(str(col)) for col in row)]= ans_str
+                            fl[tuple(rename(str(col)) for col in row)] = ans_str
                         assert decl not in F
                         F[decl] = fl
                 else:

@@ -3,8 +3,7 @@ from dataclasses import dataclass
 
 import syntax
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
-import logic
-from semantics import print_element, Element, RelationInterp, FunctionInterp, FirstOrderStructure
+from semantics import print_element, RelationInterp, FirstOrderStructure
 
 from typing import List, Dict, Optional, Set, Union
 
