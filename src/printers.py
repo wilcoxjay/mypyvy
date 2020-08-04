@@ -57,7 +57,7 @@ def ordered_by_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args:
     order_name = args[0]
     order = get_relation(order_name)
     us = UninterpretedSort(s.name)
-    assert order.arity == [us, us] and not order.mutable
+    assert order.arity == (us, us) and not order.mutable
     ordinal = get_ordinal(struct.rel_interps[order], elt)
     return f'{s.name}{ordinal}'
 
