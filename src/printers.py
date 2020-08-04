@@ -97,7 +97,7 @@ def option_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: Lis
     option_sort = UninterpretedSort(s.name)
 
     assert not is_none.mutable and not value.mutable and \
-        is_none.arity == [option_sort] and value.arity == [option_sort]
+        is_none.arity == (option_sort,) and value.arity == (option_sort,)
 
     elt_sort = syntax.get_decl_from_sort(value.sort)
 
