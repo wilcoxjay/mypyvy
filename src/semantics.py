@@ -32,7 +32,7 @@ from syntax import FunctionDecl, DefinitionDecl, Not, New
 
 
 Element = str
-Universe = Dict[SortDecl, Tuple[Element, ...]]
+Universe = Dict[SortDecl, Tuple[Element, ...]]  # ODED: I think this should be Sort or str, rather than SortDecl. The universe does not interpret sorts like Int or Bool (I think).
 RelationInterp = Dict[Tuple[Element, ...], bool]
 FunctionInterp = Dict[Tuple[Element, ...], Element]
 RelationInterps = Dict[RelationDecl, RelationInterp]
@@ -72,6 +72,36 @@ class FirstOrderStructure(ABC):
     # TODO: when everything is a function, all three properties above
     # can just be merged into one interp property, or better yet, all
     # four above can just become an overloaded __getitem__ method.
+
+
+@dataclass
+class BareFirstOrderStructure(FirstOrderStructure):
+    '''This class represents a bare first-order structure, whose symbols
+    need not be related to the program, and whose properties are given
+    by simple dictionaries. Example uses include representing the
+    model obtained from an SMT solver.
+
+    Note that not all element tuples have to be in the interpretation
+    for every relation/function. That is, the structure can be
+    partial.
+
+    '''
+    _univs: Universe
+    _rel_interps: RelationInterps
+    _const_interps: ConstantInterps
+    _func_interps: FunctionInterps
+    @property
+    def univs(self) -> Universe:
+        return self._univs
+    @property
+    def rel_interps(self) -> RelationInterps:
+        return self._rel_interps
+    @property
+    def const_interps(self) -> ConstantInterps:
+        return self._const_interps
+    @property
+    def func_interps(self) -> FunctionInterps:
+        return self._func_interps
 
 
 class Trace:

@@ -137,7 +137,7 @@ def symbols_used(scope: Scope, expr: Expr, state_index: int = 0) -> Set[Tuple[in
             args |= symbols_used(scope, arg, state_index)
 
         d = scope.get(expr.callee)
-        assert d is not None and not isinstance(d, tuple)
+        assert d is not None and not isinstance(d, tuple), (d, expr.callee, expr)
         if isinstance(d, DefinitionDecl):
             with scope.fresh_stack():
                 with scope.in_scope(d.binder, [None for i in range(len(d.binder.vs))]):
@@ -1025,7 +1025,7 @@ class RelationDecl(Decl):
 class ConstantDecl(Decl):
     def __init__(
             self, name: str, sort: Sort, mutable: bool, annotations: List[Annotation], *,
-            span: Optional[Span]
+            span: Optional[Span] = None
     ) -> None:
         super().__init__(span)
         self.span = span

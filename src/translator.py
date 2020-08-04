@@ -11,9 +11,10 @@ import syntax
 from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryExpr
 from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse, ModifiesClause
 from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, StateDecl
-from syntax import Program, SortDecl, New
-from semantics import Trace, Element, RelationInterp, FunctionInterp, RelationInterps, FunctionInterps
+from syntax import Program, New, SortDecl, Sort, UninterpretedSort, BoolSort, IntSort
+from semantics import Trace, Element, RelationInterp, FunctionInterp, RelationInterps, FunctionInterps, FirstOrderStructure, BareFirstOrderStructure
 from z3_utils import z3_quantifier_alternations
+from solver_cvc4 import CVC4Model
 
 
 TRANSITION_INDICATOR = 'tid'
@@ -171,6 +172,8 @@ class Z3Translator:
 
         If allow_undefined is True, the resulting trace may leave some symbols undefined.
         '''
+        if not isinstance(z3model, CVC4Model):
+            struct = Z3Translator.model_to_first_order_structure(z3model)
         trace = Trace(num_states)
         keys = Z3Translator._get_keys(num_states)
 
@@ -329,6 +332,135 @@ class Z3Translator:
                 assert False, decl
 
         return trace
+
+    @staticmethod
+    def model_to_first_order_structure(z3model: z3.ModelRef) -> FirstOrderStructure:
+        '''
+        Convert z3 model to a BareFirstOrderStructure.
+
+        Note that all declarations of the bare structure are not
+        related to the program's declarations.
+        '''
+        assert isinstance(z3model, z3.ModelRef), f'{type(z3model)}\n{z3model}'
+        struct = BareFirstOrderStructure({}, {}, {}, {})
+
+        # create universe
+
+        sorts: Dict[str, Sort] = {
+            'Bool': BoolSort,
+            'Int': IntSort,
+        }
+        sort_decls: Dict[Sort, SortDecl] = {}  # TODO: remove once Universe maps sorts and not SortDecls
+        elements: Dict[Tuple[Sort, z3.ExprRef], Element] = {}
+        z3elements: Dict[Tuple[Sort, Element], z3.ExprRef] = {}
+        for z3sort in sorted(z3model.sorts(), key=str):
+            z3elems = sorted(z3model.get_universe(z3sort), key=str)
+            name = z3sort.name()
+            sort = UninterpretedSort(name)
+            sort.decl = SortDecl(name, [])
+            sorts[sort.name] = sort
+            sort_decls[sort] = sort.decl
+            struct.univs[sort.decl] = ()
+            for i, x in enumerate(z3elems):
+                e = f'{sort.name}{i}'  # TODO: someday this will just be i
+                assert (sort, x) not in elements, (sort, i, x, e)
+                elements[sort, x] = e
+                assert (sort, e) not in z3elements, (sort, i, x, e)
+                z3elements[sort, e] = x
+                struct.univs[sort.decl] += (e,)
+
+        # interpret relations, constants, functions
+
+        def _eval_bool(expr: z3.ExprRef) -> bool:
+            assert z3.is_bool(expr), expr
+            ans = z3model.eval(expr, model_completion=True)
+            assert z3.is_bool(ans), (expr, ans)
+            return bool(ans)
+
+        def _eval_int(expr: z3.ExprRef) -> str:  # TODO: this should return int
+            assert z3.is_int(expr), expr
+            ans = z3model.eval(expr, model_completion=True)
+            assert z3.is_int_value(ans), (expr, ans)
+            return str(ans.as_long())
+
+        def _eval_elem(sort: Sort) -> Callable[[z3.ExprRef], Element]:
+            def _eval(expr: z3.ExprRef) -> Element:
+                assert sorts[expr.sort().name()] is sort, expr
+                ans = z3model.eval(expr, model_completion=True)
+                assert (sort, ans) in elements, (sort, expr, ans)
+                return elements[sort, ans]
+            return _eval
+
+        for z3decl in sorted(z3model.decls(), key=str):
+            name = z3decl.name()
+            dom = tuple(
+                sorts[z3decl.domain(i).name()]
+                for i in range(z3decl.arity())
+            )
+            rng = sorts[z3decl.range().name()]
+            decl: Union[RelationDecl, ConstantDecl, FunctionDecl]
+            if rng is BoolSort:
+                decl = RelationDecl(name, list(dom), False, None, [])
+            elif len(dom) == 0:
+                decl = ConstantDecl(name, rng, False, [])
+            else:
+                decl = FunctionDecl(name, list(dom), rng, False, [])
+
+            _eval: Callable[[z3.ExprRef], Union[bool, int, Element]]
+            if rng is BoolSort:
+                _eval = _eval_bool
+            elif rng is IntSort:
+                _eval = _eval_int
+            elif isinstance(rng, UninterpretedSort):
+                _eval = _eval_elem(rng)
+            else:
+                assert False, (decl, rng)
+            domains = [struct.univs[sort_decls[sort]] for sort in dom]
+            fi = {
+                row: _eval(z3decl(*(
+                    z3elements[sort, e]
+                    for sort, e in zip(dom, row)
+                )))
+                for row in product(*domains)
+            }
+            if isinstance(decl, RelationDecl):
+                assert decl not in struct.rel_interps
+                assert all(isinstance(v, bool) for v in fi.values())
+                assert all(
+                    len(k) == len(dom) and
+                    all(e in struct.univs[sort_decls[sort]] for e, sort in zip(k, dom))
+                    for k in fi.keys()
+                )
+                struct.rel_interps[decl] = cast(RelationInterp, fi)
+            elif isinstance(decl, FunctionDecl):
+                assert decl not in struct.func_interps
+                assert all(isinstance(v, Element) for v in fi.values())
+                if isinstance(rng, UninterpretedSort):
+                    assert all(v in struct.univs[sort_decls[rng]] for v in fi.values())
+                elif rng is IntSort:
+                    assert all(isinstance(int(v), int) for v in fi.values())
+                else:
+                    assert False, (decl, rng)
+                assert all(
+                    len(k) == len(dom) and
+                    all(e in struct.univs[sort_decls[sort]] for e, sort in zip(k, dom))
+                    for k in fi.keys()
+                )
+                struct.func_interps[decl] = cast(FunctionInterp, fi)
+            elif isinstance(decl, ConstantDecl):
+                assert decl not in struct.const_interps
+                assert list(fi.keys()) == [()]
+                v = fi[()]
+                assert isinstance(v, Element)
+                if isinstance(rng, UninterpretedSort):
+                    assert v in struct.univs[sort_decls[rng]]
+                elif rng is IntSort:
+                    assert isinstance(int(v), int)
+                else:
+                    assert False, (decl, rng)
+                struct.const_interps[decl] = cast(Element, fi[()])
+
+        return struct
 
     @staticmethod
     def sort_to_z3(s: Union[syntax.Sort, syntax.SortDecl]) -> z3.SortRef:
