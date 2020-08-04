@@ -550,9 +550,7 @@ class Expr(Denotable):
         raise Exception('Unexpected expr %s does not implement __repr__ method' % type(self))
 
     def __str__(self) -> str:
-        buf: List[str] = []
-        pretty(self, buf, PREC_TOP, 'NONE')
-        return ''.join(buf)
+        return ''.join(pretty(self))
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Expr):
@@ -1711,7 +1709,13 @@ PREC_ASSOC = {
 def no_parens(ip: int, op: int, side: str) -> bool:
     return ip < op or (ip == op and side == PREC_ASSOC[ip])
 
-def pretty(e: Expr, buf: List[str], prec: int, side: str) -> None:
+def pretty(e: Expr) -> str:
+    buf = _pretty(e)
+    return ''.join(buf)
+
+def _pretty(e: Expr, buf: Optional[List[str]] = None, prec: int = PREC_TOP, side: str = 'NONE') -> List[str]:
+    if buf is None:
+        buf = []
     needs_parens = not no_parens(pretty_precedence(e), prec, side)
 
     if needs_parens:
@@ -1724,6 +1728,8 @@ def pretty(e: Expr, buf: List[str], prec: int, side: str) -> None:
     if needs_parens:
         buf.append(')')
 
+    return buf
+
 def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
     if isinstance(e, Bool):
         buf.append('true' if e.val else 'false')
@@ -1732,16 +1738,16 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
     elif isinstance(e, UnaryExpr):
         if e.op == 'NOT':
             buf.append('!')
-            pretty(e.arg, buf, PREC_NOT, 'NONE')
+            _pretty(e.arg, buf, PREC_NOT, 'NONE')
         elif e.op == 'NEW':
             buf.append('new(')
-            pretty(e.arg, buf, PREC_TOP, 'NONE')
+            _pretty(e.arg, buf, PREC_TOP, 'NONE')
             buf.append(')')
         else:
             assert False
     elif isinstance(e, BinaryExpr):
         p = pretty_precedence(e)
-        pretty(e.arg1, buf, p, 'LEFT')
+        _pretty(e.arg1, buf, p, 'LEFT')
 
         pretties = {
             'IMPLIES': '->',
@@ -1762,7 +1768,7 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
 
         buf.append(' %s ' % s)
 
-        pretty(e.arg2, buf, p, 'RIGHT')
+        _pretty(e.arg2, buf, p, 'RIGHT')
     elif isinstance(e, NaryExpr):
         assert len(e.args) >= 2
 
@@ -1780,15 +1786,15 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
         if e.op == 'DISTINCT':
             buf.append('distinct(')
 
-        pretty(e.args[0], buf, p, 'LEFT')
+        _pretty(e.args[0], buf, p, 'LEFT')
 
         for arg in e.args[1:-1]:
             buf.append('%s' % sep)
-            pretty(arg, buf, p, 'LEFT')
+            _pretty(arg, buf, p, 'LEFT')
 
         buf.append('%s' % sep)
 
-        pretty(e.args[-1], buf, p, 'RIGHT')
+        _pretty(e.args[-1], buf, p, 'RIGHT')
 
         if e.op == 'DISTINCT':
             buf.append(')')
@@ -1800,7 +1806,7 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
             if started:
                 buf.append(', ')
             started = True
-            pretty(arg, buf, PREC_TOP, 'NONE')
+            _pretty(arg, buf, PREC_TOP, 'NONE')
         buf.append(')')
     elif isinstance(e, QuantifierExpr):
         buf.append(e.quant.lower())
@@ -1814,23 +1820,23 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
             buf.append(str(sv))
         buf.append('. ')
 
-        pretty(e.body, buf, PREC_QUANT, 'NONE')
+        _pretty(e.body, buf, PREC_QUANT, 'NONE')
     elif isinstance(e, Id):
         buf.append(e.name)
     elif isinstance(e, IfThenElse):
         buf.append('if ')
-        pretty(e.branch, buf, PREC_TOP, 'NONE')
+        _pretty(e.branch, buf, PREC_TOP, 'NONE')
         buf.append(' then ')
-        pretty(e.then, buf, PREC_TOP, 'NONE')
+        _pretty(e.then, buf, PREC_TOP, 'NONE')
         buf.append(' else ')
-        pretty(e.els, buf, PREC_TOP, 'NONE')
+        _pretty(e.els, buf, PREC_TOP, 'NONE')
     elif isinstance(e, Let):
         buf.append('let ')
         buf.append(str(e.binder.vs[0]))
         buf.append(' = ')
-        pretty(e.val, buf, PREC_TOP, 'NONE')
+        _pretty(e.val, buf, PREC_TOP, 'NONE')
         buf.append(' in ')
-        pretty(e.body, buf, PREC_TOP, 'NONE')
+        _pretty(e.body, buf, PREC_TOP, 'NONE')
     else:
         assert False
 
