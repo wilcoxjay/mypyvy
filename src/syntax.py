@@ -537,8 +537,29 @@ class FaithfulPrinter:
 def faithful_print_prog(prog: Program, skip_invariants: bool = False) -> str:
     return FaithfulPrinter(prog, skip_invariants).process()
 
-@dataclass(frozen=True, order=True)
-class Bool:
+
+@dataclass
+class AbstractExpr:
+    def __lt__(self, other: Any) -> bool:
+        if not isinstance(other, AbstractExpr):
+            raise TypeError
+        fs1 = tuple(f for f in dataclasses.fields(self) if f.compare)
+        vs1 = tuple(getattr(self, f.name) for f in fs1)
+        fs2 = tuple(f for f in dataclasses.fields(other) if f.compare)
+        vs2 = tuple(getattr(other, f.name) for f in fs2)
+        return vs1 < vs2
+
+    def __gt__(self, other: Any) -> bool:
+        return other < self
+
+    def __le__(self, other: Any) -> bool:
+        return self == other or self < other
+
+    def __ge__(self, other: Any) -> bool:
+        return self == other or self > other
+
+@dataclass(frozen=True)
+class Bool(AbstractExpr):
     val: bool
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
@@ -548,8 +569,8 @@ class Bool:
 TrueExpr = Bool(True)
 FalseExpr = Bool(False)
 
-@dataclass(frozen=True, order=True)
-class Int:
+@dataclass(frozen=True)
+class Int(AbstractExpr):
     val: int
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
@@ -558,8 +579,8 @@ UNOPS = {
     'NEW'
 }
 
-@dataclass(frozen=True, order=True)
-class UnaryExpr:
+@dataclass(frozen=True)
+class UnaryExpr(AbstractExpr):
     op: str
     arg: Expr
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
@@ -594,8 +615,8 @@ BINOPS = {
     'MULT'
 }
 
-@dataclass(frozen=True, order=True)
-class BinaryExpr:
+@dataclass(frozen=True)
+class BinaryExpr(AbstractExpr):
     op: str
     arg1: Expr
     arg2: Expr
@@ -613,8 +634,8 @@ NOPS = {
     'DISTINCT'
 }
 
-@dataclass(frozen=True, order=True)
-class NaryExpr:
+@dataclass(frozen=True)
+class NaryExpr(AbstractExpr):
     op: str
     args: Tuple[Expr, ...]
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
@@ -666,8 +687,8 @@ def Implies(arg1: Expr, arg2: Expr) -> Expr:
 def Apply(callee: str, args: Tuple[Expr, ...]) -> Expr:
     return AppExpr(callee, args)
 
-@dataclass(frozen=True, order=True)
-class AppExpr:
+@dataclass(frozen=True)
+class AppExpr(AbstractExpr):
     callee: str
     args: Tuple[Expr, ...]
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
@@ -698,8 +719,8 @@ def safe_cast_sort(s: InferenceSort) -> Sort:
 class Binder(Denotable):
     vs: Tuple[SortedVar, ...]
 
-@dataclass(frozen=True, order=True)
-class QuantifierExpr:
+@dataclass(frozen=True)
+class QuantifierExpr(AbstractExpr):
     quant: str
     vs: dataclasses.InitVar[Tuple[SortedVar, ...]]
     binder: Binder = dataclasses.field(init=False)
@@ -717,8 +738,8 @@ class QuantifierExpr:
     def get_vs(self) -> Tuple[SortedVar, ...]:
         return self.binder.vs
 
-@dataclass(frozen=True, order=True)
-class Id:
+@dataclass(frozen=True)
+class Id(AbstractExpr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     name: str
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
@@ -726,8 +747,8 @@ class Id:
     def __str__(self) -> str:
         return pretty(self)
 
-@dataclass(frozen=True, order=True)
-class IfThenElse:
+@dataclass(frozen=True)
+class IfThenElse(AbstractExpr):
     branch: Expr
     then: Expr
     els: Expr
@@ -736,8 +757,8 @@ class IfThenElse:
     def __str__(self) -> str:
         return pretty(self)
 
-@dataclass(frozen=True, order=True)
-class Let:
+@dataclass(frozen=True)
+class Let(AbstractExpr):
     var: dataclasses.InitVar[SortedVar]
     binder: Binder = dataclasses.field(init=False)
     val: Expr
