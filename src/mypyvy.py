@@ -271,13 +271,13 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             diagram = parser.parse_expr(elm.childNodes[0].data)
             typechecker.typecheck_expr(prog.scope, diagram, syntax.BoolSort)
             assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
-            active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
+            active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.get_vs()]
 
             if not seen_first:
                 # restrict the domain to be subdomain of the diagram's existentials
                 seen_first = True
                 import itertools  # type: ignore
-                for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort):  # TODO; need to sort first
+                for sort, vars in itertools.groupby(diagram.get_vs(), lambda v: v.sort):  # TODO; need to sort first
                     free_var = syntax.SortedVar(syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
 
                     # TODO: diagram simplification omits them from the exists somewhere
@@ -285,13 +285,13 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
                     els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
                     els = list(vars)
                     els += consts
-                    restrict_domain = syntax.Forall([free_var],
+                    restrict_domain = syntax.Forall((free_var,),
                                                     syntax.Or(*(syntax.Eq(syntax.Id(free_var.name),
                                                                           syntax.Id(v.name))
                                                                 for v in els)))
                     active_clauses += [restrict_domain]
 
-            diagram_active = syntax.Exists(diagram.vs(),
+            diagram_active = syntax.Exists(diagram.get_vs(),
                                            syntax.And(diagram.body, *active_clauses))
             typechecker.typecheck_expr(prog.scope, diagram_active, syntax.BoolSort)
 
@@ -329,15 +329,15 @@ def sandbox(s: Solver) -> None:
 
     derrel_name = syntax.the_program.scope.fresh("nder")
     (free_vars, def_expr) = diff_conjunctions[0]
-    def_axiom = syntax.Forall(free_vars,
+    def_axiom = syntax.Forall(tuple(free_vars),
                               syntax.Iff(syntax.Apply(derrel_name,
-                                                      [syntax.Id(v.name) for v in free_vars]),
+                                                      tuple(syntax.Id(v.name) for v in free_vars)),
                                          # TODO: extract pattern
                                          def_expr))
 
     derrel = syntax.RelationDecl(name=derrel_name,
-                                 arity=[syntax.safe_cast_sort(var.sort) for var in free_vars],
-                                 mutable=True, derived=def_axiom, annotations=[])
+                                 arity=tuple(syntax.safe_cast_sort(var.sort) for var in free_vars),
+                                 mutable=True, derived=def_axiom)
 
     # TODO: this irreversibly adds the relation to the context, wrap
     typechecker.typecheck_statedecl(syntax.the_program.scope, derrel)

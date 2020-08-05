@@ -1,20 +1,16 @@
 from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime
-import dataclasses
 import time
 import itertools
 import math
 import random
 import io
-import re
-import sexp
 import subprocess
 import sys
 from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
-from typing import cast, TypeVar, Callable
+from typing import cast, Callable
 
 import z3
 
@@ -273,7 +269,7 @@ def assert_any_transition(s: Solver, t: Z3Translator,
     if allow_stutter:
         tid = z3.Bool(get_transition_indicator(uid, '$stutter'))
         tids.append(tid)
-        frame = syntax.And(*DefinitionDecl._frame(prog.scope, mods=[]))
+        frame = syntax.And(*DefinitionDecl._frame(prog.scope, mods=()))
         s.add(z3.Implies(tid, t.translate_expr(New(frame, state_index))))
 
     s.add(z3.Or(*tids))
@@ -671,7 +667,7 @@ class Diagram:
             struct: FirstOrderStructure,
     ) -> None:
         vs, ineqs, rels, consts, funcs = Diagram._read_first_order_structure(struct)
-        self.binder = syntax.Binder(vs)
+        self.binder = syntax.Binder(tuple(vs))
         self.ineqs = ineqs
         self.rels = rels
         self.consts = consts
@@ -686,11 +682,11 @@ class Diagram:
 
     @staticmethod
     def _read_first_order_structure(struct: FirstOrderStructure) -> Tuple[
-            List[syntax.SortedVar], # vs
-            Dict[SortDecl, List[Expr]], # ineqs
-            Dict[RelationDecl, List[Expr]], # rels
-            Dict[ConstantDecl, Expr], # consts
-            Dict[FunctionDecl, List[Expr]], # funcs
+            List[syntax.SortedVar],  # vs
+            Dict[SortDecl, List[Expr]],  # ineqs
+            Dict[RelationDecl, List[Expr]],  # rels
+            Dict[ConstantDecl, Expr],  # consts
+            Dict[FunctionDecl, List[Expr]],  # funcs
     ]:
         vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = {}
         ineqs: Dict[SortDecl, List[Expr]] = {}
@@ -713,7 +709,7 @@ class Diagram:
                         assert isinstance(col_sort, syntax.UninterpretedSort)
                         assert col_sort.decl is not None
                         args.append(syntax.Id(col))
-                    e = syntax.AppExpr(R.name, args)
+                    e = syntax.AppExpr(R.name, tuple(args))
                 else:
                     e = syntax.Id(R.name)
                 e = e if ans else syntax.Not(e)
@@ -724,14 +720,13 @@ class Diagram:
         for F, fl in struct.func_interps.items():
             funcs[F] = []
             for tup, res in fl.items():
-                e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
+                e = syntax.AppExpr(F.name, tuple(syntax.Id(col) for col in tup))
                 e = syntax.Eq(e, syntax.Id(res))
                 funcs[F].append(e)
 
         vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
 
         return vs, ineqs, rels, consts, funcs
-
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
         for s, l in self.ineqs.items():
@@ -824,7 +819,7 @@ class Diagram:
                     typechecker.typecheck_expr(scope, c, syntax.BoolSort)
         typechecker.post_typecheck_binder(self.binder)
 
-    def vs(self) -> List[syntax.SortedVar]:
+    def get_vs(self) -> Tuple[syntax.SortedVar, ...]:
         return self.binder.vs
 
     def to_z3(self, t: Z3Translator, new: bool = False) -> z3.ExprRef:
@@ -903,8 +898,8 @@ class Diagram:
             S |= i
 
     def prune_unused_vars(self) -> None:
-        self.binder.vs = [v for v in self.binder.vs
-                          if any(v.name in syntax.free_ids(c) for _, _, c in self.conjuncts())]
+        self.binder.vs = tuple(v for v in self.binder.vs
+                               if any(v.name in syntax.free_ids(c) for _, _, c in self.conjuncts()))
 
     @contextmanager
     def without(self, d: _RelevantDecl, j: Union[int, Set[int], None] = None) -> Iterator[None]:

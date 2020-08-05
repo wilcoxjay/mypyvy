@@ -2,23 +2,17 @@ from __future__ import annotations
 
 from itertools import chain, product
 
-from typing import (Any, Callable, cast, Dict, Iterable, Iterator,
-                    List, Optional, Tuple, Union)
+from typing import Callable, cast, Dict, Iterator, List, Optional, Tuple, Union
 
 import z3
 from networkx import DiGraph  # type: ignore
 
 import syntax
-from syntax import (Scope, Binder, Expr, Bool, Int, UnaryExpr,
-                    BinaryExpr, NaryExpr, AppExpr, QuantifierExpr,
-                    Id, Let, IfThenElse, ModifiesClause,
-                    DefinitionDecl, RelationDecl, FunctionDecl,
-                    ConstantDecl, StateDecl, Program, New, SortDecl,
-                    Sort, UninterpretedSort, BoolSort, IntSort,
-                    SortInferencePlaceholder)
-from semantics import (Trace, Element, RelationInterp, FunctionInterp,
-                       RelationInterps, FunctionInterps, FirstOrderStructure,
-                       BareFirstOrderStructure)
+from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryExpr
+from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse
+from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl
+from syntax import Program, SortDecl, Sort, UninterpretedSort, BoolSort, IntSort, SortInferencePlaceholder
+from semantics import Trace, Element, RelationInterp, FunctionInterp, FirstOrderStructure, BareFirstOrderStructure
 from z3_utils import z3_quantifier_alternations
 from solver_cvc4 import CVC4Model, CVC4Int
 
@@ -238,7 +232,7 @@ class Z3Translator:
                         assert decl not in R
                         R[decl] = {(): bool(ans)}
                 elif isinstance(decl, FunctionDecl):
-                    fl: FunctionInterp  = {}
+                    fl: FunctionInterp = {}
                     domains = [z3model.get_universe(z3decl.domain(i))
                                for i in range(z3decl.arity())]
                     if not any(x is None for x in domains):
@@ -252,7 +246,7 @@ class Z3Translator:
                             else:
                                 ans_str = rename(ans.decl().name())
 
-                            fl[tuple(rename(str(col)) for col in row)]= ans_str
+                            fl[tuple(rename(str(col)) for col in row)] = ans_str
                         assert decl not in F
                         F[decl] = fl
                 else:
@@ -495,7 +489,7 @@ class Z3Translator:
             z3elems = sorted(z3model.get_universe(z3sort), key=str)
             name = z3sort.name()
             sort = UninterpretedSort(name)
-            sort.decl = SortDecl(name, [])
+            sort.decl = SortDecl(name)
             sorts[sort.name] = sort
             sort_decls[sort] = sort.decl
             struct.univs[sort.decl] = ()
@@ -538,11 +532,11 @@ class Z3Translator:
             rng = sorts[z3decl.range().name()]
             decl: Union[RelationDecl, ConstantDecl, FunctionDecl]
             if rng is BoolSort:
-                decl = RelationDecl(name, list(dom), False, None, [])
+                decl = RelationDecl(name, tuple(dom), mutable=False)
             elif len(dom) == 0:
-                decl = ConstantDecl(name, rng, False, [])
+                decl = ConstantDecl(name, rng, mutable=False)
             else:
-                decl = FunctionDecl(name, list(dom), rng, False, [])
+                decl = FunctionDecl(name, tuple(dom), rng, mutable=False)
 
             _eval: Callable[[z3.ExprRef], Union[bool, int, Element]]
             if rng is BoolSort:

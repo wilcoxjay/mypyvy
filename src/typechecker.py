@@ -385,7 +385,7 @@ def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
                             return
 
                         for a, sort in zip(tc.args, (v.sort for v in ition.binder.vs)):
-                            if isinstance(a, syntax.Expr):
+                            if not isinstance(a, syntax.Star):
                                 with scope.n_states(1):
                                     typecheck_expr(scope, a, sort)
             else:

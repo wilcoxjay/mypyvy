@@ -1,7 +1,8 @@
 '''
 This module contains everything specific to using CVC4 in mypyvy. (Except for some leftovers still in class Solver.)
 
-Currently, using cvc4 is done by communicating with a subprocess in SMT-LIB2. We generate the smt2 by dumping from z3, and parse the model using sexpr.py.
+Currently, using cvc4 is done by communicating with a subprocess in SMT-LIB2. We generate the smt2 by dumping from z3,
+and parse the model using sexpr.py.
 
 As of now, the cvc4 process is reset using (reset) before every (check-sat).
 
@@ -12,32 +13,15 @@ TODO: respect timeout
 
 '''
 from __future__ import annotations
-from collections import OrderedDict, defaultdict
-from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
 import dataclasses
-import time
-import itertools
-import math
-import random
-import io
-import re
 import sexp
 import subprocess
-import sys
-from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
-from typing import cast, TypeVar, Callable
+from typing import List, Optional, Union, Dict, Sequence, cast
 
 import z3
 
 import utils
-import typechecker
-import syntax
-from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
-from syntax import FunctionDecl, DefinitionDecl, Not, New
-from semantics import Trace, State, FirstOrderStructure
-
 
 CVC4EXEC = str(utils.PROJECT_ROOT / 'script' / 'run_cvc4.sh')
 

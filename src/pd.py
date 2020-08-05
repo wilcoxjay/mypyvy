@@ -1943,7 +1943,7 @@ def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_claus
 
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
-        vs = [v for v in variables if v.name in set(n for lit in lits for n in free_ids(lit))]
+        vs = tuple(v for v in variables if v.name in set(n for lit in lits for n in free_ids(lit)))
         if len(vs) > 0:
             return Forall(vs, Or(*lits))
         else:
@@ -1970,7 +1970,7 @@ def subclauses(top_clause: Expr) -> Iterable[Expr]:
     assert n**2 < 10**6, f'{2**n}, really??'
     for lits in powerset(literals):
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        vs = tuple(v for v in variables if v.name in free)
         yield Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -1991,8 +1991,8 @@ def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr
     for lits in P:
         if any(s <= set(lits) for s in implied):
             continue
-        vs = [v for v in top_clause.binder.vs
-             if v.name in set(n for lit in lits for n in free_ids(lit))]
+        vs = tuple(v for v in top_clause.binder.vs
+                   if v.name in set(n for lit in lits for n in free_ids(lit)))
         if len(vs) > 0:
             clause : Expr = Forall(vs, Or(*lits))
         else:
@@ -2068,7 +2068,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
     def to_clause(s: Iterable[int]) -> Expr:
         lits = [literals[i] for i in sorted(s)]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        vs = tuple(v for v in variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     n = len(literals)
@@ -2076,8 +2076,8 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
     solver = Solver()
     t = solver.get_translator(1)
     solver.add(t.translate_expr(
-        state_or_predicate if isinstance(state_or_predicate, Expr) else
-        state_or_predicate.as_onestate_formula(0)
+        state_or_predicate.as_onestate_formula(0) if isinstance(state_or_predicate, PDState) else
+        state_or_predicate
     ))
 
     # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
@@ -2439,7 +2439,7 @@ class SubclausesMapTurbo:
     def to_clause(self, s: Iterable[int]) -> Expr:
         lits = [self.literals[i] for i in sorted(s)]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in self.variables if v.name in free]
+        vs = tuple(v for v in self.variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -2721,7 +2721,7 @@ class MultiSubclausesMapICE:
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
         lits = [self.literals[k][i] for i in sorted(s)]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in self.variables[k] if v.name in free]
+        vs = tuple(v for v in self.variables[k] if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -2916,7 +2916,7 @@ def forward_explore_marco(solver: Solver,
         def to_clause(self, s: Set[int]) -> Expr:
             lits = [self.literals[i] for i in sorted(s)]
             free = set(chain(*(free_ids(lit) for lit in lits)))
-            vs = [v for v in self.variables if v.name in free]
+            vs = tuple(v for v in self.variables if v.name in free)
             return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     def valid(clause: Expr) -> bool:
@@ -7085,7 +7085,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        vs = tuple(v for v in variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     def f(s: Set[int]) -> bool:
@@ -7599,7 +7599,7 @@ def cdcl_invariant(solver: Solver) -> str:
             for pos, neg in new_predicates:
                 print(f'\nTrying to separate: pos={sorted(pos)}, neg={sorted(neg)}, ps={sorted(sharp_predicates)}')
                 p = sm.separate(pos, neg, sharp_predicates)
-                if not isinstance(p, Predicate):
+                if isinstance(p, tuple):
                     pos, neg, ps = p
                     print(f'\nLearned new inseparability: pos={sorted(pos)}, neg={sorted(neg)}, ps={sorted(ps)}')
                     inseparabilities.append((pos, neg, ps))

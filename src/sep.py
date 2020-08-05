@@ -95,16 +95,16 @@ def sep_main(solver: Solver) -> str:
         solver = Solver(use_cvc4=utils.args.cvc4) # reusing the same solver too much results in unknowns
         prefix: List[str] = []
         prefix_sorts: List[UninterpretedSort] = []
-        vs: List[SortedVar] = []
+        vs: Tuple[SortedVar, ...] = ()
 
         if isinstance(p, QuantifierExpr):
             assert p.quant == 'FORALL'
             prefix = []
-            for v in p.vs():
+            for v in p.get_vs():
                 assert isinstance(v.sort, UninterpretedSort)
                 prefix.append(v.sort.name)
                 prefix_sorts.append(v.sort)
-            vs = [SortedVar(f'V{i}', s) for i, s in enumerate(prefix_sorts)]
+            vs = tuple(SortedVar(f'V{i}', s) for i, s in enumerate(prefix_sorts))
 
         var_names = [v.name for v in vs]
 
@@ -130,7 +130,7 @@ def sep_main(solver: Solver) -> str:
                 assert isinstance(s, UninterpretedSort)
                 arg_sorts.append(s.name)
             for ts in product(*(terms0[name] for name in arg_sorts)):
-                terms[f.sort.name].append(Apply(f.name, list(ts)))
+                terms[f.sort.name].append(Apply(f.name, tuple(ts)))
         print_terms('terms with functions')
 
         atoms: List[Expr] = []
@@ -143,7 +143,7 @@ def sep_main(solver: Solver) -> str:
                 assert isinstance(s, UninterpretedSort)
                 arg_sorts.append(s.name)
             for ts in product(*(terms[name] for name in arg_sorts)):
-                atoms.append(Apply(r.name, list(ts)))
+                atoms.append(Apply(r.name, tuple(ts)))
         atoms.extend(Eq(x, y) for ts in terms.values() for x, y in combinations(ts, 2))
         atoms = sorted(atoms)
         print(f'[{datetime.now()}] atoms ({len(atoms)}):\n' + ''.join(f'    {a}\n' for a in atoms))

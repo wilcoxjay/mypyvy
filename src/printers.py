@@ -3,8 +3,7 @@ from dataclasses import dataclass
 
 import syntax
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
-import logic
-from semantics import print_element, Element, RelationInterp, FunctionInterp, FirstOrderStructure
+from semantics import print_element, RelationInterp, FirstOrderStructure
 
 from typing import List, Dict, Optional, Set, Union
 
@@ -57,7 +56,7 @@ def ordered_by_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args:
     order_name = args[0]
     order = get_relation(order_name)
     us = UninterpretedSort(s.name)
-    assert order.arity == [us, us] and not order.mutable
+    assert order.arity == (us, us) and not order.mutable
     ordinal = get_ordinal(struct.rel_interps[order], elt)
     return f'{s.name}{ordinal}'
 
@@ -98,7 +97,7 @@ def option_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: Lis
     option_sort = UninterpretedSort(s.name)
 
     assert not is_none.mutable and not value.mutable and \
-        is_none.arity == [option_sort] and value.arity == [option_sort]
+        is_none.arity == (option_sort,) and value.arity == (option_sort,)
 
     elt_sort = syntax.get_decl_from_sort(value.sort)
 

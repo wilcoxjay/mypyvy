@@ -56,12 +56,12 @@ def negate_clause(c: Expr) -> Expr:
         return syntax.BinaryExpr(op, c.arg1, c.arg2)
     elif isinstance(c, syntax.NaryExpr):
         assert c.op == 'OR'
-        return syntax.NaryExpr('AND', [negate_clause(arg) for arg in c.args])
+        return syntax.NaryExpr('AND', tuple(negate_clause(arg) for arg in c.args))
     elif isinstance(c, syntax.AppExpr) or isinstance(c, syntax.Id):
         return syntax.Not(c)
     elif isinstance(c, syntax.QuantifierExpr):
         assert c.quant == 'FORALL'
-        return syntax.QuantifierExpr('EXISTS', c.vs(), negate_clause(c.body))
+        return syntax.QuantifierExpr('EXISTS', c.get_vs(), negate_clause(c.body))
     else:
         assert False, f'unsupported expression {c} in negate_clause'
 
@@ -114,11 +114,10 @@ class Frames:
     def establish_safety(self) -> None:
         while bstate := self.find_something_to_block():
             self.currently_blocking = bstate
-            if isinstance(state := bstate.state_or_expr, State):
-                diag_or_expr: Union[Diagram, Expr] = Diagram(state)
+            if isinstance(bstate.state_or_expr, State):
+                diag_or_expr: Union[Diagram, Expr] = Diagram(bstate.state_or_expr)
             else:
-                assert isinstance(expr := bstate.state_or_expr, Expr)
-                diag_or_expr = expr
+                diag_or_expr = bstate.state_or_expr
             frame_no = bstate.known_absent_until_frame + 1
             utils.logger.info(f'will block state #{bstate.id} in frame {frame_no}')
             self.block(diag_or_expr, frame_no, [(None, diag_or_expr)])
