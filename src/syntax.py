@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import dataclasses
 from dataclasses import dataclass
+import functools
 import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
@@ -538,6 +539,7 @@ def faithful_print_prog(prog: Program, skip_invariants: bool = False) -> str:
     return FaithfulPrinter(prog, skip_invariants).process()
 
 
+@functools.total_ordering
 @dataclass
 class AbstractExpr:
     def __lt__(self, other: Any) -> bool:
@@ -548,15 +550,6 @@ class AbstractExpr:
         fs2 = tuple(f for f in dataclasses.fields(other) if f.compare)
         vs2 = tuple(getattr(other, f.name) for f in fs2)
         return vs1 < vs2
-
-    def __gt__(self, other: Any) -> bool:
-        return other < self
-
-    def __le__(self, other: Any) -> bool:
-        return self == other or self < other
-
-    def __ge__(self, other: Any) -> bool:
-        return self == other or self > other
 
 @dataclass(frozen=True)
 class Bool(AbstractExpr):
