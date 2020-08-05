@@ -2,17 +2,23 @@ from __future__ import annotations
 
 from itertools import chain, product
 
-from typing import Any, Callable, cast, Dict, Iterable, Iterator, List, Optional, Tuple, Union
+from typing import (Any, Callable, cast, Dict, Iterable, Iterator,
+                    List, Optional, Tuple, Union)
 
 import z3
 from networkx import DiGraph  # type: ignore
 
 import syntax
-from syntax import Scope, Binder, Expr, Bool, Int, UnaryExpr, BinaryExpr, NaryExpr
-from syntax import AppExpr, QuantifierExpr, Id, Let, IfThenElse, ModifiesClause
-from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, StateDecl
-from syntax import Program, New, SortDecl, Sort, UninterpretedSort, BoolSort, IntSort
-from semantics import Trace, Element, RelationInterp, FunctionInterp, RelationInterps, FunctionInterps, FirstOrderStructure, BareFirstOrderStructure
+from syntax import (Scope, Binder, Expr, Bool, Int, UnaryExpr,
+                    BinaryExpr, NaryExpr, AppExpr, QuantifierExpr,
+                    Id, Let, IfThenElse, ModifiesClause,
+                    DefinitionDecl, RelationDecl, FunctionDecl,
+                    ConstantDecl, StateDecl, Program, New, SortDecl,
+                    Sort, UninterpretedSort, BoolSort, IntSort,
+                    SortInferencePlaceholder)
+from semantics import (Trace, Element, RelationInterp, FunctionInterp,
+                       RelationInterps, FunctionInterps, FirstOrderStructure,
+                       BareFirstOrderStructure)
 from z3_utils import z3_quantifier_alternations
 from solver_cvc4 import CVC4Model, CVC4Int
 
@@ -166,14 +172,12 @@ class Z3Translator:
             assert False, expr
 
     @staticmethod
-    def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Trace:
+    def _old_model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Trace:
         '''
         Convert z3 model to Trace with given number of states.
 
         If allow_undefined is True, the resulting trace may leave some symbols undefined.
         '''
-        if not isinstance(z3model, CVC4Model):
-            struct = Z3Translator.model_to_first_order_structure(z3model)
         trace = Trace(num_states)
         keys = Z3Translator._get_keys(num_states)
 
@@ -272,6 +276,140 @@ class Z3Translator:
                         # TODO: not sure what's going on here with check_bmc and pd.check_k_state_implication
                         # assert False
                         pass
+
+        if allow_undefined:
+            return trace
+
+        def get_univ(d: SortDecl) -> Tuple[Element, ...]:
+            if d not in trace.univs:
+                trace.univs[d] = (d.name + '0',)
+            return trace.univs[d]
+
+        def arbitrary_interp_r(r: RelationDecl) -> RelationInterp:
+            doms = [get_univ(syntax.get_decl_from_sort(s)) for s in r.arity]
+            return dict.fromkeys(product(*doms), False)
+
+        def ensure_defined_r(r: RelationDecl) -> None:
+            arb_interp: Optional[RelationInterp] = None
+            for m in (trace.rel_interps if r.mutable else [trace.immut_rel_interps]):
+                if r not in m:
+                    if arb_interp is None:
+                        arb_interp = arbitrary_interp_r(r)
+                    m[r] = arb_interp
+
+        def arbitrary_interp_c(c: ConstantDecl) -> Element:
+            if isinstance(c.sort, syntax._BoolSort):
+                return 'false'
+            elif isinstance(c.sort, syntax._IntSort):
+                return '0'
+            assert isinstance(c.sort, syntax.UninterpretedSort)
+            sort = c.sort
+            return get_univ(syntax.get_decl_from_sort(sort))[0]
+
+        def ensure_defined_c(c: ConstantDecl) -> None:
+            arb_interp = arbitrary_interp_c(c)
+            for m in (trace.const_interps if c.mutable else [trace.immut_const_interps]):
+                if c not in m:
+                    m[c] = arb_interp
+
+        def arbitrary_interp_f(f: FunctionDecl) -> FunctionInterp:
+            doms = [get_univ(syntax.get_decl_from_sort(s)) for s in f.arity]
+            image = get_univ(syntax.get_decl_from_sort(f.sort))[0]
+            return dict.fromkeys(product(*doms), image)
+
+        def ensure_defined_f(f: FunctionDecl) -> None:
+            arb_interp: Optional[FunctionInterp] = None
+            for m in (trace.func_interps if f.mutable else [trace.immut_func_interps]):
+                if f not in m:
+                    if arb_interp is None:
+                        arb_interp = arbitrary_interp_f(f)
+                    m[f] = arb_interp
+
+        for decl in prog.relations_constants_and_functions():
+            if isinstance(decl, RelationDecl):
+                ensure_defined_r(decl)
+            elif isinstance(decl, ConstantDecl):
+                ensure_defined_c(decl)
+            elif isinstance(decl, FunctionDecl):
+                ensure_defined_f(decl)
+            else:
+                assert False, decl
+
+        return trace
+
+    @staticmethod
+    def model_to_trace(z3model: z3.ModelRef, num_states: int, allow_undefined: bool = False) -> Trace:
+        '''
+        Convert z3 model to Trace with given number of states.
+
+        If allow_undefined is True, the resulting trace may leave some symbols undefined.
+
+        TODO: right now this procedure is guided by the model. Maybe
+        it should be flipped and be guided by the vocabulary of the
+        program and num_states, asserting that it finds everything needed in the
+        model.
+
+        '''
+        if isinstance(z3model, CVC4Model):
+            return Z3Translator._old_model_to_trace(z3model, num_states, allow_undefined)
+
+        struct = Z3Translator.model_to_first_order_structure(z3model)
+        trace = Trace(num_states)
+        keys = Z3Translator._get_keys(num_states)
+        prog = syntax.the_program
+
+        for k, v in struct.univs.items():  # TODO: maybe should sort here, not sure
+            sort = prog.scope.get_sort(k.name)
+            assert sort is not None, k
+            trace.univs[sort] = v
+
+        for d, interp in chain(  # TODO: maybe should sort here, not sure
+                struct.rel_interps.items(),
+                struct.const_interps.items(),
+                struct.func_interps.items()
+        ):
+            assert isinstance(d, (RelationDecl, ConstantDecl, FunctionDecl))
+            for i, key in enumerate(keys):
+                if d.name.startswith(prefix := key + '_'):
+                    name = d.name[len(prefix):]
+                    R = trace.rel_interps[i]
+                    C = trace.const_interps[i]
+                    F = trace.func_interps[i]
+                    break
+            else:
+                name = d.name
+                R = trace.immut_rel_interps
+                C = trace.immut_const_interps
+                F = trace.immut_func_interps
+
+            decl = prog.scope.get(name)
+            assert not isinstance(decl, Sort), (d, decl)
+            assert not isinstance(decl, SortInferencePlaceholder), (d, decl)
+            if decl is None:
+                if name.startswith(prefix := TRANSITION_INDICATOR + '_'):
+                    assert isinstance(d, RelationDecl) and len(d.arity) == 0
+                    interp = cast(RelationInterp, interp)
+                    if interp[()]:
+                        name = name[len(prefix):]
+                        istr, name = name.split('_', maxsplit=1)
+                        i = int(istr)
+                        if i < len(trace.transitions):
+                            trace.transitions[i] = name
+                        else:
+                            # TODO: not sure what's going on here with check_bmc and pd.check_k_state_implication
+                            # assert False
+                            pass
+            elif isinstance(decl, RelationDecl):
+                interp = cast(RelationInterp, interp)
+                R[decl] = interp
+            elif isinstance(decl, FunctionDecl):
+                interp = cast(FunctionInterp, interp)
+                F[decl] = interp
+            elif isinstance(decl, ConstantDecl):
+                interp = cast(Element, interp)
+                C[decl] = interp
+            else:
+                assert False, (d, decl)
 
         if allow_undefined:
             return trace
