@@ -18,7 +18,7 @@ fi
 $CVC4CMD \
     --lang=smtlib2.6 \
     --finite-model-find \
-    --full-saturate-quant \
+    --fs-interleave \
     --nl-ext-tplanes \
     --produce-models \
     --seed=$RANDOM \
