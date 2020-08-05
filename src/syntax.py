@@ -546,9 +546,9 @@ class AbstractExpr:
         if not isinstance(other, AbstractExpr):
             return NotImplemented
         fs1 = tuple(f for f in dataclasses.fields(self) if f.compare)
-        vs1 = tuple(getattr(self, f.name) for f in fs1)
+        vs1 = (str(type(self)),) + tuple(getattr(self, f.name) for f in fs1)
         fs2 = tuple(f for f in dataclasses.fields(other) if f.compare)
-        vs2 = tuple(getattr(other, f.name) for f in fs2)
+        vs2 = (str(type(self)),) + tuple(getattr(other, f.name) for f in fs2)
         return vs1 < vs2
 
 @dataclass(frozen=True)
