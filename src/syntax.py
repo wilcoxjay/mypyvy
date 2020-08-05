@@ -544,7 +544,7 @@ def faithful_print_prog(prog: Program, skip_invariants: bool = False) -> str:
 class AbstractExpr:
     def __lt__(self, other: Any) -> bool:
         if not isinstance(other, AbstractExpr):
-            raise TypeError
+            return NotImplemented
         fs1 = tuple(f for f in dataclasses.fields(self) if f.compare)
         vs1 = tuple(getattr(self, f.name) for f in fs1)
         fs2 = tuple(f for f in dataclasses.fields(other) if f.compare)
