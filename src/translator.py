@@ -14,7 +14,7 @@ from syntax import DefinitionDecl, RelationDecl, FunctionDecl, ConstantDecl, Sta
 from syntax import Program, New, SortDecl, Sort, UninterpretedSort, BoolSort, IntSort
 from semantics import Trace, Element, RelationInterp, FunctionInterp, RelationInterps, FunctionInterps, FirstOrderStructure, BareFirstOrderStructure
 from z3_utils import z3_quantifier_alternations
-from solver_cvc4 import CVC4Model
+from solver_cvc4 import CVC4Model, CVC4Int
 
 
 TRANSITION_INDICATOR = 'tid'
@@ -254,7 +254,7 @@ class Z3Translator:
                 else:
                     assert isinstance(decl, ConstantDecl)
                     v = z3model.eval(z3decl())
-                    if z3.is_int_value(v):
+                    if z3.is_int_value(v) or isinstance(v, CVC4Int):
                         v_str = str(v.as_long())
                     else:
                         v_str = rename(v.decl().name())

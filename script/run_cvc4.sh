@@ -15,4 +15,11 @@ else
     fi
 fi
 
-$CVC4CMD --lang=smtlib2.6 --finite-model-find --full-saturate-quant --produce-models --seed=$RANDOM "$@"
+$CVC4CMD \
+    --lang=smtlib2.6 \
+    --finite-model-find \
+    --full-saturate-quant \
+    --nl-ext-tplanes \
+    --produce-models \
+    --seed=$RANDOM \
+    "$@"

@@ -151,6 +151,16 @@ class CVC4UniverseElement:
         return CVC4UniverseElementDecl(self)
 
 @dataclass
+class CVC4Int:
+    i: int
+
+    def __str__(self) -> str:
+        return str(self.i)
+
+    def as_long(self) -> int:
+        return self.i
+
+@dataclass
 class CVC4UniverseElementDecl:
     elt: CVC4UniverseElement
 
@@ -214,7 +224,7 @@ class CVC4Model:
                 ans.append(cast(z3.SortRef, CVC4Sort(name)))
         return ans
 
-    def eval_in_scope(self, scope: Dict[str, CVC4UniverseElement], e: sexp.Sexp) -> Union[bool, CVC4UniverseElement]:
+    def eval_in_scope(self, scope: Dict[str, CVC4UniverseElement], e: sexp.Sexp) -> Union[bool, CVC4UniverseElement, CVC4Int]:
         # print(scope)
         # print(e)
 
@@ -250,6 +260,19 @@ class CVC4Model:
                     return arg_vals[1]
                 else:
                     return arg_vals[2]
+            elif f == '-':
+                if len(arg_vals) == 1:
+                    x, = arg_vals
+                    assert isinstance(x, CVC4Int)
+                    return CVC4Int(-x.i)
+                elif len(arg_vals) == 2:
+                    assert False, arg_vals
+                    x, y = arg_vals
+                    assert isinstance(x, CVC4Int)
+                    assert isinstance(y, CVC4Int)
+                    return CVC4Int(x.i - y.i)
+                else:
+                    assert False, arg_vals
             else:
                 assert False, ('unsupported function or special form in cvc4 model evaluator', f)
         elif isinstance(e, str):
@@ -257,9 +280,11 @@ class CVC4Model:
                 return True
             elif e == 'false':
                 return False
-            else:
-                assert e in scope, ('unrecognized variable or symbol in cvc4 model evaluator', e)
+            elif e in scope:
                 return scope[e]
+            else:
+                # assert False, ('unrecognized variable or symbol in cvc4 model evaluator', e)
+                return CVC4Int(int(e))
         else:
             assert False, e
 
