@@ -548,7 +548,7 @@ class AbstractExpr:
         fs1 = tuple(f for f in dataclasses.fields(self) if f.compare)
         vs1 = (str(type(self)),) + tuple(getattr(self, f.name) for f in fs1)
         fs2 = tuple(f for f in dataclasses.fields(other) if f.compare)
-        vs2 = (str(type(self)),) + tuple(getattr(other, f.name) for f in fs2)
+        vs2 = (str(type(other)),) + tuple(getattr(other, f.name) for f in fs2)
         return vs1 < vs2
 
 @dataclass(frozen=True)
