@@ -472,11 +472,6 @@ class Solver:
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh solver')
                 s2 = z3.Solver()
-                # ODED: I comment this out, since the axioms are
-                # already supposed to be part of self.assetions():
-                # lator = self.translator_factory(self.scope, 0)
-                # for a in syntax.the_program.axioms():
-                #     s2.add(lator.translate_expr(a.expr))
                 for e in self.assertions():
                     s2.add(e)
                 res = s2.check(*assumptions)
@@ -493,9 +488,6 @@ class Solver:
                 print(f'[{datetime.now()}] Solver.check: trying fresh context')
                 ctx = z3.Context()
                 s3 = z3.Solver(ctx=ctx)
-                # ODED: see comment above, axioms should already be in self.assertions()
-                # for a in syntax.the_program.axioms():
-                #     s3.add(lator.translate_expr(a.expr).translate(ctx))
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
                 res = s3.check(*(e.translate(ctx) for e in assumptions))
