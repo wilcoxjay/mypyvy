@@ -131,6 +131,7 @@ class MypyvyArgs:
     relax: bool
     relax_backwards: bool
     relax_forwards: bool
+    bound: int
 
     def main(self, solver: Any) -> None:
         ...

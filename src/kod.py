@@ -25,201 +25,310 @@ from logic import *
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 
-class KodModel(object):
+KODKOD_JAR_EXECUTABLE_PATH = "/Users/amohamdy/stanford/aiken-1920-research/kodkod/kodkod.jar:."
+KODKOD_LIBRARY_PATH = "/Users/amohamdy/stanford/aiken-1920-research/kodkod/darwin_x86_64/"
+KodExpr = str
+class KodTranslator:
+  def __init__(self, prog: Program, num_states: int):
+    self.prog = prog
+    self.num_states = num_states
 
-  def get_dependencies(self):
-    return ["java.util.ArrayList",
-            "java.util.List",
-            "kodkod.ast.Formula",
-            "kodkod.ast.Relation",
-            "kodkod.ast.Variable",
-            "kodkod.engine.Solution",
-            "kodkod.engine.Solver",
-            "kodkod.engine.satlab.SATFactory",
-            "kodkod.instance.Bounds",
-            "kodkod.instance.TupleFactory",
-            "kodkod.instance.TupleSet",
-            "kodkod.instance.Universe",
+    assert prog.scope is not None
+    assert len(prog.scope.stack) == 0
+    self.scope = cast(Scope[KodExpr], prog.scope)
+  
+  def translate_expr(self, expr: Expr) -> KodExpr:
+    assert self.scope.num_states == 0, self.scope.num_states
+    assert self.scope.current_state_index == 0, self.scope.current_state_index
+    with self.scope.n_states(self.num_states):
+      return self._translate_expr(expr)
+  
+  @staticmethod
+  def join_expr(op: str, args: List[KodExpr]) -> KodExpr:
+    if len(args) == 1:
+      return args[0]
+    jop = f'){op}('
+    joined_args = jop.join(args[1:])
+    return f'{args[0]}{op}({joined_args})'
+
+  @staticmethod
+  def relation_to_kod(r: RelationDecl) -> KodExpr:
+    return f'this.relations.get("{r.name}")'
+  
+  @staticmethod
+  def var_to_kod(sv: SortedVar) -> KodExpr:
+    return f'this.get_var("{sv.name}")'
+  
+  @staticmethod
+  def const_to_kod(c: ConstantDecl) -> KodExpr:
+    return f'this.get_var("{c.name}")'
+  
+  @staticmethod
+  def sort_to_kod(s: Sort) -> KodExpr:
+    return f'this.sorts.get("{s}")'
+
+  @staticmethod
+  def sortdecl_to_kod(s: SortDecl) -> KodExpr:
+    return f'this.sorts.get("{s.name}")'
+  
+  @staticmethod
+  def bool_to_kod(b: Bool) -> KodExpr:
+    return 'Formula.TRUE' if b.val else 'Formula.FALSE'
+    
+  def _translate_expr(self, e: Expr) -> KodExpr:
+    if isinstance(e, Bool):
+      return KodTranslator.bool_to_kod(e)
+
+    elif isinstance(e, UnaryExpr) and e.op == 'NOT':
+      body = self._translate_expr(e.arg)
+      return f'{body}.not()'
+
+    elif isinstance(e, UnaryExpr) and e.op == 'NEW':
+      assert self.scope.new_allowed()
+      with self.scope.next_state_index():
+        return self._translate_expr(e.arg)
+
+    # TODO: CHANGE TO ELIFs and don't leave it open-ended
+    elif isinstance(e, BinaryExpr):
+      arg1 = self._translate_expr(e.arg1)
+      arg2 = self._translate_expr(e.arg2)
+      op = '' 
+      endop = '' 
+      if e.op == 'EQUAL':
+        op = '.eq'
+      elif e.op == 'NOTEQ':
+        op = '.eq'
+        endop = '.not()'
+      else:
+        op = f'.{e.op.lower()}'
+      return KodTranslator.join_expr(op, [arg1, arg2]) + endop
+
+    elif isinstance(e, NaryExpr) and e.op in ('AND', 'OR'):
+      # TODO: op == "DISTINCT"
+      args = [f'({self._translate_expr(a)})' for a in e.args]
+      op = f'.{e.op.lower()}'
+      return KodTranslator.join_expr(op, args) 
+
+    elif isinstance(e, AppExpr):
+      d = self.scope.get(e.callee)
+      if isinstance(d, DefinitionDecl):
+        assert False
+      elif isinstance(d, FunctionDecl):
+        assert False
+      elif isinstance(d, RelationDecl):
+        translated_args = [self._translate_expr(a) for a in e.args]
+        product = KodTranslator.join_expr('.product', translated_args) 
+        callee = KodTranslator.relation_to_kod(d)
+        return f'{product}.in({callee})'
+      else:
+        assert False, f'{d}\n{e}'
+
+    elif isinstance(e, QuantifierExpr): # and e.quant in self.Kod_QUANT:
+      vs = []
+      sorts = []
+      for sv in e.binder.vs:
+        assert sv.sort is not None and not isinstance(sv.sort, syntax.SortInferencePlaceholder)
+        vs.append(self.var_to_kod(sv))
+        sorts.append(self.sort_to_kod(sv.sort))
+      with self.scope.in_scope(e.binder, vs):
+        body = self._translate_expr(e.body)
+      quant = 'forAll' if e.quant == 'FORALL' else 'forSome'
+      sorted_vars = [f'{v}.oneOf({s})' for v, s in zip(vs, sorts)]
+      # translated = self.__translate_expr(NaryExpr('AND', sorted_vars))
+      quantified = KodTranslator.join_expr('.and', sorted_vars)
+      return f'{body}.{quant}({quantified})'
+
+    elif isinstance(e, Id):
+      d = self.scope.get(e.name)
+      assert d is not None, f'{e.name}\n{e}'
+      if isinstance(d, RelationDecl): # Nullary relation : BOOL
+        assert False
+      elif isinstance(d, ConstantDecl):
+        return KodTranslator.const_to_kod(d)
+        assert False
+      elif isinstance(d, DefinitionDecl):
+        assert False
+      elif isinstance(d, FunctionDecl):
+        assert False, 'impossible since functions have arity > 0'
+      elif isinstance(d, SortDecl):
+        return self.sortdecl_to_kod(d)
+      else:
+        x, = d
+        return x
+
+    else:
+      assert False, f'NOT FOUND/IMPLEMENTED: {e}' 
+
+class KodSolver:
+  def __init__(self, prog: Program, e: Expr, bound: int):
+    self.prog: Program = prog
+    self.e: Expr = e
+    self.bound: int = bound 
+    # self.num_states = num_states
+
+    self.translator = self.get_translator(1) 
+
+    assert prog.scope is not None
+    assert len(prog.scope.stack) == 0
+    self.scope = cast(Scope[KodExpr], prog.scope)
+
+    self.class_methods_generators = [
+      self.kod_get_constructor,
+      self.kod_get_get_var,
+      self.kod_get_formula,
+      self.kod_get_bounds,
+      self.kod_get_main,
+    ]
+  
+  def get_dependencies(self) -> List[str]:
+    return ['java.util.ArrayList',
+            'java.util.List',
+            'java.util.Map',
+            'java.util.HashMap',
+            'java.util.Arrays',
+            'kodkod.ast.Formula',
+            'kodkod.ast.Relation',
+            'kodkod.ast.Variable',
+            'kodkod.engine.Solution',
+            'kodkod.engine.Solver',
+            'kodkod.engine.satlab.SATFactory',
+            'kodkod.instance.Bounds',
+            'kodkod.instance.TupleFactory',
+            'kodkod.instance.TupleSet',
+            'kodkod.instance.Universe',
             ]
 
-  '''
-  dictionary of hardcoded (for now) relations and their respective arities
-  '''
-  def get_relations(self):
-    # TODO: new relations? identify and append
-    return {
-      'client':1,
-      'server':1,
-      'id':1,
-      'used':1,
-      'new_used':1,
-      'server_holds_lock':1,
-      'new_server_holds_lock':1,
-      'holds_lock':2,
-      'new_holds_lock':2,
-      'request_msg':3,
-      'new_request_msg':3,
-      'grant_msg':3,
-      'new_grant_msg':3,
-      'release_msg':3,
-      'new_release_msg':3
-    }
-  
-  def get_free_variables(self): # will probably take in some invariant/transition to give the respective free variables
-    # will probably pass in some sort of INIT FLAG indication
-    # Will have to "transform" from mypyvy/z3 syntax to get the variables
-    # FOR NOW WE'LL JUST RETURN c1, c2, s1, s2, i1, i2
-    return ['c1', 'c2', 's1', 's2', 'i1', 'i2']
-
-  def get_init_conditions(self):
-    # Will have to "transform" from mypyvy/z3 syntax -- Translating will be the interesting part
-    # For now we'll just hard-encode them
+  def kod_get_get_var(self) -> List[str]:
     return [
-      "s.in(server_holds_lock).forAll(s.oneOf(Server))",
-      "used.no()",
-      "holds_lock.no()",
-      "request_msg.no()",
-      "grant_msg.no()",
-      "release_msg.no()",
+      'public Variable get_var(String name) {',
+      '  if(!this.vars.containsKey(name)) {',
+      '    vars.put(name, Variable.unary(name));',
+      '  }',
+      '  return this.vars.get(name);',
+      '}',
     ]
+  
+  def get_translator(self, num_states: int) -> KodTranslator:
+    # TODO: support multiple states
+    assert num_states == 1
+    return KodTranslator(self.prog, num_states)
 
+  def kod_get_formula(self) -> List[str]:
+    kod_formula = self.translator.translate_expr(self.e)
+    lines = ['public Formula formula() {',
+      f'// {self.e}']
+    lines.append(f'return {kod_formula};')
+    lines.append('}')
+    return lines
 
-  def constructor(self):
-    lines = ["public _kodkod_model() {"]
-    relations = self.get_relations()
-    for rel in relations:
-      lines.append(f'this.{rel} = Relation.nary(\"{rel}\", {str(relations[rel])});')
+  def kod_get_constructor(self) -> List[str]:
+    lines = ["public _KodkodModel() {"]
+    lines.extend([
+      "this.vars = new HashMap<String, Variable>();",
+      "this.relations = new HashMap<String, Relation>();",
+      "this.sorts = new HashMap<String, Relation>();",
+    ])
+    lines.extend(f'this.sorts.put("{s.name}", Relation.unary("{s.name}"));' for s in self.scope.sorts.values())
+    lines.extend(f'this.relations.put("{r.name}", Relation.nary("{r.name}", {len(r.arity)}));'
+      for r in self.scope.relations.values())
     lines.append("}\n")
     return lines
-  
-  def inits(self): # Will get from init statements
-    lines = ["public Formula inits() {"]
-    lines.extend([f'final Variable {v} = Variable.unary(\"{v}\");' for v in self.get_free_variables()]) 
-    lines.append("final List<Formula> inits = new ArrayList<Formula>();")
-    lines.extend([f'inits.add({i});' for i in self.get_init_conditions()])
-    lines.append("return Formula.and(inits);\n}\n")
-    return lines
 
-  def get_bounds(self):
-    lines = [
-      'public Bounds bounds(int client, int server, int id) {',
-      'final List<String> atoms = new ArrayList<String>(' + ' + '.join(f'_b{i}' for i in range(len(self.bounds))) + ');',
+  def kod_get_bounds(self) -> List[str]:
+    lines: List[str] = [
+      'public Bounds bounds() {',
     ]
-    # lines.extend(['for(int i = 0; i < _b' + str(i) + '; i++) {\natoms.add('])
+    # Forgive the indentation below, f-strings are weird like that
+    atoms = ', '.join(f'"{s.name}{i}"' for s in self.scope.sorts.values() for i in range(self.bound))
+    lines.extend([
+      f'final Universe _univ = new Universe(Arrays.asList({atoms}));',
+      'final TupleFactory _f  = _univ.factory();',
+      'final Bounds _b = new Bounds(_univ);',
+    ])
+    # Bound sorts
+    lines.extend(
+      f'_b.boundExactly(this.sorts.get("{s.name}"), _f.range(_f.tuple("{s.name}0"), _f.tuple("{s.name}{self.bound - 1}")));'
+      for s in self.scope.sorts.values()
+    )
+    # Bound relations to their sorts
+    for r in self.scope.relations.values():
+      kod_relation = f'this.relations.get("{r.name}")' #self.translator.translate_expr(r)
+      bound_list = [f'_b.upperBound(this.sorts.get("{s}"))' for s in r.arity]
+      up_bound = KodTranslator.join_expr('.product', bound_list)
+      lines.append(f'_b.bound({kod_relation}, {up_bound});')
+
+    lines.append('return _b;')
     lines.append('}\n')
     return lines
 
-  def check_inits(self):
-    return [
-      'public void checkInits(' + ', '.join(f'int _b{i}' for i in range(len(self.bounds))) + ') {',
-      'final Solver solver = new Solver();',
-      'solver.options().setSolver(SATFactory.MiniSat);',
-      # this.inits() for NOW -- NEED TO CHANGE
-      'final Solution sol = solver.solve(this.inits(), get_bounds(' + ', '.join(f'_b{i}' for i in range(len(self.bounds))) + '));',
-      'System.out.println(sol);',
-      '}\n'
-      ]
-
-  def check_transitions(self):
-    return [
-      'public void checkTransitions(' + ', '.join(f'int _b{i}' for i in range(len(self.bounds))) + ') {',
-      'final Solver solver = new Solver();',
-      'solver.options().setSolver(SATFactory.MiniSat);',
-      '}\n'
-      ]
-
-  def main(self):
-    lines = [
+  def kod_get_main(self) -> List[str]:
+    lines: List[str] = [
       'public static void main(String[] args) {',
-      'final _kodkod_model model = new _kodkod_model();',
+      'final _KodkodModel model = new _KodkodModel();',
+      'final Solver solver = new Solver();',
+      'solver.options().setSolver(SATFactory.MiniSat);',
+      'final Solution sol = solver.solve(model.formula(), model.bounds());',
+      'System.out.println(sol);',
+      'String json = \"{\\\"outcome\\\": \\\"%s\\\",\\n\\\"instance\\\": \\\"%s\\\",\\n\\\"proof\\\": \\\"%s\\\",\\n\\\"stats\\\": \\\"%s\\\"}\";',
+      'json = String.format(json, sol.outcome(), sol.instance(), sol.proof(), sol.stats());',
+      'System.out.println(json);',
     ]
-    lines.extend([f'final int _b{i} = Integer.parseInt(args[{i}]);' for i in range(len(self.bounds))])
-    # lines.append('model.checkInits(' + *['_b' + str(i) for i in range(len(self.bounds))] + ');')
-    lines.append('model.checkInits(' + ', '.join(f'_b{i}' for i in range(len(self.bounds))) + ');')
-    lines.append('model.checkTransitions(' + ', '.join(f'_b{i}' for i in range(len(self.bounds))) + ');\n}')
+    lines.append('}')
+    return lines
+  
+  def kod_get_class(self) -> List[str]:
+    lines: List[str] = [
+      'public final class _KodkodModel {',
+      'private final Map<String, Variable> vars;',
+      'private final Map<String, Relation> relations;',
+      'private final Map<String, Relation> sorts;',
+    ]
+    lines.extend(chain(*(g() for g in self.class_methods_generators)))
+    lines.append("}")
     return lines
 
-  def __init__(self, *bounds):
-    if os.path.exists("_kodkod_model.java"):
-      os.remove("_kodkod_model.java")
-    self.file = open("_kodkod_model.java", "a")
-    self.bounds = bounds
-
-    # TODO
-    self.class_methods_generators = [
-      self.constructor,
-      self.inits,
-    #   self.declarations,
-    #   self.get_invariants,
-    #   self.get_transitions,
-      self.get_bounds,
-      self.check_inits,
-      self.check_transitions,
-      self.main,
-    ]
-  
-  def __del__(self):
-    self.file.close()
-
-  # '''
-  # header: method/class/header w/o '{', None if no header to be written with indentation ind
-  # body: list of lines for the body to be written with indentation (ind + 1)
-  # ind: indentation
-  # * If a header is provided, encompasses body between an openning '{' and closing '}'
-  # '''
-  # def write_indented(self, header, body, ind):
-  #   if header:
-  #     self.file.write('  ' * ind + header + ' {\n')
-  #   self.file.writelines([('  ' * (ind + 1)) + line + '\n' for line in body])
-  #   if header:
-  #     self.file.write('  ' * ind + '}\n')
-  
-  #   '''
-  # body: list of lines for the body to be written with indentation (ind)
-  # ind: indentation
-  # * If a header is provided, encompasses body between an openning '{' and closing '}'
-  # '''
-  # def write_indented(self, lines, ind):
-  #   if not lines:
-  #     return
-
-  #   self.file.write('  ' * ind + lines[0] + '\n')
-  #   if line[0].strip()[-1] == '{':
-  #     self.write_indented(lines[1:], ind + 1)
-  #   else:
-  #     self.write_indented(lines[1:], ind)
-
-  def write_model(self):
+  def get_java_code(self) -> List[str]:
+    lines: List[str] = []
     # write modules' imports
-    self.file.writelines(f'import ' + module +';\n' for module in self.get_dependencies())
-    self.file.write("public final class _kodkod_model {\n")
-    self.file.writelines(f'private final Relation {rel};\n' for rel in self.get_relations().keys()) # write relations
-    for generator in self.class_methods_generators:
-      self.file.writelines(f'{line}\n' for line in generator())
-    self.file.write("}")
-  
-def to_kodkod(e: Expr) -> str:
-  if isinstace(e, QuantifierExpr) and e.quant == 'FORALL':
-    return to_kodkod(e.body) + '.forAll(...)'
+    lines.extend(f'import ' + module +';' for module in self.get_dependencies())
+    lines.extend(self.kod_get_class())
+    return lines
 
+def kod_check_sat(prog: Program, f: Expr, bound: int) -> bool:
+  '''
+  Returns True if f is sat
+  '''
+  start = datetime.now()
+  solver = KodSolver(prog, f, bound)
+  open('_KodkodModel.java', 'w').write('\n'.join(solver.get_java_code()))
+  end = datetime.now()
+  print(f'py -> java translation: {(end - start).microseconds / 1000}ms')
+  cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, '_KodkodModel.java']
+  subprocess.check_call(cmd)
+  cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', '_KodkodModel']
+  out = subprocess.check_output(cmd, text=True)
+  print(out)
+  return False
 
-def kod_verify(_solver: Solver) -> str:
-    '''
-    '''
-    prog = syntax.the_program
-    print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting kod_verify\n')
+def kod_verify(_solver: Solver) -> None:
+  '''
+  '''
+  prog = syntax.the_program
+  print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting kod_verify\n')
 
-    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
-    safety = [inv.expr for inv in prog.invs() if inv.is_safety]
-    invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
+  inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
+  safety = [inv.expr for inv in prog.invs() if inv.is_safety]
+  invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
 
-    for i, p in enumerate(invs):
-      print(f'invariant {i}: {p}')
-    
+  for inv in invs:
+    f = And(*inits, Not(inv))
+    print(f'CHECKING INIT IMPLIES {inv}')
+    res = kod_check_sat(prog, f, utils.args.bound if utils.args.bound is not None else 1)
 
-    model = KodModel(3, 3, 3)
-    model.write_model()   
-
+    if res:
+      print('  invariant not implied by init')
+    else:
+      print(f'GOOD')
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
@@ -230,6 +339,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     result.append(s)
 
     for s in result:
-        s.add_argument('--scope', type=int, help='')
+        s.add_argument('--bound', type=int, help='Maximum bounds to use for bounded kodkod model.')
 
     return result

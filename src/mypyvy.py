@@ -1,7 +1,6 @@
 #! /usr/bin/env python3
 from __future__ import annotations
 import os
-import numpy
 import sys
 
 import argparse
@@ -27,11 +26,8 @@ from trace import bmc_trace
 
 import pd
 import rethink
-<<<<<<< HEAD
 import kod
-=======
 import sep
->>>>>>> master
 
 T = TypeVar('T')
 
