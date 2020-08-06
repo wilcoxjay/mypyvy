@@ -10,7 +10,7 @@ style:
 check:
 	$(PYTHON) -m mypy --config-file ./mypy.ini $(SRC_FILES)
 
-test: check check-imports unit typecheck verify verify-pd trace updr pd-old pd sep
+test: check check-imports unit typecheck verify verify-pd trace updr pd-old pd sep kod
 
 unit: check
 	$(PYTHON) -m unittest discover -s src -v
@@ -125,6 +125,9 @@ sep:
 	grep "Successfully learned a total" lockserv.sep.log
 	time $(PYTHON) src/mypyvy.py sep examples/pd/consensus_forall.pyv > consensus_forall.sep.log
 	grep "Successfully learned a total" consensus_forall.sep.log
+
+kod:
+	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/ring.pyv 
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
