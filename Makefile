@@ -1,4 +1,4 @@
-PYTHON := python3 -u
+PYTHON := python3.8 -u
 MYPYVY_OPTS := --seed=0 --log=warning --timeout 60000
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
@@ -128,6 +128,10 @@ sep:
 
 kod:
 	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/ring.pyv 
+	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/ring-id.pyv
+	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/lockserv.pyv
+	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/consensus_forall.pyv
+	time $(PYTHON) src/mypyvy.py sep examples/pd/stoppable_paxos_forall.pyv > stoppable_paxos_forall.sep.log
 
 check-imports: $(patsubst %.py, %.importable, $(SRC_FILES))
 
