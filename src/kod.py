@@ -24,6 +24,8 @@ from syntax import *
 from logic import *
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
+import json
+import ast
 
 KODKOD_JAR_EXECUTABLE_PATH = "/Users/amohamdy/stanford/aiken-1920-research/kodkod/kodkod.jar:."
 KODKOD_LIBRARY_PATH = "/Users/amohamdy/stanford/aiken-1920-research/kodkod/darwin_x86_64/"
@@ -208,6 +210,7 @@ class KodSolver:
                 'kodkod.instance.Bounds',
                 'kodkod.instance.TupleFactory',
                 'kodkod.instance.TupleSet',
+                'kodkod.instance.Tuple',
                 'kodkod.instance.Universe',
                 ]
 
@@ -321,10 +324,25 @@ class KodSolver:
             'final Solver solver = new Solver();',
             'solver.options().setSolver(SATFactory.MiniSat);',
             'final Solution sol = solver.solve(model.formula(), model.bounds());',
-            'System.out.println(sol);',
-            'String json = \"{\\\"outcome\\\": \\\"%s\\\",\\n\\\"instance\\\": \\\"%s\\\",\\n\\\"proof\\\": \\\"%s\\\",\\n\\\"stats\\\": \\\"%s\\\"}\";',
-            'json = String.format(json, sol.outcome(), sol.instance(), sol.proof(), sol.stats());',
-            'System.out.println(json);',
+            'String out = String.format("{\\n`outcome`: `%s`,\\n`instance`:{\\n", sol.outcome());',
+            'if (sol.sat()) {',
+            'for (Map.Entry<Relation, TupleSet> me : sol.instance().relationTuples().entrySet()) {',
+            'out += String.format("`%s`: [", me.getKey());',
+            'Iterator<Tuple> it = me.getValue().iterator();',
+            'while (it.hasNext()) {',
+            'out += "[";',
+            'Tuple t = it.next();',
+            'for (int i = 0; i < t.arity(); i++) {',
+            'out += String.format("`%s`", t.atom(i));',
+            '}',
+            'out += "],";',
+            '}',
+            'out += "],\\n";',
+            '}',
+            '}',
+            'out += String.format("\\n},\\n`proof`: `%s`\\n}", sol.proof());',
+            'out = out.replace(\'`\', \'"\');',
+            'System.out.println(out);',
         ]
         lines.append('}')
         return lines
@@ -349,7 +367,7 @@ class KodSolver:
         lines.extend(self.kod_get_class())
         return lines
 
-def kod_check_sat(prog: Program, f: Expr, bound: int) -> bool:
+def kod_check_sat(prog: Program, f: Expr, bound: int) -> bool: # -> Dict[String, Union(List[List[str]], str)]
     '''
     Returns True if f is sat
     '''
@@ -362,8 +380,15 @@ def kod_check_sat(prog: Program, f: Expr, bound: int) -> bool:
     subprocess.check_call(cmd)
     cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', '_KodkodModel']
     out = subprocess.check_output(cmd, text=True)
-    print(out)
-    return False
+    print('out:', out)
+    out = ast.literal_eval(out)
+    # out = json.loads(out)
+    print(type(out['instance']))
+    for entry in out['instance']:
+        val = out['instance'][entry]
+        for atom in val:
+            print(f'{atom} part of {val} in {entry}')
+    return out['outcome'] in ['SATISFIABLE', 'TRIVIALLY_SATISFIABLE']
 
 def kod_verify(_solver: Solver) -> None:
     '''
