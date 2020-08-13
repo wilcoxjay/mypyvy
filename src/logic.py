@@ -1,31 +1,27 @@
 from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime
-import dataclasses
 import time
 import itertools
 import math
 import random
 import io
-import re
-import sexp
 import subprocess
 import sys
-from typing import List, Any, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
-from typing import cast, TypeVar, Callable
+from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
+from typing import cast, Callable
+
 import z3
 
 import utils
-import resolver
+import typechecker
 import syntax
 from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
 from syntax import FunctionDecl, DefinitionDecl, Not, New
-from translator import Z3Translator
-
-
-TRANSITION_INDICATOR = 'tid'
+from semantics import Trace, State, FirstOrderStructure
+from translator import Z3Translator, TRANSITION_INDICATOR
+from solver_cvc4 import CVC4Model, new_cvc4_process, check_with_cvc4
 
 
 # useful for debugging
@@ -121,7 +117,7 @@ def check_init(
                     utils.logger.always_print('  implies invariant%s... ' % msg, end='')
                     sys.stdout.flush()
 
-                res = check_unsat([(inv.span, 'invariant%s may not hold in initial state' % msg)],
+                res = check_unsat([(inv.span, 'invariant%s does not hold in initial state' % msg)],
                                   s, 1, minimize=minimize, verbose=verbose)
                 if res is not None:
                     if utils.args.smoke_test_solver:
@@ -166,7 +162,7 @@ def check_transitions(
                 utils.logger.always_print('checking transition %s:' % (ition.name,))
 
             with s.new_frame():
-                s.add(lator.translate_transition(ition))
+                s.add(lator.translate_expr(ition.as_twostate_formula(prog.scope)))
                 for inv in prog.invs():
                     if 'check_invariant' in utils.args and \
                        utils.args.check_invariant is not None and \
@@ -186,9 +182,9 @@ def check_transitions(
                             utils.logger.always_print('  preserves invariant%s... ' % msg, end='')
                             sys.stdout.flush()
 
-                        res = check_unsat([(inv.span, 'invariant%s may not be preserved by transition %s'
+                        res = check_unsat([(inv.span, 'invariant%s is not preserved by transition %s'
                                             % (msg, ition.name)),
-                                           (ition.span, 'this transition may not preserve invariant%s'
+                                           (ition.span, 'this transition does not preserve invariant%s'
                                             % (msg,))],
                                           s, 2, minimize=minimize, verbose=verbose)
                         if res is not None:
@@ -249,7 +245,7 @@ def check_two_state_implication_all_transitions(
         s.add(t.translate_expr(New(Not(new_conc))))
         for trans in prog.transitions():
             with s.new_frame():
-                s.add(t.translate_transition(trans))
+                s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
                 res = s.check()
                 assert res in (z3.sat, z3.unsat), res
                 if res != z3.unsat:
@@ -260,20 +256,21 @@ def get_transition_indicator(uid: str, name: str) -> str:
     return '%s_%s_%s' % (TRANSITION_INDICATOR, uid, name)
 
 def assert_any_transition(s: Solver, t: Z3Translator,
-                          key_index: int, allow_stutter: bool = False) -> None:
+                          state_index: int, allow_stutter: bool = False) -> None:
     prog = syntax.the_program
-    uid = str(key_index)
+    uid = str(state_index)
 
     tids = []
     for transition in prog.transitions():
         tid = z3.Bool(get_transition_indicator(uid, transition.name))
         tids.append(tid)
-        s.add(z3.Implies(tid, t.translate_transition(transition, index=key_index)))
+        s.add(z3.Implies(tid, t.translate_expr(New(transition.as_twostate_formula(prog.scope), state_index))))
 
     if allow_stutter:
         tid = z3.Bool(get_transition_indicator(uid, '$stutter'))
         tids.append(tid)
-        s.add(z3.Implies(tid, z3.And(*t.frame([], index=key_index))))
+        frame = syntax.And(*DefinitionDecl._frame(prog.scope, mods=()))
+        s.add(z3.Implies(tid, t.translate_expr(New(frame, state_index))))
 
     s.add(z3.Or(*tids))
 
@@ -307,213 +304,6 @@ def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[E
         return None
 
 
-CVC4EXEC = str(utils.PROJECT_ROOT / 'script' / 'run_cvc4.sh')
-
-def cvc4_preprocess(z3str: str) -> str:
-    lines = ['(set-logic UF)']
-    for st in z3str.splitlines():
-        st = st.strip()
-        if st == '' or st.startswith(';') or st.startswith('(set-info '):
-            continue
-        st = st.replace('member', 'member2')
-        assert '@' not in st, st
-        if st.startswith('(declare-sort ') and not st.endswith(' 0)'):
-            assert st.endswith(')'), st
-            st = st[:-1] + ' 0)'
-        lines.append(st)
-    return '\n'.join(lines)
-
-def cvc4_postprocess(cvc4line: str) -> str:
-    return cvc4line.replace('member2', 'member')
-
-# The following classes whose names start with 'CVC4' impersonate various classes from z3 in a
-# duck typing style. Sometimes, they are given intentionally false type annotations to match
-# the corresponding z3 function. Reader beware!!
-
-@dataclass
-class CVC4Sort:
-    name: str
-
-    def __str__(self) -> str:
-        return self.name
-
-@dataclass
-class CVC4UniverseElement:
-    name: str
-    sort: CVC4Sort
-
-    def __str__(self) -> str:
-        return self.name
-
-    def decl(self) -> CVC4UniverseElementDecl:
-        return CVC4UniverseElementDecl(self)
-
-@dataclass
-class CVC4UniverseElementDecl:
-    elt: CVC4UniverseElement
-
-    def name(self) -> str:
-        return self.elt.name
-
-@dataclass
-class CVC4AppExpr:
-    func: CVC4FuncDecl
-    args: List[CVC4UniverseElement]
-
-@dataclass
-class CVC4VarDecl:
-    name: str
-    sort: CVC4Sort
-
-@dataclass
-class CVC4FuncDecl:
-    name: str
-    var_decls: dataclasses.InitVar[sexp.SList]
-    return_sort: str
-    body: sexp.Sexp
-
-    def __post_init__(self, var_decls: sexp.SList) -> None:
-        self.var_decls: List[CVC4VarDecl] = []
-        for d in var_decls:
-            assert isinstance(d, sexp.SList), d
-            assert len(d) == 2
-            var_name, var_sort = d
-            assert isinstance(var_name, str), var_name
-            assert isinstance(var_sort, str), var_sort
-            self.var_decls.append(CVC4VarDecl(var_name, CVC4Sort(var_sort)))
-
-    def __str__(self) -> str:
-        return self.name
-
-    def arity(self) -> int:
-        return len(self.var_decls)
-
-    def domain(self, i: int) -> z3.SortRef:
-        assert i < self.arity(), (i, self.arity())
-        return cast(z3.SortRef, self.var_decls[i].sort)
-
-    def __call__(self, *args: z3.ExprRef) -> z3.ExprRef:
-        return cast(z3.ExprRef, CVC4AppExpr(self, cast(List[CVC4UniverseElement], list(args))))
-
-@dataclass
-class CVC4Model:
-    sexpr: dataclasses.InitVar[sexp.Sexp]
-
-    def __post_init__(self, sexpr: sexp.Sexp) -> None:
-        assert isinstance(sexpr, sexp.SList), sexpr
-        self.sexprs = sexpr.contents[1:]
-
-    def sorts(self) -> List[z3.SortRef]:
-        ans: List[z3.SortRef] = []
-        for s in self.sexprs:
-            if isinstance(s, sexp.SList) and s.contents[0] == 'declare-sort':
-                name = s.contents[1]
-                assert isinstance(name, str), name
-                ans.append(cast(z3.SortRef, CVC4Sort(name)))
-        return ans
-
-    def eval_in_scope(self, scope: Dict[str, CVC4UniverseElement], e: sexp.Sexp) -> Union[bool, CVC4UniverseElement]:
-        # print(scope)
-        # print(e)
-
-        if isinstance(e, sexp.SList):
-            assert len(e) > 0, e
-            f = e[0]
-            assert isinstance(f, str), f
-            args = e[1:]
-            arg_vals = [self.eval_in_scope(scope, arg) for arg in args]
-            # print(f)
-            # print(arg_vals)
-            if f == '=':
-                assert len(arg_vals) == 2, arg_vals
-                return arg_vals[0] == arg_vals[1]
-            elif f == 'and':
-                for arg in arg_vals:
-                    assert arg is True or arg is False, arg
-                return all(arg_vals)
-            elif f == 'or':
-                for arg in arg_vals:
-                    assert arg is True or arg is False, arg
-                return any(arg_vals)
-            elif f == 'not':
-                assert len(arg_vals) == 1
-                val = arg_vals[0]
-                assert isinstance(val, bool), val
-                return not val
-            elif f == 'ite':
-                assert len(arg_vals) == 3, arg_vals
-                branch = arg_vals[0]
-                assert isinstance(branch, bool), branch
-                if branch:
-                    return arg_vals[1]
-                else:
-                    return arg_vals[2]
-            else:
-                assert False, ('unsupported function or special form in cvc4 model evaluator', f)
-        elif isinstance(e, str):
-            if e == 'true':
-                return True
-            elif e == 'false':
-                return False
-            else:
-                assert e in scope, ('unrecognized variable or symbol in cvc4 model evaluator', e)
-                return scope[e]
-        else:
-            assert False, e
-
-    def eval(self, e: z3.ExprRef, model_completion: bool = False) -> z3.ExprRef:
-        cvc4e = cast(Union[CVC4AppExpr], e)
-        if isinstance(cvc4e, CVC4AppExpr):
-            f = cvc4e.func
-            args = cvc4e.args
-            scope: Dict[str, CVC4UniverseElement] = {}
-            for sort in self.sorts():
-                univ = self.get_universe(sort)
-                for x in univ:
-                    assert isinstance(x, CVC4UniverseElement), x
-                    scope[x.name] = x
-            for var_decl, value in zip(f.var_decls, args):
-                scope[var_decl.name] = value
-            ans = self.eval_in_scope(scope, f.body)
-            return cast(z3.ExprRef, ans)
-        else:
-            assert False, ('unsupported expression passed to cvc4 model evaluator', cvc4e)
-
-    def get_universe(self, z3s: z3.SortRef) -> Sequence[z3.ExprRef]:
-        sort = cast(CVC4Sort, z3s)
-        assert isinstance(sort, CVC4Sort), sort
-        for i, sexpr in enumerate(self.sexprs):
-            if isinstance(sexpr, sexp.SList) and sexpr.contents[0] == 'declare-sort' and sexpr.contents[1] == sort.name:
-                univ: List[z3.ExprRef] = []
-                for sexpr in self.sexprs[i + 1:]:
-                    prefix = 'rep: '
-                    if isinstance(sexpr, sexp.Comment) and sexpr.contents.strip().startswith(prefix):
-                        elt_name = sexpr.contents.strip()[len(prefix):]
-                        # print(elt_name, sort)
-                        univ.append(cast(z3.ExprRef, CVC4UniverseElement(elt_name, sort)))
-                    else:
-                        break
-
-                return univ
-        assert False, ('could not find sort declaration in model', sort)
-
-    def decls(self) -> List[z3.FuncDeclRef]:
-        ans: List[z3.FuncDeclRef] = []
-        for sexpr in self.sexprs:
-            if isinstance(sexpr, sexp.SList) and sexpr.contents[0] == 'define-fun':
-                assert len(sexpr.contents) == 5, sexpr
-                fun_name = sexpr.contents[1]
-                assert isinstance(fun_name, str), fun_name
-                args = sexpr.contents[2]
-                assert isinstance(args, sexp.SList), args
-                return_sort = sexpr.contents[3]
-                assert isinstance(return_sort, str), return_sort
-                cvc4func = CVC4FuncDecl(fun_name, args, return_sort, sexpr.contents[4])
-                # print(cvc4func)
-                ans.append(cast(z3.FuncDeclRef, cvc4func))
-
-        return ans
-
 LatorFactory = Callable[[syntax.Scope, int], Z3Translator]
 class Solver:
     def __init__(
@@ -530,7 +320,7 @@ class Solver:
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[z3.ExprRef], prog.scope)
         self.translator_factory: LatorFactory = translator_factory if translator_factory is not None else Z3Translator
-        self.num_states = 0 # number of states for which axioms are assumed so far
+        self.num_states = 0  # number of states for which axioms are assumed so far
         self.nqueries = 0
         self.assumptions_necessary = False
         self.mutable_axioms: List[Expr] = []
@@ -567,8 +357,7 @@ class Solver:
 
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
-            self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                              stderr=subprocess.PIPE, text=True)
+            self.cvc4_proc = new_cvc4_process()
         return self.cvc4_proc
 
     def debug_recent(self) -> Tuple[str, Optional[str], Optional[str]]:
@@ -646,60 +435,10 @@ class Solver:
             assumptions = []
         self.nqueries += 1
 
-        def check_with_cvc4() -> z3.CheckSatResult:
-            assert assumptions is None or len(assumptions) == 0, 'assumptions not supported in cvc4'
-            cvc4script = cvc4_preprocess(self.z3solver.to_smt2())
-            self.cvc4_last_query = cvc4script
-            proc = self.get_cvc4_proc()
-            print('(reset)', file=proc.stdin)
-            print(cvc4script, file=proc.stdin)
-            # print(cvc4script)
-            assert proc.stdout is not None
-            ans = proc.stdout.readline()
-            if not ans:
-                print(cvc4script)
-                out, err = proc.communicate()
-                print(out)
-                print(err)
-                assert False, 'cvc4 closed its stdout before we could get an answer'
-            assert ans[-1] == '\n', repr(ans)
-            ans = ans.strip()
-            ans_map = {
-                'sat': z3.sat,
-                'unsat': z3.unsat
-            }
-            assert ans in ans_map, repr(ans)
-            res = ans_map[ans]
-            if res == z3.sat:
-                # get model and store it in self.cvc4_model
-                print('(get-model)', file=proc.stdin)
-                parser = sexp.get_parser('')
-                lines = []
-                for s in parser.parse():
-                    if isinstance(s, sexp.EOF):
-                        # print('got intermediate EOF')
-                        line = cvc4_postprocess(proc.stdout.readline())
-                        lines.append(line)
-                        if line == '':
-                            assert False, 'unexpected underlying EOF'
-                        else:
-                            line = line.strip()
-                            # print(f'got new data line: {line}')
-                            parser.add_input(line)
-                    else:
-                        self.cvc4_last_model_response = ''.join(lines)
-                        # print('got s-expression. not looking for any more input.')
-                        assert isinstance(s, sexp.SList), s
-                        # for sub in s:
-                        #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
-                        self.cvc4_model = CVC4Model(s)
-                        break
-                else:
-                    assert False
-            return res
-
         if self.use_cvc4:
-            return check_with_cvc4()
+            assert assumptions is None or len(assumptions) == 0, 'assumptions not supported in cvc4'
+            self.cvc4_model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
+            return z3.unsat if self.cvc4_model is None else z3.sat
 
         def luby() -> Iterable[int]:
             l: List[int] = [1]
@@ -717,6 +456,7 @@ class Solver:
             res = self.z3solver.check(*assumptions)
             if res == z3.unknown:
                 print(f'[{datetime.now()}] Solver.check: encountered unknown, printing debug information')
+                print(f'[{datetime.now()}] Solver.check: z3.solver.reason_unknown: {self.z3solver.reason_unknown()}')
                 print(f'[{datetime.now()}] Solver.check: self.assertions:')
                 for e in self.assertions():
                     print(e)
@@ -732,37 +472,40 @@ class Solver:
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh solver')
                 s2 = z3.Solver()
-                lator = self.get_translator(0)
-                for a in syntax.the_program.axioms():
-                    s2.add(lator.translate_expr(a.expr))
                 for e in self.assertions():
                     s2.add(e)
-
-                print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
+                res = s2.check(*assumptions)
+                print(f'[{datetime.now()}] Solver.check: s2.check(): {res}')
                 print(f'[{datetime.now()}] Solver.check: s2 stats and smt2:')
                 print(s2.statistics())
                 print()
                 print(s2.to_smt2())
                 print()
+                if res == z3.sat:
+                    # we can't get model, so we still consider this to be unknown
+                    res = z3.unknown
 
                 print(f'[{datetime.now()}] Solver.check: trying fresh context')
                 ctx = z3.Context()
                 s3 = z3.Solver(ctx=ctx)
-                for a in syntax.the_program.axioms():
-                    s3.add(lator.translate_expr(a.expr).translate(ctx))
                 for e in self.assertions():
                     s3.add(e.translate(ctx))
-                print(f'[{datetime.now()}] Solver.check: s3.check()',
-                      s3.check(*(e.translate(ctx) for e in assumptions)))
+                res = s3.check(*(e.translate(ctx) for e in assumptions))
+                print(f'[{datetime.now()}] Solver.check: s3.check(): {res}')
                 print(f'[{datetime.now()}] Solver.check: s3 stats and smt2:')
                 print(s3.statistics())
                 print()
                 print(s3.to_smt2())
                 print()
+                if res == z3.sat:
+                    # we can't get model, so we still consider this to be unknown
+                    res = z3.unknown
 
-                print(f'[{datetime.now()}] Solver.check: trying cvc4')
-                res = check_with_cvc4()
-                print(f'[{datetime.now()}] Solver.check: cvc4 result: {res}')
+                if assumptions is None or len(assumptions) == 0:
+                    print(f'[{datetime.now()}] Solver.check: trying cvc4')
+                    self.cvc4_model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
+                    res = z3.unsat if self.cvc4_model is None else z3.sat
+                    print(f'[{datetime.now()}] Solver.check: cvc4 result: {res}')
 
             assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
                                                if res == z3.unknown else None)
@@ -913,19 +656,69 @@ class Diagram:
 
     def __init__(
             self,
-            vs: List[syntax.SortedVar],
-            ineqs: Dict[SortDecl, List[Expr]],
-            rels: Dict[RelationDecl, List[Expr]],
-            consts: Dict[ConstantDecl, Expr],
-            funcs: Dict[FunctionDecl, List[Expr]]
+            struct: FirstOrderStructure,
     ) -> None:
-        self.binder = syntax.Binder(vs)
+        vs, ineqs, rels, consts, funcs = Diagram._read_first_order_structure(struct)
+        self.binder = syntax.Binder(tuple(vs))
         self.ineqs = ineqs
         self.rels = rels
         self.consts = consts
         self.funcs = funcs
         self.trackers: List[z3.ExprRef] = []
         self.tombstones: Dict[_RelevantDecl, Optional[Set[int]]] = defaultdict(set)
+        if utils.args.simplify_diagram:
+            self.simplify_consts()
+        prog = syntax.the_program
+        assert prog.scope is not None
+        self._typecheck(prog.scope)
+
+    @staticmethod
+    def _read_first_order_structure(struct: FirstOrderStructure) -> Tuple[
+            List[syntax.SortedVar],  # vs
+            Dict[SortDecl, List[Expr]],  # ineqs
+            Dict[RelationDecl, List[Expr]],  # rels
+            Dict[ConstantDecl, Expr],  # consts
+            Dict[FunctionDecl, List[Expr]],  # funcs
+    ]:
+        vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = {}
+        ineqs: Dict[SortDecl, List[Expr]] = {}
+        rels: Dict[RelationDecl, List[Expr]] = {}
+        consts: Dict[ConstantDecl, Expr] = {}
+        funcs: Dict[FunctionDecl, List[Expr]] = {}
+        for sort in struct.univs:
+            vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
+                                  for v in struct.univs[sort]]
+            u = [syntax.Id(s) for s in struct.univs[sort]]
+            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
+
+        for R, l in struct.rel_interps.items():
+            rels[R] = []
+            for tup, ans in l.items():
+                e: Expr
+                if tup:
+                    args: List[Expr] = []
+                    for (col, col_sort) in zip(tup, R.arity):
+                        assert isinstance(col_sort, syntax.UninterpretedSort)
+                        assert col_sort.decl is not None
+                        args.append(syntax.Id(col))
+                    e = syntax.AppExpr(R.name, tuple(args))
+                else:
+                    e = syntax.Id(R.name)
+                e = e if ans else syntax.Not(e)
+                rels[R].append(e)
+        for C, c in struct.const_interps.items():
+            e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
+            consts[C] = e
+        for F, fl in struct.func_interps.items():
+            funcs[F] = []
+            for tup, res in fl.items():
+                e = syntax.AppExpr(F.name, tuple(syntax.Id(col) for col in tup))
+                e = syntax.Eq(e, syntax.Id(res))
+                funcs[F].append(e)
+
+        vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
+
+        return vs, ineqs, rels, consts, funcs
 
     def ineq_conjuncts(self) -> Iterable[Tuple[SortDecl, int, Expr]]:
         for s, l in self.ineqs.items():
@@ -1010,17 +803,15 @@ class Diagram:
             ' &\n  '.join(str(c) for _, _, c in self.conjuncts())
         )
 
-    def resolve(self, scope: Scope) -> None:
-        resolver.pre_resolve_binder(scope, self.binder)
-
+    def _typecheck(self, scope: Scope) -> None:
+        typechecker.pre_typecheck_binder(scope, self.binder)
         with scope.in_scope(self.binder, [v.sort for v in self.binder.vs]):
             with scope.n_states(1):
                 for _, _, c in self.conjuncts():
-                    resolver.resolve_expr(scope, c, syntax.BoolSort)
+                    typechecker.typecheck_expr(scope, c, syntax.BoolSort)
+        typechecker.post_typecheck_binder(self.binder)
 
-        resolver.post_resolve_binder(self.binder)
-
-    def vs(self) -> List[syntax.SortedVar]:
+    def get_vs(self) -> Tuple[syntax.SortedVar, ...]:
         return self.binder.vs
 
     def to_z3(self, t: Z3Translator, new: bool = False) -> z3.ExprRef:
@@ -1099,8 +890,8 @@ class Diagram:
             S |= i
 
     def prune_unused_vars(self) -> None:
-        self.binder.vs = [v for v in self.binder.vs
-                          if any(v.name in syntax.free_ids(c) for _, _, c in self.conjuncts())]
+        self.binder.vs = tuple(v for v in self.binder.vs
+                               if any(v.name in syntax.free_ids(c) for _, _, c in self.conjuncts()))
 
     @contextmanager
     def without(self, d: _RelevantDecl, j: Union[int, Set[int], None] = None) -> Iterator[None]:
@@ -1175,433 +966,3 @@ def reorder(lst: List[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]]
 
     assert 0 <= order < math.factorial(len(lst))
     return list(utils.generator_element(itertools.permutations(lst), order))
-
-_digits_re = re.compile(r'(?P<prefix>.*?)(?P<suffix>[0-9]+)$')
-
-def try_printed_by(state: State, s: SortDecl, elt: str) -> Optional[str]:
-    custom_printer_annotation = syntax.get_annotation(s, 'printed_by')
-
-    if custom_printer_annotation is not None:
-        assert len(custom_printer_annotation.args) >= 1
-        import importlib
-        printers = importlib.import_module('printers')
-        printer_name = custom_printer_annotation.args[0]
-        custom_printer = printers.__dict__.get(printer_name)
-        custom_printer_args = custom_printer_annotation.args[1:] \
-            if custom_printer is not None else []
-        if custom_printer is not None:
-            return custom_printer(state, s, elt, custom_printer_args)
-        else:
-            utils.print_warning(custom_printer_annotation.span,
-                                'could not find printer named %s' % (printer_name,))
-    return None
-
-def print_element(state: State, s: Union[SortDecl, syntax.Sort], elt: str) -> str:
-    if not isinstance(s, SortDecl):
-        if isinstance(s, (syntax._BoolSort, syntax._IntSort)):
-            return elt
-        s = syntax.get_decl_from_sort(s)
-
-    return try_printed_by(state, s, elt) or elt
-
-def print_tuple(state: State, arity: List[syntax.Sort], tup: List[str]) -> str:
-    l = []
-    assert len(arity) == len(tup)
-    for s, x in zip(arity, tup):
-        l.append(print_element(state, s, x))
-    return ','.join(l)
-
-
-# The following classes define the semantics of multi-vocabulary
-# formulas in terms of traces. There is also a convenience class
-# representing a single state. (should be moved to semantics.py?)
-#
-# ODED: there is a cyclic import issue here, should discuss with James
-
-Universe = Dict[SortDecl, List[str]]
-RelationInterp = Dict[RelationDecl, List[Tuple[List[str], bool]]]
-ConstantInterp = Dict[ConstantDecl, str]
-FunctionInterp = Dict[FunctionDecl, List[Tuple[List[str], str]]]
-
-
-_K = TypeVar('_K')
-_V = TypeVar('_V')
-def _lookup_assoc(l: Sequence[Tuple[_K, _V]], k: _K) -> _V:
-    for k2, v2 in l:
-        if k == k2:
-            return v2
-    assert False
-
-
-class Trace:
-    def __init__(
-            self,
-            num_states: int,
-    ) -> None:
-        assert num_states >= 0
-        self.num_states = num_states
-
-        self.univs: Universe = OrderedDict()
-
-        self.immut_rel_interps: RelationInterp = OrderedDict()
-        self.immut_const_interps: ConstantInterp = OrderedDict()
-        self.immut_func_interps: FunctionInterp = OrderedDict()
-
-        self.rel_interps: List[RelationInterp] = [OrderedDict() for i in range(self.num_states)]
-        self.const_interps: List[ConstantInterp] = [OrderedDict() for i in range(self.num_states)]
-        self.func_interps: List[FunctionInterp] = [OrderedDict() for i in range(self.num_states)]
-
-        self.transitions: List[str] = ['' for i in range(self.num_states - 1)]
-        self.onestate_formula_cache: Dict[int, Expr] = {}
-        self.diagram_cache: Dict[int, Diagram] = {}
-
-    def _as_trace(self, indices: Tuple[int, ...]) -> Trace:
-        assert all(0 <= i < self.num_states for i in indices)
-        assert indices in [(1, 0), (1,)], 'should only be used in legacy pd.py code'
-        t = Trace(len(indices))
-        t.univs = self.univs.copy()
-        t.immut_rel_interps = self.immut_rel_interps.copy()
-        t.immut_const_interps = self.immut_const_interps.copy()
-        t.immut_func_interps = self.immut_func_interps.copy()
-        t.rel_interps = [self.rel_interps[i].copy() for i in indices]
-        t.const_interps = [self.const_interps[i].copy() for i in indices]
-        t.func_interps = [self.func_interps[i] for i in indices]
-        # no transition labels in permuted trace
-        return t
-
-    def __str__(self) -> str:
-        l = []
-        dummy_state = State(self, None)
-        l.extend(_univ_str(dummy_state))
-        l.append(_state_str(dummy_state))
-        for i in range(self.num_states):
-            if i > 0 and self.transitions[i - 1] != '':
-                l.append('\ntransition %s' % (self.transitions[i - 1],))
-            l.append('\nstate %s:' % (i,))
-            l.append(_state_str(State(self, i), print_immutable=False))
-
-        return '\n'.join(l)
-
-    def as_diagram(self, index: Optional[int] = None) -> Diagram:
-        assert self.num_states == 1 or index is not None, \
-            'to generate a diagram from a multi-state model, you must specify which state you want'
-        assert index is None or (0 <= index and index < self.num_states)
-
-        if index is None:
-            index = 0
-
-        prog = syntax.the_program
-
-        mut_rel_interps = self.rel_interps[index]
-        mut_const_interps = self.const_interps[index]
-        mut_func_interps = self.func_interps[index]
-
-        vars_by_sort: Dict[SortDecl, List[syntax.SortedVar]] = OrderedDict()
-        ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
-        rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
-        consts: Dict[ConstantDecl, Expr] = OrderedDict()
-        funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
-        for sort in self.univs:
-            vars_by_sort[sort] = [syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
-                                  for v in self.univs[sort]]
-            u = [syntax.Id(s) for s in self.univs[sort]]
-            ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
-
-        for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
-            rels[R] = []
-            for tup, ans in l:
-                e: Expr
-                if tup:
-                    args: List[Expr] = []
-                    for (col, col_sort) in zip(tup, R.arity):
-                        assert isinstance(col_sort, syntax.UninterpretedSort)
-                        assert col_sort.decl is not None
-                        args.append(syntax.Id(col))
-                    e = syntax.AppExpr(R.name, args)
-                else:
-                    e = syntax.Id(R.name)
-                e = e if ans else syntax.Not(e)
-                rels[R].append(e)
-        for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-            e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
-            consts[C] = e
-        for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
-            funcs[F] = []
-            for tup, res in fl:
-                e = syntax.AppExpr(F.name, [syntax.Id(col) for col in tup])
-                e = syntax.Eq(e, syntax.Id(res))
-                funcs[F].append(e)
-
-        vs = list(itertools.chain(*(vs for vs in vars_by_sort.values())))
-        diag = Diagram(vs, ineqs, rels, consts, funcs)
-        if utils.args.simplify_diagram:
-            diag.simplify_consts()
-        assert prog.scope is not None
-        diag.resolve(prog.scope)
-
-        return diag
-
-    def as_onestate_formula(self, index: Optional[int] = None) -> Expr:
-        assert self.num_states == 1 or index is not None, \
-            'to generate a onestate formula from a multi-state model, ' + \
-            'you must specify which state you want'
-        assert index is None or (0 <= index and index < self.num_states)
-
-        if index is None:
-            index = 0
-
-        if index not in self.onestate_formula_cache:
-            prog = syntax.the_program
-
-            mut_rel_interps = self.rel_interps[index]
-            mut_const_interps = self.const_interps[index]
-            mut_func_interps = self.func_interps[index]
-
-            vs: List[syntax.SortedVar] = []
-            ineqs: Dict[SortDecl, List[Expr]] = OrderedDict()
-            rels: Dict[RelationDecl, List[Expr]] = OrderedDict()
-            consts: Dict[ConstantDecl, Expr] = OrderedDict()
-            funcs: Dict[FunctionDecl, List[Expr]] = OrderedDict()
-            for sort in self.univs:
-                vs.extend(syntax.SortedVar(v, syntax.UninterpretedSort(sort.name))
-                          for v in self.univs[sort])
-                u = [syntax.Id(v) for v in self.univs[sort]]
-                ineqs[sort] = [syntax.Neq(a, b) for a, b in itertools.combinations(u, 2)]
-            for R, l in itertools.chain(mut_rel_interps.items(), self.immut_rel_interps.items()):
-                rels[R] = []
-                for tup, ans in l:
-                    e = (
-                        syntax.AppExpr(R.name, [syntax.Id(col) for col in tup])
-                        if tup else syntax.Id(R.name)
-                    )
-                    rels[R].append(e if ans else syntax.Not(e))
-            for C, c in itertools.chain(mut_const_interps.items(), self.immut_const_interps.items()):
-                consts[C] = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
-            for F, fl in itertools.chain(mut_func_interps.items(), self.immut_func_interps.items()):
-                funcs[F] = [
-                    syntax.Eq(syntax.AppExpr(F.name, [syntax.Id(col) for col in tup]),
-                              syntax.Id(res))
-                    for tup, res in fl
-                ]
-
-            # get a fresh variable, avoiding names of universe elements in vs
-            fresh = prog.scope.fresh('x', [v.name for v in vs])
-
-            e = syntax.Exists(vs, syntax.And(
-                *itertools.chain(*ineqs.values(), *rels.values(), consts.values(), *funcs.values(), (
-                    syntax.Forall([syntax.SortedVar(fresh,
-                                                    syntax.UninterpretedSort(sort.name))],
-                                  syntax.Or(*(syntax.Eq(syntax.Id(fresh), syntax.Id(v))
-                                              for v in self.univs[sort])))
-                    for sort in self.univs
-                ))))
-            assert prog.scope is not None
-            with prog.scope.n_states(1):
-                resolver.resolve_expr(prog.scope, e, None)
-            self.onestate_formula_cache[index] = e
-        return self.onestate_formula_cache[index]
-
-    def as_state(self, i: Optional[int]) -> State:
-        assert i is None or (0 <= i and i < self.num_states)
-        return State(self, i)
-
-    def eval(self, full_expr: Expr, starting_index: Optional[int]) -> Union[str, bool]:
-        def go(expr: Expr, index: Optional[int]) -> Union[str, bool]:
-            def current_rels() -> Dict[RelationDecl, List[Tuple[List[str], bool]]]:
-                return dict(itertools.chain(self.immut_rel_interps.items(),
-                                            self.rel_interps[index].items() if index is not None else []))
-
-            def current_consts() -> Dict[ConstantDecl, str]:
-                return dict(itertools.chain(self.immut_const_interps.items(),
-                                            self.const_interps[index].items() if index is not None else []))
-
-            def current_funcs() -> Dict[FunctionDecl, List[Tuple[List[str], str]]]:
-                return dict(itertools.chain(self.immut_func_interps.items(),
-                                            self.func_interps[index].items() if index is not None else []))
-            scope: syntax.Scope[Union[str, bool]] = \
-                cast(syntax.Scope[Union[str, bool]], syntax.the_program.scope)
-            if isinstance(expr, syntax.Bool):
-                return expr.val
-            elif isinstance(expr, syntax.UnaryExpr):
-                if expr.op == 'NEW':
-                    assert index is not None
-                    return go(expr.arg, index=index + 1)
-                elif expr.op == 'NOT':
-                    return not go(expr.arg, index)
-                assert False, "eval unknown operation %s" % expr.op
-            elif isinstance(expr, syntax.BinaryExpr):
-                if expr.op == 'IMPLIES':
-                    return not go(expr.arg1, index) or go(expr.arg2, index)
-                elif expr.op in ['IFF', 'EQUAL']:
-                    return go(expr.arg1, index) == go(expr.arg2, index)
-                else:
-                    assert expr.op == 'NOTEQ'
-                    return go(expr.arg1, index) != go(expr.arg2, index)
-            elif isinstance(expr, syntax.NaryExpr):
-                assert expr.op in ['AND', 'OR', 'DISTINCT']
-                if expr.op in ['AND', 'OR']:
-                    p = all if expr.op == 'AND' else any
-                    return p(go(arg, index) for arg in expr.args)
-                else:
-                    assert expr.op == 'DISTINCT'
-                    return len(set(go(arg, index) for arg in expr.args)) == len(expr.args)
-            elif isinstance(expr, syntax.AppExpr):
-                d = scope.get(expr.callee)
-                assert isinstance(d, syntax.RelationDecl) or isinstance(d, syntax.FunctionDecl)
-                table: Sequence[Tuple[Sequence[str], Union[bool, str]]]
-                if isinstance(d, syntax.RelationDecl):
-                    table = current_rels()[d]
-                else:
-                    table = current_funcs()[d]
-                args = []
-                for arg in expr.args:
-                    ans = go(arg, index)
-                    assert isinstance(ans, str)
-                    args.append(ans)
-                return _lookup_assoc(table, args)
-            elif isinstance(expr, syntax.QuantifierExpr):
-                assert expr.quant in ['FORALL', 'EXISTS']
-                p = all if expr.quant == 'FORALL' else any
-                doms = [self.univs[syntax.get_decl_from_sort(sv.sort)] for sv in expr.binder.vs]
-
-                def one(q: syntax.QuantifierExpr, tup: Tuple[str, ...]) -> bool:
-                    with scope.in_scope(q.binder, list(tup)):
-                        ans = go(q.body, index)
-                        assert isinstance(ans, bool)
-                        return ans
-                return p(one(expr, t) for t in itertools.product(*doms))
-            elif isinstance(expr, syntax.Id):
-                a = scope.get(expr.name)
-                # definitions are not supported
-                assert not isinstance(a, syntax.DefinitionDecl) and \
-                    not isinstance(a, syntax.FunctionDecl) and a is not None
-                if isinstance(a, syntax.RelationDecl):
-                    return _lookup_assoc(current_rels()[a], [])
-                elif isinstance(a, syntax.ConstantDecl):
-                    return current_consts()[a]
-                elif isinstance(a, tuple):
-                    # bound variable introduced to scope
-                    (bound_elem,) = a
-                    return bound_elem
-                else:
-                    assert isinstance(a, str) or isinstance(a, bool)
-                    return a
-            elif isinstance(expr, syntax.IfThenElse):
-                branch = go(expr.branch, index)
-                assert isinstance(branch, bool)
-                return go(expr.then, index) if branch else go(expr.els, index)
-            elif isinstance(expr, syntax.Let):
-                val = go(expr.val, index)
-                with scope.in_scope(expr.binder, [val]):
-                    return go(expr.body, index)
-            else:
-                assert False, expr
-
-        return go(full_expr, index=starting_index)
-
-
-@dataclass
-class State:
-    trace: Trace
-    index: Optional[int]
-
-    def __repr__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(self, print_negative_tuples=True, print_immutable=True)])
-
-    def __str__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_state_str(self, print_immutable=True)])
-
-    def eval(self, e: Expr) -> Union[str, bool]:
-        return self.trace.eval(e, starting_index=self.index)
-
-    def as_diagram(self) -> Diagram:
-        return self.trace.as_diagram(index=self.index)
-
-    def as_onestate_formula(self) -> Expr:
-        return self.trace.as_onestate_formula(index=self.index)
-
-    def univs(self) -> Universe:
-        return self.trace.univs
-
-    def rel_interp(self) -> RelationInterp:
-        if self.index is None:
-            return self.trace.immut_rel_interps
-        else:
-            return dict(itertools.chain(self.trace.immut_rel_interps.items(),
-                                        self.trace.rel_interps[self.index].items()))
-
-    def const_interp(self) -> ConstantInterp:
-        if self.index is None:
-            return self.trace.immut_const_interps
-        else:
-            return dict(itertools.chain(self.trace.immut_const_interps.items(),
-                                        self.trace.const_interps[self.index].items()))
-
-    def func_interp(self) -> FunctionInterp:
-        if self.index is None:
-            return self.trace.immut_func_interps
-        else:
-            return dict(itertools.chain(self.trace.immut_func_interps.items(),
-                                        self.trace.func_interps[self.index].items()))
-
-    def element_sort(self, element_name: str) -> SortDecl:
-        matching_sorts = [sort for (sort, univ) in self.univs().items()
-                          if element_name in univ]
-        assert matching_sorts, "%s unknown element name" % element_name
-        assert len(matching_sorts) == 1, "ambiguous element name %s" % element_name
-        return matching_sorts[0]
-
-
-def _univ_str(state: State) -> List[str]:
-    l = []
-    for s in sorted(state.univs().keys(), key=str):
-        if syntax.has_annotation(s, 'no_print'):
-            continue
-
-        l.append(str(s))
-
-        def key(x: str) -> Tuple[str, int]:
-            ans = print_element(state, s, x)
-            if (m := _digits_re.match(ans)) is not None:
-                return (m['prefix'], int(m['suffix']))
-            else:
-                return (ans, 0)
-        for x in sorted(state.univs()[s], key=key):
-            l.append('  %s' % print_element(state, s, x))
-    return l
-
-
-def _state_str(
-        state: State,
-        print_immutable: bool = True,
-        print_negative_tuples: Optional[bool] = None,
-) -> str:
-    if print_negative_tuples is None:
-        print_negative_tuples = utils.args.print_negative_tuples
-
-    l = []
-
-    Cs = state.const_interp()
-    for C in Cs:
-        if syntax.has_annotation(C, 'no_print') or (not C.mutable and not print_immutable):
-            continue
-        l.append('%s = %s' % (C.name, print_element(state, C.sort, Cs[C])))
-
-    Rs = state.rel_interp()
-    for R in Rs:
-        if syntax.has_annotation(R, 'no_print') or (not R.mutable and not print_immutable):
-            continue
-        for tup, b in sorted(Rs[R], key=lambda x: print_tuple(state, R.arity, x[0])):
-            if b or print_negative_tuples:
-                l.append('%s%s(%s)' % ('' if b else '!', R.name,
-                                       print_tuple(state, R.arity, tup)))
-
-    Fs = state.func_interp()
-    for F in Fs:
-        if syntax.has_annotation(F, 'no_print') or (not F.mutable and not print_immutable):
-            continue
-        for tup, res in sorted(Fs[F], key=lambda x: print_tuple(state, F.arity, x[0])):
-            l.append('%s(%s) = %s' % (F.name, print_tuple(state, F.arity, tup),
-                                      print_element(state, F.sort, res)))
-
-    return '\n'.join(l)

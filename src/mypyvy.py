@@ -12,13 +12,13 @@ from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Un
 import z3
 import resource
 
-import translator
 import logic
 from logic import Solver, Trace
 import parser
-import resolver
+import typechecker
 import syntax
 from syntax import Expr, Program, InvariantDecl
+from semantics import RelationInterps, ConstantInterps, FunctionInterps
 import updr
 import utils
 import relaxed_traces
@@ -46,7 +46,7 @@ def get_safety() -> List[Expr]:
                 oldcount = utils.error_count
                 e = syntax.close_free_vars(parser.parse_expr(utils.args.safety))
                 with prog.scope.n_states(1):
-                    resolver.resolve_expr(prog.scope, e, syntax.BoolSort)
+                    typechecker.typecheck_expr(prog.scope, e, syntax.BoolSort)
                 assert oldcount == utils.error_count, 'errors in parsing or typechecking'
                 safety = [e]
             except Exception as e:
@@ -74,7 +74,9 @@ def do_updr(s: Solver) -> None:
 
     try:
         fs.search()
+        print('updr found inductive invariant!')
     except updr.AbstractCounterexample:
+        print('updr found abstract counterexample!')
         pass
 
 def debug_tokens(filename: str) -> None:
@@ -92,10 +94,6 @@ def debug_tokens(filename: str) -> None:
 JSON = Dict[str, Any]
 def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
                                    Tuple[InvariantDecl, logic.Trace, syntax.DefinitionDecl]]) -> JSON:
-    RT = Dict[syntax.RelationDecl, List[Tuple[List[str], bool]]]
-    CT = Dict[syntax.ConstantDecl, str]
-    FT = Dict[syntax.FunctionDecl, List[Tuple[List[str], str]]]
-
     inv = res[0]
     trace = res[1]
     if len(res) == 3:
@@ -125,7 +123,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
         univs.append(u)
     obj['universes'] = univs
 
-    def state_json(r: RT, c: CT, f: FT) -> JSON:
+    def state_json(r: RelationInterps, c: ConstantInterps, f: FunctionInterps) -> JSON:
         obj: JSON = {}
 
         rels = []
@@ -133,7 +131,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
             r_obj: JSON = {}
             r_obj['name'] = rd.name
             tuples = []
-            for t, b in r_interp:
+            for t, b in r_interp.items():
                 if b:
                     tuples.append(t)
             r_obj['interpretation'] = tuples
@@ -152,7 +150,7 @@ def json_counterexample(res: Union[Tuple[InvariantDecl, logic.Trace],
         for fd, f_interp in f.items():
             f_obj: JSON = {}
             f_obj['name'] = fd.name
-            f_obj['interpretation'] = f_interp
+            f_obj['interpretation'] = list(f_interp.items())
             funcs.append(f_obj)
         obj['functions'] = funcs
 
@@ -249,7 +247,7 @@ def theorem(s: Solver) -> None:
         with s.new_frame():
             s.add(z3.Not(t.translate_expr(th.expr)))
 
-            logic.check_unsat([(th.span, 'theorem%s may not hold' % msg)], s, num_states)
+            logic.check_unsat([(th.span, 'theorem%s does not hold' % msg)], s, num_states)
 
 def nop(s: Solver) -> None:
     pass
@@ -274,15 +272,15 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
-            resolver.resolve_expr(prog.scope, diagram, syntax.BoolSort)
+            typechecker.typecheck_expr(prog.scope, diagram, syntax.BoolSort)
             assert isinstance(diagram, syntax.QuantifierExpr) and diagram.quant == 'EXISTS'
-            active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.vs()]
+            active_clauses = [relaxed_traces.active_var(v.name, str(v.sort)) for v in diagram.get_vs()]
 
             if not seen_first:
                 # restrict the domain to be subdomain of the diagram's existentials
                 seen_first = True
                 import itertools  # type: ignore
-                for sort, vars in itertools.groupby(diagram.vs(), lambda v: v.sort):  # TODO; need to sort first
+                for sort, vars in itertools.groupby(diagram.get_vs(), lambda v: v.sort):  # TODO; need to sort first
                     free_var = syntax.SortedVar(syntax.the_program.scope.fresh("v_%s" % str(sort)), None)
 
                     # TODO: diagram simplification omits them from the exists somewhere
@@ -290,15 +288,15 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
                     els: Sequence[Union[syntax.SortedVar, syntax.ConstantDecl]]
                     els = list(vars)
                     els += consts
-                    restrict_domain = syntax.Forall([free_var],
+                    restrict_domain = syntax.Forall((free_var,),
                                                     syntax.Or(*(syntax.Eq(syntax.Id(free_var.name),
                                                                           syntax.Id(v.name))
                                                                 for v in els)))
                     active_clauses += [restrict_domain]
 
-            diagram_active = syntax.Exists(diagram.vs(),
+            diagram_active = syntax.Exists(diagram.get_vs(),
                                            syntax.And(diagram.body, *active_clauses))
-            resolver.resolve_expr(prog.scope, diagram_active, syntax.BoolSort)
+            typechecker.typecheck_expr(prog.scope, diagram_active, syntax.BoolSort)
 
             components.append(syntax.AssertDecl(expr=diagram_active))
         elif elm.tagName == 'action':
@@ -334,19 +332,19 @@ def sandbox(s: Solver) -> None:
 
     derrel_name = syntax.the_program.scope.fresh("nder")
     (free_vars, def_expr) = diff_conjunctions[0]
-    def_axiom = syntax.Forall(free_vars,
+    def_axiom = syntax.Forall(tuple(free_vars),
                               syntax.Iff(syntax.Apply(derrel_name,
-                                                      [syntax.Id(v.name) for v in free_vars]),
+                                                      tuple(syntax.Id(v.name) for v in free_vars)),
                                          # TODO: extract pattern
                                          def_expr))
 
     derrel = syntax.RelationDecl(name=derrel_name,
-                                 arity=[syntax.safe_cast_sort(var.sort) for var in free_vars],
-                                 mutable=True, derived=def_axiom, annotations=[])
+                                 arity=tuple(syntax.safe_cast_sort(var.sort) for var in free_vars),
+                                 mutable=True, derived=def_axiom)
 
     # TODO: this irreversibly adds the relation to the context, wrap
-    resolver.resolve_statedecl(syntax.the_program.scope, derrel)
-    syntax.the_program.decls.append(derrel)  # TODO: hack! because RelationDecl.resolve only adds to prog.scope
+    typechecker.typecheck_statedecl(syntax.the_program.scope, derrel)
+    syntax.the_program.decls.append(derrel)  # TODO: hack! because typecheck_statedecl only adds to prog.scope
     s.mutable_axioms.extend([def_axiom])  # TODO: hack! currently we register these axioms only on solver init
 
     print("Trying derived relation:", derrel)
@@ -354,7 +352,7 @@ def sandbox(s: Solver) -> None:
     # the new decrease_domain action incorporates restrictions that derived relations remain the same on active tuples
     new_decrease_domain = relaxed_traces.relaxation_action_def(syntax.the_program, fresh=False)
     new_prog = relaxed_traces.replace_relaxation_action(syntax.the_program, new_decrease_domain)
-    resolver.resolve_program(new_prog)
+    typechecker.typecheck_program(new_prog)
     print(new_prog)
 
     syntax.the_program = new_prog
@@ -419,6 +417,9 @@ def trace(s: Solver) -> None:
     traces = list(prog.traces())
     if traces:
         utils.logger.always_print('finding traces:')
+    else:
+        utils.logger.always_print('no traces found in file')
+        return
 
     for trace in traces:
         res = bmc_trace(prog, trace, s, lambda s, n: logic.check_unsat([], s, n), log=True)
@@ -427,6 +428,8 @@ def trace(s: Solver) -> None:
                 return 'sat' if b else 'unsat'
             utils.print_error(trace.span, 'trace declared %s but was %s!' %
                               (bool_to_sat(trace.sat), bool_to_sat(res is not None)))
+    else:
+        utils.logger.always_print(f'\nchecked {len(traces)} traces and found {utils.error_count} errors')
 
 
 def check_one_bounded_width_invariant(s: Solver) -> None:
@@ -585,6 +588,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
                        help='assert that the discovered states already contain all the answers')
         s.add_argument('--print-exit-code', action=utils.YesNoAction, default=False,
                        help='print the exit code before exiting (good for regression testing)')
+        s.add_argument('--exit-0', action=utils.YesNoAction, default=False,
+                       help='always exit with status 0 (good for testing)')
 
         s.add_argument('--cvc4', action='store_true',
                        help='use CVC4 as the backend solver. this is not very well supported.')
@@ -719,10 +724,10 @@ def main() -> None:
 
         utils.logger.always_print(to_str(prog), end=end)
 
-    pre_resolve_error_count = utils.error_count
+    pre_typecheck_error_count = utils.error_count
 
-    resolver.resolve_program(prog)
-    if utils.error_count > pre_resolve_error_count:
+    typechecker.typecheck_program(prog)
+    if utils.error_count > pre_typecheck_error_count:
         utils.logger.always_print('program has resolution errors.')
         utils.exit(1)
 

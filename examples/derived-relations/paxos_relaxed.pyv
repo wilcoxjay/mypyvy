@@ -104,7 +104,7 @@ transition decrease_domain()
 
   & (forall R, V. new(round_active(R)) & new(value_active(V)) -> let old_quorum = decision_quorum(R,V) in new(quorum_active(old_quorum)))
   & (forall R, V, N. new(round_active(R)) & new(value_active(V)) & new(node_active(N)) -> decision(R,V) & member(N, decision_quorum(R, V)) -> vote(N, R, V))
-  & (forall Q, R. new(quorum_active(Q)) & new(round_active(R)) -> (r(Q,R) -> new(r(Q,R))))
+  & (forall Q, R. new(quorum_active(Q)) & new(round_active(R)) -> (dr(Q,R) -> new(dr(Q,R))))
 
 # derived relation r(quorum, round, round, value):
 #   quorum_active(Q0) & round_active(R1) & round_active(R2) & value_active(V0) -> 
@@ -133,10 +133,10 @@ transition decrease_domain()
 #      & one_b(N,R2)
 #      & r(N,R1,V1))
 
-derived relation r(quorum, round):
+derived relation dr(quorum, round):
   quorum_active(Q0) & round_active(R0)
   -> 
-  (r(Q0, R0) <->
+  (dr(Q0, R0) <->
    (exists N0.
      node_active(N0) &
      member(N0, Q0) &

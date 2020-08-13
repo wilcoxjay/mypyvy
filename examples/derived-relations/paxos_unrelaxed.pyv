@@ -92,8 +92,8 @@ transition decide(r: round, v: value, q: quorum)
 #      & one_b(N,R2)
 #      & r(N,R1,V1))
 
-derived relation r(quorum, round):
-  (r(Q0, R0) <->
+derived relation dr(quorum, round):
+  (dr(Q0, R0) <->
    (exists N0.
      member(N0, Q0) &
      left_round(N0, R0) &

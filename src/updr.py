@@ -56,12 +56,12 @@ def negate_clause(c: Expr) -> Expr:
         return syntax.BinaryExpr(op, c.arg1, c.arg2)
     elif isinstance(c, syntax.NaryExpr):
         assert c.op == 'OR'
-        return syntax.NaryExpr('AND', [negate_clause(arg) for arg in c.args])
+        return syntax.NaryExpr('AND', tuple(negate_clause(arg) for arg in c.args))
     elif isinstance(c, syntax.AppExpr) or isinstance(c, syntax.Id):
         return syntax.Not(c)
     elif isinstance(c, syntax.QuantifierExpr):
         assert c.quant == 'FORALL'
-        return syntax.QuantifierExpr('EXISTS', c.vs(), negate_clause(c.body))
+        return syntax.QuantifierExpr('EXISTS', c.get_vs(), negate_clause(c.body))
     else:
         assert False, f'unsupported expression {c} in negate_clause'
 
@@ -114,11 +114,10 @@ class Frames:
     def establish_safety(self) -> None:
         while bstate := self.find_something_to_block():
             self.currently_blocking = bstate
-            if isinstance(state := bstate.state_or_expr, State):
-                diag_or_expr: Union[Diagram, Expr] = state.as_diagram()
+            if isinstance(bstate.state_or_expr, State):
+                diag_or_expr: Union[Diagram, Expr] = Diagram(bstate.state_or_expr)
             else:
-                assert isinstance(expr := bstate.state_or_expr, Expr)
-                diag_or_expr = expr
+                diag_or_expr = bstate.state_or_expr
             frame_no = bstate.known_absent_until_frame + 1
             utils.logger.info(f'will block state #{bstate.id} in frame {frame_no}')
             self.block(diag_or_expr, frame_no, [(None, diag_or_expr)])
@@ -238,7 +237,7 @@ class Frames:
                 break
             assert isinstance(x, tuple), (res, x)
             trans, cti = x
-            pre_diag = cti.as_diagram(index=0)
+            pre_diag = Diagram(cti.as_state(0))
 
             trace.append((trans, pre_diag))
             self.block(pre_diag, j - 1, trace)
@@ -337,7 +336,7 @@ class Frames:
             solver.add(to_z3())
             for ition in prog.transitions():
                 with solver.new_frame():
-                    solver.add(t.translate_transition(ition))
+                    solver.add(t.translate_expr(ition.as_twostate_formula(prog.scope)))
                     if (res := solver.check(trackers())) == z3.sat:
                         m = Z3Translator.model_to_trace(solver.model(trackers()), 2)
                         state = m.as_state(0)

@@ -1,15 +1,15 @@
 import logic
-from logic import Solver, Expr
+from logic import Solver
 import syntax
 from syntax import New
 import translator
 import utils
 import z3
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional
 
 def translate_transition_call(
-        s: Solver, lator: translator.Z3Translator, key_index: int, c: syntax.TransitionCall
+        s: Solver, lator: translator.Z3Translator, state_index: int, c: syntax.TransitionCall
 ) -> z3.ExprRef:
     prog = syntax.the_program
     ition = prog.scope.get_definition(c.target)
@@ -18,14 +18,13 @@ def translate_transition_call(
     qs: List[Optional[z3.ExprRef]] = [b for b in bs]
     if c.args is not None:
         for j, a in enumerate(c.args):
-            if isinstance(a, Expr):
-                bs[j] = lator.translate_expr(New(a, key_index))
+            if not isinstance(a, syntax.Star):
+                bs[j] = lator.translate_expr(New(a, state_index))
                 qs[j] = None
-            else:
-                assert isinstance(a, syntax.Star)
+
     qs1 = [q for q in qs if q is not None]
     with lator.scope.in_scope(ition.binder, bs):
-        body = lator.translate_transition_body(ition, index=key_index)
+        body = lator.translate_expr(New(ition._framed_body(lator.scope), state_index))
     if qs1:
         return z3.Exists(qs1, body)
     else:

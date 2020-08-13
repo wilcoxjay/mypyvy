@@ -1,0 +1,4 @@
+error 200801-global-shadowing-transition.pyv:10:19: err is already globally declared as a relation. shadowing global declarations is not allowed.
+error 200801-global-shadowing-transition.pyv:12:18: a is already globally declared as a constant. shadowing global declarations is not allowed.
+program has resolution errors.
+mypyvy exiting with status 1

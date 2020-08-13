@@ -2,7 +2,7 @@ import unittest
 
 import utils
 import parser
-import resolver
+import typechecker
 import syntax
 import mypyvy
 
@@ -56,7 +56,7 @@ class SyntaxTests(unittest.TestCase):
     def test_as_clauses_lockserv(self) -> None:
         with open(lockserv_path) as f:
             prog = mypyvy.parse_program(f.read())
-        resolver.resolve_program(prog)
+        typechecker.typecheck_program(prog)
         for inv in prog.invs():
             expr = inv.expr
             with self.subTest(expr=expr):
@@ -68,8 +68,8 @@ class SyntaxTests(unittest.TestCase):
         with open(lockserv_path) as f:
             prog2 = mypyvy.parse_program(f.read())
 
-        resolver.resolve_program(prog1)
-        resolver.resolve_program(prog2)
+        typechecker.typecheck_program(prog1)
+        typechecker.typecheck_program(prog2)
         for d1, d2 in zip(prog1.decls_containing_exprs(), prog2.decls_containing_exprs()):
             e1 = d1.expr
             e2 = d2.expr
@@ -86,7 +86,7 @@ class SyntaxTests(unittest.TestCase):
             mutable relation active_quorum(quorum)
         '''
         prog = mypyvy.parse_program(minipaxos)
-        resolver.resolve_program(prog)
+        typechecker.typecheck_program(prog)
         node = prog.scope.get_sort('node')
         assert node is not None
         quorum = prog.scope.get_sort('quorum')
@@ -98,18 +98,18 @@ class SyntaxTests(unittest.TestCase):
         guards = {node: active_node, quorum: active_quorum}
 
         e = parser.parse_expr('forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)')
-        resolver.resolve_expr(prog.scope, e, None)
+        typechecker.typecheck_expr(prog.scope, e, None)
 
         expected = parser.parse_expr('forall Q1, Q2. active_quorum(Q1) & active_quorum(Q2) -> '
                                      'exists N. active_node(N) & (member(N, Q1) & member(N, Q2))')
         with prog.scope.n_states(1):
-            resolver.resolve_expr(prog.scope, expected, None)
+            typechecker.typecheck_expr(prog.scope, expected, None)
 
         self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
     def test_decls_eq(self) -> None:
-        s1 = syntax.SortDecl('foo', [])
-        s2 = syntax.SortDecl('foo', [])
+        s1 = syntax.SortDecl('foo')
+        s2 = syntax.SortDecl('foo')
         self.assertEqual(s1, s2)
 
 def build_python_cmd() -> List[str]:

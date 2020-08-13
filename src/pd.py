@@ -290,8 +290,8 @@ def is_substructure(s: PDState, t: PDState) -> bool:
     )
     if not cheap_check:
         return False
-    diag_s = s.as_diagram(0).to_ast()
-    diag_t = t.as_diagram(0).to_ast()
+    diag_s = Diagram(s.as_state(0)).to_ast()
+    diag_t = Diagram(t.as_state(0)).to_ast()
     if diag_s == diag_t:
         return True
     return cheap_check_implication([diag_t], [diag_s])
@@ -587,7 +587,7 @@ def check_dual_edge_multiprocessing_helper(
     t = s.get_translator(2)
     for q in qs:
         s.add(t.translate_expr(q))
-    s.add(t.translate_transition(trans))
+    s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
     for i, p in enumerate(ps):
         s.add(t.translate_expr(p))
         s.add(t.translate_expr(New(p)))
@@ -799,7 +799,7 @@ def check_dual_edge(
                 t = _cti_solver.get_translator(2)
                 for q in qs:
                     _cti_solver.add(t.translate_expr(q))
-                _cti_solver.add(t.translate_transition(trans))
+                _cti_solver.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
                 p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
                 for i, p in enumerate(ps):
                     _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
@@ -1097,7 +1097,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 pass
             t = s.get_translator(2)
             # add transition relation
-            s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
+            s.add(t.translate_expr(list(prog.transitions())[hq.i_transition].as_twostate_formula(prog.scope)))
             # add ps
             for i in sorted(hq.p):
                 s.add(t.translate_expr(ps[i]))
@@ -1834,19 +1834,29 @@ def check_k_state_implication(
     if om is None:
         return None
     else:
-        # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
-        # this file to use logic.State for its states, this will be easy to re-enable.
-        assert False
-        z3m = om.z3model
-        assert z3m is not None
-        keys = list(om.keys)
+        # ODED: not sure if this is correct (see previous version below)
         states = tuple(
-            Trace.from_z3(keys[i:], z3m)
-            for i in reversed(range(len(keys)))
+            om._as_trace(tuple(reversed(range(i + 1))))
+            for i in range(om.num_states)
         )
         print(f'Found new {k}-{msg} violating {p}:')
         print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
         return states
+
+        # # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
+        # # this file to use logic.State for its states, this will be easy to re-enable.
+        # reveal_type(om)
+        # assert False
+        # z3m = om.z3model
+        # assert z3m is not None
+        # keys = list(om.keys)
+        # states = tuple(
+        #     Trace.from_z3(keys[i:], z3m)
+        #     for i in reversed(range(len(keys)))
+        # )
+        # print(f'Found new {k}-{msg} violating {p}:')
+        # print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
+        # return states
 
 
 class MapSolver:
@@ -1933,7 +1943,7 @@ def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_claus
 
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
-        vs = [v for v in variables if v.name in set(n for lit in lits for n in free_ids(lit))]
+        vs = tuple(v for v in variables if v.name in set(n for lit in lits for n in free_ids(lit)))
         if len(vs) > 0:
             return Forall(vs, Or(*lits))
         else:
@@ -1960,7 +1970,7 @@ def subclauses(top_clause: Expr) -> Iterable[Expr]:
     assert n**2 < 10**6, f'{2**n}, really??'
     for lits in powerset(literals):
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        vs = tuple(v for v in variables if v.name in free)
         yield Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -1981,8 +1991,8 @@ def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr
     for lits in P:
         if any(s <= set(lits) for s in implied):
             continue
-        vs = [v for v in top_clause.binder.vs
-             if v.name in set(n for lit in lits for n in free_ids(lit))]
+        vs = tuple(v for v in top_clause.binder.vs
+                   if v.name in set(n for lit in lits for n in free_ids(lit)))
         if len(vs) > 0:
             clause : Expr = Forall(vs, Or(*lits))
         else:
@@ -2058,7 +2068,7 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
     def to_clause(s: Iterable[int]) -> Expr:
         lits = [literals[i] for i in sorted(s)]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        vs = tuple(v for v in variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     n = len(literals)
@@ -2066,8 +2076,8 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
     solver = Solver()
     t = solver.get_translator(1)
     solver.add(t.translate_expr(
-        state_or_predicate if isinstance(state_or_predicate, Expr) else
-        state_or_predicate.as_onestate_formula(0)
+        state_or_predicate.as_onestate_formula(0) if isinstance(state_or_predicate, PDState) else
+        state_or_predicate
     ))
 
     # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
@@ -2170,16 +2180,13 @@ def map_clause_state_interaction_instantiate(
         assert len(variables) == len(values)
         consts_and_vars: Dict[str, str] = dict(chain(
             ((var.name, val) for var, val in zip(variables, values)),
-            ((d.name, val) for d, val in state.immut_const_interps.items()),
-            ((d.name, val) for d, val in state.const_interps[0].items()),
+            ((d.name, val) for d, val in state.as_state(0).const_interps.items())
         ))
         functions: Dict[str, Dict[Tuple[str,...], str]] = dict(
-            (d.name, dict((tuple(args), val) for args, val in func))
-            for d, func in chain(state.immut_func_interps.items(), state.func_interps[0].items())
+            (d.name, v) for d, v in state.as_state(0).func_interps.items()
         )
         relations: Dict[str, Dict[Tuple[str,...], bool]] = dict(
-            (d.name, dict((tuple(args), val) for args, val in func))
-            for d, func in chain(state.immut_rel_interps.items(), state.rel_interps[0].items())
+            (d.name, v) for d, v in state.as_state(0).rel_interps.items()
         )
         def get_term(t: Expr) -> str:
             if isinstance(t, Id):
@@ -2432,7 +2439,7 @@ class SubclausesMapTurbo:
     def to_clause(self, s: Iterable[int]) -> Expr:
         lits = [self.literals[i] for i in sorted(s)]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in self.variables if v.name in free]
+        vs = tuple(v for v in self.variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -2714,7 +2721,7 @@ class MultiSubclausesMapICE:
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
         lits = [self.literals[k][i] for i in sorted(s)]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in self.variables[k] if v.name in free]
+        vs = tuple(v for v in self.variables[k] if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -2909,7 +2916,7 @@ def forward_explore_marco(solver: Solver,
         def to_clause(self, s: Set[int]) -> Expr:
             lits = [self.literals[i] for i in sorted(s)]
             free = set(chain(*(free_ids(lit) for lit in lits)))
-            vs = [v for v in self.variables if v.name in free]
+            vs = tuple(v for v in self.variables if v.name in free)
             return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     def valid(clause: Expr) -> bool:
@@ -2985,7 +2992,7 @@ def forward_explore_marco(solver: Solver,
     # transition_indicators = []
     # for i, trans in enumerate(prog.transitions()):
     #     transition_indicators.append(z3.Bool(f'@transition_{i}'))
-    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
     # wp_checked_valid: Set[Tuple[Optional[PDState], SubclausesMap, Tuple[int,...]]] = set()
     # def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
     #     # return True iff wp(clause) is implied by init and valid in all states
@@ -3191,7 +3198,8 @@ def forward_explore(s: Solver,
             [None], # general initial state
             (s for s in states if s.num_states > 1) # discovered non-initial states
         )
-        label = lambda s: 'init' if s is None else 'initial state' if len(s.keys) == 1 else 'state'
+        def label(s: Optional[PDState]) -> str:
+            return 'init' if s is None else 'initial state' if s.num_states == 1 else 'state'
         for precondition, p in product(preconditions, a):
             # print(f'Checking if {label(precondition)} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
@@ -3385,7 +3393,7 @@ def repeated_houdini(s: Solver) -> str:
         else:
             new_clauses = []
             for m in unreachable:
-                cs = as_clauses(Not(m.as_diagram(0).to_ast()))
+                cs = as_clauses(Not(Diagram(m.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
                 if c not in clauses:
@@ -3442,7 +3450,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 substructure.append((j, i))
             if is_substructure(t, s):
                 substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
         assert len(cs) == 1
         c = cs[0]
         maps.append(SubclausesMapTurbo(c, states, predicates_of_state[i], True))
@@ -4006,7 +4014,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     substructure.append((j, i))
                 if is_substructure(t, s):
                     substructure.append((i, j))
-            cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+            cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
             assert len(cs) == 1
             c = cs[0]
             maps.append(SubclausesMapTurbo(c, states, [], True))
@@ -4623,7 +4631,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                 substructure.append((j, i))
             if is_substructure(t, s):
                 substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
         assert len(cs) == 1
         c = cs[0]
         maps.append(SubclausesMapTurbo(c, states, [], True))
@@ -5156,7 +5164,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     substructure.append((i, j))
                 for j in sorted(superstructures):
                     substructure.append((j, i))
-                cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+                cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
                 maps.append(MultiSubclausesMapICE([c], states, init_ps))
@@ -5921,7 +5929,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             transition_indicators: List[z3.ExprRef] = []
             for i, trans in enumerate(prog.transitions()):
                 transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
             p_indicators: List[z3.ExprRef] = []
             def cti_solver_add_p(p: Predicate) -> None:
                 i = len(p_indicators)
@@ -6206,7 +6214,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         transition_indicators: List[z3.ExprRef] = []
         for i, trans in enumerate(prog.transitions()):
             transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
         p_indicators: List[z3.ExprRef] = []
         def add_p(p: Predicate) -> None:
             assert len(p_indicators) == len(ps)
@@ -6906,7 +6914,7 @@ class MonotoneFunction:
 #     # true on A, and then does set cover using z3.
 #     top_clauses: List[Predicate] = []
 #     for s in B:
-#         cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+#         cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
 #         assert len(cs) == 1
 #         c = cs[0]
 #         if c not in top_clauses:
@@ -7077,7 +7085,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
         free = set(chain(*(free_ids(lit) for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        vs = tuple(v for v in variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     def f(s: Set[int]) -> bool:
@@ -7237,7 +7245,7 @@ class SeparabilityMap:
     def _new_states(self) -> None:
         # create new SubclausesMapTurbo's
         for i in range(len(self.maps), len(self.states)):
-            cs = as_clauses(Not(self.states[i].as_diagram(0).to_ast()))
+            cs = as_clauses(Not(Diagram(self.states[i].as_state(0)).to_ast()))
             assert len(cs) == 1
             c = cs[0]
             self.maps.append(SubclausesMapTurbo(c, self.states, self.predicates))
@@ -7591,7 +7599,7 @@ def cdcl_invariant(solver: Solver) -> str:
             for pos, neg in new_predicates:
                 print(f'\nTrying to separate: pos={sorted(pos)}, neg={sorted(neg)}, ps={sorted(sharp_predicates)}')
                 p = sm.separate(pos, neg, sharp_predicates)
-                if not isinstance(p, Predicate):
+                if isinstance(p, tuple):
                     pos, neg, ps = p
                     print(f'\nLearned new inseparability: pos={sorted(pos)}, neg={sorted(neg)}, ps={sorted(ps)}')
                     inseparabilities.append((pos, neg, ps))
@@ -7889,7 +7897,7 @@ def enumerate_reachable_states(s: Solver) -> None:
                 new_states = []
                 with s.new_frame():
                     s.add(t2.translate_expr(state.as_onestate_formula(0)))
-                    s.add(t2.translate_transition(ition))
+                    s.add(t2.translate_expr(ition.as_twostate_formula(prog.scope)))
                     while True:
                         res = s.check()
                         if res == z3.unsat:
