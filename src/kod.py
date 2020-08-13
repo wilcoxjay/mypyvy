@@ -382,12 +382,10 @@ def kod_check_sat(prog: Program, f: Expr, bound: int) -> bool: # -> Dict[String,
     out = subprocess.check_output(cmd, text=True)
     print('out:', out)
     out = ast.literal_eval(out)
-    # out = json.loads(out)
-    print(type(out['instance']))
-    for entry in out['instance']:
-        val = out['instance'][entry]
-        for atom in val:
-            print(f'{atom} part of {val} in {entry}')
+    # for entry in out['instance']:
+    #     val = out['instance'][entry]
+    #     for atom in val:
+    #         print(f'{atom} part of {val} in {entry}')
     return out['outcome'] in ['SATISFIABLE', 'TRIVIALLY_SATISFIABLE']
 
 def kod_verify(_solver: Solver) -> None:
@@ -414,7 +412,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     result : List[argparse.ArgumentParser] = []
 
     # forward_explore_inv
-    s = subparsers.add_parser('kod-verify', help='Verify invariants using KodKod')
+    s = subparsers.add_parser('kod-verify', help='Verify model using KodKod')
     s.set_defaults(main=kod_verify)
     result.append(s)
 
