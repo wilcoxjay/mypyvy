@@ -199,7 +199,6 @@ kod:
 	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/ring-id.pyv
 	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/lockserv.pyv
 	time $(PYTHON) src/mypyvy.py kod-verify examples/pd/consensus_forall.pyv
-	time $(PYTHON) src/mypyvy.py sep examples/pd/stoppable_paxos_forall.pyv > stoppable_paxos_forall.sep.log
 
 nightly:
 	python3 script/nightly.py
