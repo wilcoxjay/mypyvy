@@ -40,9 +40,9 @@ class KodExpr: # KodExpr is either a kodkod Formula or a kodkod Relational Expre
         self.is_formula = is_formula
     
     # For now prints that string
-    def __str__(self):
+    def __str__(self) -> str:
         return self.expr_str
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.expr_str
 
 class KodTranslator:
@@ -71,22 +71,18 @@ class KodTranslator:
         return KodExpr(f'{args[0]}{op}({joined_args})', is_formula)
 
     @staticmethod
-    def relation_to_kod(r: Union[RelationDecl, FunctionDecl, str], index: int) -> KodExpr:
-        if isinstance(r, RelationDecl) or isinstance(r, FunctionDecl):
-            return KodExpr(f'this.get_expression("{r.name}", LeafExprType.RELATION, {index})')
-        return KodExpr(f'this.get_expression("{r}", {index})')
-
+    def relation_to_kod(
+            r: Union[RelationDecl, FunctionDecl, ConstantDecl],
+            leaf_expr_type: str,
+            index: int
+        ) -> KodExpr:
+        if not r.mutable:
+            index = 0
+        return KodExpr(f'this.get_expression("{r.name}", {leaf_expr_type}, {index})')
+        
     @staticmethod
     def var_to_kod(sv: SortedVar) -> KodExpr:
         return KodExpr(f'this.get_var("{sv.name}")')
-
-    @staticmethod
-    def const_to_kod(c: ConstantDecl, index: int) -> KodExpr:
-        return KodExpr(f'this.get_expression("{c.name}", LeafExprType.CONSTANT, {index})')
-
-    @staticmethod
-    def nullary_to_kod(d: RelationDecl, index: int) -> KodExpr:
-        return KodExpr(f'this.get_expression("{d.name}", LeafExprType.RELATION, {index})')
 
     @staticmethod
     def sort_to_kod(s: Sort) -> KodExpr:
@@ -149,7 +145,7 @@ class KodTranslator:
                 assert False
             elif isinstance(d, FunctionDecl):
                 kod_args = [self._translate_expr(a) for a in e.args]
-                to_join = str(KodTranslator.relation_to_kod(d, self.scope.current_state_index))
+                to_join = str(KodTranslator.relation_to_kod(d, 'LeafExprType.FUNCTION', self.scope.current_state_index))
                 for a in reversed(kod_args):
                     to_join = f'{a}.join({to_join})'
                 return KodExpr(to_join)
@@ -157,7 +153,7 @@ class KodTranslator:
                 kod_args = [self._translate_expr(a) for a in e.args]
                 assert all(not a.is_formula for a in kod_args), f'Cannot apply relation to a formula: {e}'
                 product = KodTranslator.join_expr('.product', kod_args, False)
-                callee = KodTranslator.relation_to_kod(d, self.scope.current_state_index)
+                callee = KodTranslator.relation_to_kod(d, 'LeafExprType.RELATION', self.scope.current_state_index)
                 return KodTranslator.join_expr('.in', [product, callee], True)
             else:
                 assert False, f'{d}\n{e}'
@@ -185,7 +181,8 @@ class KodTranslator:
             assert then.is_formula == els.is_formula, f'Then and Else statements must either both be formulae or expressions'
 
             if not then.is_formula:
-                return KodExpr(f'{branch}.thenElse({then}, {els})')
+                assert False, 'Example with expressions for thenElse'
+                return KodExpr(f'{branch}.thenElse({then}, {els})') # TODO: NOT TESTED
 
             if_branch = Implies(e.branch, e.then)
             els_branch = Implies(Not(e.branch), e.els)
@@ -195,10 +192,10 @@ class KodTranslator:
             d = self.scope.get(e.name)
             assert d is not None, f'{e.name}\n{e}'
             if isinstance(d, RelationDecl): # Nullary relation : BOOL
-                kod_nullary = KodTranslator.relation_to_kod(d, self.scope.current_state_index)
+                kod_nullary = KodTranslator.relation_to_kod(d, 'LeafExprType.RELATION', self.scope.current_state_index)
                 return KodExpr(f'{kod_nullary}.some()', True)
             elif isinstance(d, ConstantDecl):
-                return KodTranslator.const_to_kod(d, self.scope.current_state_index)
+                return KodTranslator.relation_to_kod(d, 'LeafExprType.CONSTANT', self.scope.current_state_index)
             elif isinstance(d, DefinitionDecl):
                 assert False
             elif isinstance(d, FunctionDecl):
@@ -232,6 +229,7 @@ class KodSolver:
           self.kod_get_get_expression,
           self.kod_get_get_relation_name,
           self.kod_get_formula,
+          self.kod_get_spec,
           self.kod_get_bounds,
           self.kod_get_main,
         ]
@@ -257,6 +255,36 @@ class KodSolver:
                 'kodkod.instance.Universe',
                 ]
 
+    def kod_get_constructor(self) -> List[str]:
+        lines = ["public _KodkodModel() {"]
+        lines.extend([
+            'this.arities = new HashMap<String, List<String>>();',
+            'this.vars = new HashMap<String, Variable>();',
+            'this.relations = new HashMap<String, Map<Integer, Relation>>();',
+            'this.functions = new HashMap<String, Map<Integer, Relation>>();',
+            'this.constants = new HashMap<String, Map<Integer, Relation>>();',
+            'this.sorts = new HashMap<String, Relation>();',
+        ])
+        lines.append('this.sorts.put("__KOD_BOOL__", Relation.unary("__KOD_BOOL__"));')
+        lines.extend(f'this.sorts.put("{s.name}", Relation.unary("{s.name}"));' for s in self.scope.sorts.values())
+        for r in self.scope.relations.values():
+            if not r.arity: # Nullary Relations are of __KOD_BOOL__ sort
+                arity_string = 'Arrays.asList(\"__KOD_BOOL__\")'
+            else:
+                sorts = [f'"{s}"' for s in r.arity]
+                arity_string = f'Arrays.asList({", ".join(sorts)})'
+            lines.append(f'this.arities.put("{r.name}", {arity_string});')
+        for f in self.scope.functions.values():
+            sorts = [f'"{s}"' for s in (*f.arity, f.sort)]
+            arity_string = f'Arrays.asList({", ".join(sorts)})'
+            lines.append(f'this.arities.put("{f.name}", {arity_string});')
+        for c in self.scope.constants.values():
+            arity_string = f'Arrays.asList("{c.sort}")'
+            lines.append(f'this.arities.put("{c.name}", {arity_string});')
+
+        lines.append("}\n")
+        return lines
+
     def kod_get_get_var(self) -> List[str]:
         return [
             'public Variable get_var(String name) {',
@@ -269,12 +297,13 @@ class KodSolver:
     def kod_get_get_expression(self) -> List[str]:
         return [
             'public Relation get_expression(String name, LeafExprType t, int index) {', 
-            '   final private <Map<String, Map<Integer, Relation>> m;', 
+            '   final Map<String, Map<Integer, Relation>> m;', 
             '   switch(t)', 
             '   {', 
             '      case RELATION: m = this.relations; break;',  
-            '      case FUNCTION: m = this.functions; break; ', 
-            '      case CONSTANT: m = this.constants; break; ', 
+            '      case FUNCTION: m = this.functions; break;', 
+            '      case CONSTANT: m = this.constants; break;', 
+            '      default: m = this.constants;; // TODO: Raise Exception',
             '   }', 
             '   if (!m.containsKey(name)) {',   
             '      m.put(name, new HashMap<Integer, Relation>());', 
@@ -294,9 +323,6 @@ class KodSolver:
             '}',
         ]
     
-    def get_translator(self, num_states: int) -> KodTranslator:
-        return KodTranslator(self.prog, num_states)
-
     def kod_get_formula(self) -> List[str]:
         kod_formula = self.translator.translate_expr(self.e)
         lines = ['public Formula formula() {',
@@ -305,35 +331,38 @@ class KodSolver:
         lines.append('}')
         return lines
 
-    def kod_get_constructor(self) -> List[str]:
-        lines = ["public _KodkodModel() {"]
-        lines.extend([
-            'this.arities = new HashMap<String, List<String>>();',
-            'this.vars = new HashMap<String, Variable>();',
-            'this.relations = new HashMap<String, Map<Integer, Relation>>();',
-            'this.functions = new HashMap<String, Map<Integer, Relation>>();',
-            'this.constants = new HashMap<String, Map<Integer, Relation>>();',
-            'this.sorts = new HashMap<String, Relation>();',
-        ])
-        lines.extend(f'this.sorts.put("{s.name}", Relation.unary("{s.name}"));' for s in self.scope.sorts.values())
-        lines.append('this.sorts.put("__KOD_BOOL__", Relation.unary("__KOD_BOOL__"));')
-        for r in self.scope.relations.values():
-            if not r.arity: # Nullary Relations are of __KOD_BOOL__ sort
-                arity_string = 'Arrays.asList(\"__KOD_BOOL__\")'
-            else:
-                sorts = [f'"{s}"' for s in r.arity]
-                arity_string = f'Arrays.asList({", ".join(sorts)})'
-            lines.append(f'this.arities.put("{r.name}", {arity_string});')
-        for f in self.scope.functions.values():
-            sorts = [f'"{s}"' for s in (*f.arity, f.sort)]
-            arity_string = f'Arrays.asList({", ".join(sorts)})'
-            lines.append(f'this.arities.put("{f.name}", {arity_string});')
-        for c in self.scope.constants.values():
-            arity_string = f'Arrays.asList("{c.sort}")'
-            lines.append(f'this.arities.put("{c.name}", {arity_string});')
+    def kod_get_spec(self) -> List[str]: # Should modify this later to also include axioms
+        return [
+            'public Formula spec() {',
+            '   // Function (modeled as kodkod relations) in mypyvy have a total ordering',
+            '   List<Formula> functions_spec = new ArrayList<Formula>();',
+            '   for(Map<Integer, Relation> m : this.functions.values()) {',
+            '      for(Relation f : m.values()) {',
+            '         List<String> arity = arities.get(get_relation_name(f));',
+            '         if(arity.size() > 0) {',
+            '            final List<Relation> domain_sorts = new ArrayList<Relation>();',
+            '            for(int i = 0; i < arity.size() - 1; i++) {',
+            '               domain_sorts.add(sorts.get(arity.get(i)));',
+            '            }',
+            '            final Expression domain = Expression.product(domain_sorts);',
+            '            functions_spec.add(f.function(domain, this.sorts.get(arity.get(arity.size() - 1))));',
+            '          }',
+            '      }',
+            '   }',
+            '   final Formula functions_totality = Formula.and(functions_spec);',
 
-        lines.append("}\n")
-        return lines
+            '   // Constants (modeled as kodkod relations) must contain exactly one value',
+            '   List<Formula> constants_spec = new ArrayList<Formula>();',
+            '   for(Map<Integer, Relation> m : constants.values()) {',
+            '       for(Relation r : m.values()) {',
+            '            constants_spec.add(r.one());',
+            '       }',
+            '   }',
+            '   final Formula constants_singularity = Formula.and(constants_spec);',
+
+            '   return Formula.and(functions_totality, constants_singularity);',
+            '}',
+        ]
 
     def kod_get_bounds(self) -> List[str]:
         lines: List[str] = [
@@ -355,7 +384,10 @@ class KodSolver:
         lines.append(f'_b.boundExactly(this.sorts.get(\"__KOD_BOOL__\"), _f.setOf(\"__KOD_TRUTH__\"));')
         # Bound relations to their arity
         lines.extend([
-            'for(Map<Integer, Relation> m : this.relations.values()) {',
+            'final Map<String, Map<Integer, Relation>> mapOfExprs = new HashMap<>(this.relations);',
+            'mapOfExprs.putAll(this.functions);',
+            'mapOfExprs.putAll(this.constants);',
+            'for(Map<Integer, Relation> m : mapOfExprs.values()) {',
             '   for(Relation rel: m.values()){',
             '      Iterator<String> it = this.arities.get(this.get_relation_name(rel)).iterator();',
             '      if(it.hasNext()) {',
@@ -381,7 +413,7 @@ class KodSolver:
             '   final _KodkodModel model = new _KodkodModel();',
             '   final Solver solver = new Solver();',
             '   solver.options().setSolver(SATFactory.MiniSat);',
-            '   final Solution sol = solver.solve(model.formula(), model.bounds());',
+            '   final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds());',
             '   String out = String.format("{\\n`outcome`: `%s`,\\n`instance`:{\\n", sol.outcome());',
             '   if (sol.sat()) {',
             '      for (Map.Entry<Relation, TupleSet> me : sol.instance().relationTuples().entrySet()) {',
@@ -424,6 +456,10 @@ class KodSolver:
         lines.append("}")
         return lines
 
+    def get_translator(self, num_states: int) -> KodTranslator:
+        return KodTranslator(self.prog, num_states)
+
+
     def get_java_code(self) -> List[str]:
         lines: List[str] = []
         # write modules' imports
@@ -435,15 +471,16 @@ def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> bool: 
     '''
     Returns True if f is sat
     '''
+    axioms = [a.expr for a in prog.axioms()]
     start = datetime.now()
-    solver = KodSolver(prog, f, bound, num_states)
+    solver = KodSolver(prog, And(*axioms, f), bound, num_states)
     open('_KodkodModel.java', 'w').write('\n'.join(solver.get_java_code()))
     end = datetime.now()
     print(f'py -> java translation: {(end - start).microseconds / 1000}ms')
     cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, '_KodkodModel.java']
     subprocess.check_call(cmd)
     cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', '_KodkodModel']
-    out = subprocess.check_output(cmd, text=True)
+    out: Any = subprocess.check_output(cmd, text=True)
     print('out:', out)
     out = ast.literal_eval(out)
     # for entry in out['instance']:
@@ -451,43 +488,6 @@ def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> bool: 
     #     for atom in val:
     #         print(f'{atom} part of {val} in {entry}')
     return out['outcome'] in ['SATISFIABLE', 'TRIVIALLY_SATISFIABLE']
-
-    '''
-            out: {
-            "outcome": "SATISFIABLE",
-            "instance":{
-            "server": [["server0"],["server1"],["server2"],],
-            "client": [["client0"],["client1"],["client2"],],
-            "idx": [["idx0"],["idx1"],["idx2"],],
-            "request_msg": [["client0""server2""idx2"],["client2""server2""idx2"],],
-            "request_msg": [["client0""server2""idx2"],],
-            "grant_msg": [],
-            "grant_msg": [["client2""server2""idx2"],],
-            "release_msg": [],
-            "release_msg": [],
-            "semaphore": [["server1"],["server2"],],
-            "semaphore": [["server1"],],
-            "used": [["idx1"],],
-            "used": [["idx1"],],
-            "holds_lock": [["client2""server2"],],
-            "holds_lock": [["client2""server2"],],
-            "$c": [["client2"],],
-            "$s": [["server2"],],
-            "$id": [["idx2"],],
-            "$C1": [["client2"],],
-            "$S": [["server2"],],
-            "$C2": [["client2"],],
-            "$I2": [["idx2"],],
-
-            },
-            "proof": "null"
-            }
-        univ = {'server': ('server0', 'server1', 'server2'), 'client': ('client0', ..)}
-        relations = {
-            '_0_holds_lock': {('client0', 'server2'): True, ('client0', 'server0'): False, ...},
-            '_1_holds_lock': {},
-        }
-'''
 
 def kod_verify(_solver: Solver) -> None:
     '''
@@ -498,7 +498,6 @@ def kod_verify(_solver: Solver) -> None:
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
     # safety = [inv.expr for inv in prog.invs() if inv.is_safety]
     invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
-
 
     for inv in invs:
         f = And(*inits, Not(inv))
