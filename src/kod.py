@@ -73,8 +73,8 @@ class KodTranslator:
     @staticmethod
     def relation_to_kod(r: Union[RelationDecl, FunctionDecl, str], index: int) -> KodExpr:
         if isinstance(r, RelationDecl) or isinstance(r, FunctionDecl):
-            return KodExpr(f'this.get_relation("{r.name}", {index})')
-        return KodExpr(f'this.get_relation("{r}", {index})')
+            return KodExpr(f'this.get_expression("{r.name}", LeafExprType.RELATION, {index})')
+        return KodExpr(f'this.get_expression("{r}", {index})')
 
     @staticmethod
     def var_to_kod(sv: SortedVar) -> KodExpr:
@@ -82,11 +82,11 @@ class KodTranslator:
 
     @staticmethod
     def const_to_kod(c: ConstantDecl, index: int) -> KodExpr:
-        return KodExpr(f'this.get_relation("{c.name}", {index})')
+        return KodExpr(f'this.get_expression("{c.name}", LeafExprType.CONSTANT, {index})')
 
     @staticmethod
     def nullary_to_kod(d: RelationDecl, index: int) -> KodExpr:
-        return KodExpr(f'this.get_relation("{d.name}", {index})')
+        return KodExpr(f'this.get_expression("{d.name}", LeafExprType.RELATION, {index})')
 
     @staticmethod
     def sort_to_kod(s: Sort) -> KodExpr:
@@ -229,7 +229,7 @@ class KodSolver:
         self.class_methods_generators = [ # Order is important here: kod_get_formula must be before kod_get_bounds
           self.kod_get_constructor,
           self.kod_get_get_var,
-          self.kod_get_get_relation,
+          self.kod_get_get_expression,
           self.kod_get_get_relation_name,
           self.kod_get_formula,
           self.kod_get_bounds,
@@ -266,18 +266,25 @@ class KodSolver:
             '  return this.vars.get(name);',
             '}',
         ]
-    def kod_get_get_relation(self) -> List[str]:
+    def kod_get_get_expression(self) -> List[str]:
         return [
-            'public Relation get_relation(String name, int index) {',
-            '   if (!this.relations.containsKey(name)) {',
-            '      relations.put(name, new HashMap<Integer, Relation>());',
-            '   }',
-            '   if (!this.relations.get(name).containsKey(index)) {',
-            '       int arity = this.arities.get(name).size() == 0? 1: this.arities.get(name).size();',
-            '       this.relations.get(name).put(index, Relation.nary("__" + index + "__" + name, arity));',
-            '   }',
-            '   return this.relations.get(name).get(index);',
-            '}',
+            'public Relation get_expression(String name, LeafExprType t, int index) {', 
+            '   final private <Map<String, Map<Integer, Relation>> m;', 
+            '   switch(t)', 
+            '   {', 
+            '      case RELATION: m = this.relations; break;',  
+            '      case FUNCTION: m = this.functions; break; ', 
+            '      case CONSTANT: m = this.constants; break; ', 
+            '   }', 
+            '   if (!m.containsKey(name)) {',   
+            '      m.put(name, new HashMap<Integer, Relation>());', 
+            '   }', 
+            '   if (!m.get(name).containsKey(index)) {',    
+            '      int arity = this.arities.get(name).size() == 0? 1: this.arities.get(name).size();',  
+            '      m.get(name).put(index, Relation.nary("__" + index + "__" + name, arity));',  
+            '   }', 
+            '   return m.get(name).get(index);',    
+            '}',    
         ]
 
     def kod_get_get_relation_name(self) -> List[str]:
@@ -301,9 +308,11 @@ class KodSolver:
     def kod_get_constructor(self) -> List[str]:
         lines = ["public _KodkodModel() {"]
         lines.extend([
+            'this.arities = new HashMap<String, List<String>>();',
             'this.vars = new HashMap<String, Variable>();',
             'this.relations = new HashMap<String, Map<Integer, Relation>>();',
-            'this.arities = new HashMap<String, List<String>>();',
+            'this.functions = new HashMap<String, Map<Integer, Relation>>();',
+            'this.constants = new HashMap<String, Map<Integer, Relation>>();',
             'this.sorts = new HashMap<String, Relation>();',
         ])
         lines.extend(f'this.sorts.put("{s.name}", Relation.unary("{s.name}"));' for s in self.scope.sorts.values())
@@ -399,9 +408,16 @@ class KodSolver:
     def kod_get_class(self) -> List[str]:
         lines: List[str] = [
             'public final class _KodkodModel {',
+            'enum LeafExprType {',
+            '   RELATION,',
+            '   FUNCTION,',
+            '   CONSTANT,',
+            '}',
+            'private final Map<String, List<String>> arities;',
             'private final Map<String, Variable> vars;',
             'private final Map<String, Map<Integer, Relation>> relations;',
-            'private final Map<String, List<String>> arities;',
+            'private final Map<String, Map<Integer, Relation>> functions;',
+            'private final Map<String, Map<Integer, Relation>> constants;',
             'private final Map<String, Relation> sorts;',
         ]
         lines.extend(chain(*(g() for g in self.class_methods_generators)))
@@ -519,8 +535,3 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--bound', type=int, help='Maximum bounds to use for bounded kodkod model.')
 
     return result
-
-'''
-NOTES
-In a transition there's exactly 2 states
-'''
