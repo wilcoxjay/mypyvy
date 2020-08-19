@@ -272,6 +272,10 @@ def typecheck_modifies_clause(scope: syntax.Scope, mod: syntax.ModifiesClause) -
         isinstance(d, ConstantDecl) or isinstance(d, FunctionDecl)
     if d is None:
         utils.print_error(mod.span, 'Unresolved constant, relation, or function %s' % (mod.name,))
+        return
+
+    if not d.mutable:
+        utils.print_error(mod.span, f'Immutable symbols may not appear in a modifies clause ({mod.name} is immutable)')
 
 def typecheck_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingExpr) -> None:
     if isinstance(d, syntax.InitDecl):
