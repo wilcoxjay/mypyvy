@@ -683,6 +683,8 @@ class AppExpr(AbstractExpr):
     callee: str
     args: Tuple[Expr, ...]
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
+    resolved: Optional[Union[RelationDecl, FunctionDecl, DefinitionDecl]] = \
+        dataclasses.field(default=None, compare=False)
 
     def __str__(self) -> str:
         return pretty(self)
@@ -690,7 +692,7 @@ class AppExpr(AbstractExpr):
 @dataclass(order=True)
 class SortedVar(Denotable):
     name: str
-    sort: InferenceSort
+    sort: InferenceSort = dataclasses.field(compare=False)
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
     def __hash__(self) -> int:
@@ -734,6 +736,8 @@ class Id(AbstractExpr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     name: str
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
+    resolved: Optional[Union[ConstantDecl, RelationDecl, DefinitionDecl, SortedVar]] = \
+        dataclasses.field(default=None, compare=False)
 
     def __str__(self) -> str:
         return pretty(self)
