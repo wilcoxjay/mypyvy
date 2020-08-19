@@ -1,4 +1,4 @@
-# MYPYVY: verify --seed=0 --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+# MYPYVY: verify --seed=0 --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code --no-print-counterexample
 
 mutable constant x: int
 mutable constant y: int

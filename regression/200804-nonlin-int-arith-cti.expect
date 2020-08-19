@@ -1,16 +1,7 @@
 checking init:
   implies invariant on line 17... ok.
 checking transition north:
-  preserves invariant on line 17...
-
-
-state 0:
-x = 0
-y = -4
-
-state 1:
-x = 0
-y = -3
+  preserves invariant on line 17... 
 error 200804-nonlin-int-arith-cti.pyv:17:1: invariant on line 17 is not preserved by transition north
 error 200804-nonlin-int-arith-cti.pyv:8:1: this transition does not preserve invariant on line 17
 program has errors.
