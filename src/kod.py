@@ -331,7 +331,7 @@ class KodSolver:
           'public Bounds bounds() {',
         ]
         atoms = [f'"{s.name}{i}"' for s in self.scope.sorts.values() for i in range(self.bound)]
-        atoms.extend(['\"__KOD_TRUE__\", \"__KOD_FALSE__\"'])
+        atoms.append('\"__KOD_TRUTH__\"')
         atoms_string = ', '.join(atoms)
         lines.extend([
             f'final Universe _univ = new Universe(Arrays.asList({atoms_string}));',
@@ -343,15 +343,13 @@ class KodSolver:
           f'_b.boundExactly(this.sorts.get("{s.name}"), _f.range(_f.tuple("{s.name}0"), _f.tuple("{s.name}{self.bound - 1}")));'
           for s in self.scope.sorts.values()
         )
-        lines.append(f'_b.boundExactly(this.sorts.get(\"__KOD_BOOL__\"), _f.setOf(\"__KOD_TRUE__\", \"__KOD_FALSE__\"));')
+        lines.append(f'_b.boundExactly(this.sorts.get(\"__KOD_BOOL__\"), _f.setOf(\"__KOD_TRUTH__\"));')
         # Bound relations to their arity
         lines.extend([
             'for(Map<Integer, Relation> m : this.relations.values()) {',
             '   for(Relation rel: m.values()){',
             '      Iterator<String> it = this.arities.get(this.get_relation_name(rel)).iterator();',
-            '      if(!it.hasNext()) { // Nullary relation',
-            '         _b.bound(rel, _f.setOf(_f.tuple("__KODBOOLUNITY__")));',
-            '      } else {',
+            '      if(it.hasNext()) {',
             '         TupleSet up_bounds = _b.upperBound(this.sorts.get(it.next())); ',
             '         while(it.hasNext()) {',
             '            up_bounds = up_bounds.product(_b.upperBound(this.sorts.get(it.next())));',
