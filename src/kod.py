@@ -519,8 +519,11 @@ def kod_verify(_solver: Solver) -> None:
                 print('  invariant not implied by init')
             else:
                 print(f'GOOD')
+    
 
-
+def kod_benchmark(_solver: Solver):
+    prog = syntax.the_program
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark')
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
@@ -532,5 +535,9 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     for s in result:
         s.add_argument('--bound', type=int, help='Maximum bounds to use for bounded kodkod model.')
+    
+    s = subparsers.add_parser('kod-benchmark', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
+    s.set_defaults(main=kod_benchmark)
+    result.append(s)
 
     return result
