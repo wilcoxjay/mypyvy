@@ -1,0 +1,89 @@
+# node ids and states
+sort node_id
+sort node_state
+
+# ordering on node states
+immutable relation le(node_state, node_state)
+axiom le(X,X) # reflexive
+axiom le(X,Y) & le(Y,X) -> X = Y # anti-symmetric
+axiom le(X,Y) & le(Y,Z) -> le(X,Z) # transitive
+axiom le(X,Y) | le(Y,X) # total
+
+# empty state
+immutable constant empty: node_state
+
+# the empty state is the least state
+axiom le(empty, X)
+
+# let's say that there are three nodes
+immutable constant head: node_id
+immutable constant middle: node_id
+immutable constant tail: node_id
+
+# the head, middle, and tail nodes are all different
+# (this is too strong; it should be OK for them to all be the same, too)
+axiom head != middle & head != tail & middle != tail
+
+# nodes have states
+# TODO: maybe this could just be a big mutable relation
+mutable constant head_state : node_state
+mutable constant middle_state : node_state
+mutable constant tail_state : node_state
+
+# set of messages in transit: sender, recipient, data
+mutable relation msg(node_id, node_id, node_state)
+
+# all replicas start in the empty state
+init head_state = empty
+init middle_state = empty
+init tail_state = empty
+# with no messages in transit
+init !msg(X, Y, Z)
+
+# the head replica can move to a new state and send its state to the middle node
+transition head_send(next: node_state)
+  modifies head_state, msg
+  le(head_state, next) & # the new state must be bigger
+  new(head_state) = next &
+  # add next to the set of messages sent from head to middle
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = head & Y = middle & Z = next))
+
+# the middle replica can receive a message and update its state
+transition middle_recv(recvd: node_state)
+  modifies middle_state, msg
+  le(middle_state, recvd) &
+  msg(head, middle, recvd) & # the received message must have come from head
+  (msg(head, middle, Z) -> le(recvd, Z)) & # this must be the smallest of the messages from head
+  new(middle_state) = recvd &
+  # take recvd out of the set of messages
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & (X = head & Y = middle & Z != recvd))
+
+# the middle replica can send its state to the tail node
+transition middle_send()
+  modifies msg
+  # add next to the set of messages sent from middle to tail
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = middle & Y = tail & Z = middle_state))
+
+# the tail replica can receive a message and update its state
+transition tail_recv(recvd: node_state)
+  modifies tail_state, msg
+  le(tail_state, recvd) &
+  msg(middle, tail, recvd) & # the received message must have come from middle
+  (msg(middle, tail, Z) -> le(recvd, Z)) & # this must be the smallest of the messages from middle
+  new(tail_state) = recvd &
+  # take x out of the set of messages
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & (X = middle & Y = tail & Z != recvd))
+
+# head is always ahead of middle,
+invariant le(middle_state, head_state)
+# which is always ahead of tail,
+invariant le(tail_state, middle_state)
+# so head is always ahead of tail
+invariant le(tail_state, head_state)
+
+# if a message is in flight, the state in that message is no bigger than whatever the head state is	
+invariant msg(X, Y, Z) -> le(Z, head_state)
+
+# in general, the state in a message is no bigger than the sender's state
+invariant msg(head, Y, Z) -> le(Z, head_state)
+invariant msg(middle, Y, Z) -> le(Z, middle_state)
