@@ -381,19 +381,21 @@ class KodSolver:
 
     def kod_get_bounds(self) -> List[str]:
         lines: List[str] = [
-          'public Bounds bounds() {',
+            'public Bounds bounds(int _bounds) {',
+            '   List<String> atoms = new ArrayList<>(((sorts.size() - 1) * _bounds) + 1); // -1 for __KOD_BOOL__',
+            '   for(Relation sort: sorts.values()) {',
+            '      for(int i = 0; i < _bounds; i++) {',
+            '         atoms.add(sort.name() + i);',
+            '      }',
+            '   }',
+            '   atoms.add("__KOD_TRUTH__");',
+            '   final Universe _univ = new Universe(atoms);',
+            '   final TupleFactory _f  = _univ.factory();',
+            '   final Bounds _b = new Bounds(_univ);',
         ]
-        atoms = [f'"{s.name}{i}"' for s in self.scope.sorts.values() for i in range(self.bound)]
-        atoms.append('\"__KOD_TRUTH__\"')
-        atoms_string = ', '.join(atoms)
-        lines.extend([
-            f'final Universe _univ = new Universe(Arrays.asList({atoms_string}));',
-            'final TupleFactory _f  = _univ.factory();',
-            'final Bounds _b = new Bounds(_univ);',
-        ])
         # Bound sorts
         lines.extend(
-          f'_b.boundExactly(this.sorts.get("{s.name}"), _f.range(_f.tuple("{s.name}0"), _f.tuple("{s.name}{self.bound - 1}")));'
+          f'_b.boundExactly(this.sorts.get("{s.name}"), _f.range(_f.tuple("{s.name}0"), _f.tuple("{s.name}" + (_bounds - 1))));'
           for s in self.scope.sorts.values()
         )
         lines.append(f'_b.boundExactly(this.sorts.get(\"__KOD_BOOL__\"), _f.setOf(\"__KOD_TRUTH__\"));')
@@ -428,7 +430,7 @@ class KodSolver:
             f'   final {self.class_name} model = new {self.class_name}();',
             '   final Solver solver = new Solver();',
             '   solver.options().setSolver(SATFactory.MiniSat);',
-            '   final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds());',
+            f'   final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds({utils.args.bound}));',
             '   String out = String.format("{\\n`outcome`: `%s`,\\n`instance`:{\\n", sol.outcome());',
             '   if (sol.sat()) {',
             '      for (Map.Entry<Relation, TupleSet> me : sol.instance().relationTuples().entrySet()) {',
@@ -459,7 +461,7 @@ class KodSolver:
             '   RELATION,',
             '   FUNCTION,',
             '   CONSTANT,',
-            '}',
+            '};',
             'private final Map<String, List<String>> arities;',
             'private final Map<String, Variable> vars;',
             'private final Map<String, Map<Integer, Relation>> relations;',
