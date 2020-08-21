@@ -585,7 +585,7 @@ def bench_with(
 MAXIMUM_SATISFIABILITY_BOUND = 3
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
-    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {get_class_name(utils.args.filename)}')
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
     invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
     data = []
 
