@@ -11,7 +11,7 @@ TESTS_ROOT_DIRECTORY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy
 KOD_OUTPUT_DIRECTORY = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/examples/'
 MYPYVY_EXECUTABLE_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/src/mypyvy.py'
 
-def bench_kod_on(filepath: str):
+def bench_kod_on(filepath: str) -> None:
     out = None
     print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
     completed_process: CompletedProcess[str] = subprocess.run(
@@ -23,7 +23,7 @@ def bench_kod_on(filepath: str):
     print(out)
     print(f'[PID={os.getpid()}] DONE')
 
-def main():
+def main() -> None:
     # if len(sys.argv) < 2:
     #     print('Usage: python3 benchmark_driver.py [path to root of tests directory] [path to output directory]')
     #     return

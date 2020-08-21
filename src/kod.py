@@ -218,8 +218,9 @@ class KodTranslator:
             assert False, f'NOT INSTANCE OF ANYTHING: NOT FOUND/IMPLEMENTED: {e}'
 
 class KodSolver:
-    def __init__(self, prog: Program, e: Expr, bound: int, num_states: int):
+    def __init__(self, prog: Program, class_name: str, e: Expr, bound: int, num_states: int):
         self.prog: Program = prog
+        self.class_name = class_name
         self.e: Expr = e
         self.bound: int = bound
         self.num_states: int = num_states
@@ -230,7 +231,7 @@ class KodSolver:
         assert len(prog.scope.stack) == 0
         self.scope = cast(Scope[KodExpr], prog.scope)
 
-        self.class_methods_generators = [ # Order is important here: kod_get_formula must be before kod_get_bounds
+        self.class_methods_generators: List[Callable[...,List[str]]] = [ # Order is important here: kod_get_formula must be before kod_get_bounds
           self.kod_get_constructor,
           self.kod_get_get_var,
           self.kod_get_get_expression,
@@ -265,8 +266,8 @@ class KodSolver:
                 'kodkod.instance.Universe',
                 ]
 
-    def kod_get_constructor(self, kod_class_name: str) -> List[str]:
-        lines = [f'public {kod_class_name}() {{']
+    def kod_get_constructor(self) -> List[str]:
+        lines = [f'public {self.class_name}() {{']
         lines.extend([
             'this.arities = new HashMap<String, List<String>>();',
             'this.vars = new HashMap<String, Variable>();',
@@ -295,7 +296,7 @@ class KodSolver:
         lines.append("}\n")
         return lines
 
-    def kod_get_get_var(self, *unused) -> List[str]:
+    def kod_get_get_var(self) -> List[str]:
         return [
             'public Variable get_var(String name) {',
             '  if(!this.vars.containsKey(name)) {',
@@ -304,7 +305,7 @@ class KodSolver:
             '  return this.vars.get(name);',
             '}',
         ]
-    def kod_get_get_expression(self, *unused) -> List[str]:
+    def kod_get_get_expression(self) -> List[str]:
         return [
             'public Relation get_expression(String name, LeafExprType t, int index) {', 
             '   final Map<String, Map<Integer, Relation>> m;', 
@@ -326,14 +327,14 @@ class KodSolver:
             '}',    
         ]
 
-    def kod_get_get_relation_name(self, *unused) -> List[str]:
+    def kod_get_get_relation_name(self) -> List[str]:
         return [
             'public String get_relation_name(Relation rel) {',
             '   return rel.name().substring(rel.name().indexOf(\"__\", 2) + 2);',
             '}',
         ]
     
-    def kod_get_formula(self, *unused) -> List[str]:
+    def kod_get_formula(self) -> List[str]:
         kod_formula = self.translator.translate_expr(self.e)
         lines = ['public Formula formula() {',
           f'// {self.e}']
@@ -341,7 +342,7 @@ class KodSolver:
         lines.append('}')
         return lines
 
-    def kod_get_spec(self, *unused) -> List[str]: # Should modify this later to also include axioms
+    def kod_get_spec(self) -> List[str]: # Should modify this later to also include axioms
         return [
             'public Formula spec() {',
             '   // Function (modeled as kodkod relations) in mypyvy have a total ordering',
@@ -378,7 +379,7 @@ class KodSolver:
             '}',
         ]
 
-    def kod_get_bounds(self, *unused) -> List[str]:
+    def kod_get_bounds(self) -> List[str]:
         lines: List[str] = [
           'public Bounds bounds() {',
         ]
@@ -421,10 +422,10 @@ class KodSolver:
         return lines
 
 # TODO: Change back quotes to single quotes
-    def kod_get_main(self, kod_class_name: str) -> List[str]:
+    def kod_get_main(self) -> List[str]:
         lines: List[str] = [
             'public static void main(String[] args) {',
-            f'   final {kod_class_name} model = new {kod_class_name}();',
+            f'   final {self.class_name} model = new {self.class_name}();',
             '   final Solver solver = new Solver();',
             '   solver.options().setSolver(SATFactory.MiniSat);',
             '   final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds());',
@@ -451,9 +452,9 @@ class KodSolver:
         ]
         return lines
 
-    def kod_get_class(self, kod_class_name: str) -> List[str]:
+    def kod_get_class(self) -> List[str]:
         lines: List[str] = [
-            f'public final class {kod_class_name} {{',
+            f'public final class {self.class_name} {{',
             'enum LeafExprType {',
             '   RELATION,',
             '   FUNCTION,',
@@ -466,7 +467,7 @@ class KodSolver:
             'private final Map<String, Map<Integer, Relation>> constants;',
             'private final Map<String, Relation> sorts;',
         ]
-        lines.extend(chain(*(g(kod_class_name) for g in self.class_methods_generators)))
+        lines.extend(chain(*(g() for g in self.class_methods_generators)))
         lines.append("}")
         return lines
 
@@ -474,20 +475,20 @@ class KodSolver:
         return KodTranslator(self.prog, num_states)
 
 
-    def get_java_code(self, kod_class_name) -> List[str]:
+    def get_java_code(self) -> List[str]:
         lines: List[str] = []
         # get modules' imports
         lines.extend(f'import ' + module +';' for module in self.get_dependencies())
-        lines.extend(self.kod_get_class(kod_class_name))
+        lines.extend(self.kod_get_class())
         return lines
 
-def get_class_name(filename: str):
+def get_class_name(filename: str) -> str:
     dot_index = filename.find('.')
     kod_class_name = filename[:dot_index] if dot_index != -1 else filename
     kod_class_name.replace('-', '_')
     return f'_KOD_{kod_class_name}'
 
-def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[str, Union[List[List[str]], str]]:
+def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[str, Union[List[List[str]], str, int]]:
     '''
     Returns True if f is sat
     '''
@@ -496,9 +497,9 @@ def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[s
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
     start = datetime.now()
-    solver = KodSolver(prog, And(*axioms, f), bound, num_states)
+    solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states)
     with open(kod_filename, 'w') as f:
-        f.write('\n'.join(solver.get_java_code(kod_class_name)))
+        f.write('\n'.join(solver.get_java_code()))
     end = datetime.now()
     cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
     subprocess.check_call(cmd)
@@ -547,13 +548,8 @@ def kod_verify(_solver: Solver) -> None:
                 print(f'GOOD')
     
 
-def remove_invariant_and_check(prog: Program, kod_file_lock: Lock, inv: Union[Bool, Int, UnaryExpr, Id]):
-    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
-    invs = [inv.expr for inv in prog.invs() if not inv.is_safety and inv.expr != inv]
-    itions = prog.transitions()
-
 MAXIMUM_SATISFIABILITY_BOUND = 3
-def kod_benchmark(_solver: Solver):
+def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
     print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
     invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
