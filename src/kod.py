@@ -483,8 +483,7 @@ class KodSolver:
         return lines
 
 def get_class_name(filename: str) -> str:
-    dot_index = filename.find('.')
-    kod_class_name = filename[:dot_index] if dot_index != -1 else filename
+    kod_class_name = os.path.splitext(os.path.basename(filename))[0]
     kod_class_name.replace('-', '_')
     return f'_KOD_{kod_class_name}'
 
@@ -492,8 +491,7 @@ def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[s
     '''
     Returns True if f is sat
     '''
-    filename = os.path.basename(utils.args.filename)
-    kod_class_name = get_class_name(filename)
+    kod_class_name = get_class_name(utils.args.filename)
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
     start = datetime.now()
@@ -587,7 +585,7 @@ def bench_with(
 MAXIMUM_SATISFIABILITY_BOUND = 3
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
-    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {get_class_name(utils.args.filename)}')
     invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
     data = []
 
@@ -619,7 +617,7 @@ def kod_benchmark(_solver: Solver) -> None:
     #             out = {}
 
     df = pd.DataFrame(data, columns=['FILE', 'TRANSITION', 'REMOVED_INVARIANT', 'CHECKED_INVARIANT', 'BOUND', 'OUTCOME', 'RESULT', 'TRANSLATION_TIME', 'SOLVING_TIME'])
-    df.to_csv('_KOD_RESULT_' + os.path.basename(utils.args.filename))
+    df.to_csv('_KOD_RESULT_' + get_class_name(utils.args.filename))
 
     # solver: str, File: str, pre_inv: Optional[int], transition: int, post_inv: int, bound: Optional[int], result: SAT/UNSAT/TIME_OUT, time: datetime, 
     # string, Optional[int], int, int, int, datetime?, 
