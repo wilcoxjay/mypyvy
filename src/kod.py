@@ -5,8 +5,10 @@ import itertools
 from itertools import product, chain, combinations, repeat
 from functools import reduce
 from collections import defaultdict
+from multiprocessing import Lock
 from pathlib import Path
 import pickle
+# from stubs.z3 import unknown
 import sys
 import os
 import math
@@ -19,15 +21,20 @@ import queue
 from datetime import datetime, timedelta
 from hashlib import sha1
 from dataclasses import dataclass
+from threading import Thread
+import colorama
+import subprocess
 
 from syntax import *
 from logic import *
+import threading
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
-import ast
+from ast import literal_eval
+import pandas as pd
 
-KODKOD_JAR_EXECUTABLE_PATH = "/Users/amohamdy/stanford/aiken-1920-research/kodkod/kodkod.jar:."
-KODKOD_LIBRARY_PATH = "/Users/amohamdy/stanford/aiken-1920-research/kodkod/darwin_x86_64/"
+KODKOD_JAR_EXECUTABLE_PATH = '/Users/amohamdy/stanford/aiken-1920-research/kodkod/kodkod.jar:.'
+KODKOD_LIBRARY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/kodkod/darwin_x86_64/'
 # KodExpr = str
 class KodExpr: # KodExpr is either a kodkod Formula or a kodkod Relational Expression
     # Note a KodKod Decl is treated as a formula here
@@ -241,10 +248,13 @@ class KodSolver:
                 'java.util.HashMap',
                 'java.util.Arrays',
                 'java.util.Iterator',
+                'java.util.Collection;',
                 'kodkod.ast.Formula',
                 'kodkod.ast.Relation',
                 'kodkod.ast.Expression',
                 'kodkod.ast.Variable',
+                'import kodkod.ast.Decl;',
+                'import kodkod.ast.Decls;',
                 'kodkod.engine.Solution',
                 'kodkod.engine.Solver',
                 'kodkod.engine.satlab.SATFactory',
@@ -255,8 +265,8 @@ class KodSolver:
                 'kodkod.instance.Universe',
                 ]
 
-    def kod_get_constructor(self) -> List[str]:
-        lines = ["public _KodkodModel() {"]
+    def kod_get_constructor(self, kod_class_name: str) -> List[str]:
+        lines = [f'public {kod_class_name}() {{']
         lines.extend([
             'this.arities = new HashMap<String, List<String>>();',
             'this.vars = new HashMap<String, Variable>();',
@@ -285,7 +295,7 @@ class KodSolver:
         lines.append("}\n")
         return lines
 
-    def kod_get_get_var(self) -> List[str]:
+    def kod_get_get_var(self, *unused) -> List[str]:
         return [
             'public Variable get_var(String name) {',
             '  if(!this.vars.containsKey(name)) {',
@@ -294,7 +304,7 @@ class KodSolver:
             '  return this.vars.get(name);',
             '}',
         ]
-    def kod_get_get_expression(self) -> List[str]:
+    def kod_get_get_expression(self, *unused) -> List[str]:
         return [
             'public Relation get_expression(String name, LeafExprType t, int index) {', 
             '   final Map<String, Map<Integer, Relation>> m;', 
@@ -316,14 +326,14 @@ class KodSolver:
             '}',    
         ]
 
-    def kod_get_get_relation_name(self) -> List[str]:
+    def kod_get_get_relation_name(self, *unused) -> List[str]:
         return [
             'public String get_relation_name(Relation rel) {',
             '   return rel.name().substring(rel.name().indexOf(\"__\", 2) + 2);',
             '}',
         ]
     
-    def kod_get_formula(self) -> List[str]:
+    def kod_get_formula(self, *unused) -> List[str]:
         kod_formula = self.translator.translate_expr(self.e)
         lines = ['public Formula formula() {',
           f'// {self.e}']
@@ -331,7 +341,7 @@ class KodSolver:
         lines.append('}')
         return lines
 
-    def kod_get_spec(self) -> List[str]: # Should modify this later to also include axioms
+    def kod_get_spec(self, *unused) -> List[str]: # Should modify this later to also include axioms
         return [
             'public Formula spec() {',
             '   // Function (modeled as kodkod relations) in mypyvy have a total ordering',
@@ -364,7 +374,7 @@ class KodSolver:
             '}',
         ]
 
-    def kod_get_bounds(self) -> List[str]:
+    def kod_get_bounds(self, *unused) -> List[str]:
         lines: List[str] = [
           'public Bounds bounds() {',
         ]
@@ -407,10 +417,10 @@ class KodSolver:
         return lines
 
 # TODO: Change back quotes to single quotes
-    def kod_get_main(self) -> List[str]:
+    def kod_get_main(self, kod_class_name: str) -> List[str]:
         lines: List[str] = [
             'public static void main(String[] args) {',
-            '   final _KodkodModel model = new _KodkodModel();',
+            f'   final {kod_class_name} model = new {kod_class_name}();',
             '   final Solver solver = new Solver();',
             '   solver.options().setSolver(SATFactory.MiniSat);',
             '   final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds());',
@@ -430,16 +440,16 @@ class KodSolver:
             '      out += "],\\n";',
             '      }',
             '   }',
-            '   out += String.format("\\n},\\n`proof`: `%s`\\n}", sol.proof());',
+            '   out += String.format("\\n},\\n`proof`: `%s`,\\n`translation_time`: %s, `solving_time`: %s,\\n}", sol.proof(), sol.stats().translationTime(), sol.stats().solvingTime());',
             '   out = out.replace(\'`\', \'"\');',
             '   System.out.println(out);',
             '}'
         ]
         return lines
 
-    def kod_get_class(self) -> List[str]:
+    def kod_get_class(self, kod_class_name: str) -> List[str]:
         lines: List[str] = [
-            'public final class _KodkodModel {',
+            f'public final class {kod_class_name} {{',
             'enum LeafExprType {',
             '   RELATION,',
             '   FUNCTION,',
@@ -452,7 +462,7 @@ class KodSolver:
             'private final Map<String, Map<Integer, Relation>> constants;',
             'private final Map<String, Relation> sorts;',
         ]
-        lines.extend(chain(*(g() for g in self.class_methods_generators)))
+        lines.extend(chain(*(g(kod_class_name) for g in self.class_methods_generators)))
         lines.append("}")
         return lines
 
@@ -460,34 +470,47 @@ class KodSolver:
         return KodTranslator(self.prog, num_states)
 
 
-    def get_java_code(self) -> List[str]:
+    def get_java_code(self, kod_class_name) -> List[str]:
         lines: List[str] = []
-        # write modules' imports
+        # get modules' imports
         lines.extend(f'import ' + module +';' for module in self.get_dependencies())
-        lines.extend(self.kod_get_class())
+        lines.extend(self.kod_get_class(kod_class_name))
         return lines
 
-def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> bool: # -> Dict[String, Union(List[List[str]], str)]
+def get_class_name(filename: str):
+    dot_index = filename.find('.')
+    kod_class_name = filename[:dot_index] if dot_index != -1 else filename
+    kod_class_name.replace('-', '_')
+    return f'_KOD_{kod_class_name}'
+
+def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[str, Union[List[List[str]], str]]:
     '''
     Returns True if f is sat
     '''
+    filename = os.path.basename(utils.args.filename)
+    kod_class_name = get_class_name(filename)
+    kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
     start = datetime.now()
     solver = KodSolver(prog, And(*axioms, f), bound, num_states)
-    open('_KodkodModel.java', 'w').write('\n'.join(solver.get_java_code()))
+    with open(kod_filename, 'w') as f:
+        f.write('\n'.join(solver.get_java_code(kod_class_name)))
     end = datetime.now()
-    print(f'py -> java translation: {(end - start).microseconds / 1000}ms')
-    cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, '_KodkodModel.java']
+    cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
     subprocess.check_call(cmd)
-    cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', '_KodkodModel']
-    out: Any = subprocess.check_output(cmd, text=True)
-    print('out:', out)
-    out = ast.literal_eval(out)
-    # for entry in out['instance']:
-    #     val = out['instance'][entry]
-    #     for atom in val:
-    #         print(f'{atom} part of {val} in {entry}')
-    return out['outcome'] in ['SATISFIABLE', 'TRIVIALLY_SATISFIABLE']
+    cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', kod_class_name]
+
+    try:
+        out: Any = subprocess.check_output(cmd, text=True, timeout=60*60)
+    except subprocess.TimeoutExpired:
+        return {'outcome': 'TIMEOUT'}
+    except subprocess.CalledProcessError:
+        return {'outcome': 'ERROR'}
+
+    # print('out:', out)
+    out = literal_eval(out)
+    out['to_java_translation_time'] = (end - start).microseconds / 1000
+    return out
 
 def kod_verify(_solver: Solver) -> None:
     '''
@@ -496,15 +519,14 @@ def kod_verify(_solver: Solver) -> None:
     print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting kod_verify\n')
 
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
-    # safety = [inv.expr for inv in prog.invs() if inv.is_safety]
     invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
 
     for inv in invs:
         f = And(*inits, Not(inv))
         print(f'CHECKING INIT IMPLIES {inv}')
-        res = kod_check_sat(prog, f, utils.args.bound if utils.args.bound is not None else 1, 1)
+        res = kod_check_sat(prog, f, utils.args.bound if utils.args.bound else 1, 1)
 
-        if res:
+        if res['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
             print('  invariant not implied by init')
         else:
             print(f'GOOD')
@@ -515,15 +537,85 @@ def kod_verify(_solver: Solver) -> None:
             print(f'CHECKING transition {ition.name} IMPLIES {inv}')
             res = kod_check_sat(prog, f, utils.args.bound if utils.args.bound is not None else 1, 2)
 
-            if res:
+            if res['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
                 print('  invariant not implied by init')
             else:
                 print(f'GOOD')
     
 
+def remove_invariant_and_check(prog: Program, kod_file_lock: Lock, inv: Union[Bool, Int, UnaryExpr, Id]):
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
+    invs = [inv.expr for inv in prog.invs() if not inv.is_safety and inv.expr != inv]
+    itions = prog.transitions()
+
+MAXIMUM_SATISFIABILITY_BOUND = 3
 def kod_benchmark(_solver: Solver):
     prog = syntax.the_program
-    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark')
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
+    invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
+    data = []
+
+    # kod_file_lock = threading.Lock()
+    # threads = []
+    # lator = _solver.get_translator(2)
+    # for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
+    #     out = helper(ition, remove_index, check_index)
+    #     pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
+    #     f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+        # with _solver.new_frame():
+        #     _solver.add(lator.translate_expr(f))
+        #     t0 = ....
+        #     res = _solver.check()
+        # out
+    
+    for ition in prog.transitions():
+        # t = threading.Thread(target=remove_invariant_and_check, args=(prog, kod_file_lock, inv))
+        # threads.append(t)
+        # t.start()
+        print(f'Transition {ition.name}:')
+        for remove_index in range(1): # invs[i] is to be removed in the pre-state
+            pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]
+            for check_index in range(len(invs)):
+                if check_index == remove_index:
+                    continue
+
+                f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+                # defined here for scope
+                bound = 0
+                out = {}
+                outcome = 'UNSAT' # for now it's either SAT or UNSAT until we can actually TIMEOUT
+                for bound in range(1, MAXIMUM_SATISFIABILITY_BOUND + 1):
+                    print(f'  [{bound}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
+                    out = kod_check_sat(prog, f, bound, 2)
+                    print(f'Done.  py -> java time: {out["to_java_translation_time"]}ms kodkod time: {out["solving_time"] + out["translation_time"]}')
+
+                    entry = {
+                        'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
+                        'TRANSITION' : ition.name,
+                        'REMOVED_INVARIANT' : remove_index,
+                        'CHECKED_INVARIANT' : check_index,
+                        'BOUND' : bound,
+                        'OUTCOME' : out['outcome'],
+                        'TRANSLATION_TIME' : out['translation_time'],
+                        'SOLVING_TIME': out['solving_time'],
+                    }
+                    data.append(entry)
+
+                    if out['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
+                        print(colorama.Fore.GREEN + out['outcome'] + colorama.Fore.RESET)
+                        outcome = out['outcome']
+                        break
+                    else:
+                        res = colorama.Fore.RED + out['outcome'] + colorama.Fore.RESET
+                        print(f'    Result: {res}')
+
+
+    df = pd.DataFrame(data, columns=['FILE', 'TRANSITION', 'REMOVED_INVARIANT', 'CHECKED_INVARIANT', 'BOUND', 'OUTCOME', 'RESULT', 'TRANSLATION_TIME', 'SOLVING_TIME'])
+    df.to_csv('_KOD_RESULT_' + os.path.basename(utils.args.filename))
+
+    # solver: str, File: str, pre_inv: Optional[int], transition: int, post_inv: int, bound: Optional[int], result: SAT/UNSAT/TIME_OUT, time: datetime, 
+    # string, Optional[int], int, int, int, datetime?, 
+    # python tmp file 
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
@@ -533,11 +625,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=kod_verify)
     result.append(s)
 
-    for s in result:
-        s.add_argument('--bound', type=int, help='Maximum bounds to use for bounded kodkod model.')
-    
     s = subparsers.add_parser('kod-benchmark', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
     s.set_defaults(main=kod_benchmark)
     result.append(s)
 
+    for s in result:
+        s.add_argument('--bound', type=int, help='Maximum bounds to use for bounded kodkod model.')
+    
     return result
