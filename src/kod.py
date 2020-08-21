@@ -548,6 +548,42 @@ def kod_verify(_solver: Solver) -> None:
                 print(f'GOOD')
     
 
+def bench_with(
+        ition: DefinitionDecl,
+        invs: List[Union[Bool, Int, UnaryExpr, Unknown, Id]],
+        remove_index: Optional[int],
+        check_index: int
+        ) -> List[Dict[str, Union[str, int, None]]]:
+    prog = syntax.the_program
+    pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
+    f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+    results = []
+
+    for bound in range(1, MAXIMUM_SATISFIABILITY_BOUND + 1):
+        print(f'  [{bound}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
+        out = kod_check_sat(prog, f, bound, 2)
+        print(f'Done.  py -> java time: {out["to_java_translation_time"]}ms kodkod time: {out["solving_time"] + out["translation_time"]}')
+
+        entry = {
+            'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
+            'TRANSITION' : ition.name,
+            'REMOVED_INVARIANT' : remove_index,
+            'CHECKED_INVARIANT' : check_index,
+            'BOUND' : bound,
+            'OUTCOME' : out['outcome'],
+            'TRANSLATION_TIME' : out['translation_time'],
+            'SOLVING_TIME': out['solving_time'],
+        }
+        results.append(entry)
+        if out['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
+            res = colorama.Fore.GREEN + out['outcome'] + colorama.Fore.RESET
+            print(f'    Result: {res}')
+            break
+        else:
+            res = colorama.Fore.RED + out['outcome'] + colorama.Fore.RESET
+            print(f'    Result: {res}')
+    return results
+
 MAXIMUM_SATISFIABILITY_BOUND = 3
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
@@ -557,58 +593,30 @@ def kod_benchmark(_solver: Solver) -> None:
 
     # kod_file_lock = threading.Lock()
     # threads = []
-    # lator = _solver.get_translator(2)
-    # for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
-    #     out = helper(ition, remove_index, check_index)
-    #     pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
-    #     f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+    lator = _solver.get_translator(2)
+    for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
+        data.extend(bench_with(ition, invs, remove_index, check_index))
         # with _solver.new_frame():
         #     _solver.add(lator.translate_expr(f))
         #     t0 = ....
         #     res = _solver.check()
         # out
     
-    for ition in prog.transitions():
-        # t = threading.Thread(target=remove_invariant_and_check, args=(prog, kod_file_lock, inv))
-        # threads.append(t)
-        # t.start()
-        print(f'Transition {ition.name}:')
-        for remove_index in range(1): # invs[i] is to be removed in the pre-state
-            pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]
-            for check_index in range(len(invs)):
-                if check_index == remove_index:
-                    continue
+    # for ition in prog.transitions():
+    #     # t = threading.Thread(target=remove_invariant_and_check, args=(prog, kod_file_lock, inv))
+    #     # threads.append(t)
+    #     # t.start()
+    #     print(f'Transition {ition.name}:')
+    #     for remove_index in range(1): # invs[i] is to be removed in the pre-state
+    #         pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]
+    #         for check_index in range(len(invs)):
+    #             if check_index == remove_index:
+    #                 continue
 
-                f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
-                # defined here for scope
-                bound = 0
-                out = {}
-                outcome = 'UNSAT' # for now it's either SAT or UNSAT until we can actually TIMEOUT
-                for bound in range(1, MAXIMUM_SATISFIABILITY_BOUND + 1):
-                    print(f'  [{bound}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
-                    out = kod_check_sat(prog, f, bound, 2)
-                    print(f'Done.  py -> java time: {out["to_java_translation_time"]}ms kodkod time: {out["solving_time"] + out["translation_time"]}')
-
-                    entry = {
-                        'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
-                        'TRANSITION' : ition.name,
-                        'REMOVED_INVARIANT' : remove_index,
-                        'CHECKED_INVARIANT' : check_index,
-                        'BOUND' : bound,
-                        'OUTCOME' : out['outcome'],
-                        'TRANSLATION_TIME' : out['translation_time'],
-                        'SOLVING_TIME': out['solving_time'],
-                    }
-                    data.append(entry)
-
-                    if out['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
-                        print(colorama.Fore.GREEN + out['outcome'] + colorama.Fore.RESET)
-                        outcome = out['outcome']
-                        break
-                    else:
-                        res = colorama.Fore.RED + out['outcome'] + colorama.Fore.RESET
-                        print(f'    Result: {res}')
-
+    #             f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+    #             # defined here for scope
+    #             bound = 0
+    #             out = {}
 
     df = pd.DataFrame(data, columns=['FILE', 'TRANSITION', 'REMOVED_INVARIANT', 'CHECKED_INVARIANT', 'BOUND', 'OUTCOME', 'RESULT', 'TRANSLATION_TIME', 'SOLVING_TIME'])
     df.to_csv('_KOD_RESULT_' + os.path.basename(utils.args.filename))
