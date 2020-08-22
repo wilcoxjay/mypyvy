@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from hashlib import sha1
 from dataclasses import dataclass
 from threading import Thread
-import colorama
+from colorama import Fore
 import subprocess
 
 from syntax import *
@@ -218,12 +218,13 @@ class KodTranslator:
             assert False, f'NOT INSTANCE OF ANYTHING: NOT FOUND/IMPLEMENTED: {e}'
 
 class KodSolver:
-    def __init__(self, prog: Program, class_name: str, e: Expr, bound: int, num_states: int):
+    def __init__(self, prog: Program, class_name: str, e: Expr, bound: int, num_states: int, one_bound=False):
         self.prog: Program = prog
         self.class_name = class_name
         self.e: Expr = e
         self.bound: int = bound
         self.num_states: int = num_states
+        self.one_bound: int = one_bound
 
         self.translator = self.get_translator(2)
 
@@ -249,12 +250,14 @@ class KodSolver:
                 'java.util.HashMap',
                 'java.util.Arrays',
                 'java.util.Iterator',
-                'java.util.Collection;',
+                'java.util.Collection',
+                'java.io.Writer',
+                'java.io.PrintWriter',
+                'java.io.IOException',
                 'kodkod.ast.Formula',
                 'kodkod.ast.Relation',
                 'kodkod.ast.Expression',
                 'kodkod.ast.Variable',
-                # 'kodkod.ast.Decl',
                 'kodkod.ast.Decls',
                 'kodkod.engine.Solution',
                 'kodkod.engine.Solver',
@@ -353,15 +356,14 @@ class KodSolver:
             '         // Last sort is sort of range',
             '         List<String> function_arguments = arities.get(get_relation_name(f))',
             '                                             .subList(0, arities.get(get_relation_name(f)).size() - 1);',
-            '         if(function_arguments.size() > 0){',
-            '            joined = get_var("X0").join(joined);',
-            '            Decls dcls = get_var("X0").oneOf(sorts.get(function_arguments.get(0)));',
-            '            for(int ind = 1; ind < function_arguments.size(); ind++) {',
-            '               joined = get_var("X" + ind).join(joined);',
-            '               dcls = dcls.and(get_var("X" + ind).oneOf(sorts.get(function_arguments.get(ind))));',
-            '            }',
-            '            functions_spec.add(joined.one().forAll(dcls));',
+            '         assert function_arguments.size() > 0;',
+            '         joined = get_var("X0").join(joined);',
+            '         Decls dcls = get_var("X0").oneOf(sorts.get(function_arguments.get(0)));',
+            '         for(int ind = 1; ind < function_arguments.size(); ind++) {',
+            '            joined = get_var("X" + ind).join(joined);',
+            '            dcls = dcls.and(get_var("X" + ind).oneOf(sorts.get(function_arguments.get(ind))));',
             '         }',
+            '         functions_spec.add(joined.one().forAll(dcls));',
             '      }',
             '   }',
             '   final Formula functions_totality = Formula.and(functions_spec);',
@@ -381,10 +383,10 @@ class KodSolver:
 
     def kod_get_bounds(self) -> List[str]:
         lines: List[str] = [
-            'public Bounds bounds(int _bounds) {',
-            '   List<String> atoms = new ArrayList<>(((sorts.size() - 1) * _bounds) + 1); // -1 for __KOD_BOOL__',
+            'public Bounds bounds(int _bound) {',
+            '   List<String> atoms = new ArrayList<>(((sorts.size() - 1) * _bound) + 1); // -1 for __KOD_BOOL__',
             '   for(Relation sort: sorts.values()) {',
-            '      for(int i = 0; i < _bounds; i++) {',
+            '      for(int i = 0; i < _bound; i++) {',
             '         atoms.add(sort.name() + i);',
             '      }',
             '   }',
@@ -395,7 +397,7 @@ class KodSolver:
         ]
         # Bound sorts
         lines.extend(
-          f'_b.boundExactly(this.sorts.get("{s.name}"), _f.range(_f.tuple("{s.name}0"), _f.tuple("{s.name}" + (_bounds - 1))));'
+          f'_b.boundExactly(this.sorts.get("{s.name}"), _f.range(_f.tuple("{s.name}0"), _f.tuple("{s.name}" + (_bound - 1))));'
           for s in self.scope.sorts.values()
         )
         lines.append(f'_b.boundExactly(this.sorts.get(\"__KOD_BOOL__\"), _f.setOf(\"__KOD_TRUTH__\"));')
@@ -429,28 +431,39 @@ class KodSolver:
             'public static void main(String[] args) {',
             f'   final {self.class_name} model = new {self.class_name}();',
             '   final Solver solver = new Solver();',
+            '   final Writer writer = new PrintWriter(System.out);',
             '   solver.options().setSolver(SATFactory.MiniSat);',
-            f'   final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds({utils.args.bound}));',
-            '   String out = String.format("{\\n`outcome`: `%s`,\\n`instance`:{\\n", sol.outcome());',
-            '   if (sol.sat()) {',
-            '      for (Map.Entry<Relation, TupleSet> me : sol.instance().relationTuples().entrySet()) {',
-            '         out += String.format("`%s`: [", me.getKey());',
-            '         Iterator<Tuple> it = me.getValue().iterator();',
-            '         while (it.hasNext()) {',
-            '            out += "[";',
-            '            Tuple t = it.next();',
-            '            for (int i = 0; i < t.arity(); i++) {',
-            '            out += String.format("`%s`, ", t.atom(i));',
+            f'   for(int i = {self.bound if self.one_bound else 1}; i <= {self.bound}; i++) {{',
+            '      final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds(i));',
+            '      String out = String.format("{\\n`bound`: %d,\\n`outcome`: `%s`,\\n`instance`:{\\n", i, sol.outcome());',
+            '      if (sol.sat()) {',
+            '         for (Map.Entry<Relation, TupleSet> me : sol.instance().relationTuples().entrySet()) {',
+            '            out += String.format("`%s`: [", me.getKey());',
+            '            Iterator<Tuple> it = me.getValue().iterator();',
+            '            while (it.hasNext()) {',
+            '               out += "[";',
+            '               Tuple t = it.next();',
+            '               for (int j = 0; j < t.arity(); j++) {',
+            '               out += String.format("`%s`, ", t.atom(j));',
+            '            }',
+            '            out += "],";',
+            '            }',
+            '         out += "],\\n";',
             '         }',
-            '         out += "],";',
-            '         }',
-            '      out += "],\\n";',
             '      }',
+            '      out += String.format("\\n},\\n`proof`: `%s`,\\n`translation_time`: %s, `solving_time`: %s,\\n},", sol.proof(), sol.stats().translationTime(), sol.stats().solvingTime());',
+            '      out = out.replace(\'`\', \'"\');',
+            '      try {',
+            '         writer.append(out);',
+            '         writer.flush();',
+            '      } catch(IOException ex) {',
+            '         System.out.println("{outcome: \'WRITER_ERROR\'},");',
+            '      }',
+            '      if(sol.sat()) {',
+            '         break;',
+            '      }'
             '   }',
-            '   out += String.format("\\n},\\n`proof`: `%s`,\\n`translation_time`: %s, `solving_time`: %s,\\n}", sol.proof(), sol.stats().translationTime(), sol.stats().solvingTime());',
-            '   out = out.replace(\'`\', \'"\');',
-            '   System.out.println(out);',
-            '}'
+            '}',
         ]
         return lines
 
@@ -489,7 +502,7 @@ def get_class_name(filename: str) -> str:
     kod_class_name.replace('-', '_')
     return f'_KOD_{kod_class_name}'
 
-def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[str, Union[List[List[str]], str, int]]:
+def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int, one_bound=False) -> Tuple[Dict[str, Union[List[List[str]], str, int]]]:
     '''
     Returns True if f is sat
     '''
@@ -497,7 +510,7 @@ def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[s
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
     start = datetime.now()
-    solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states)
+    solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
     with open(kod_filename, 'w') as f:
         f.write('\n'.join(solver.get_java_code()))
     end = datetime.now()
@@ -508,13 +521,14 @@ def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int) -> Dict[s
     try:
         out: Any = subprocess.check_output(cmd, text=True, timeout=60*60)
     except subprocess.TimeoutExpired:
-        return {'outcome': 'TIMEOUT'}
+        # out = literal_eval(out) # Ask Oded about this
+        return {'outcome': 'TIMEOUT'},
     except subprocess.CalledProcessError:
-        return {'outcome': 'ERROR'}
+        return {'outcome': 'ERROR'},
 
-    # print('out:', out)
+    print(f'\n-----------------\n\n{out}\n\n--------------')
     out = literal_eval(out)
-    out['to_java_translation_time'] = (end - start).microseconds / 1000
+    out[0]['to_java_translation_time'] = (end - start).microseconds / 1000
     return out
 
 def kod_verify(_solver: Solver) -> None:
@@ -529,7 +543,12 @@ def kod_verify(_solver: Solver) -> None:
     for inv in invs:
         f = And(*inits, Not(inv))
         print(f'CHECKING INIT IMPLIES {inv}')
-        res = kod_check_sat(prog, f, utils.args.bound if utils.args.bound else 1, 1)
+        res = kod_check_sat(
+                    prog,
+                    f,
+                    utils.args.bound if utils.args.bound else 1,
+                    1,
+                    one_bound=True)[0]
 
         if res['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
             print('  invariant not implied by init')
@@ -540,7 +559,12 @@ def kod_verify(_solver: Solver) -> None:
         for inv in invs:
             f = And(*invs, ition.as_twostate_formula(prog.scope), New(Not(inv)))
             print(f'CHECKING transition {ition.name} IMPLIES {inv}')
-            res = kod_check_sat(prog, f, utils.args.bound if utils.args.bound is not None else 1, 2)
+            res = kod_check_sat(
+                        prog,
+                        f,
+                        utils.args.bound if utils.args.bound is not None else 1,
+                        2,
+                        one_bound=True)[0]
 
             if res['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
                 print('  invariant not implied by init')
@@ -548,6 +572,7 @@ def kod_verify(_solver: Solver) -> None:
                 print(f'GOOD')
     
 
+MAXIMUM_SATISFIABILITY_BOUND = 3
 def bench_with(
         ition: DefinitionDecl,
         invs: List[Union[Bool, Int, UnaryExpr, Unknown, Id]],
@@ -559,32 +584,25 @@ def bench_with(
     f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
     results = []
 
-    for bound in range(1, MAXIMUM_SATISFIABILITY_BOUND + 1):
-        print(f'  [{bound}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
-        out = kod_check_sat(prog, f, bound, 2)
-        print(f'Done.  py -> java time: {out["to_java_translation_time"]}ms kodkod time: {out["solving_time"] + out["translation_time"]}')
-
+    print(f'{ition.name} Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
+    out = kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2)
+    print(f'Done.  py -> java time: {out[0]["to_java_translation_time"]}ms')
+    for run in out:
         entry = {
             'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
             'TRANSITION' : ition.name,
             'REMOVED_INVARIANT' : remove_index,
             'CHECKED_INVARIANT' : check_index,
-            'BOUND' : bound,
-            'OUTCOME' : out['outcome'],
-            'TRANSLATION_TIME' : out['translation_time'],
-            'SOLVING_TIME': out['solving_time'],
+            'BOUND' : run['bound'],
+            'OUTCOME' : run['outcome'],
+            'TRANSLATION_TIME' : run['translation_time'],
+            'SOLVING_TIME': run['solving_time'],
         }
         results.append(entry)
-        if out['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE'):
-            res = colorama.Fore.GREEN + out['outcome'] + colorama.Fore.RESET
-            print(f'    Result: {res}')
-            break
-        else:
-            res = colorama.Fore.RED + out['outcome'] + colorama.Fore.RESET
-            print(f'    Result: {res}')
+        sat = run['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE')
+        print(f'  {run["bound"]} {Fore.GREEN if sat else Fore.RED}{run["outcome"]}{Fore.RESET} ({run["translation_time"] + run["solving_time"]}ms)')
     return results
 
-MAXIMUM_SATISFIABILITY_BOUND = 3
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
     print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
