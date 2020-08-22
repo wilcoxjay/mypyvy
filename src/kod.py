@@ -5,14 +5,15 @@ import itertools
 from itertools import product, chain, combinations, repeat
 from functools import reduce
 from collections import defaultdict
-from multiprocessing import Lock
+from os import remove
 from pathlib import Path
 import pickle
 # from stubs.z3 import unknown
 import sys
 import os
 import math
-import multiprocessing
+from multiprocessing import Lock, cpu_count
+from multiprocessing.pool import ThreadPool
 import multiprocessing.connection
 from contextlib import nullcontext
 import random
@@ -80,12 +81,12 @@ class KodTranslator:
     @staticmethod
     def relation_to_kod(
             r: Union[RelationDecl, FunctionDecl, ConstantDecl],
-            leaf_expr_type: str,
+            expr_type: str,
             index: int
         ) -> KodExpr:
         if not r.mutable:
             index = 0
-        return KodExpr(f'this.get_expression("{r.name}", {leaf_expr_type}, {index})')
+        return KodExpr(f'this.get_expression("{r.name}", "{expr_type}", {index})')
         
     @staticmethod
     def var_to_kod(sv: SortedVar) -> KodExpr:
@@ -152,7 +153,7 @@ class KodTranslator:
                 assert False
             elif isinstance(d, FunctionDecl):
                 kod_args = [self._translate_expr(a) for a in e.args]
-                to_join = str(KodTranslator.relation_to_kod(d, 'LeafExprType.FUNCTION', self.scope.current_state_index))
+                to_join = str(KodTranslator.relation_to_kod(d, 'FUNCTION', self.scope.current_state_index))
                 for a in reversed(kod_args):
                     to_join = f'{a}.join({to_join})'
                 return KodExpr(to_join)
@@ -160,7 +161,7 @@ class KodTranslator:
                 kod_args = [self._translate_expr(a) for a in e.args]
                 assert all(not a.is_formula for a in kod_args), f'Cannot apply relation to a formula: {e}'
                 product = KodTranslator.join_expr('.product', kod_args, False)
-                callee = KodTranslator.relation_to_kod(d, 'LeafExprType.RELATION', self.scope.current_state_index)
+                callee = KodTranslator.relation_to_kod(d, 'RELATION', self.scope.current_state_index)
                 return KodTranslator.join_expr('.in', [product, callee], True)
             else:
                 assert False, f'{d}\n{e}'
@@ -199,10 +200,10 @@ class KodTranslator:
             d = self.scope.get(e.name)
             assert d is not None, f'{e.name}\n{e}'
             if isinstance(d, RelationDecl): # Nullary relation : BOOL
-                kod_nullary = KodTranslator.relation_to_kod(d, 'LeafExprType.RELATION', self.scope.current_state_index)
+                kod_nullary = KodTranslator.relation_to_kod(d, 'RELATION', self.scope.current_state_index)
                 return KodExpr(f'{kod_nullary}.some()', True)
             elif isinstance(d, ConstantDecl):
-                return KodTranslator.relation_to_kod(d, 'LeafExprType.CONSTANT', self.scope.current_state_index)
+                return KodTranslator.relation_to_kod(d, 'CONSTANT', self.scope.current_state_index)
             elif isinstance(d, DefinitionDecl):
                 assert False
             elif isinstance(d, FunctionDecl):
@@ -251,9 +252,7 @@ class KodSolver:
                 'java.util.Arrays',
                 'java.util.Iterator',
                 'java.util.Collection',
-                'java.io.Writer',
-                'java.io.PrintWriter',
-                'java.io.IOException',
+                'java.io.*',
                 'kodkod.ast.Formula',
                 'kodkod.ast.Relation',
                 'kodkod.ast.Expression',
@@ -310,15 +309,16 @@ class KodSolver:
         ]
     def kod_get_get_expression(self) -> List[str]:
         return [
-            'public Relation get_expression(String name, LeafExprType t, int index) {', 
-            '   final Map<String, Map<Integer, Relation>> m;', 
-            '   switch(t)', 
-            '   {', 
-            '      case RELATION: m = this.relations; break;',  
-            '      case FUNCTION: m = this.functions; break;', 
-            '      case CONSTANT: m = this.constants; break;', 
+
+            'public Relation get_expression(String name, String type, int index) {',
+            '   final Map<String, Map<Integer, Relation>> m;',
+            '   switch(type)',
+            '   {',
+            '      case "RELATION": m = this.relations; break;',
+            '      case "FUNCTION": m = this.functions; break;',
+            '      case "CONSTANT": m = this.constants; break;',
             '      default: m = this.constants;; // TODO: Raise Exception',
-            '   }', 
+            '   }',
             '   if (!m.containsKey(name)) {',   
             '      m.put(name, new HashMap<Integer, Relation>());', 
             '   }', 
@@ -470,11 +470,6 @@ class KodSolver:
     def kod_get_class(self) -> List[str]:
         lines: List[str] = [
             f'public final class {self.class_name} {{',
-            'enum LeafExprType {',
-            '   RELATION,',
-            '   FUNCTION,',
-            '   CONSTANT,',
-            '};',
             'private final Map<String, List<String>> arities;',
             'private final Map<String, Variable> vars;',
             'private final Map<String, Map<Integer, Relation>> relations;',
@@ -497,38 +492,61 @@ class KodSolver:
         lines.extend(self.kod_get_class())
         return lines
 
-def get_class_name(filename: str) -> str:
-    kod_class_name = os.path.splitext(os.path.basename(filename))[0]
-    kod_class_name.replace('-', '_')
+def get_class_name(filename: str, suffix: str = '') -> str:
+    kod_class_name = os.path.splitext(os.path.basename(filename))[0] + suffix
+    kod_class_name = kod_class_name.replace('-', '_')
     return f'_KOD_{kod_class_name}'
 
-def kod_check_sat(prog: Program, f: Expr, bound: int, num_states: int, one_bound=False) -> Tuple[Dict[str, Union[List[List[str]], str, int]]]:
+def kod_check_sat(
+        prog: Program,
+        f: Expr,
+        bound: int,
+        num_states: int,
+        one_bound: bool =False,
+        kod_class_name: Optional[str] = None,
+        solver_lock: multiprocessing.synchronize.Lock = None
+        ) -> Tuple[Dict[str, Union[List[List[str]], str, int]]]:
     '''
     Returns True if f is sat
     '''
-    kod_class_name = get_class_name(utils.args.filename)
+    if not kod_class_name:
+        kod_class_name = get_class_name(utils.args.filename)
+    else:
+        assert not os.path.isfile(kod_class_name + '.java')
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
-    start = datetime.now()
+    translation_start = datetime.now()
+
+    if solver_lock:
+        solver_lock.acquire()
     solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
+    java_lines = solver.get_java_code()
+    if solver_lock:
+        solver_lock.release()
+
     with open(kod_filename, 'w') as f:
-        f.write('\n'.join(solver.get_java_code()))
-    end = datetime.now()
+        f.write('\n'.join(java_lines))
+    translation_end = datetime.now()
     cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
+    compilation_start = datetime.now()
     subprocess.check_call(cmd)
+    compilation_end = datetime.now()
+    run_start = datetime.now()
     cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', kod_class_name]
+    run_end = datetime.now()
+    print((run_end - run_start).microseconds / 1000)
 
     try:
-        out: Any = subprocess.check_output(cmd, text=True, timeout=60*60)
+        out: Any = subprocess.check_output(cmd, text=True, timeout=1)
     except subprocess.TimeoutExpired:
-        # out = literal_eval(out) # Ask Oded about this
         return {'outcome': 'TIMEOUT'},
     except subprocess.CalledProcessError:
         return {'outcome': 'ERROR'},
 
-    print(f'\n-----------------\n\n{out}\n\n--------------')
     out = literal_eval(out)
-    out[0]['to_java_translation_time'] = (end - start).microseconds / 1000
+    print(out)
+    out[0]['to_java_time'] = (translation_end - translation_start).microseconds / 1000
+    out[0]['compilation_time'] = (compilation_end - compilation_start).microseconds / 1000
     return out
 
 def kod_verify(_solver: Solver) -> None:
@@ -572,48 +590,67 @@ def kod_verify(_solver: Solver) -> None:
                 print(f'GOOD')
     
 
-MAXIMUM_SATISFIABILITY_BOUND = 3
+MAXIMUM_SATISFIABILITY_BOUND = 10
 def bench_with(
         ition: DefinitionDecl,
-        invs: List[Union[Bool, Int, UnaryExpr, Unknown, Id]],
         remove_index: Optional[int],
-        check_index: int
+        check_index: int,
+        solver_lock: multiprocessing.synchronize.Lock
         ) -> List[Dict[str, Union[str, int, None]]]:
     prog = syntax.the_program
+    invs = [inv.expr for inv in prog.invs()] 
     pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
     f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
     results = []
-
+    class_name = get_class_name(utils.args.filename, '_' + str(hash((ition.name, remove_index, check_index))))
     print(f'{ition.name} Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
-    out = kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2)
-    print(f'Done.  py -> java time: {out[0]["to_java_translation_time"]}ms')
+    out = kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2, False, class_name, solver_lock)
     for run in out:
-        entry = {
-            'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
-            'TRANSITION' : ition.name,
-            'REMOVED_INVARIANT' : remove_index,
-            'CHECKED_INVARIANT' : check_index,
-            'BOUND' : run['bound'],
-            'OUTCOME' : run['outcome'],
-            'TRANSLATION_TIME' : run['translation_time'],
-            'SOLVING_TIME': run['solving_time'],
-        }
+        if run['outcome'] == 'TIMEOUT':
+            entry = {
+                'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
+                'TRANSITION' : ition.name,
+                'REMOVED_INVARIANT' : remove_index,
+                'CHECKED_INVARIANT' : check_index,
+                'OUTCOME' : run['outcome'],
+            }
+        else:
+            entry = {
+                'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
+                'TRANSITION' : ition.name,
+                'REMOVED_INVARIANT' : remove_index,
+                'CHECKED_INVARIANT' : check_index,
+                'BOUND' : run['bound'],
+                'OUTCOME' : run['outcome'],
+                'TRANSLATION_TIME' : run['translation_time'],
+                'SOLVING_TIME': run['solving_time'],
+                'TO_JAVA_TIME': out[0]['to_jave_time'],
+                'COMPILATION_TIME': out[0]['compilation_time']
+            }
+            sat = run['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE')
+            print(f'  {run["bound"]} {Fore.GREEN if sat else Fore.RED}{run["outcome"]}{Fore.RESET} ({run["translation_time"] + run["solving_time"]}ms)')
         results.append(entry)
-        sat = run['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE')
-        print(f'  {run["bound"]} {Fore.GREEN if sat else Fore.RED}{run["outcome"]}{Fore.RESET} ({run["translation_time"] + run["solving_time"]}ms)')
     return results
 
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
     print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
-    invs = [inv.expr for inv in prog.invs() if not inv.is_safety]
+    invs = [inv.expr for inv in prog.invs()]
     data = []
 
-    # kod_file_lock = threading.Lock()
+    solver_lock = threading.Lock()
     # threads = []
     lator = _solver.get_translator(2)
-    for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
-        data.extend(bench_with(ition, invs, remove_index, check_index))
+    threads = []
+
+    if True:
+        with ThreadPool(cpu_count()) as pool:
+            prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (solver_lock,))
+            for run in pool.starmap(bench_with, prd):
+                data.extend(run)
+    else: # left for experimenting
+        for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
+            data.extend(bench_with(ition, remove_index, check_index))
         # with _solver.new_frame():
         #     _solver.add(lator.translate_expr(f))
         #     t0 = ....
@@ -636,8 +673,8 @@ def kod_benchmark(_solver: Solver) -> None:
     #             bound = 0
     #             out = {}
 
-    df = pd.DataFrame(data, columns=['FILE', 'TRANSITION', 'REMOVED_INVARIANT', 'CHECKED_INVARIANT', 'BOUND', 'OUTCOME', 'RESULT', 'TRANSLATION_TIME', 'SOLVING_TIME'])
-    df.to_csv('_KOD_RESULT_' + get_class_name(utils.args.filename))
+    df = pd.DataFrame(data, columns=['FILE', 'TRANSITION', 'REMOVED_INVARIANT', 'CHECKED_INVARIANT', 'BOUND', 'OUTCOME', 'TRANSLATION_TIME', 'SOLVING_TIME'])
+    df.to_csv('_KOD_RESULT_' + get_class_name(utils.args.filename) + '.csv')
 
     # solver: str, File: str, pre_inv: Optional[int], transition: int, post_inv: int, bound: Optional[int], result: SAT/UNSAT/TIME_OUT, time: datetime, 
     # string, Optional[int], int, int, int, datetime?, 
