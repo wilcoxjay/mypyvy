@@ -11,6 +11,7 @@ from syntax import Expr, TrueExpr, DefinitionDecl, New
 import pickle
 from typing import List, Optional, Tuple, Union, Sequence
 from translator import Z3Translator
+from solver import CheckSatResult, sat, unsat
 
 RelaxedTrace = List[Tuple[Optional[DefinitionDecl], Union[Diagram, Expr]]]
 
@@ -230,7 +231,7 @@ class Frames:
 
         while True:
             res, x = self.find_predecessor(j - 1, diag_or_expr)
-            if res == z3.unsat:
+            if res == unsat:
                 assert x is None or isinstance(x, MySet)
                 core: Optional[MySet[int]] = x
                 self.augment_core_for_init(diag_or_expr, core)
@@ -285,11 +286,11 @@ class Frames:
 
             res = self.solver.check(diag.trackers)
 
-            assert res == z3.unsat
+            assert res == unsat
             uc = self.solver.unsat_core()
 
             res = self.solver.check([diag.trackers[i] for i in core])
-            if res == z3.unsat:
+            if res == unsat:
                 return
 
             for x in sorted(uc, key=lambda y: y.decl().name()):
@@ -307,7 +308,7 @@ class Frames:
             self,
             j: int,
             diag_or_expr: Union[Diagram, Expr]
-    ) -> Tuple[z3.CheckSatResult, Union[Optional[MySet[int]], Tuple[DefinitionDecl, Trace]]]:
+    ) -> Tuple[CheckSatResult, Union[Optional[MySet[int]], Tuple[DefinitionDecl, Trace]]]:
         pre_frame = self[j]
         prog = syntax.the_program
         solver = self.solver
@@ -337,7 +338,7 @@ class Frames:
             for ition in prog.transitions():
                 with solver.new_frame():
                     solver.add(t.translate_expr(ition.as_twostate_formula(prog.scope)))
-                    if (res := solver.check(trackers())) == z3.sat:
+                    if (res := solver.check(trackers())) == sat:
                         m = Z3Translator.model_to_trace(solver.model(trackers()), 2)
                         state = m.as_state(0)
                         src = self.currently_blocking
@@ -345,14 +346,14 @@ class Frames:
                         steps_from_cex = src.known_absent_until_frame + 1 - j + src.num_steps_to_bad
                         bstate = BackwardReachableState(len(self.backwards_reachable_states), state, steps_from_cex)
                         self.record_backwards_reachable_state(bstate)
-                        return (z3.sat, (ition, m))
-                    elif res == z3.unsat:
+                        return (sat, (ition, m))
+                    elif res == unsat:
                         if utils.args.use_z3_unsat_cores and isinstance(diag_or_expr, Diagram):
                             assert core is not None
                             # carefully retrieve the unsat core before calling check again
                             uc = solver.unsat_core()
                             res = solver.check([diag_or_expr.trackers[i] for i in core])
-                            if res == z3.unsat:
+                            if res == unsat:
                                 continue
                             for x in sorted(uc, key=lambda y: y.decl().name()):
                                 assert isinstance(x, z3.ExprRef)
@@ -367,7 +368,7 @@ class Frames:
                 ret_core: Optional[MySet[int]] = MySet(sorted(core))
             else:
                 ret_core = None
-            return (z3.unsat, ret_core)
+            return (unsat, ret_core)
 
     def clause_implied_by_transitions_from_frame(
             self,

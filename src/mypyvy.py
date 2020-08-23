@@ -15,7 +15,7 @@ from logic import Solver, Trace
 import parser
 import typechecker
 import syntax
-from syntax import Expr, Program, InvariantDecl
+from syntax import Expr, Program, InvariantDecl, Not
 from semantics import RelationInterps, ConstantInterps, FunctionInterps
 import updr
 import utils
@@ -242,7 +242,7 @@ def theorem(s: Solver) -> None:
         sys.stdout.flush()
 
         with s.new_frame():
-            s.add(z3.Not(t.translate_expr(th.expr)))
+            s.add(t.translate_expr(Not(th.expr)))
 
             logic.check_unsat([(th.span, 'theorem%s does not hold' % msg)], s, num_states)
 
