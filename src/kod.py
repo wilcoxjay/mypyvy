@@ -522,13 +522,13 @@ def kod_check_sat(
     axioms = [a.expr for a in prog.axioms()]
 
     if solver_lock:
-        solver_lock.acquire()
-    solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
-    java_lines = solver.get_java_code()
-    if solver_lock:
-        solver_lock.release()
+        with solver_lock:
+            solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
+            try:
+                java_lines = solver.get_java_code()
+            finally:
+                print('ERROR IN get_java_code()')
 
-    print('GOT HERE!')
     with open(kod_filename, 'w') as f:
         f.write('\n'.join(java_lines))
     cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
@@ -621,6 +621,17 @@ def kod_benchmark(_solver: Solver) -> None:
         for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
             data.extend(bench_with(ition, remove_index, check_index))
     
+def z3_benchmark(_solver: Solver) -> None:
+    prog = syntax.the_program
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
+    invs = [inv.expr for inv in prog.invs()]
+    lator = _solver.get_translator(2)
+    if not os.path.exists('_Z3_RESULTS'):
+        os.mkdir('_KOD_RESULTS')
+    
+    with ThreadPool(cpu_count()) as pool:
+        prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (solver_lock,))
+        pool.starmap(bench_with, prd)
 
     # solver: str, File: str, pre_inv: Optional[int], transition: int, post_inv: int, bound: Optional[int], result: SAT/UNSAT/TIME_OUT, time: datetime, 
     # string, Optional[int], int, int, int, datetime?, 
