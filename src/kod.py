@@ -521,7 +521,6 @@ def kod_check_sat(
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
 
-    print('Before')
     if solver_lock:
         solver_lock.acquire()
     solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
