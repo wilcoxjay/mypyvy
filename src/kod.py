@@ -431,7 +431,7 @@ class KodSolver:
             'public static void main(String[] args) {',
             f'   final {self.class_name} model = new {self.class_name}();',
             '   final Solver solver = new Solver();',
-            '   final Writer writer = new PrintWriter(System.out);',
+            '   final Writer stdout = new PrintWriter(System.out);',
             '   solver.options().setSolver(SATFactory.MiniSat);',
             f'   for(int i = {self.bound if self.one_bound else 1}; i <= {self.bound}; i++) {{',
             '      final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds(i));',
@@ -454,14 +454,19 @@ class KodSolver:
             '      out += String.format("\\n},\\n`proof`: `%s`,\\n`translation_time`: %s, `solving_time`: %s,\\n},", sol.proof(), sol.stats().translationTime(), sol.stats().solvingTime());',
             '      out = out.replace(\'`\', \'"\');',
             '      try {',
-            '         writer.append(out);',
+            '         FileWriter writer = new FileWriter("_KOD_RESULTS" + File.separator + model.getClass().getName() + "_" + i + ".result", false);',
+            '         writer.write(out);',
             '         writer.flush();',
+            '         writer.close();',
+            # '         stdout.append(out);',
+            # '         stdout.flush();',
             '      } catch(IOException ex) {',
+            '         System.out.println(ex);',
             '         System.out.println("{outcome: \'WRITER_ERROR\'},");',
             '      }',
             '      if(sol.sat()) {',
             '         break;',
-            '      }'
+            '      }',
             '   }',
             '}',
         ]
@@ -505,7 +510,7 @@ def kod_check_sat(
         one_bound: bool =False,
         kod_class_name: Optional[str] = None,
         solver_lock: multiprocessing.synchronize.Lock = None
-        ) -> Tuple[Dict[str, Union[List[List[str]], str, int]]]:
+        ) -> None:
     '''
     Returns True if f is sat
     '''
@@ -515,8 +520,8 @@ def kod_check_sat(
         assert not os.path.isfile(kod_class_name + '.java')
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
-    translation_start = datetime.now()
 
+    print('Before')
     if solver_lock:
         solver_lock.acquire()
     solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
@@ -524,30 +529,20 @@ def kod_check_sat(
     if solver_lock:
         solver_lock.release()
 
+    print('GOT HERE!')
     with open(kod_filename, 'w') as f:
         f.write('\n'.join(java_lines))
-    translation_end = datetime.now()
     cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
-    compilation_start = datetime.now()
     subprocess.check_call(cmd)
-    compilation_end = datetime.now()
     run_start = datetime.now()
     cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', kod_class_name]
     run_end = datetime.now()
     print((run_end - run_start).microseconds / 1000)
 
     try:
-        out: Any = subprocess.check_output(cmd, text=True, timeout=1)
+        subprocess.run(cmd, text=True, timeout=10*60)
     except subprocess.TimeoutExpired:
-        return {'outcome': 'TIMEOUT'},
-    except subprocess.CalledProcessError:
-        return {'outcome': 'ERROR'},
-
-    out = literal_eval(out)
-    print(out)
-    out[0]['to_java_time'] = (translation_end - translation_start).microseconds / 1000
-    out[0]['compilation_time'] = (compilation_end - compilation_start).microseconds / 1000
-    return out
+        print(f'---- TIMEOUT on {kod_class_name}')
 
 def kod_verify(_solver: Solver) -> None:
     '''
@@ -596,41 +591,15 @@ def bench_with(
         remove_index: Optional[int],
         check_index: int,
         solver_lock: multiprocessing.synchronize.Lock
-        ) -> List[Dict[str, Union[str, int, None]]]:
+        ) -> None:
     prog = syntax.the_program
     invs = [inv.expr for inv in prog.invs()] 
     pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
-    f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
-    results = []
     class_name = get_class_name(utils.args.filename, '_' + str(hash((ition.name, remove_index, check_index))))
-    print(f'{ition.name} Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
-    out = kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2, False, class_name, solver_lock)
-    for run in out:
-        if run['outcome'] == 'TIMEOUT':
-            entry = {
-                'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
-                'TRANSITION' : ition.name,
-                'REMOVED_INVARIANT' : remove_index,
-                'CHECKED_INVARIANT' : check_index,
-                'OUTCOME' : run['outcome'],
-            }
-        else:
-            entry = {
-                'FILE' : os.path.basename(utils.args.filename), # same pyv file per csv file
-                'TRANSITION' : ition.name,
-                'REMOVED_INVARIANT' : remove_index,
-                'CHECKED_INVARIANT' : check_index,
-                'BOUND' : run['bound'],
-                'OUTCOME' : run['outcome'],
-                'TRANSLATION_TIME' : run['translation_time'],
-                'SOLVING_TIME': run['solving_time'],
-                'TO_JAVA_TIME': out[0]['to_jave_time'],
-                'COMPILATION_TIME': out[0]['compilation_time']
-            }
-            sat = run['outcome'] in ('SATISFIABLE', 'TRIVIALLY_SATISFIABLE')
-            print(f'  {run["bound"]} {Fore.GREEN if sat else Fore.RED}{run["outcome"]}{Fore.RESET} ({run["translation_time"] + run["solving_time"]}ms)')
-        results.append(entry)
-    return results
+    f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+
+    print(f'[{ition.name}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
+    kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2, False, class_name, solver_lock)
 
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
@@ -642,39 +611,17 @@ def kod_benchmark(_solver: Solver) -> None:
     # threads = []
     lator = _solver.get_translator(2)
     threads = []
+    if not os.path.exists('_KOD_RESULTS'):
+        os.mkdir('_KOD_RESULTS')
 
     if True:
         with ThreadPool(cpu_count()) as pool:
             prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (solver_lock,))
-            for run in pool.starmap(bench_with, prd):
-                data.extend(run)
+            pool.starmap(bench_with, prd)
     else: # left for experimenting
         for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
             data.extend(bench_with(ition, remove_index, check_index))
-        # with _solver.new_frame():
-        #     _solver.add(lator.translate_expr(f))
-        #     t0 = ....
-        #     res = _solver.check()
-        # out
     
-    # for ition in prog.transitions():
-    #     # t = threading.Thread(target=remove_invariant_and_check, args=(prog, kod_file_lock, inv))
-    #     # threads.append(t)
-    #     # t.start()
-    #     print(f'Transition {ition.name}:')
-    #     for remove_index in range(1): # invs[i] is to be removed in the pre-state
-    #         pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]
-    #         for check_index in range(len(invs)):
-    #             if check_index == remove_index:
-    #                 continue
-
-    #             f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
-    #             # defined here for scope
-    #             bound = 0
-    #             out = {}
-
-    df = pd.DataFrame(data, columns=['FILE', 'TRANSITION', 'REMOVED_INVARIANT', 'CHECKED_INVARIANT', 'BOUND', 'OUTCOME', 'TRANSLATION_TIME', 'SOLVING_TIME'])
-    df.to_csv('_KOD_RESULT_' + get_class_name(utils.args.filename) + '.csv')
 
     # solver: str, File: str, pre_inv: Optional[int], transition: int, post_inv: int, bound: Optional[int], result: SAT/UNSAT/TIME_OUT, time: datetime, 
     # string, Optional[int], int, int, int, datetime?, 

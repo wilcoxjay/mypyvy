@@ -6,14 +6,13 @@ import multiprocessing as mp
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 
 TESTS_ROOT_DIRECTORY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/examples'
-KOD_OUTPUT_DIRECTORY = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/examples/'
 MYPYVY_EXECUTABLE_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/src/mypyvy.py'
 
 def bench_kod_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
     try:
         subprocess.run(
-            [MYPYVY_EXECUTABLE_PATH, 'kod-benchmark', filepath, KOD_OUTPUT_DIRECTORY],
+            [MYPYVY_EXECUTABLE_PATH, 'kod-benchmark', filepath],
             timeout=60*60
         )
     except subprocess.TimeoutExpired:
