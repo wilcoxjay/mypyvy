@@ -6,8 +6,8 @@ from subprocess import CompletedProcess
 import multiprocessing as mp
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 
-TESTS_ROOT_DIRECTORY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/examples'
-MYPYVY_EXECUTABLE_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/src/mypyvy.py'
+TESTS_ROOT_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/examples'
+MYPYVY_EXECUTABLE_PATH = '/scr/amohamdy/mypyvy/src/mypyvy.py'
 
 already_checked = [
                     'lockserv_multi.pyv',
