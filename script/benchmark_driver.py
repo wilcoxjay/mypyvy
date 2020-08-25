@@ -8,6 +8,32 @@ from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set
 TESTS_ROOT_DIRECTORY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/examples'
 MYPYVY_EXECUTABLE_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/src/mypyvy.py'
 
+already_checked = [
+                    'lockserv_multi.pyv',
+                    'paxos_fol.pyv',
+                    'sharded-kv-retransmit.pyv',
+                    'consensus.pyv',
+                  ]
+
+errored_files = [
+                    'cache_one.pyv',
+                    'crawler.pyv',
+                    'crawler-cti.pyv',
+                    'parity.pyv',
+                    'indigo_tournament.pyv',
+                    'nopath.pyv',
+                    'raft.pyv',
+                    'cache_unsafe.pyv',
+                    'consensus_unsafe.pyv',
+                    'consensus_unsafe2.pyv',
+                    'lockserv_unsafe.pyv',
+                    'paxos_forall_choosable_unsafe.pyv',
+                    'paxos_forall_choosable_unsafe2.pyv',
+                    'paxos_forall_choosable_unsafe_no_intersection.pyv',
+                    'sharded-kv-retransmit_unsafe.pyv',
+                    'sharded-kv_unsafe.pyv',
+                    'sharded-kv_unsafe2.pyv',
+                ]
 def bench_kod_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
     try:
@@ -20,18 +46,12 @@ def bench_kod_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] DONE')
 
 def main() -> None:
-    # if len(sys.argv) < 2:
-    #     print('Usage: python3 benchmark_driver.py [path to root of tests directory] [path to output directory]')
-    #     return
-    # TESTS_ROOT_DIRECTORY_PATH = sys.argv[1]
     test_files = [os.path.join(root, f) for root, _, files in os.walk(TESTS_ROOT_DIRECTORY_PATH) for f in files if re.match(r'.*[.]pyv', f)]
-    # pool = mp.Pool(mp.cpu_count())
-    # pool.map(bench_kod_on, test_files)
-    # pool.close()
-    # print('CALLING MAP')
     for file in test_files:
-        bench_kod_on(file)
-    # map(bench_kod_on, test_files)
+        if os.path.basename(file) in already_checked or os.path.basename(file) in errored_files:
+            print(f'Already Checked: {os.path.basename(file)}')
+        else:
+            bench_kod_on(file)
 
 if __name__ == '__main__':
     main()

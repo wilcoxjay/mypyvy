@@ -150,7 +150,7 @@ class KodTranslator:
         elif isinstance(e, AppExpr):
             d = self.scope.get(e.callee)
             if isinstance(d, DefinitionDecl):
-                assert False
+                assert False, (e,d)
             elif isinstance(d, FunctionDecl):
                 kod_args = [self._translate_expr(a) for a in e.args]
                 to_join = str(KodTranslator.relation_to_kod(d, 'FUNCTION', self.scope.current_state_index))
@@ -205,7 +205,7 @@ class KodTranslator:
             elif isinstance(d, ConstantDecl):
                 return KodTranslator.relation_to_kod(d, 'CONSTANT', self.scope.current_state_index)
             elif isinstance(d, DefinitionDecl):
-                assert False
+                assert False, d
             elif isinstance(d, FunctionDecl):
                 assert False, 'impossible since functions have arity > 0'
             elif isinstance(d, SortDecl):
@@ -497,9 +497,11 @@ class KodSolver:
         lines.extend(self.kod_get_class())
         return lines
 
-def get_class_name(filename: str, suffix: str = '') -> str:
+def get_class_name(filename: str, suffix: str = '', z3:bool = False) -> str:
     kod_class_name = os.path.splitext(os.path.basename(filename))[0] + suffix
     kod_class_name = kod_class_name.replace('-', '_')
+    if z3:
+        return f'_Z3_{kod_class_name}'
     return f'_KOD_{kod_class_name}'
 
 def kod_check_sat(
@@ -509,10 +511,8 @@ def kod_check_sat(
         num_states: int,
         one_bound: bool =False,
         kod_class_name: Optional[str] = None,
-        solver_lock: multiprocessing.synchronize.Lock = None
         ) -> None:
     '''
-    Returns True if f is sat
     '''
     if not kod_class_name:
         kod_class_name = get_class_name(utils.args.filename)
@@ -521,27 +521,23 @@ def kod_check_sat(
     kod_filename = kod_class_name + '.java'
     axioms = [a.expr for a in prog.axioms()]
 
-    if solver_lock:
-        with solver_lock:
-            solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
-            try:
-                java_lines = solver.get_java_code()
-            finally:
-                print('ERROR IN get_java_code()')
+    solver = KodSolver(prog, kod_class_name, And(*axioms, f), bound, num_states, one_bound)
+
+    java_lines = solver.get_java_code()
 
     with open(kod_filename, 'w') as f:
         f.write('\n'.join(java_lines))
-    cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
-    subprocess.check_call(cmd)
-    run_start = datetime.now()
-    cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', kod_class_name]
-    run_end = datetime.now()
-    print((run_end - run_start).microseconds / 1000)
+    # cmd = ['javac', '-cp', KODKOD_JAR_EXECUTABLE_PATH, kod_filename]
+    # subprocess.check_call(cmd)
+    # run_start = datetime.now()
+    # cmd = ['java', '-cp', KODKOD_JAR_EXECUTABLE_PATH, f'-Djava.library.path={KODKOD_LIBRARY_PATH}', kod_class_name]
+    # run_end = datetime.now()
+    # print((run_end - run_start).microseconds / 1000)
 
-    try:
-        subprocess.run(cmd, text=True, timeout=10*60)
-    except subprocess.TimeoutExpired:
-        print(f'---- TIMEOUT on {kod_class_name}')
+    # try:
+    #     subprocess.run(cmd, text=True, timeout=10*60)
+    # except subprocess.TimeoutExpired:
+    #     print(f'---- TIMEOUT on {kod_class_name}')
 
 def kod_verify(_solver: Solver) -> None:
     '''
@@ -589,7 +585,6 @@ def bench_with(
         ition: DefinitionDecl,
         remove_index: Optional[int],
         check_index: int,
-        solver_lock: multiprocessing.synchronize.Lock
         ) -> None:
     prog = syntax.the_program
     invs = [inv.expr for inv in prog.invs()] 
@@ -597,8 +592,8 @@ def bench_with(
     class_name = get_class_name(utils.args.filename, '_' + str(hash((ition.name, remove_index, check_index))))
     f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
 
-    print(f'[{ition.name}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
-    kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2, False, class_name, solver_lock)
+    # print(f'[{ition.name}] Checking inv {check_index} in post-state without inv {remove_index} in pre-state...', end='')
+    kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2, False, class_name)
 
 def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
@@ -613,26 +608,71 @@ def kod_benchmark(_solver: Solver) -> None:
     if not os.path.exists('_KOD_RESULTS'):
         os.mkdir('_KOD_RESULTS')
 
-    if True:
+    if False:
         with ThreadPool(cpu_count()) as pool:
             prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (solver_lock,))
             pool.starmap(bench_with, prd)
     else: # left for experimenting
         for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
-            data.extend(bench_with(ition, remove_index, check_index))
+            bench_with(ition, remove_index, check_index)
+
+
+def z3_bench_with(
+        ition: DefinitionDecl,
+        remove_index: Optional[int],
+        check_index: int,
+        solver: Solver,
+        solver_lock: multiprocessing.synchronize.Lock
+        ) -> None:
+
+    prog = syntax.the_program
+    invs = [inv.expr for inv in prog.invs()] 
+    pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
+    lator = solver.get_translator(2)
+    class_name = get_class_name(utils.args.filename, '_' + str(hash((ition.name, remove_index, check_index))), True)
+    f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+    with solver_lock:
+        with solver.new_frame():
+            translation_start = datetime.now()
+            solver.add(lator.translate_expr(f))
+            translation_end = datetime.now()
+            solving_start = datetime.now()
+            res = solver.check()
+            solving_end = datetime.now()
+    if res.r == z3.Z3_L_TRUE:
+        outcome = "SATISFIABLE"
+    elif res.r == z3.Z3_L_FALSE:
+        outcome = "UNSATISFIABLE"
+    else:
+        outcome = "UNKNOWN"
+    result = {
+        "outcome": outcome,
+        "ition": ition.name,
+        "remove_index": remove_index,
+        "check_indedx": check_index,
+        "translation_time": (translation_end - translation_start).microseconds / 1000,
+        "solving_time": (solving_end - solving_start).microseconds / 1000,
+    }
+    open(class_name + '.result', 'w').write(str(result))
+    
+
     
 def z3_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
-    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting kod_benchmark on {os.path.basename(utils.args.filename)}')
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting z3 benchmark on {os.path.basename(utils.args.filename)}')
     invs = [inv.expr for inv in prog.invs()]
-    lator = _solver.get_translator(2)
+    solver_lock = threading.Lock()
     if not os.path.exists('_Z3_RESULTS'):
         os.mkdir('_KOD_RESULTS')
     
     with ThreadPool(cpu_count()) as pool:
-        prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (solver_lock,))
-        pool.starmap(bench_with, prd)
+        prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (_solver,), (solver_lock,))
+        pool.starmap(z3_bench_with, prd)
 
+        # with _solver.new_frame():
+        #     _solver.add(lator.translate_expr(f))
+        #     t0 = ....
+        #     res = _solver.check()
     # solver: str, File: str, pre_inv: Optional[int], transition: int, post_inv: int, bound: Optional[int], result: SAT/UNSAT/TIME_OUT, time: datetime, 
     # string, Optional[int], int, int, int, datetime?, 
     # python tmp file 
@@ -647,6 +687,10 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     s = subparsers.add_parser('kod-benchmark', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
     s.set_defaults(main=kod_benchmark)
+    result.append(s)
+
+    s = subparsers.add_parser('z3-benchmark', help='Benchmark z3 running time for finding instance by removing invariants one at a time')
+    s.set_defaults(main=z3_benchmark)
     result.append(s)
 
     for s in result:
