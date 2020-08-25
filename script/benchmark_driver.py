@@ -34,6 +34,7 @@ errored_files = [
                     'sharded-kv_unsafe.pyv',
                     'sharded-kv_unsafe2.pyv',
                 ]
+
 def bench_kod_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
     try:
@@ -45,13 +46,28 @@ def bench_kod_on(filepath: str) -> None:
         print(f'{os.path.basename(filepath)}: TIMED OUT!')
     print(f'[PID={os.getpid()}] DONE')
 
+def bench_z3_on(filepath: str) -> None:
+    print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
+    try:
+        subprocess.run(
+            [MYPYVY_EXECUTABLE_PATH, 'kod-benchmark', filepath],
+            timeout=60*60
+        )
+    except subprocess.TimeoutExpired:
+        print(f'{os.path.basename(filepath)}: TIMED OUT!')
+    print(f'[PID={os.getpid()}] DONE')
+
 def main() -> None:
+    if len(sys.argv > 1) and sys.argv[1] == 'z3':
+        bench = bench_z3_on
+    else:
+        bench = bench_kod_on
     test_files = [os.path.join(root, f) for root, _, files in os.walk(TESTS_ROOT_DIRECTORY_PATH) for f in files if re.match(r'.*[.]pyv', f)]
     for file in test_files:
         if os.path.basename(file) in already_checked or os.path.basename(file) in errored_files:
             print(f'Already Checked: {os.path.basename(file)}')
         else:
-            bench_kod_on(file)
+            bench(file)
 
 if __name__ == '__main__':
     main()
