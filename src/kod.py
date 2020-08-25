@@ -622,7 +622,6 @@ def z3_bench_with(
         remove_index: Optional[int],
         check_index: int,
         solver: Solver,
-        solver_lock: multiprocessing.synchronize.Lock
         ) -> None:
 
     prog = syntax.the_program
@@ -631,29 +630,29 @@ def z3_bench_with(
     lator = solver.get_translator(2)
     class_name = get_class_name(utils.args.filename, '_' + str(hash((ition.name, remove_index, check_index))), True)
     f = And(*pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
-    with solver_lock:
-        with solver.new_frame():
-            translation_start = datetime.now()
-            solver.add(lator.translate_expr(f))
-            translation_end = datetime.now()
-            solving_start = datetime.now()
-            res = solver.check()
-            solving_end = datetime.now()
-    if res.r == z3.Z3_L_TRUE:
-        outcome = "SATISFIABLE"
-    elif res.r == z3.Z3_L_FALSE:
-        outcome = "UNSATISFIABLE"
-    else:
-        outcome = "UNKNOWN"
-    result = {
-        "outcome": outcome,
-        "ition": ition.name,
-        "remove_index": remove_index,
-        "check_indedx": check_index,
-        "translation_time": (translation_end - translation_start).microseconds / 1000,
-        "solving_time": (solving_end - solving_start).microseconds / 1000,
-    }
-    open(class_name + '.result', 'w').write(str(result))
+
+    with solver.new_frame():
+        solver.add(lator.translate_expr(f))
+        with open(class_name + '.smt2', 'w') as f:
+            f.write(solver.z3solver.to_smt2())
+
+    with open(class_name + '.run', 'w') as f:
+        f.write(repr(dict(ition=ition.name, remove_index=remove_index, check_index=check_index)))
+
+    # if res.r == z3.Z3_L_TRUE:
+    #     outcome = "SATISFIABLE"
+    # elif res.r == z3.Z3_L_FALSE:
+    #     outcome = "UNSATISFIABLE"
+    # else:
+    #     outcome = "UNKNOWN"
+    # result = {
+    #     "outcome": outcome,
+    #     "ition": ition.name,
+    #     "remove_index": remove_index,
+    #     "check_indedx": check_index,
+    #     "translation_time": (translation_end - translation_start).microseconds / 1000,
+    #     "solving_time": (solving_end - solving_start).microseconds / 1000,
+    # }
     
 
     
@@ -663,11 +662,10 @@ def z3_benchmark(_solver: Solver) -> None:
     invs = [inv.expr for inv in prog.invs()]
     solver_lock = threading.Lock()
     if not os.path.exists('_Z3_RESULTS'):
-        os.mkdir('_KOD_RESULTS')
+        os.mkdir('_Z3_RESULTS')
     
-    with ThreadPool(cpu_count()) as pool:
-        prd = product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (_solver,), (solver_lock,))
-        pool.starmap(z3_bench_with, prd)
+    for entry in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs)), (_solver,)):
+        z3_bench_with(*entry)
 
         # with _solver.new_frame():
         #     _solver.add(lator.translate_expr(f))
