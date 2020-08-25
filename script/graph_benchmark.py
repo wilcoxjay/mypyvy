@@ -3,8 +3,8 @@ import sys
 import re
 from ast import literal_eval
 
-KOD_RESULTS_DIRECTORY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/_kod_files/_KOD_RESULTS/'
-Z3_RESULTS_DIRECTORY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/mypyvy/_z3_files/'
+KOD_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_KOD_RESULTS/'
+Z3_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_Z3_RESULTS/'
 '''
 {
     'lockserv': {
