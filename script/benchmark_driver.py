@@ -50,7 +50,7 @@ def bench_z3_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
     try:
         subprocess.run(
-            [MYPYVY_EXECUTABLE_PATH, 'kod-benchmark', filepath],
+            [MYPYVY_EXECUTABLE_PATH, 'z3-benchmark', filepath],
             timeout=60*60
         )
     except subprocess.TimeoutExpired:
