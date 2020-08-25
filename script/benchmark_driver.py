@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import subprocess
 from subprocess import CompletedProcess
@@ -58,7 +59,7 @@ def bench_z3_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] DONE')
 
 def main() -> None:
-    if len(sys.argv > 1) and sys.argv[1] == 'z3':
+    if len(sys.argv) > 1 and sys.argv[1] == 'z3':
         bench = bench_z3_on
     else:
         bench = bench_kod_on
