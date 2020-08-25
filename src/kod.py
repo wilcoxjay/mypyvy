@@ -34,8 +34,8 @@ from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set
 from ast import literal_eval
 import pandas as pd
 
-KODKOD_JAR_EXECUTABLE_PATH = '/Users/amohamdy/stanford/aiken-1920-research/kodkod/kodkod.jar:.'
-KODKOD_LIBRARY_PATH = '/Users/amohamdy/stanford/aiken-1920-research/kodkod/darwin_x86_64/'
+KODKOD_JAR_EXECUTABLE_PATH = '/scr/padon/kodkod/kodkod.jar:.'
+KODKOD_LIBRARY_PATH = '/scr/padon/kodkod/'
 # KodExpr = str
 class KodExpr: # KodExpr is either a kodkod Formula or a kodkod Relational Expression
     # Note a KodKod Decl is treated as a formula here
