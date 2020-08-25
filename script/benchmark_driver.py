@@ -60,6 +60,7 @@ def bench_z3_on(filepath: str) -> None:
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == 'z3':
+        print('Generating Z3 Files')
         bench = bench_z3_on
     else:
         bench = bench_kod_on
