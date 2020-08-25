@@ -36,7 +36,7 @@ errored_files = [
                 ]
 
 def bench_kod_on(filepath: str) -> None:
-    print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
+    print(f'[PID={os.getpid()}] KodKod: Benchmarking {os.path.basename(filepath)} ... ', end='')
     try:
         subprocess.run(
             [MYPYVY_EXECUTABLE_PATH, 'kod-benchmark', filepath],
@@ -47,7 +47,7 @@ def bench_kod_on(filepath: str) -> None:
     print(f'[PID={os.getpid()}] DONE')
 
 def bench_z3_on(filepath: str) -> None:
-    print(f'[PID={os.getpid()}] Benchmarking {os.path.basename(filepath)} ... ', end='')
+    print(f'[PID={os.getpid()}] Z3: Benchmarking {os.path.basename(filepath)} ... ', end='')
     try:
         subprocess.run(
             [MYPYVY_EXECUTABLE_PATH, 'z3-benchmark', filepath],
