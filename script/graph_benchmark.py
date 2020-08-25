@@ -26,7 +26,7 @@ def fill_params_map(files_map, run_files):
 def get_kod_params(filename):
     so_far = filename[:filename.rfind('.kod.out')]
     classname, ition, remove_index, check_index, bound = so_far.rsplit('_', 4)
-    return classname, ition, int(remove_index) if remove_index else -1, int(check_index), int(bound)
+    return classname, ition, int(remove_index) if remove_index != 'None' else -1, int(check_index), int(bound)
 
 
 def fill_kod_map(kod_results, result_files):
