@@ -438,7 +438,7 @@ class KodSolver:
             '      String out = String.format("{`bound`: %d, `outcome`: `%s`, `translation_time`: %s, `solving_time`: %s}", i, sol.outcome(), sol.stats().translationTime(), sol.stats().solvingTime());',
             '      out = out.replace(\'`\', \'"\');',
             '      try {',
-            '         FileWriter writer = new FileWriter("_KOD_RESULTS" + File.separator + model.getClass().getName() + "_" + i + "kod.out", false);',
+            '         FileWriter writer = new FileWriter("_KOD_RESULTS" + File.separator + model.getClass().getName() + "_" + i + ".kod.out", false);',
             '         writer.write(out);',
             '         writer.flush();',
             '         writer.close();',
