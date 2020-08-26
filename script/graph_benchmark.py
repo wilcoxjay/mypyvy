@@ -12,7 +12,9 @@ Z3_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_Z3_RESULTS/'
     {
         ('request_msg', 1, 0):
         {
-            (unsat, 3ms), (unsat, 5ms), (sat, 2ms)
+            1: (unsat, 3ms),
+            2: (unsat, 5ms),
+            3: (sat, 2ms)
         }
     }
 }
@@ -58,13 +60,18 @@ def main():
     # fill_params_map(params_map, run_files)
     kod_results = {}
     fill_kod_map(kod_results, kod_results_files)
-    for file_results in kod_results.values(): # for every file
-        fig, ax = plt.subplots(len(file_results.keys()))
-        for i, (params, results) in enumerate(file_results.items()): # for every transition, remove_index, check_index
-            ax[i + 1].scatter(params, [results[i + 1][1]])
-            if len(results) != 1:
-                ax[i + 1].scatter(params, [results[len(results) - 1][1]])
-                plt.show()
+    fig, ax = plt.subplots(len(kod_results.keys()))
+    for i, file_results in enumerate(kod_results.values()): # for every file
+        x = []
+        y = []
+        res = []
+        for (params, results) in enumerate(file_results.items()): # for every transition, remove_index, check_index
+            x.append(params)
+            res.append(results[max(results.keys())][0])
+            y.append(results[max(results.keys())][1])
+        # should probably sort?
+        ax[i].plot(x, y)
+        plt.show()
 
 
 
