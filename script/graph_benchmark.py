@@ -60,7 +60,7 @@ def main():
     # fill_params_map(params_map, run_files)
     kod_results = {}
     fill_kod_map(kod_results, kod_results_files)
-    fig, ax = plt.subplots(len(kod_results.keys()))
+    # fig, ax = plt.subplots(len(kod_results.keys()))
     for i, file_results in enumerate(kod_results.values()): # for every file
         x = []
         y = []
@@ -70,8 +70,10 @@ def main():
             res.append(results[max(results.keys())][0])
             y.append(results[max(results.keys())][1])
         # should probably sort?
-        ax[i].plot(x, y)
+        plt.plot(x, y)
         plt.show()
+        # ax[i].plot(x, y)
+        # plt.show()
 
 
 
