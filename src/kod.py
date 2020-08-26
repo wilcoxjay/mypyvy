@@ -435,7 +435,7 @@ class KodSolver:
             '   solver.options().setSolver(SATFactory.MiniSat);',
             f'   for(int i = {self.bound if self.one_bound else 1}; i <= {self.bound}; i++) {{',
             '      final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds(i));',
-            '      String out = String.format("`bound` = %d,\\n`outcome` = `%s`", i, sol.outcome());',
+            '      String out = String.format("%d\\n%s", i, sol.outcome());',
             '      out = out.replace(\'`\', \'"\');',
             '      try {',
             '         FileWriter writer = new FileWriter("_KOD_RESULTS" + File.separator + model.getClass().getName() + "_" + i + ".kod.out", false);',
