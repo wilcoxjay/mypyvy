@@ -48,7 +48,7 @@ def fill_kod_map(kod_results, result_files):
             kod_results[classname] = {}
         if not (ition, remove_index, check_index) in kod_results[classname]:
             kod_results[classname][(ition, remove_index, check_index)] = []
-        kod_results[classname][(ition, remove_index, check_index)][bound].append((result['outcome'], result['solving_time']))
+        kod_results[classname][(ition, remove_index, check_index)].append((result['outcome'], result['solving_time']))
 
 def main():
     kod_results_files = [os.path.join(root, f) for root, _, files in os.walk(KOD_RESULTS_DIRECTORY_PATH) for f in files if re.match(r'.*[.]kod[.]out', f)]
@@ -64,6 +64,7 @@ def main():
             ax[i].scatter(params, results[0][1])
             if len(results) != 1:
                 ax[i].scatter(params, results[len(results) - 1])
+                plt.show()
 
 
 
