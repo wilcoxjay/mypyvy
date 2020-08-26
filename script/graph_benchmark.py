@@ -47,10 +47,8 @@ def fill_kod_map(kod_results, result_files):
         if not classname in kod_results:
             kod_results[classname] = {}
         if not (ition, remove_index, check_index) in kod_results[classname]:
-            kod_results[classname][(ition, remove_index, check_index)] = []
-        if bound != len(kod_results[classname][(ition, remove_index, check_index)]) - 1:
-            assert False, f'bound: {bound} \t kod_results[classname][(ition, remove_index, check_index)]: {kod_results[classname][(ition, remove_index, check_index)]}'
-        kod_results[classname][(ition, remove_index, check_index)].append((result['outcome'], result['solving_time']))
+            kod_results[classname][(ition, remove_index, check_index)] = {}
+        kod_results[classname][(ition, remove_index, check_index)][bound] = (result['outcome'], result['solving_time'])
 
 def main():
     kod_results_files = [os.path.join(root, f) for root, _, files in os.walk(KOD_RESULTS_DIRECTORY_PATH) for f in files if re.match(r'.*[.]kod[.]out', f)]
