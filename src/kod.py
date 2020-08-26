@@ -435,10 +435,10 @@ class KodSolver:
             '   solver.options().setSolver(SATFactory.MiniSat);',
             f'   for(int i = {self.bound if self.one_bound else 1}; i <= {self.bound}; i++) {{',
             '      final Solution sol = solver.solve(Formula.and(model.formula(), model.spec()), model.bounds(i));',
-            '      String out = String.format("%d\\n%s", i, sol.outcome());',
+            '      String out = String.format("{`bound`: %d, `outcome`: `%s`, `translation_time`: %s, `solving_time`: %s}", i, sol.outcome(), sol.stats().translationTime(), sol.stats().solvingTime());',
             '      out = out.replace(\'`\', \'"\');',
             '      try {',
-            '         FileWriter writer = new FileWriter("_KOD_RESULTS" + File.separator + model.getClass().getName() + "_" + i + ".kod.out", false);',
+            '         FileWriter writer = new FileWriter("_KOD_RESULTS" + File.separator + model.getClass().getName() + "__" + i + ".kod.result", false);',
             '         writer.write(out);',
             '         writer.flush();',
             '         writer.close();',
@@ -480,11 +480,6 @@ class KodSolver:
         lines.extend(f'import ' + module +';' for module in self.get_dependencies())
         lines.extend(self.kod_get_class())
         return lines
-
-def get_class_name(filename: str) -> str:
-    kod_class_name = os.path.splitext(os.path.basename(filename))[0]
-    kod_class_name = kod_class_name.replace('-', '_')
-    return kod_class_name
 
 def kod_check_sat(
         prog: Program,
@@ -547,9 +542,13 @@ def kod_verify(_solver: Solver) -> None:
             #     print(f'GOOD')
             print('Checking ition')
     
+def get_class_name(filename: str) -> str:
+    kod_class_name = os.path.splitext(os.path.basename(filename))[0]
+    kod_class_name = kod_class_name.replace('-', '_')
+    return kod_class_name
 
 MAXIMUM_SATISFIABILITY_BOUND = 10
-def bench_with(
+def kod_bench_with(
         solver: Solver,
         ition: DefinitionDecl,
         remove_index: Optional[int],
@@ -559,31 +558,56 @@ def bench_with(
     invs = [inv.expr for inv in prog.invs()] 
     pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
     class_name = get_class_name(utils.args.filename)
-    file_name = f'{class_name}_{ition.name}_{remove_index}_{check_index}'
-    lator = solver.get_translator(2)
+    file_name = f'{class_name}__{ition.name}__{remove_index}__{check_index}'
 
     axioms = [a.expr for a in prog.axioms()]
     f = And(*axioms, *pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
 
     kod_check_sat(prog, f, MAXIMUM_SATISFIABILITY_BOUND, 2, file_name)
 
-    with solver.new_frame():
-        solver.add(lator.translate_expr(f))
-        with open(file_name + '.smt2', 'w') as smt2_file:
-            smt2_file.write(solver.z3solver.to_smt2())
-
-def benchmark(_solver: Solver) -> None:
+def kod_benchmark(_solver: Solver) -> None:
     prog = syntax.the_program
     print(f'[{datetime.now()}] [PID={os.getpid()}] Starting benchmark on {os.path.basename(utils.args.filename)}')
     invs = [inv.expr for inv in prog.invs()]
 
     if not os.path.exists('_KOD_RESULTS'):
         os.mkdir('_KOD_RESULTS')
+
+    for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
+        kod_bench_with(_solver, ition, remove_index, check_index)
+
+def z3_bench_with(
+        solver: Solver,
+        ition: DefinitionDecl,
+        remove_index: Optional[int],
+        check_index: int
+        ) -> None:
+    prog = syntax.the_program
+    invs = [inv.expr for inv in prog.invs()] 
+    pre_invs = [inv for counter, inv in enumerate(invs) if counter != remove_index]      
+    class_name = get_class_name(utils.args.filename)
+    file_name = f'{class_name}__{ition.name}__{remove_index}__{check_index}'
+    lator = solver.get_translator(2)
+
+    axioms = [a.expr for a in prog.axioms()]
+    f = And(*axioms, *pre_invs, ition.as_twostate_formula(prog.scope), New(Not(invs[check_index])))
+
+    with solver.new_frame():
+        solver.add(lator.translate_expr(f))
+        with open(file_name + '.smt2', 'w') as smt2_file:
+            smt2_file.write(solver.z3solver.to_smt2())
+
+def z3_benchmark(_solver: Solver) -> None:
+    prog = syntax.the_program
+    print(f'[{datetime.now()}] [PID={os.getpid()}] Starting benchmark on {os.path.basename(utils.args.filename)}')
+    invs = [inv.expr for inv in prog.invs()]
+
     if not os.path.exists('_Z3_RESULTS'):
         os.mkdir('_Z3_RESULTS')
 
     for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
-        bench_with(_solver, ition, remove_index, check_index)
+        z3_bench_with(_solver, ition, remove_index, check_index)
+
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
@@ -594,7 +618,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     result.append(s)
 
     s = subparsers.add_parser('kod-benchmark', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
-    s.set_defaults(main=benchmark)
+    s.set_defaults(main=kod_benchmark)
+    result.append(s)
+
+    s = subparsers.add_parser('z3-benchmark', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
+    s.set_defaults(main=z3_benchmark)
     result.append(s)
 
     for s in result:

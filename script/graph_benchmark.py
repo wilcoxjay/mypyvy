@@ -4,8 +4,8 @@ import re
 import matplotlib.pyplot as plt
 from ast import literal_eval
 
-KOD_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_KOD_RESULTS/'
-Z3_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_Z3_RESULTS/'
+KOD_RESULTS_DIRECTORY_PATH = '_KOD_RESULTS/'
+Z3_RESULTS_DIRECTORY_PATH = '_Z3_RESULTS/'
 '''
 kod_results is something like this:
 {
@@ -35,7 +35,7 @@ def fill_params_map(files_map, run_files):
 
 def get_kod_params(filename):
     so_far = filename[:filename.rfind('.kod.out')]
-    classname, ition, remove_index, check_index, bound = so_far.rsplit('_', 4)
+    classname, ition, remove_index, check_index, bound = so_far.rsplit('__', 4)
     return classname, ition, int(remove_index) if remove_index != 'None' else -1, int(check_index), int(bound)
 
 
@@ -46,6 +46,7 @@ def fill_kod_map(kod_results, result_files):
             try:
                 result = literal_eval(f.read())
             except:
+                print('ERROR reading file')
                 continue
         filename = os.path.basename(file)
         classname, ition, remove_index, check_index, bound = get_kod_params(filename)
@@ -53,9 +54,10 @@ def fill_kod_map(kod_results, result_files):
             kod_results[classname] = {}
         if not (ition, remove_index, check_index) in kod_results[classname]:
             kod_results[classname][(ition, remove_index, check_index)] = {}
-        kod_results[classname][(ition, remove_index, check_index)][bound] = (result['outcome'], result['solving_time'])
+        kod_results[classname][(ition, remove_index, check_index)][bound] = (result['outcome'], result['solving_time'] + result['translation_time'])
 
-def main():
+#def main():
+if __name__ == '__main__':
     kod_results_files = [os.path.join(root, f) for root, _, files in os.walk(KOD_RESULTS_DIRECTORY_PATH) for f in files if re.match(r'.*[.]kod[.]out', f)]
     # z3_results_files = [os.path.join(root, f) for root, _, files in os.walk(Z3_RESULTS_DIRECTORY_PATH) for f in files if re.match(r'.*[.]z3[.]out', f)]
     # run_files = [os.path.join(root, f) for root, _, files in os.walk(Z3_RESULTS_DIRECTORY_PATH) for f in files if re.match(r'.*[.]run', f)]
@@ -64,23 +66,38 @@ def main():
     kod_results = {}
     fill_kod_map(kod_results, kod_results_files)
     fig, ax = plt.subplots(len(kod_results.keys()))
-    for i, file_results in enumerate(kod_results.values()): # for every file
+    for i, (filename, file_results) in enumerate(kod_results.items()): # for every file
         x = []
         y = []
         res = []
         for params, results in file_results.items(): # for every transition, remove_index, check_index
-            x.append(params)
-            res.append(results[max(results.keys())][0])
-            y.append(results[max(results.keys())][1])
+            total_time = sum(t for _, t in results.values())
+            y.append(total_time)
         # should probably sort?
-        ax[i].plot(x, y)
-        fig.show()
-        fig.savefig("example_fig")
-
-
-
-
-
-
-if __name__ == '__main__':
-    main()
+        plt.figure()
+        plt.plot(y, 'o')
+        # plt.show()
+        plt.savefig(f'{filename}.png')
+        # ax[i].plot(x, y)
+        # fig.show()
+        # fig.savefig("example_fig")
+    x = []
+    y = []
+    for r in kod_results.values():
+        for rr in r.values():
+            for bound, (res, t) in rr.items():
+                if res == 'UNSATISFIABLE':
+                    x.append(bound)
+                    y.append(t)
+    plt.figure()
+    plt.plot(x, y, 'o')
+    x = []
+    y = []
+    for r in kod_results.values():
+        for rr in r.values():
+            for bound, (res, t) in rr.items():
+                if res == 'SATISFIABLE':
+                    x.append(bound)
+                    y.append(t)
+    plt.plot(x, y, 'o')
+    plt.savefig('bound.png')
