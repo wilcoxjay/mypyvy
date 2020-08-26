@@ -74,7 +74,7 @@ def main():
             y.append(results[max(results.keys())][1])
         # should probably sort?
         ax[i].plot([1, 2, 3 , 4 ,5], [5, 4, 3, 2, 1])
-        ax[i].show()
+        fig.show()
 
 
 
