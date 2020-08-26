@@ -7,6 +7,7 @@ from ast import literal_eval
 KOD_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_KOD_RESULTS/'
 Z3_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_Z3_RESULTS/'
 '''
+kod_results is something like this:
 {
     'lockserv':
     {
@@ -16,7 +17,9 @@ Z3_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_Z3_RESULTS/'
             2: (unsat, 5ms),
             3: (sat, 2ms)
         }
+        ...
     }
+    ...
 }
 '''
 def get_filename(file, prefix, suffix):
@@ -60,7 +63,7 @@ def main():
     # fill_params_map(params_map, run_files)
     kod_results = {}
     fill_kod_map(kod_results, kod_results_files)
-    # fig, ax = plt.subplots(len(kod_results.keys()))
+    fig, ax = plt.subplots(len(kod_results.keys()))
     for i, file_results in enumerate(kod_results.values()): # for every file
         x = []
         y = []
@@ -70,10 +73,8 @@ def main():
             res.append(results[max(results.keys())][0])
             y.append(results[max(results.keys())][1])
         # should probably sort?
-        plt.plot(x, y)
-        plt.show()
-        # ax[i].plot(x, y)
-        # plt.show()
+        ax[i].plot([1, 2, 3 , 4 ,5], [5, 4, 3, 2, 1])
+        ax[i].show()
 
 
 
