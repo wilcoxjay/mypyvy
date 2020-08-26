@@ -608,6 +608,13 @@ def z3_benchmark(_solver: Solver) -> None:
     for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
         z3_bench_with(_solver, ition, remove_index, check_index)
 
+def get_bench_files(_solver: Solver) -> None:
+    prog = syntax.the_program
+    invs = [inv.expr for inv in prog.invs()]
+    class_name = get_class_name(utils.args.filename)
+    with open(f'{class_name}.bench_files', 'w') as f:
+        for ition, remove_index, check_index in product(prog.transitions(), chain([None], range(len(invs))), range(len(invs))):        
+            f.write(f'{class_name}__{ition.name}__{remove_index}__{check_index}\n')
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
@@ -621,8 +628,12 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=kod_benchmark)
     result.append(s)
 
-    s = subparsers.add_parser('z3-benchmark', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
+    s = subparsers.add_parser('z3-benchmark', help='Benchmark z3 running time for finding instance by removing invariants one at a time')
     s.set_defaults(main=z3_benchmark)
+    result.append(s)
+
+    s = subparsers.add_parser('get-bench-files', help='Benchmark kodkod running time for finding instance by removing invariants one at a time')
+    s.set_defaults(main=get_bench_files)
     result.append(s)
 
     for s in result:
