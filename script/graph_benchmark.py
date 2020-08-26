@@ -61,9 +61,9 @@ def main():
     for file_results in kod_results.values(): # for every file
         fig, ax = plt.subplots(len(file_results.keys()))
         for i, (params, results) in enumerate(file_results.items()): # for every transition, remove_index, check_index
-            ax[i + 1].scatter(params, results[i + 1][1])
+            ax[i + 1].scatter(params, [results[i + 1][1]])
             if len(results) != 1:
-                ax[i + 1].scatter(params, results[len(results) - 1])
+                ax[i + 1].scatter(params, [results[len(results) - 1][1]])
                 plt.show()
 
 
