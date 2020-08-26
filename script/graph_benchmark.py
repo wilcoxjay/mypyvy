@@ -73,7 +73,7 @@ def main():
             res.append(results[max(results.keys())][0])
             y.append(results[max(results.keys())][1])
         # should probably sort?
-        ax[i].plot([1, 2, 3 , 4 ,5], [5, 4, 3, 2, 1])
+        ax[i].plot(x, y)
         fig.show()
         fig.savefig("example_fig")
 
