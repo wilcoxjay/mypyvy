@@ -48,6 +48,8 @@ def fill_kod_map(kod_results, result_files):
             kod_results[classname] = {}
         if not (ition, remove_index, check_index) in kod_results[classname]:
             kod_results[classname][(ition, remove_index, check_index)] = []
+        if bound != len(kod_results[classname][(ition, remove_index, check_index)]) - 1:
+            assert False, f'bound: {bound} \t kod_results[classname][(ition, remove_index, check_index)]: {kod_results[classname][(ition, remove_index, check_index)]}'
         kod_results[classname][(ition, remove_index, check_index)].append((result['outcome'], result['solving_time']))
 
 def main():
@@ -60,10 +62,10 @@ def main():
     fill_kod_map(kod_results, kod_results_files)
     for file_results in kod_results.values(): # for every file
         fig, ax = plt.subplots(len(file_results.keys()))
-        for i, (params, results) in enumerate(file_results): # for every transition, remove_index, check_index
-            ax[i].scatter(params, results[0][1])
+        for (params, results) in file_results: # for every transition, remove_index, check_index
+            ax[0].scatter(params, results[0][1])
             if len(results) != 1:
-                ax[i].scatter(params, results[len(results) - 1])
+                ax[0].scatter(params, results[len(results) - 1])
                 plt.show()
 
 
