@@ -60,10 +60,10 @@ def main():
     fill_kod_map(kod_results, kod_results_files)
     for file_results in kod_results.values(): # for every file
         fig, ax = plt.subplots(len(file_results.keys()))
-        for (params, results) in file_results: # for every transition, remove_index, check_index
-            ax[0].scatter(params, results[0][1])
+        for i, (params, results) in enumerate(file_results.items()): # for every transition, remove_index, check_index
+            ax[i].scatter(params, results[i][1])
             if len(results) != 1:
-                ax[0].scatter(params, results[len(results) - 1])
+                ax[i].scatter(params, results[len(results) - 1])
                 plt.show()
 
 
