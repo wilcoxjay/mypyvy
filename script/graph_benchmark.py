@@ -1,14 +1,19 @@
 import os
 import sys
 import re
+import matplotlib.pyplot as plt
 from ast import literal_eval
 
 KOD_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_KOD_RESULTS/'
 Z3_RESULTS_DIRECTORY_PATH = '/scr/amohamdy/mypyvy/benchmark_files/_Z3_RESULTS/'
 '''
 {
-    'lockserv': {
-        ('request_msg', 1, 0): (unsat, 3ms)
+    'lockserv':
+    {
+        ('request_msg', 1, 0):
+        {
+            (unsat, 3ms), (unsat, 5ms), (sat, 2ms)
+        }
     }
 }
 '''
@@ -42,8 +47,8 @@ def fill_kod_map(kod_results, result_files):
         if not classname in kod_results:
             kod_results[classname] = {}
         if not (ition, remove_index, check_index) in kod_results[classname]:
-            kod_results[classname][(ition, remove_index, check_index)] = {}
-        kod_results[classname][(ition, remove_index, check_index)][bound] = (result['outcome'], result['solving_time'])
+            kod_results[classname][(ition, remove_index, check_index)] = []
+        kod_results[classname][(ition, remove_index, check_index)][bound].append((result['outcome'], result['solving_time']))
 
 def main():
     kod_results_files = [os.path.join(root, f) for root, _, files in os.walk(KOD_RESULTS_DIRECTORY_PATH) for f in files if re.match(r'.*[.]kod[.]out', f)]
@@ -53,9 +58,17 @@ def main():
     # fill_params_map(params_map, run_files)
     kod_results = {}
     fill_kod_map(kod_results, kod_results_files)
-    print('kod_results:', kod_results)
+    for file_results in kod_results.values(): # for every file
+        fig, ax = plt.subplots(len(file_results.keys()))
+        for i, (params, results) in enumerate(file_results): # for every transition, remove_index, check_index
+            ax[i].scatter(params, results[0][1])
+            if len(results) != 1:
+                ax[i].scatter(params, results[len(results) - 1])
 
-    # print('map: ', files_map)
+
+
+
+
 
 if __name__ == '__main__':
     main()
