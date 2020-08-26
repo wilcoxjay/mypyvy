@@ -65,7 +65,7 @@ def main():
         x = []
         y = []
         res = []
-        for (params, results) in enumerate(file_results.items()): # for every transition, remove_index, check_index
+        for params, results in file_results.items(): # for every transition, remove_index, check_index
             x.append(params)
             res.append(results[max(results.keys())][0])
             y.append(results[max(results.keys())][1])
