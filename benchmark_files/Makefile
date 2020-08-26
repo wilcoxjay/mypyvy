@@ -19,10 +19,10 @@ run-z3: $(patsubst %.smt2, %.z3.out, $(Z3_BENCHMARK_FILES))
 
 %.kodkod.out: %.class    
 
-	(/usr/bin/time -f "%e" timeout -v 16m  prlimit --verbose --data=10000000000 java -cp $(KODKOD_JAR_EXECUTABLE_PATH) -Djava.library.path=$(KODKOD_LIBRARY_PATH) $(basename $<) ) &> $@
+	(/usr/bin/time -f "%e" timeout -v 10m  prlimit --verbose --data=16000000000 java -cp $(KODKOD_JAR_EXECUTABLE_PATH) -Djava.library.path=$(KODKOD_LIBRARY_PATH) $(basename $<) ) &> $@
 
 %.z3.out: %.smt2
-	(/usr/bin/time -f "%e" timeout -v 16m  prlimit --verbose --data=10000000000 $(Z3) $< ) &> $@
+	(/usr/bin/time -f "%e" timeout -v 10m  prlimit --verbose --data=16000000000 $(Z3) $< ) &> $@
 
 clean:
 	rm -v *.class *.out *.result	
