@@ -15,75 +15,116 @@ immutable constant empty: node_state
 # the empty state is the least state
 axiom le(empty, X)
 
-# let's say that there are three nodes
+# let's say that there are three nodes in the chain, plus one client
+immutable constant client: node_id
 immutable constant head: node_id
 immutable constant middle: node_id
 immutable constant tail: node_id
 
-# the head, middle, and tail nodes are all different
-# (this is too strong; it should be OK for them to all be the same, too)
-axiom head != middle & head != tail & middle != tail
+# client is distinct from head/middle/tail
+axiom client != head && client != middle && client != tail
+
+# if head = tail, then head/middle/tail are all the same
+axiom head = tail -> head = middle && middle = tail
 
 # nodes have states
-# TODO: maybe this could just be a big mutable relation
-mutable constant head_state : node_state
-mutable constant middle_state : node_state
-mutable constant tail_state : node_state
+mutable function state(node_id): node_state
 
 # set of messages in transit: sender, recipient, data
 mutable relation msg(node_id, node_id, node_state)
 
 # all replicas start in the empty state
-init head_state = empty
-init middle_state = empty
-init tail_state = empty
+init state(X) = empty
 # with no messages in transit
 init !msg(X, Y, Z)
 
-# the head replica can move to a new state and send its state to the middle node
-transition head_send(next: node_state)
-  modifies head_state, msg
-  le(head_state, next) & # the new state must be bigger
-  new(head_state) = next &
-  # add next to the set of messages sent from head to middle
-  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = head & Y = middle & Z = next))
+# the client node can move to a new state
+transition client_update(next: node_state)
+  modifies state
+  le(state(client), next) & # the new state must be bigger
+  # update client's state
+  (forall N. N != client -> new(state(N)) = state(N)) & new(state(client)) = next
 
-# the middle replica can receive a message and update its state
+# the client node can send its state to the head node
+transition client_send()   
+  modifies msg
+  # add to the set of messages in transit
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = client & Y = head & Z = state(client)))
+
+# the head node can receive a message and update its state
+transition head_recv(recvd: node_state)
+  modifies state, msg
+  le(state(head), recvd) &
+  msg(client, head, recvd) & # the received message must have come from client
+  # NB: This precondition simulates FIFO delivery in a sneaky way,
+  # by reusing the ordering on states.
+  # A non-sneaky way to model FIFO would be with something like message sequence numbers.
+  (msg(client, head, Z) -> le(recvd, Z)) & # this must be the smallest of the messages from client
+  # update head's state
+  (forall N. N != head -> new(state(N)) = state(N)) & new(state(head)) = recvd &
+  # take recvd out of the set of messages in transit
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & !(X = client & Y = head & Z = recvd))
+
+# the head node can send its state to the middle node
+transition head_send()
+  modifies msg
+  # add to the set of messages in transit
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = head & Y = middle & Z = state(head)))
+
+# the middle node can receive a message and update its state
 transition middle_recv(recvd: node_state)
-  modifies middle_state, msg
-  le(middle_state, recvd) &
+  modifies state, msg
+  le(state(middle), recvd) &
   msg(head, middle, recvd) & # the received message must have come from head
   (msg(head, middle, Z) -> le(recvd, Z)) & # this must be the smallest of the messages from head
-  new(middle_state) = recvd &
-  # take recvd out of the set of messages
-  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & (X = head & Y = middle & Z != recvd))
+  # update middle's state
+  (forall N. N != middle -> new(state(N)) = state(N)) & new(state(middle)) = recvd &
+  # take recvd out of the set of messages in transit
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & !(X = head & Y = middle & Z = recvd))
 
-# the middle replica can send its state to the tail node
+# the middle node can send its state to the tail node
 transition middle_send()
   modifies msg
-  # add next to the set of messages sent from middle to tail
-  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = middle & Y = tail & Z = middle_state))
+  # add to the set of messages in transit
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) | (X = middle & Y = tail & Z = state(middle)))
 
-# the tail replica can receive a message and update its state
+# the tail node can receive a message and update its state
 transition tail_recv(recvd: node_state)
-  modifies tail_state, msg
-  le(tail_state, recvd) &
+  modifies state, msg
+  le(state(tail), recvd) &
   msg(middle, tail, recvd) & # the received message must have come from middle
   (msg(middle, tail, Z) -> le(recvd, Z)) & # this must be the smallest of the messages from middle
-  new(tail_state) = recvd &
-  # take x out of the set of messages
-  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & (X = middle & Y = tail & Z != recvd))
+  # update tail's state
+  (forall N. N != tail -> new(state(N)) = state(N)) & new(state(tail)) = recvd &
+  new(state(tail)) = recvd &
+  # take recvd out of the set of messages in transit
+  (new(msg(X, Y, Z)) <-> msg(X, Y, Z) & !(X = middle & Y = tail & Z = recvd))
 
+# client is always ahead of head,
+invariant le(state(head), state(client))
 # head is always ahead of middle,
-invariant le(middle_state, head_state)
+invariant le(state(middle), state(head))
 # which is always ahead of tail,
-invariant le(tail_state, middle_state)
+invariant le(state(tail), state(middle))
 # so head is always ahead of tail
-invariant le(tail_state, head_state)
+invariant le(state(tail), state(head))
 
-# if a message is in flight, the state in that message is no bigger than whatever the head state is	
-invariant msg(X, Y, Z) -> le(Z, head_state)
+# if a message is in flight, the state in that message is no bigger than whatever the client state is	
+invariant msg(X, Y, Z) -> le(Z, state(client))
 
 # in general, the state in a message is no bigger than the sender's state
-invariant msg(head, Y, Z) -> le(Z, head_state)
-invariant msg(middle, Y, Z) -> le(Z, middle_state)
+invariant msg(client, Y, Z) -> le(Z, state(client))
+invariant msg(head, Y, Z) -> le(Z, state(head))
+invariant msg(middle, Y, Z) -> le(Z, state(middle))
+
+# a normal execution
+sat trace {
+  client_update
+  client_send
+  head_recv
+  head_send
+  middle_recv
+  middle_send
+  tail_recv
+  assert state(tail) != empty
+}
