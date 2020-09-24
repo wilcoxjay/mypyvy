@@ -1,0 +1,17 @@
+sort account
+mutable function balance(account): int
+
+init balance(A) = 0
+
+transition deposit(a: account, amount: int)
+  modifies balance
+  & amount >= 0
+  & (forall A. new(balance(A)) = if A = a then balance(a) + amount else balance(A))
+
+transition withdraw(a: account, amount: int)
+  modifies balance
+  & amount >= 0
+  & amount <= balance(a)
+  & (forall A. new(balance(A)) = if A = a then balance(a) - amount else balance(A))
+
+safety balance(A) >= 0
