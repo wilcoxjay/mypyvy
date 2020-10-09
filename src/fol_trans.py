@@ -8,7 +8,7 @@ try:
     import separators.timer
     import separators.learn
 except ModuleNotFoundError:
-    pass
+    raise NotImplementedError()
 
 PDState = Tuple[Trace, int]
 
@@ -129,8 +129,18 @@ def predicate_to_formula(p: Expr, two_state:bool = False) -> separators.logic.Fo
             return L.And([L.Implies(p2f(p.branch, old), p2f(p.then, old)), L.Implies(L.Not(p2f(p.branch, old)), p2f(p.els, old))])
         elif isinstance(p, Id):
             assert p.name in [r.name for r in syntax.the_program.relations()]
-            return p2f(AppExpr(None, p.name, []), old)
+            immutable = False
+            for r in syntax.the_program.relations():
+                if r.name == p.name and not r.mutable:
+                    immutable = True
+            return L.Relation(p.name if old or immutable else p.name+'\'', [])
+        elif isinstance(p, Bool):
+            if p.val == True:
+                return L.And([])
+            else:
+                return L.Or([])
         else:
+            print("Failed", p, file = sys.stderr)
             assert False
     def p2t(p: Expr, old: bool) -> L.Term:
         if isinstance(p, Id):
@@ -283,13 +293,15 @@ def model_to_state(m: separators.logic.Model) -> PDState:
 
 class FOLSeparator(object):
     '''Class used to call into the folseparators code'''
-    def __init__(self, states: List[PDState]) -> None:
+    def __init__(self, states: List[PDState], sep: Optional[separators.separate.Separator] = None) -> None:
         prog = syntax.the_program
         self.states = states
         self.ids: Dict[int, int] = {}
         self.sig = prog_to_sig(prog, two_state=False)
-        S = separators.separate.HybridSeparator
-        self.separator = S(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
+        if sep is None:
+            self.separator = separators.separate.HybridSeparator(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
+        else:
+            self.separator = sep
 
     def _state_id(self, i: int) -> int:
         assert 0 <= i < len(self.states)

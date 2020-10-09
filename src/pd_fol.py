@@ -1,7 +1,12 @@
 
 import argparse
+import multiprocessing
 import random
 import time
+from multiprocessing import Process, Manager
+from typing import AnyStr
+from separators.logic import symbols
+from separators.separate import HybridSeparator
 
 from syntax import *
 from logic import *
@@ -77,7 +82,7 @@ class BlockTask(object):
         self.prior_eval_cache: List[Tuple[Set[int], Set[int]]] = []
         self.ci_cache: Dict[Tuple[int, int], bool] = {}
         self.generalize_bound = -1
-        self.generalizer: Optional[LatticeEdgeGeneralizer] = None
+        self.generalizer: Optional[EdgeGeneralizer] = None
         self.heuristic = heuristic
         
     def destroy(self) -> None:
@@ -281,8 +286,12 @@ def fol_ic3(solver: Solver) -> None:
             lower_bound_reachability(t.state, K_bound)
             return True
 
-        if utils.args.inductive_generalize:
-            inductive_generalize(t)
+        if 'parallelism' in utils.args.expt_flags:
+            inductive_generalize_parallel(t)
+        elif utils.args.inductive_generalize:
+            i = inductive_generalize(t)
+            if i is not None:
+                push()
         else:
             generalize(t.state, t.frame)
         return True
@@ -337,10 +346,10 @@ def fol_ic3(solver: Solver) -> None:
             push()
             return
 
-    def inductive_generalize(t: BlockTask) -> None:
+    def inductive_generalize(t: BlockTask) -> bool:
         # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
+        print("Inductive generalizing")
         if t.sep is None:
-            print("Inductive generalizing")
             t.sep = FOLSeparator(states)
             # Note, we may want to seed this set with some subset of the known frame transitions
             # which are most likely to constrain the solution, while avoiding adding all constraints
@@ -366,7 +375,7 @@ def fol_ic3(solver: Solver) -> None:
                 remaining.pop()
             print (f"[IC3] Unsep core is size {len(core)} out of {len(t.imp_constraints)}")
             t.imp_constraints = core
-            return
+            return None
         
         p_respects_all_transitions = True
         for (s_i, s_j) in reversed(all_transitions): # try most recent first
@@ -381,7 +390,7 @@ def fol_ic3(solver: Solver) -> None:
         if not p_respects_all_transitions:
             # exit and go back up to the top of this function, but with new constraints
             print("Added cached transition to constraints")
-            return
+            return None
         
         print(f"Candidate predicate is: {p}")
         p_ind = len(t.prior_predicates)
@@ -397,7 +406,7 @@ def fol_ic3(solver: Solver) -> None:
             print(general)
 
             add_initial((state, 0))
-            return
+            return None
         # F_i-1 ^ p => wp(p)?
         
         if t.generalizer is None:
@@ -407,20 +416,107 @@ def fol_ic3(solver: Solver) -> None:
             print("Adding new edge")
             tr, trans = res
 
-            two_state_model = generalize_cti(solver, trans, tr, frame_predicates(t.frame-1))
-            print("CTI generalized model:")
-            print(two_state_model)
+            if False:
+                two_state_model = generalize_cti(solver, trans, tr, frame_predicates(t.frame-1))
+                print("CTI generalized model:")
+                print(two_state_model)
 
             s_i, s_j = add_state((tr,0)), add_state((tr,1))
             add_transition(s_i, s_j)
             t.imp_constraints.append((s_i, s_j))
-            return
+            return None
         
         print_learn_predicate(p)
         idx = add_predicate_to_frame(p, t.frame)
-        push()
-        return
+        return idx
+    class Logger(object):
+        def __init__(self, out, name):
+            self._out = out
+            self.encoding = out.encoding
+            self._name = name
+        def write(self, s: AnyStr) -> None:
+            if s.startswith("Candidate"):
+                self._out.write(f"[{self._name}] {s}\n")
+                self._out.flush()
+    def sig_symbols(s: separators.logic.Signature) -> List[str]:
+        r: List[str] = []
+        r.extend(s.relations.keys())
+        r.extend(s.functions.keys())
+        r.extend(s.constants.keys())
+        return r
+    def inductive_generalize_parallel(t: BlockTask) -> None:
+        sig = prog_to_sig(syntax.the_program, two_state=False)
+        # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
+        def inductive_generalize_worker(name, success_queue, logic: str, expt_flags: Set[str], blocked_symbols: List[str] = []) -> None:
+            true_stdout = sys.stdout
+            sys.stdout = Logger(true_stdout, name)
+            nonlocal K_bound
+            K_bound = 1000
+            if 'impmatrix' in expt_flags:
+                backing_sep = separators.separate.ImplicationSeparator(sig, logic = logic, expt_flags= expt_flags, blocked_symbols=blocked_symbols)
+            else:
+                backing_sep = separators.separate.HybridSeparator(sig, logic = logic, expt_flags= expt_flags, blocked_symbols=blocked_symbols)
+            t.sep = FOLSeparator(states, backing_sep)
+            while True:
+                i = inductive_generalize(t)
+                if i is not None:
+                    success_queue.put((name, predicates[i]))
 
+        golden: List[separators.logic.Formula] = []
+        for inv in syntax.the_program.invs():
+            if states[t.state][0].as_state(states[t.state][1]).eval(inv.expr) == False:
+                cex = check_two_state_implication_all_transitions(solver, frame_predicates(t.frame-1), inv.expr, minimize=False)
+                g = predicate_to_formula(inv.expr)
+                golden.append(g)
+                print("Possible formula is:", g, '(relatively inductive)' if cex is None else '(not relatively inductive)')
+        
+        success_queue: multiprocessing.Queue[Tuple[str, Expr]] = multiprocessing.Queue()
+        print("Starting parallel inductive_generalize...")
+        workers: List[Process] =[]
+        
+        all_syms = sig_symbols(sig)
+        for g in all_syms: #golden:
+            #syms = symbols(g)
+            #blocked_symbols = list(set(all_syms) - set(syms))
+            blocked_symbols = [g]
+            if utils.args.logic == 'universal':
+                pass
+            if utils.args.logic == 'fol':
+                workers.append(Process(target=inductive_generalize_worker, args = ('full-b', success_queue, 'fol', set(), blocked_symbols)))
+                workers.append(Process(target=inductive_generalize_worker, args = ('alt1-b', success_queue, 'fol', set(['alternation1']), blocked_symbols)))
+                workers.append(Process(target=inductive_generalize_worker, args = ('m4-b', success_queue, 'fol', set(['matrixsize4']), blocked_symbols)))
+                # workers.append(Process(target=inductive_generalize_worker, args = ('imp', success_queue, 'fol', set(['impmatrix']), blocked_symbols)))
+            
+            workers.append(Process(target=inductive_generalize_worker, args = ('Afull-b', success_queue, 'universal', set(), blocked_symbols)))
+            workers.append(Process(target=inductive_generalize_worker, args = ('Am4-b', success_queue, 'universal', set(['matrixsize4']), blocked_symbols)))
+            # workers.append(Process(target=inductive_generalize_worker, args = ('At1', success_queue, 'universal', set(['termlimit1']), blocked_symbols)))
+            # workers.append(Process(target=inductive_generalize_worker, args = ('At2',success_queue, 'universal', set(['termlimit2']), blocked_symbols)))
+            # workers.append(Process(target=inductive_generalize_worker, args = ('Aimp',success_queue, 'universal', set(['impmatrix']), blocked_symbols)))
+        
+        if utils.args.logic == 'universal':
+            pass
+        if utils.args.logic == 'fol':
+            workers.append(Process(target=inductive_generalize_worker, args = ('full', success_queue, 'fol', set(), [])))
+            workers.append(Process(target=inductive_generalize_worker, args = ('alt1', success_queue, 'fol', set(['alternation1']), [])))
+            workers.append(Process(target=inductive_generalize_worker, args = ('m4', success_queue, 'fol', set(['matrixsize4']), [])))
+            # workers.append(Process(target=inductive_generalize_worker, args = ('imp', success_queue, 'fol', set(['impmatrix']), blocked_symbols)))
+        
+        workers.append(Process(target=inductive_generalize_worker, args = ('Afull', success_queue, 'universal', set(), [])))
+        workers.append(Process(target=inductive_generalize_worker, args = ('Am4', success_queue, 'universal', set(['matrixsize4']), [])))
+        
+        for w in workers:
+            w.start()
+        
+        (worker_name, result) = success_queue.get()
+        print(f"Recieved result from worker process {worker_name}...")
+        print_learn_predicate(result)
+        add_predicate_to_frame(result, t.frame)
+        for w in workers:
+            w.kill()
+        print("Finished parallel inductive_generalize.")
+        push()
+        
+        
     def push() -> None:
         made_changes = False
         for frame in range(frame_n):
@@ -452,6 +548,10 @@ def fol_ic3(solver: Solver) -> None:
     for init_decl in prog.inits():
         predicates.append(init_decl.expr)
         frame_numbers.append(0)
+    for safety_decl in prog.safeties():
+        predicates.append(safety_decl.expr)
+        frame_numbers.append(0)
+        
     K_limit = utils.args.max_complexity
     K_bound = 1 if utils.args.dynamic else K_limit
     print(f"[IC3] Inferring with K_bound = {K_bound} up to {K_limit} ({'dynamic' if utils.args.dynamic else 'static'}), with max clauses={utils.args.max_clauses}, depth={utils.args.max_depth}")
@@ -533,6 +633,7 @@ class LatticeEdgeGeneralizer(EdgeGeneralizer):
         if tr is None: return None # early out if UNSAT
         
         all_transitions = []
+        tr_trans = next(syntax.the_program.transitions())
         for trans in syntax.the_program.transitions():
             res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + [p], p, minimize=False, timeout=10000)
             if res == z3.sat:
@@ -825,6 +926,35 @@ def fol_ice(solver: Solver) -> None:
                 else:
                     imp.append((st1, st2))
 
+def fol_extract(solver: Solver) -> None:
+    import os.path
+    prog = syntax.the_program
+    sig = prog_to_sig(prog)
+    names: Set[str] = set()
+    next = 0
+    def generate():
+        nonlocal next, names
+        n = f"c{next}"
+        next += 1
+        if n in names:
+            return generate()
+        else:
+            return n
+    for x in prog.invs():
+        name = x.name if x.name is not None else generate()
+        with open(f"out/extracts/{os.path.splitext(os.path.basename(utils.args.filename))[0]}-{name}.fol", "w") as f:
+                
+            f.write("; File: " + utils.args.filename + "\n")
+            f.write("; Original: " + " ".join(str(x).split("\n")) + "\n")
+            f.write(str(sig))
+            f.write("; End sig\n\n; Axioms\n")
+            for ax in prog.axioms():
+                f.write(f"(axiom {repr(predicate_to_formula(ax.expr))})\n")
+            f.write(f"\n; Conjecture {name}\n")
+            f.write(f"(conjecture {repr(predicate_to_formula(x.expr))})\n")
+        names.add(name)
+
+
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
 
     result : List[argparse.ArgumentParser] = []
@@ -839,14 +969,12 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_ice)
     result.append(s)
 
+    s = subparsers.add_parser('fol-extract', help='Extract conjuncts to a file')
+    s.set_defaults(main=fol_extract)
+    result.append(s)
+
     for s in result:
-        s.add_argument('--unroll-to-depth', type=int, help='Unroll transitions to given depth during exploration')
-        s.add_argument('--cpus', type=int, help='Number of CPUs to use in parallel')
-        s.add_argument('--restarts', action=utils.YesNoAction, default=False, help='Use restarts outside of Z3 by setting Luby timeouts')
-        s.add_argument('--induction-width', type=int, default=1, help='Upper bound on weight of dual edges to explore.')
-        s.add_argument('--all-subclauses', action=utils.YesNoAction, default=False, help='Add all subclauses of predicates.')
-        s.add_argument('--optimize-ctis', action=utils.YesNoAction, default=True, help='Optimize internal ctis')
-        
+       
         # FOL specific options
         s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
         s.add_argument("--separator", choices=('naive', 'generalized', 'hybrid'), default="hybrid", help="Use the specified separator algorithm")
