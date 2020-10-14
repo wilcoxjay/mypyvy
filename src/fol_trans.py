@@ -299,7 +299,7 @@ class FOLSeparator(object):
         self.ids: Dict[int, int] = {}
         self.sig = prog_to_sig(prog, two_state=False)
         if sep is None:
-            self.separator = separators.separate.HybridSeparator(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
+            self.separator: separators.separate.Separator = separators.separate.HybridSeparator(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
         else:
             self.separator = sep
 

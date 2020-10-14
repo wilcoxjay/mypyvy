@@ -2,11 +2,12 @@
 import argparse
 import multiprocessing
 import random
+from threading import local
 import time
 from multiprocessing import Process, Manager
-from typing import AnyStr
+from multiprocessing.connection import Connection
+from typing import AnyStr, IO, NamedTuple, TextIO
 from separators.logic import symbols
-from separators.separate import HybridSeparator
 
 from syntax import *
 from logic import *
@@ -137,6 +138,23 @@ class TaskScheduler(object):
         random.shuffle(active_tasks)
         return active_tasks[0] if len(active_tasks) > 0 else None
 
+class WorkerArgs(NamedTuple):
+    name: str
+    logic: str
+    expt_flags: Set[str]
+    blocked_symbols: List[str]
+class Constraint(object):
+    pass
+class PositiveStruct(Constraint):
+    def __init__(self, s: int):
+        self.s = s
+class NegativeStruct(Constraint):
+    def __init__(self, s: int):
+        self.s = s
+class ImplicationStructs(Constraint):
+    def __init__(self, s: int, t: int):
+        self.s = s
+        self.t = t
 
 def fol_ic3(solver: Solver) -> None:
     prog = syntax.the_program
@@ -289,8 +307,8 @@ def fol_ic3(solver: Solver) -> None:
         if 'parallelism' in utils.args.expt_flags:
             inductive_generalize_parallel(t)
         elif utils.args.inductive_generalize:
-            i = inductive_generalize(t)
-            if i is not None:
+            ii = inductive_generalize(t)
+            if ii is not None:
                 push()
         else:
             generalize(t.state, t.frame)
@@ -346,7 +364,7 @@ def fol_ic3(solver: Solver) -> None:
             push()
             return
 
-    def inductive_generalize(t: BlockTask) -> bool:
+    def inductive_generalize(t: BlockTask) -> Optional[int]:
         # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
         print("Inductive generalizing")
         if t.sep is None:
@@ -430,11 +448,11 @@ def fol_ic3(solver: Solver) -> None:
         idx = add_predicate_to_frame(p, t.frame)
         return idx
     class Logger(object):
-        def __init__(self, out, name):
+        def __init__(self, out: TextIO, name: str):
             self._out = out
             self.encoding = out.encoding
             self._name = name
-        def write(self, s: AnyStr) -> None:
+        def write(self, s: str) -> None:
             if s.startswith("Candidate"):
                 self._out.write(f"[{self._name}] {s}\n")
                 self._out.flush()
@@ -444,78 +462,196 @@ def fol_ic3(solver: Solver) -> None:
         r.extend(s.functions.keys())
         r.extend(s.constants.keys())
         return r
+
+    
+
+    def separation_worker(args: WorkerArgs, pipe: Connection) -> None:
+        sig = prog_to_sig(syntax.the_program, two_state=False)
+        true_stdout = sys.stdout
+        sys.stdout = Logger(true_stdout, args.name) # type: ignore
+        nonlocal K_bound
+        K_bound = 1000
+        if 'impmatrix' in args.expt_flags:
+            backing_sep: separators.separate.Separator = separators.separate.ImplicationSeparator(sig, logic = args.logic, expt_flags= args.expt_flags, blocked_symbols=args.blocked_symbols)
+        else:
+            backing_sep = separators.separate.HybridSeparator(sig, logic = args.logic, expt_flags= args.expt_flags, blocked_symbols=args.blocked_symbols)
+        local_states: List[PDState] = []
+        constraints: List[Constraint] = []
+        sep = FOLSeparator(local_states, backing_sep)
+        print("Starting worker")
+        while True:
+            req = pipe.recv()
+            if isinstance(req, Constraint):
+                constraints.append(req)
+            elif req is None:
+                print("Separating")
+                p = sep.separate(pos = [c.s for c in constraints if isinstance(c, PositiveStruct)],
+                                 neg = [c.s for c in constraints if isinstance(c, NegativeStruct)],
+                                 imp = [(c.s, c.t) for c in constraints if isinstance(c, ImplicationStructs)], complexity=K_bound)
+                if p is not None:
+                    pipe.send((args.name, p))
+                else:
+                    print(f"[error] Separator could not separate in {args.name}", file=sys.stderr)
+            elif isinstance(req, tuple):
+                while len(local_states) < req[0] + 1:
+                    local_states.append(req[1])
+                local_states[req[0]] = req[1]
+            else:
+                assert False
+                
+    class WorkerHandle(object):
+        def __init__(self, name: str, proc: Process, conn: Connection):
+            self.name = name
+            self.proc = proc
+            self.conn = conn
+            self.states_seen: int = 0
+            self.constraints_seen: int = 0
+            
+        def fileno(self) -> int:
+            return self.conn.fileno()
+
     def inductive_generalize_parallel(t: BlockTask) -> None:
         sig = prog_to_sig(syntax.the_program, two_state=False)
         # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
-        def inductive_generalize_worker(name, success_queue, logic: str, expt_flags: Set[str], blocked_symbols: List[str] = []) -> None:
-            true_stdout = sys.stdout
-            sys.stdout = Logger(true_stdout, name)
-            nonlocal K_bound
-            K_bound = 1000
-            if 'impmatrix' in expt_flags:
-                backing_sep = separators.separate.ImplicationSeparator(sig, logic = logic, expt_flags= expt_flags, blocked_symbols=blocked_symbols)
-            else:
-                backing_sep = separators.separate.HybridSeparator(sig, logic = logic, expt_flags= expt_flags, blocked_symbols=blocked_symbols)
-            t.sep = FOLSeparator(states, backing_sep)
-            while True:
-                i = inductive_generalize(t)
-                if i is not None:
-                    success_queue.put((name, predicates[i]))
+        # def inductive_generalize_worker(name, logic: str, expt_flags: Set[str], blocked_symbols: List[str] = []) -> None:
+        #     true_stdout = sys.stdout
+        #     sys.stdout = Logger(true_stdout, name)
+        #     nonlocal K_bound
+        #     K_bound = 1000
+        #     if 'impmatrix' in expt_flags:
+        #         backing_sep = separators.separate.ImplicationSeparator(sig, logic = logic, expt_flags= expt_flags, blocked_symbols=blocked_symbols)
+        #     else:
+        #         backing_sep = separators.separate.HybridSeparator(sig, logic = logic, expt_flags= expt_flags, blocked_symbols=blocked_symbols)
+        #     t.sep = FOLSeparator(states, backing_sep)
+        #     while True:
+        #         i = inductive_generalize(t)
+        #         if i is not None:
+        #             success_queue.put((name, predicates[i]))
 
         golden: List[separators.logic.Formula] = []
         for inv in syntax.the_program.invs():
             if states[t.state][0].as_state(states[t.state][1]).eval(inv.expr) == False:
                 cex = check_two_state_implication_all_transitions(solver, frame_predicates(t.frame-1), inv.expr, minimize=False)
-                g = predicate_to_formula(inv.expr)
-                golden.append(g)
-                print("Possible formula is:", g, '(relatively inductive)' if cex is None else '(not relatively inductive)')
+                g_as_formula = predicate_to_formula(inv.expr)
+                golden.append(g_as_formula)
+                print("Possible formula is:", g_as_formula, '(relatively inductive)' if cex is None else '(not relatively inductive)')
         
         success_queue: multiprocessing.Queue[Tuple[str, Expr]] = multiprocessing.Queue()
         print("Starting parallel inductive_generalize...")
-        workers: List[Process] =[]
-        
+        workers: List[WorkerHandle] = []
+        def L(a: WorkerArgs) -> None:
+            (main, worker) = multiprocessing.Pipe(duplex = True)
+            p = Process(target=separation_worker, args = (a, worker))
+            workers.append(WorkerHandle(a.name, p, main))
+            p.start()
+
+
         all_syms = sig_symbols(sig)
-        for g in all_syms: #golden:
+        for g in []: #all_syms: #golden:
             #syms = symbols(g)
             #blocked_symbols = list(set(all_syms) - set(syms))
             blocked_symbols = [g]
             if utils.args.logic == 'universal':
                 pass
             if utils.args.logic == 'fol':
-                workers.append(Process(target=inductive_generalize_worker, args = ('full-b', success_queue, 'fol', set(), blocked_symbols)))
-                workers.append(Process(target=inductive_generalize_worker, args = ('alt1-b', success_queue, 'fol', set(['alternation1']), blocked_symbols)))
-                workers.append(Process(target=inductive_generalize_worker, args = ('m4-b', success_queue, 'fol', set(['matrixsize4']), blocked_symbols)))
-                # workers.append(Process(target=inductive_generalize_worker, args = ('imp', success_queue, 'fol', set(['impmatrix']), blocked_symbols)))
+                L(WorkerArgs('full-b', 'fol', set(), blocked_symbols))
+                L(WorkerArgs('alt1-b', 'fol', set(['alternation1']), blocked_symbols))
+                L(WorkerArgs('m4-b', 'fol', set(['matrixsize4']), blocked_symbols))
+                # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
             
-            workers.append(Process(target=inductive_generalize_worker, args = ('Afull-b', success_queue, 'universal', set(), blocked_symbols)))
-            workers.append(Process(target=inductive_generalize_worker, args = ('Am4-b', success_queue, 'universal', set(['matrixsize4']), blocked_symbols)))
-            # workers.append(Process(target=inductive_generalize_worker, args = ('At1', success_queue, 'universal', set(['termlimit1']), blocked_symbols)))
-            # workers.append(Process(target=inductive_generalize_worker, args = ('At2',success_queue, 'universal', set(['termlimit2']), blocked_symbols)))
-            # workers.append(Process(target=inductive_generalize_worker, args = ('Aimp',success_queue, 'universal', set(['impmatrix']), blocked_symbols)))
+            L(WorkerArgs('Afull-b', 'universal', set(), blocked_symbols))
+            L(WorkerArgs('Am4-b', 'universal', set(['matrixsize4']), blocked_symbols))
         
-        if utils.args.logic == 'universal':
-            pass
         if utils.args.logic == 'fol':
-            workers.append(Process(target=inductive_generalize_worker, args = ('full', success_queue, 'fol', set(), [])))
-            workers.append(Process(target=inductive_generalize_worker, args = ('alt1', success_queue, 'fol', set(['alternation1']), [])))
-            workers.append(Process(target=inductive_generalize_worker, args = ('m4', success_queue, 'fol', set(['matrixsize4']), [])))
-            # workers.append(Process(target=inductive_generalize_worker, args = ('imp', success_queue, 'fol', set(['impmatrix']), blocked_symbols)))
+            L(WorkerArgs('full', 'fol', set(), []))
+            L(WorkerArgs('alt1', 'fol', set(['alternation1']), []))
+            L(WorkerArgs('m4', 'fol', set(['matrixsize4']), []))
+            # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
         
-        workers.append(Process(target=inductive_generalize_worker, args = ('Afull', success_queue, 'universal', set(), [])))
-        workers.append(Process(target=inductive_generalize_worker, args = ('Am4', success_queue, 'universal', set(['matrixsize4']), [])))
+        L(WorkerArgs('Afull', 'universal', set(), []))
+        L(WorkerArgs('Am4', 'universal', set(['matrixsize4']), []))
+        L(WorkerArgs('Am4', 'universal', set(['matrixsize2']), []))
+
+        local_states: List[PDState] = [states[t.state]]
+        constraints: List[Constraint] = [NegativeStruct(0)]
+
+        def update_worker(w: WorkerHandle) -> None:
+            '''Send the latest state and constraints to the workers'''
+            while w.states_seen < len(local_states):
+                w.conn.send((w.states_seen, local_states[w.states_seen]))
+                w.states_seen += 1
+            while w.constraints_seen < len(constraints):
+                w.conn.send(constraints[w.constraints_seen])
+                w.constraints_seen += 1
+
+        def is_solution(p: Expr) -> bool:
+            pass
+            # First check the current constraints, and see if p respects all of those:
+            for c in constraints:
+                if isinstance(c, PositiveStruct):
+                    if not eval_predicate(local_states[c.s], p):
+                        return False
+                elif isinstance(c, NegativeStruct):
+                    if eval_predicate(local_states[c.s], p):
+                        assert False and "candidates should always respect the negative constraint"
+                        return False
+                elif isinstance(c, ImplicationStructs):
+                    if eval_predicate(local_states[c.s], p) and not eval_predicate(local_states[c.t], p):
+                        return False
+
+            # The predicate satisfies all existing constraints. Now check for real.
+            state = check_initial(solver, p)
+            if state is not None:
+                print("Adding new initial state")
+                s = len(local_states)
+                local_states.append((state, 0))
+                constraints.append(PositiveStruct(s))
+                return False
+            
+            # F_i-1 ^ p => wp(p)?
+            gen = TrivialEdgeGeneralizer()
+            res = gen.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
+            if res is not None:
+                print("Adding new edge")
+                tr, trans = res
+                s = len(local_states)
+                local_states.append((tr,0))
+                tt = len(local_states)
+                local_states.append((tr,1))
+                constraints.append(ImplicationStructs(s,tt))
+                return False
+
+            # If we get here, then p is a solution to our inductive generalization query        
+            return True
         
         for w in workers:
-            w.start()
-        
-        (worker_name, result) = success_queue.get()
-        print(f"Recieved result from worker process {worker_name}...")
-        print_learn_predicate(result)
-        add_predicate_to_frame(result, t.frame)
-        for w in workers:
-            w.kill()
-        print("Finished parallel inductive_generalize.")
-        push()
-        
+            update_worker(w)
+            w.conn.send(None) # start them all working
+        print(f"Started initial workers (x{len(workers)})")
+        while True:
+            ready = multiprocessing.connection.wait([w.conn for w in workers])
+            for r in ready:
+                for w in workers:
+                    if w.conn is r:
+                        worker = w
+                        break
+                else:
+                    assert False
+                (_, p) = worker.conn.recv()
+                print(f"[IC3] Candidate: {p}")
+                assert isinstance(p, Expr)
+                if is_solution(p):
+                    print(f"Accepting predicate from {worker.name}")
+                    for w in workers:
+                        w.proc.kill()
+                    
+                    print_learn_predicate(p)
+                    add_predicate_to_frame(p, t.frame)
+                    print("Finished parallel inductive_generalize.")
+                    push()
+                    return
+                update_worker(worker)
+                worker.conn.send(None)
         
     def push() -> None:
         made_changes = False
@@ -551,6 +687,10 @@ def fol_ic3(solver: Solver) -> None:
     for safety_decl in prog.safeties():
         predicates.append(safety_decl.expr)
         frame_numbers.append(0)
+    for inv_decl in prog.invs():
+        if 'free-lemma' in utils.args.expt_flags and inv_decl.name == 'free_lemma':
+            predicates.append(inv_decl.expr)
+            frame_numbers.append(0)
         
     K_limit = utils.args.max_complexity
     K_bound = 1 if utils.args.dynamic else K_limit
@@ -932,7 +1072,7 @@ def fol_extract(solver: Solver) -> None:
     sig = prog_to_sig(prog)
     names: Set[str] = set()
     next = 0
-    def generate():
+    def generate() -> str:
         nonlocal next, names
         n = f"c{next}"
         next += 1
@@ -981,7 +1121,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument("--max-complexity", type=int, default=100, help="Maximum formula complexity")
         s.add_argument("--max-clauses", type=int, default=100, help="Maximum formula matrix clauses")
         s.add_argument("--max-depth", type=int, default=100, help="Maximum formula quantifier depth")
-        s.add_argument("--no-dynamic", dest="dynamic", action="store_false", help="Dynamically adjust complexity")
+        s.add_argument("--dynamic", dest="dynamic", default=False, action="store_true", help="Dynamically adjust complexity")
         s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
 
     return result
