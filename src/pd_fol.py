@@ -1,6 +1,8 @@
 
 import argparse
 import multiprocessing
+import operator
+from operator import truediv
 import random
 from threading import local
 import time
@@ -13,10 +15,10 @@ from syntax import *
 from logic import *
 from fol_trans import *
 
-def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
+def check_initial(solver: Solver, p: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     prog = syntax.the_program
     inits = tuple(init.expr for init in prog.inits())
-    m = check_implication(solver, inits, [p])
+    m = check_implication(solver, inits, [p], minimize=minimize)
     if m is None:
         return None
     return Trace.from_z3([KEY_ONE], m)
@@ -41,6 +43,37 @@ def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr
     edge = check_two_state_implication_all_transitions_unknown_is_unsat(solver, old_hyps = ps, new_conc = c, minimize=minimize, timeout=timeout)
     return two_state_trace_from_z3(edge[0]) if edge is not None else None
 
+def check_transition(
+        s: Solver,
+        old_hyps: Iterable[Expr],
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
+        timeout: int = 0,
+)-> Optional[Trace]:
+    t = s.get_translator(KEY_NEW, KEY_OLD)
+    prog = syntax.the_program
+    start = time.time()
+    with s:
+        for h in old_hyps:
+            s.add(t.translate_expr(h, old=True))
+
+        s.add(z3.Not(t.translate_expr(new_conc)))
+
+        for trans in prog.transitions():
+            with s:
+                s.add(t.translate_transition(trans))
+
+                # if utils.logger.isEnabledFor(logging.DEBUG):
+                #     utils.logger.debug('assertions')
+                #     utils.logger.debug(str(s.assertions()))
+                res = s.check(timeout=timeout)
+                if res == z3.sat:
+                    print(f"Found model in {time.time() - start:0.3f} sec")
+                    return two_state_trace_from_z3(s.model(minimize=minimize))
+                assert res == z3.unsat
+    print(f"Found model in {time.time() - start:0.3f} sec")                    
+    return None
+
 def check_two_state_implication_generalized(
         s: Solver,
         trans: DefinitionDecl,
@@ -49,8 +82,8 @@ def check_two_state_implication_generalized(
         minimize: Optional[bool] = None,
         timeout: int = 0,
 ) -> Tuple[z3.CheckSatResult, Optional[z3.ModelRef]]:
+    t = s.get_translator(KEY_NEW, KEY_OLD)
     with s:
-        t = s.get_translator(KEY_NEW, KEY_OLD)
         for h in old_hyps:
             s.add(t.translate_expr(h, old=True))
         s.add(z3.Not(t.translate_expr(new_conc)))
@@ -156,6 +189,273 @@ class ImplicationStructs(Constraint):
         self.s = s
         self.t = t
 
+class ParallelFolIc3(object):
+    FrameNum = Optional[int]
+    def __init__(self) -> None:
+        self._solver = Solver(use_cvc4=utils.args.cvc4)
+
+        self._states: List[PDState] = []
+        self._initial_states: Set[int] = set()
+        self._transitions: Set[Tuple[int, int]] = set()
+        self._predicates: List[Expr] = []
+        self._frame_numbers: List[Optional[int]] = [] # the frame number for each predicate
+        self._initial_conditions: Set[int] = set() # predicates that are initial conditions in F_0
+        self._safeties: Set[int] = set() # predicates that are safety properties
+        self._frame_n = 1 # highest non-infinite frame
+        self._reachable: Set[int] = set()
+        self._unsafe: bool = False
+
+        # Caches and derived information
+        self._eval_cache: Dict[Tuple[int, int], bool] = {}
+        self._pushing_blocker: Dict[int, int] = {}
+        self._predecessor_cache: Dict[Tuple[int, int], int] = {}
+        self._no_predecessors: Set[Tuple[int, int]] = set()
+
+    # Frame number manipulations (make None === infinity)
+    @staticmethod
+    def frame_max(a: FrameNum, b: FrameNum) -> FrameNum:
+        if a is None or b is None: return None
+        return max(a,b)
+    @staticmethod
+    def frame_leq(a: FrameNum, b: FrameNum) -> bool:
+        if b is None: return True
+        if a is None: return False
+        return a <= b
+    @staticmethod
+    def frame_key(a: FrameNum) -> Tuple[int, int]:
+        if a is None: return (1, 0)
+        return (0, a)
+
+    # Evaluation and contents of frames
+    def eval(self, pred: int, state: int) -> bool:
+        if (pred, state) not in self._eval_cache:
+            self._eval_cache[(pred, state)] = eval_predicate(self._states[state], self._predicates[pred])
+        return self._eval_cache[(pred, state)]
+    def frame_predicates(self, i: FrameNum) -> Iterable[int]:
+        yield from (index for index, f in enumerate(self._frame_numbers) if ParallelFolIc3.frame_leq(i, f))
+    def frame_transitions(self, i: FrameNum) -> Iterable[Tuple[int, int]]:
+        yield from ((a, b) for a, b in self._transitions if all(self.eval(p, a) for p in self.frame_predicates(i)))
+    
+    # Termination conditions
+    def is_complete(self) -> bool:
+        return self.is_program_safe() or self.is_program_unsafe()
+    def is_program_safe(self) -> bool:
+        # Safe if all safeties have been pushed to F_inf
+        return all(self._frame_numbers[i] is None for i in self._safeties)
+    def is_program_unsafe(self) -> bool:
+        return self._unsafe
+
+    # Adding and manipulating states, transitions, and predicates
+    def add_predicate(self, p: Expr) -> int:
+        i = len(self._predicates)
+        self._predicates.append(p)
+        self._frame_numbers.append(0)
+        return i
+    def add_state(self, s: PDState) -> int:
+        i = len(self._states)
+        self._states.append(s)
+        # print(f"State {i} is {s[0].as_state(s[1])}")
+        return i  
+
+    def print_predicates(self) -> None:
+        print ("[IC3] ---- Frame summary")
+        for i, p, index in sorted(zip(self._frame_numbers, self._predicates, range(len(self._predicates))), key = lambda x: ParallelFolIc3.frame_key(x[0])):
+            code = 'S' if index in self._safeties else 'i' if index in self._initial_conditions else ' '
+            print(f"[IC3] predicate {i if i is not None else '+'} {code} {p}")
+        print("[IC3] ----")
+
+    # Pushing
+    def push_once(self) -> bool:
+        made_changes = False
+        for index, p in sorted(enumerate(self._predicates), key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x[0]])):
+            # No need to push things already in F_inf
+            i = self._frame_numbers[index]
+            if i is None:
+                continue
+            if index in self._pushing_blocker:
+                blocker = self._pushing_blocker[index]
+                # Check if blocking state is reachable (thus we should never push)
+                if blocker in self._reachable:
+                    continue
+                # Check if the blocker state is still in F_i
+                if all(self.eval(F_i_pred, blocker) for F_i_pred in self.frame_predicates(i)):
+                    continue
+                # The blocker is invalidated
+                del self._pushing_blocker[index]
+            # Either there is no known blocker or it was just invalidated by some new predicate in F_i
+            # Check if any new blocker exists
+            cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
+            if cex is None:
+                # print("Proven that:")
+                # for j in self.frame_predicates(i):
+                #     print(f"  {self._predicates[j]}")
+                # print("implies wp of:")
+                # print(f"  {p}")
+
+                print(f"Pushed {p} to frame {i+1}")
+                self._frame_numbers[index] = i + 1
+                self._frame_n = max(self._frame_n, i+1)
+                made_changes = True
+            else:
+                blocker = self.add_state((cex, 0))
+                self._pushing_blocker[index] = blocker
+        return made_changes 
+
+    def check_for_f_infinity(self) -> bool:
+        made_changes = False
+        self._frame_n = max(x for x in self._frame_numbers if x is not None)
+        for i in range(self._frame_n):
+            # Check to see if any frame
+            if i in self._frame_numbers:
+                continue
+            # Frame has no predicates that aren't also in later frames. Move any such predicates to F_inf
+            for index, p in enumerate(self._predicates):
+                p_frame = self._frame_numbers[index]
+                if p_frame is not None and i < p_frame:
+                    print(f"Pushed {p} to frame inf")
+                    self._frame_numbers[index] = None
+                    made_changes = True
+        return made_changes
+
+    def push(self) -> None:
+        while True:
+            pushed = self.push_once()
+            made_infinite = self.check_for_f_infinity()
+            # We did something, so go see if more can happen
+            if pushed or made_infinite:
+                continue
+            break
+
+    def init(self) -> None:
+        prog = syntax.the_program
+        for init_decl in prog.inits():
+            i = self.add_predicate(init_decl.expr)
+            self._initial_conditions.add(i)
+        for safety_decl in prog.safeties():
+            i = self.add_predicate(safety_decl.expr)
+            self._safeties.add(i)
+            self._frame_numbers[i] = 1
+        if 'free-lemma' in utils.args.expt_flags:
+            for inv_decl in prog.invs():
+                if inv_decl.name == 'free_lemma':
+                    i = self.add_predicate(inv_decl.expr)
+                    self._frame_numbers[i] = 1
+     
+    def inductive_generalize(self, frame: int, state: int) -> None:
+        print(f"Inductive generalizing to block {state} in frame {frame}")
+        sep = FOLSeparator(self._states)
+        
+        edges: List[Tuple[int, int]] = []
+        while True:
+            p = sep.separate(pos=self._initial_states, neg=[state], imp=edges, complexity=1000)
+            if p is not None:
+                print(f"Candidate predicate: {p}")
+                # F_0 => p
+                initial_state = check_initial(self._solver, p, minimize=True)
+                if initial_state is not None:
+                    print("Adding new initial state")
+                    s = self.add_state((initial_state,0))
+                    self._initial_states.add(s)
+                    continue
+                
+                # F_i-1 ^ p => wp(p)?
+                # gen = TrivialEdgeGeneralizer()
+                # res = gen.find_generalized_implication(self._solver, self._states[state], [self._predicates[j] for j in self.frame_predicates(frame-1)], p)
+                edge = check_transition(self._solver, [p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
+                if edge is not None:
+                    print("Adding new edge")
+                    s_i = self.add_state((edge,0))
+                    s_j = self.add_state((edge,1))
+                    edges.append((s_i, s_j))
+                    continue
+
+                # If we get here, then p is a solution to our inductive generalization query        
+                print(f"Learned new predicate {p}")
+                
+                p_i = self.add_predicate(p)
+                self._frame_numbers[p_i] = frame
+                return
+            else:
+                assert False
+
+    def get_predecessor(self, frame: int, state: int) -> Optional[int]:
+        assert frame != 0
+        key = (frame-1, state)
+        if key in self._no_predecessors:
+            return None
+        if key in self._predecessor_cache:
+            pred = self._predecessor_cache[key]
+            if all(self.eval(p, pred) for p in self.frame_predicates(frame - 1)):
+                return pred
+            del self._predecessor_cache[key]
+
+        # We need to check for a predecessor
+        s = self._states[state]
+        formula_to_block = Not(s[0].as_onestate_formula(s[1])) \
+                        if utils.args.logic != "universal" else \
+                        Not(s[0].as_diagram(s[1]).to_ast())
+        edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
+        if edge is None:
+            self._no_predecessors.add(key)
+            return None
+        
+        s_i = self.add_state((edge, 0))
+        # add_transition(s_i, state)
+        self._predecessor_cache[key] = s_i
+        return s_i
+       
+
+    def block(self, frame: int, state: int) -> None:
+        if frame == 0:
+            # Note: this is only true if we are blocking a "must block" state. Heuristic states should not use this method
+            print("Trying to block state in frame 0, must have found a counterexample trace!")
+            self._unsafe = True
+            return
+        pred = self.get_predecessor(frame, state)
+        if pred is None:
+            self.inductive_generalize(frame, state)
+        else:
+            self.block(frame - 1, pred)
+
+    def learn(self) -> None:
+        print("Learning")
+        for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
+            i = self._frame_numbers[safety]
+            # This is called after push, so if either of these is not satisfied we should have exited
+            assert i is not None
+            assert(safety in self._pushing_blocker)
+            blocker = self._pushing_blocker[safety]
+            self.block(i, blocker)
+            return
+        assert False
+
+    def run(self) -> None:
+        start = time.time()
+        self.init()
+        while True:
+            self.push()
+            self.print_predicates()
+            if self.is_complete():
+                break
+            # We need to block with a new predicate.
+            self.learn()
+
+        print(f"Elapsed: {time.time() - start:0.2f} sec")
+        if self.is_program_safe():
+            print("Program is SAFE.")
+            for i, p, index in zip(self._frame_numbers, self._predicates, range(len(self._predicates))):
+                if i is None and index not in self._safeties:
+                    print(f"  invariant [inferred] {p}")
+        elif self.is_program_unsafe():
+            print("Program is UNSAFE.")
+        else:
+            print("Program is UNKNOWN.")
+
+    
+def p_fol_ic3(solver: Solver) -> None:
+    p = ParallelFolIc3()
+    p.run()
+    
 def fol_ic3(solver: Solver) -> None:
     prog = syntax.the_program
 
@@ -531,12 +831,11 @@ def fol_ic3(solver: Solver) -> None:
         golden: List[separators.logic.Formula] = []
         for inv in syntax.the_program.invs():
             if states[t.state][0].as_state(states[t.state][1]).eval(inv.expr) == False:
-                cex = check_two_state_implication_all_transitions(solver, frame_predicates(t.frame-1), inv.expr, minimize=False)
+                cex = check_two_state_implication_all_transitions(solver, [*frame_predicates(t.frame-1), inv.expr], inv.expr, minimize=False)
                 g_as_formula = predicate_to_formula(inv.expr)
                 golden.append(g_as_formula)
                 print("Possible formula is:", g_as_formula, '(relatively inductive)' if cex is None else '(not relatively inductive)')
         
-        success_queue: multiprocessing.Queue[Tuple[str, Expr]] = multiprocessing.Queue()
         print("Starting parallel inductive_generalize...")
         workers: List[WorkerHandle] = []
         def L(a: WorkerArgs) -> None:
@@ -570,7 +869,7 @@ def fol_ic3(solver: Solver) -> None:
         
         L(WorkerArgs('Afull', 'universal', set(), []))
         L(WorkerArgs('Am4', 'universal', set(['matrixsize4']), []))
-        L(WorkerArgs('Am4', 'universal', set(['matrixsize2']), []))
+        L(WorkerArgs('Am2', 'universal', set(['matrixsize2']), []))
 
         local_states: List[PDState] = [states[t.state]]
         constraints: List[Constraint] = [NegativeStruct(0)]
@@ -684,13 +983,15 @@ def fol_ic3(solver: Solver) -> None:
     for init_decl in prog.inits():
         predicates.append(init_decl.expr)
         frame_numbers.append(0)
-    for safety_decl in prog.safeties():
-        predicates.append(safety_decl.expr)
-        frame_numbers.append(0)
-    for inv_decl in prog.invs():
-        if 'free-lemma' in utils.args.expt_flags and inv_decl.name == 'free_lemma':
-            predicates.append(inv_decl.expr)
+    if 'no-safeties' not in utils.args.expt_flags:
+        for safety_decl in prog.safeties():
+            predicates.append(safety_decl.expr)
             frame_numbers.append(0)
+    if 'free-lemma' in utils.args.expt_flags:
+        for inv_decl in prog.invs():
+            if inv_decl.name == 'free_lemma':
+                predicates.append(inv_decl.expr)
+                frame_numbers.append(0)
         
     K_limit = utils.args.max_complexity
     K_bound = 1 if utils.args.dynamic else K_limit
@@ -723,7 +1024,7 @@ def fol_ic3(solver: Solver) -> None:
                     ps = frame_predicates(inv_frame)
                     print(f"[IC3] Found inductive invariant in frame {inv_frame}!")
                     for p in ps:
-                        print(f"[IC3] invariant: {p}")
+                        print(f"[IC3] invariant {p}")
                     print_summary()
                     return
             print(f"[IC3] Expanding new frame {frame_n+1}")
@@ -1107,6 +1408,10 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     s = subparsers.add_parser('fol-ice', help='Run ICE invariant learning with folseparators')
     s.set_defaults(main=fol_ice)
+    result.append(s)
+
+    s = subparsers.add_parser('p-fol-ic3', help='Run parallel IC3 inference with folseparators')
+    s.set_defaults(main=p_fol_ic3)
     result.append(s)
 
     s = subparsers.add_parser('fol-extract', help='Extract conjuncts to a file')
