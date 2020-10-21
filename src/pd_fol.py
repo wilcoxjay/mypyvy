@@ -1,20 +1,22 @@
 
 import argparse
+from asyncio.exceptions import CancelledError
 import multiprocessing
-import operator
-from operator import truediv
 import random
-from threading import local
 import time
-from multiprocessing import Process, Manager
+from multiprocessing import Process
 from multiprocessing.connection import Connection
-from typing import AnyStr, IO, NamedTuple, TextIO
-from separators.logic import symbols
+from typing import Awaitable, DefaultDict, NamedTuple, TextIO
+import asyncio
 
 from syntax import *
 from logic import *
 from fol_trans import *
 
+def initial_conditions() -> List[Expr]:
+    prog = syntax.the_program
+    return [init.expr for init in prog.inits()]
+    
 def check_initial(solver: Solver, p: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     prog = syntax.the_program
     inits = tuple(init.expr for init in prog.inits())
@@ -68,10 +70,10 @@ def check_transition(
                 #     utils.logger.debug(str(s.assertions()))
                 res = s.check(timeout=timeout)
                 if res == z3.sat:
-                    print(f"Found model in {time.time() - start:0.3f} sec")
+                    #print(f"Found model in {time.time() - start:0.3f} sec")
                     return two_state_trace_from_z3(s.model(minimize=minimize))
                 assert res == z3.unsat
-    print(f"Found model in {time.time() - start:0.3f} sec")                    
+    #print(f"Found model in {time.time() - start:0.3f} sec")                    
     return None
 
 def check_two_state_implication_generalized(
@@ -189,6 +191,114 @@ class ImplicationStructs(Constraint):
         self.s = s
         self.t = t
 
+async def async_recv(conn: Connection) -> Any:
+    loop = asyncio.get_event_loop()
+    event = asyncio.Event()
+    loop.add_reader(conn.fileno(), event.set)
+    await event.wait()
+    return conn.recv()
+
+T = TypeVar('T')
+async def async_race(aws: Sequence[Awaitable[T]]) -> T:
+    '''Returns the first value from `aws` and cancels the other tasks.
+    
+    Ignores exceptions from the awaitables, unless all awaitables produce an exception,
+    which causes `async_race` to raise the exception from an arbitrary task.
+    `aws` must be non-empty. '''
+    while True:
+        done, pending = await asyncio.wait(aws, return_when=asyncio.FIRST_COMPLETED)
+        exc: Optional[BaseException] = None
+        for f in done:
+            if f.cancelled():
+                exc = CancelledError()
+            elif f.exception() is None:
+                for unfinished in pending:
+                    unfinished.cancel()
+                return f.result()
+            else:
+                exc = f.exception()
+        if len(pending) == 0:
+            if exc is not None:
+                raise exc
+            else:
+                raise ValueError("Empty sequence passed to async_race()")
+        aws = list(pending)
+            
+
+async def multi_check_transition(old_hyps: Iterable[Expr],
+        new_conc: Expr,
+        minimize: Optional[bool] = None,
+        timeout: int = 0) -> Optional[Trace]:
+    async def check(s: Solver, min: bool) -> Optional[Trace]:        
+        # This function will be executed in a forked process
+        def worker(conn: Connection) -> None:
+            conn.send(check_transition(s, old_hyps, new_conc, minimize=min, timeout=timeout))
+
+        (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
+        p = Process(target=worker, args = (conn_worker,))
+        try:
+            p.start()
+            return await async_recv(conn_main)
+        except CancelledError as e:
+            p.kill()
+            raise e
+    z3solver = Solver(use_cvc4=False)
+    cvc4solver = Solver(use_cvc4=True)
+    t1 = asyncio.create_task(check(z3solver, min=True if minimize is not None and minimize else False), name="z3")
+    t2 = asyncio.create_task(check(cvc4solver, min=False), name="cvc4")
+    return await async_race([t1, t2])
+    # done, pending = await asyncio.wait([t2, t1], return_when=asyncio.FIRST_COMPLETED)
+    # task = done.pop()
+    # for not_complete in pending:
+    #     not_complete.cancel()
+    # if task.exception() is not None:
+    #     print("Error, successful task returned an exception")
+    #     assert False
+    # # if task is t1:
+    # #     print("z3 produced a result")
+    # # else:
+    # #     print("cvc4 produced a result")
+    # return task.result()
+
+async def multi_check_implication(hyps: Iterable[Expr],
+        conc: Expr,
+        minimize: Optional[bool] = None,
+        timeout: int = 0) -> Optional[Trace]:
+    async def check(s: Solver, min: bool) -> Optional[Trace]:
+               
+        # This function will be executed in a forked process
+        def worker(conn: Connection) -> None:
+            m = check_implication(s, hyps, [conc], minimize=min)
+            conn.send(Trace.from_z3([KEY_ONE], m) if m is not None else None)
+
+        (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
+        p = Process(target=worker, args = (conn_worker,))
+        try:
+            p.start()
+            result = await async_recv(conn_main)
+            return result
+        except CancelledError as e:
+            p.kill()
+            raise e
+    z3solver = Solver(use_cvc4=False)
+    cvc4solver = Solver(use_cvc4=True)
+    t1 = asyncio.create_task(check(z3solver, min=False), name="z3")
+    t2 = asyncio.create_task(check(cvc4solver, min=False), name="cvc4")
+    return await async_race([t1, t2])
+    # done, pending = await asyncio.wait([t2, t1], return_when=asyncio.FIRST_COMPLETED)
+    # task = done.pop()
+    # for not_complete in pending:
+    #     not_complete.cancel()
+    # if task.exception() is not None:
+    #     print("Error, successful task returned an exception")
+    #     assert False
+    # # if task is t1:
+    # #     print("z3 produced a result")
+    # # else:
+    # #     print("cvc4 produced a result")
+    # return task.result()
+
+
 class ParallelFolIc3(object):
     FrameNum = Optional[int]
     def __init__(self) -> None:
@@ -197,6 +307,9 @@ class ParallelFolIc3(object):
         self._states: List[PDState] = []
         self._initial_states: Set[int] = set()
         self._transitions: Set[Tuple[int, int]] = set()
+        self._successors: DefaultDict[int, Set[int]] = defaultdict(set)
+        self._predecessors: DefaultDict[int, Set[int]] = defaultdict(set)
+        
         self._predicates: List[Expr] = []
         self._frame_numbers: List[Optional[int]] = [] # the frame number for each predicate
         self._initial_conditions: Set[int] = set() # predicates that are initial conditions in F_0
@@ -210,6 +323,7 @@ class ParallelFolIc3(object):
         self._pushing_blocker: Dict[int, int] = {}
         self._predecessor_cache: Dict[Tuple[int, int], int] = {}
         self._no_predecessors: Set[Tuple[int, int]] = set()
+        self._reachable_worklist: Set[int] = set()
 
     # Frame number manipulations (make None === infinity)
     @staticmethod
@@ -256,6 +370,15 @@ class ParallelFolIc3(object):
         self._states.append(s)
         # print(f"State {i} is {s[0].as_state(s[1])}")
         return i  
+    def add_transition(self, a:int, b:int) -> None:
+        if (a,b) in self._transitions:
+            return
+        self._transitions.add((a,b))
+        self._predecessors[b].add(a)
+        self._successors[a].add(b)
+        self._reachable_worklist.add(a)
+        # self.push_reachable()
+
 
     def print_predicates(self) -> None:
         print ("[IC3] ---- Frame summary")
@@ -284,7 +407,8 @@ class ParallelFolIc3(object):
                 del self._pushing_blocker[index]
             # Either there is no known blocker or it was just invalidated by some new predicate in F_i
             # Check if any new blocker exists
-            cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
+            # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
+            cex = asyncio.run(multi_check_transition(list(self._predicates[j] for j in self.frame_predicates(i)), p))
             if cex is None:
                 # print("Proven that:")
                 # for j in self.frame_predicates(i):
@@ -351,7 +475,7 @@ class ParallelFolIc3(object):
             if p is not None:
                 print(f"Candidate predicate: {p}")
                 # F_0 => p
-                initial_state = check_initial(self._solver, p, minimize=True)
+                initial_state = asyncio.run(multi_check_implication(initial_conditions(), p))
                 if initial_state is not None:
                     print("Adding new initial state")
                     s = self.add_state((initial_state,0))
@@ -361,7 +485,8 @@ class ParallelFolIc3(object):
                 # F_i-1 ^ p => wp(p)?
                 # gen = TrivialEdgeGeneralizer()
                 # res = gen.find_generalized_implication(self._solver, self._states[state], [self._predicates[j] for j in self.frame_predicates(frame-1)], p)
-                edge = check_transition(self._solver, [p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
+                # edge = check_transition(self._solver, [p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
+                edge = asyncio.run(multi_check_transition([p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p))
                 if edge is not None:
                     print("Adding new edge")
                     s_i = self.add_state((edge,0))
@@ -394,13 +519,14 @@ class ParallelFolIc3(object):
         formula_to_block = Not(s[0].as_onestate_formula(s[1])) \
                         if utils.args.logic != "universal" else \
                         Not(s[0].as_diagram(s[1]).to_ast())
-        edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
+        # edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
+        edge = asyncio.run(multi_check_transition([self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block))
         if edge is None:
             self._no_predecessors.add(key)
             return None
         
         s_i = self.add_state((edge, 0))
-        # add_transition(s_i, state)
+        self.add_transition(s_i, state)
         self._predecessor_cache[key] = s_i
         return s_i
        
@@ -418,7 +544,6 @@ class ParallelFolIc3(object):
             self.block(frame - 1, pred)
 
     def learn(self) -> None:
-        print("Learning")
         for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
             i = self._frame_numbers[safety]
             # This is called after push, so if either of these is not satisfied we should have exited
@@ -618,13 +743,13 @@ def fol_ic3(solver: Solver) -> None:
         I_imp_p = "."
         p_imp_I = "."
         I = [i.expr for i in prog.invs()]
-        if check_implication(solver, I, [p], minimize=False) is None:
-            I_imp_p = ">"
-        for i in I:
-            if check_implication(solver, [p], [i], minimize=False) is None:
-                p_imp_I = "<"
-                break
-        print(f"[IC3] Learned predicate (Ip{I_imp_p}{p_imp_I}): {p}")
+        # if check_implication(solver, I, [p], minimize=False) is None:
+        #     I_imp_p = ">"
+        # for i in I:
+        #     if check_implication(solver, [p], [i], minimize=False) is None:
+        #         p_imp_I = "<"
+        #         break
+        print(f"[IC3] Learned predicate (I{I_imp_p}{p_imp_I}p): {p}")
 
     def generalize(s: int, i: int) -> None:
         print("Generalizing")
