@@ -107,14 +107,28 @@ invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
 # choosable_node is a witness
 # invariant member(N,Q) & left_round(N,R) & !vote(N,R,V) ->
 #     member(choosable_node(R,V,Q),Q) & left_round(choosable_node(R,V,Q),R) & !vote(choosable_node(R,V,Q),R,V)
-invariant member(N1,Q) & left_round(N1,R) & !vote(N1,R,V) & N2 = choosable_node(R,V,Q) ->
-    member(N2,Q) & left_round(N2,R) & !vote(N2,R,V)
+# invariant member(N1,Q) & left_round(N1,R) & !vote(N1,R,V) & N2 = choosable_node(R,V,Q) ->
+#     member(N2,Q) & left_round(N2,R) & !vote(N2,R,V)
+
+invariant forall N:node, Q:quorum, R:round, V:value. member(N,Q) & left_round(N,R) & !vote(N,R,V) ->
+    member(choosable_node(R,V,Q),Q)
+invariant forall N:node, Q:quorum, R:round, V:value. member(N,Q) & left_round(N,R) & !vote(N,R,V) ->
+    left_round(choosable_node(R,V,Q),R)
+invariant forall N:node, Q:quorum, R:round, V:value. member(N,Q) & left_round(N,R) & !vote(N,R,V) ->
+    !vote(choosable_node(R,V,Q),R,V)
 
 # choosable invariant
 # invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
-#     member(choosable_node(R1,V1,Q),Q) & left_round(choosable_node(R1,V1,Q),R1) & !vote(choosable_node(R1,V1,Q),R1,V1)
-invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 & N = choosable_node(R1,V1,Q)->
-    member(N,Q) & left_round(N,R1) & !vote(N,R1,V1)
+    # member(choosable_node(R1,V1,Q),Q) & left_round(choosable_node(R1,V1,Q),R1) & !vote(choosable_node(R1,V1,Q),R1,V1)
+# invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 & N = choosable_node(R1,V1,Q)->
+#     member(N,Q) & left_round(N,R1) & !vote(N,R1,V1)
+
+invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
+    !vote(choosable_node(R1,V1,Q),R1,V1)
+invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
+    member(choosable_node(R1,V1,Q),Q)
+invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
+    left_round(choosable_node(R1,V1,Q),R1)
 
 sat trace {
   assert init
