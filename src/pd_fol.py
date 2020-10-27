@@ -2,6 +2,7 @@
 import argparse
 from asyncio.exceptions import CancelledError
 import multiprocessing
+from operator import truediv
 import os.path
 import random
 import time
@@ -341,13 +342,13 @@ class IGQueryLogger(object):
                 # golden.append(g_as_formula)
                 self._print("Possible formula is:", inv.expr, '(relatively inductive)' if cex is None else '(not relatively inductive)')
         self.f.flush()
-    async def found_edge(self, edge: Trace) -> None:
+    def found_edge(self, edge: Trace) -> None:
         self._print("Adding new edge", flush=True, mirror=True)
-    async def found_intial(self, state: Trace) -> None:
+    def found_intial(self, state: Trace) -> None:
         self._print("Adding new initial state", flush=True, mirror=True)
-    async def found_candidate(self, p: Expr, origin: str) -> None:
+    def found_candidate(self, p: Expr, origin: str) -> None:
         self._print(f"Candidate (from {origin}) {p}", mirror=True)
-    async def learned(self, p: Expr) -> None:
+    def learned(self, p: Expr) -> None:
         self._print(f"Learned new predicate {p}", mirror=True)
         self._print(f"Elapsed: {time.time() - self.start_time}", flush=True)
         self.f.close() 
@@ -381,6 +382,12 @@ class ParallelFolIc3(object):
         self._predecessor_cache: Dict[Tuple[int, int], int] = {}
         self._no_predecessors: Set[Tuple[int, int]] = set()
         self._reachable_worklist: Set[int] = set()
+
+        # Synchronization
+        self._event_frames = asyncio.Event()
+        self._event_reachable = asyncio.Event()
+        self._current_heuristic_tasks: Set[Tuple[int,int]] = set()
+
 
     # Frame number manipulations (make None === infinity)
     @staticmethod
@@ -421,6 +428,8 @@ class ParallelFolIc3(object):
         i = len(self._predicates)
         self._predicates.append(p)
         self._frame_numbers.append(frame)
+        self._event_frames.set()
+        self._event_frames.clear()
         return i
     def add_state(self, s: PDState) -> int:
         i = len(self._states)
@@ -445,8 +454,16 @@ class ParallelFolIc3(object):
         print(f"[IC3] Reachable states: {len(self._reachable)}")
         print("[IC3] ----")
 
-    def push_reachable(self) -> None:
-        pass
+    def push_reachable(self, state:int) -> None:
+        # Mark state reachable
+        if state in self._reachable:
+            return
+        self._reachable.add(state)
+        self._reachable_worklist.add(state)
+        # Signal that we have changed reachablity
+        self._event_reachable.set()
+        self._event_reachable.clear()
+
         while len(self._reachable_worklist) > 0:
             item = self._reachable_worklist.pop()
             if item not in self._reachable:
@@ -455,6 +472,9 @@ class ParallelFolIc3(object):
                 if b not in self._reachable:
                     self._reachable.add(b)
                     self._reachable_worklist.add(b)
+                    # Signal that we have changed reachablity
+                    self._event_reachable.set()
+                    self._event_reachable.clear()
             
     # Pushing
     async def push_once(self) -> bool:
@@ -492,9 +512,17 @@ class ParallelFolIc3(object):
 
                 print(f"Pushed {p} to frame {i+1}")
                 self._frame_numbers[index] = i + 1
+                self._event_frames.set()
+                self._event_frames.clear()
                 made_changes = True
             else:
+                # Add the blocker and the sucessor state. We need the successor state because
+                # if we show the blocker is reachable, it is actually the successor that invalidates
+                # the predicate
                 blocker = self.add_state((cex, 0))
+                blocker_successor = self.add_state((cex, 1))
+                self.add_transition(blocker, blocker_successor)
+                
                 self._pushing_blocker[index] = blocker
         return made_changes 
 
@@ -537,9 +565,22 @@ class ParallelFolIc3(object):
                     i = self.add_predicate(inv_decl.expr)
                     self._frame_numbers[i] = 1
   
+    # async def cancel_if_blocked(self, frame: int, state: int, task: asyncio.Task) -> None:
+    #     while True:
+    #         if any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
+    #             task.cancel()
+    #         if task.done():
+    #             return
+    #         await self._event_frames.wait()  
+    async def wait_blocked(self, frame: int, state: int) -> None:
+        while True:
+            if any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
+                print(f"Finished waiting for state {state} in frame {frame}")
+                return
+            await self._event_frames.wait()  
+
     async def parallel_inductive_generalize_worker(self, name: str, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, sep: Separator) -> Expr:
         log_filename = f"sep-{''.join(random.choice('0123456789ABCDEF') for x in range(8))}.log"
-            
         def subprocess_worker(conn: Connection) -> None:
             # Redirect output to either a log or empty
             sys.stdout = open(os.path.join(utils.args.log_dir, log_filename) if utils.args.log_dir else os.devnull, "w")
@@ -582,7 +623,7 @@ class ParallelFolIc3(object):
                       [(c.s,c.t) for c in constraints if isinstance(c, ImplicationStructs)])
                 conn_main.send({'sep': cs})
                 p = await async_recv(conn_main)
-                await log.found_candidate(p, name)
+                log.found_candidate(p, name)
                 
                 # TODO: check existing constraints
                 already_blocked = False
@@ -607,7 +648,7 @@ class ParallelFolIc3(object):
                 # F_0 => p
                 initial_state = await multi_check_implication(initial_conditions(), p, minimize='no-minimize-cex' not in utils.args.expt_flags)
                 if initial_state is not None:
-                    await log.found_intial(initial_state)
+                    log.found_intial(initial_state)
                     s = self.add_state((initial_state,0))
                     self._initial_states.add(s)
                     i = len(local_states)
@@ -619,7 +660,7 @@ class ParallelFolIc3(object):
                 frame_preds = set(self.frame_predicates(frame-1))
                 edge = await multi_check_transition([p, *(self._predicates[j] for j in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
                 if edge is not None:
-                    await log.found_edge(edge)
+                    log.found_edge(edge)
                     a = len(local_states)
                     local_states.append((edge, 0))
                     b = len(local_states)
@@ -652,25 +693,36 @@ class ParallelFolIc3(object):
             constraints.append(PositiveStruct(x))
 
         sig = prog_to_sig(syntax.the_program, two_state=False)
-        workers: List[Awaitable[Expr]] = []
+        workers: List[Awaitable[Optional[Expr]]] = []
+        workers.append(self.wait_blocked(frame, state))
+        #cancellers: List[asyncio.Task] = []
         def L(n: str, logic: str, expt_flags: Set[str], blocked_symbols: Set[str]) -> None:
             ctor = ImplicationSeparator if 'impmatrix' in expt_flags else HybridSeparator
             backing_sep = ctor(sig, logic = logic, expt_flags= expt_flags | utils.args.expt_flags, blocked_symbols=list(blocked_symbols))
-            workers.append(self.parallel_inductive_generalize_worker(n, local_states, constraints, log, frame, backing_sep))
+            task = asyncio.create_task(self.parallel_inductive_generalize_worker(n, local_states, constraints, log, frame, backing_sep))
+            #cancellers.append(asyncio.create_task(self.cancel_if_blocked(frame, state, task)))
+            workers.append(task)
         
         if utils.args.logic == 'fol':
             L('full', 'fol', set(), set())
-            L('alt1', 'fol', set(['alternation1']), set())
-            L('m4', 'fol', set(['matrixsize4']), set())
+            # L('alt1', 'fol', set(['alternation1']), set())
+            # L('m4', 'fol', set(['matrixsize4']), set())
             # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
         
         L('A-full', 'universal', set(), set())
-        L('A-m4', 'universal', set(['matrixsize4']), set())
-        L('A-full-bdc', 'universal', set([]), set(['decision_quorum']))
+        # L('A-m4', 'universal', set(['matrixsize4']), set())
+        # L('A-full-bdc', 'universal', set([]), set(['decision_quorum']))
 
         p = await async_race(workers)
-        await log.learned(p)
+        if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
+            print(f"State {state} was blocked in frame {frame} by concurrent task")
+            return
+        print(f"Found predicate to block {state} in frame {frame}")
+        log.learned(p)
         self.add_predicate(p, frame)
+        await self.push()
+        self.print_predicates()
+        
 
 
     async def inductive_generalize(self, frame: int, state: int) -> None:
@@ -682,7 +734,7 @@ class ParallelFolIc3(object):
         while True:
             p = sep.separate(pos=self._initial_states, neg=[state], imp=edges, complexity=1000)
             if p is not None:
-                await log.found_candidate(p, "sep")
+                log.found_candidate(p, "sep")
                 # F_0 => p
                 initial_state = await multi_check_implication(initial_conditions(), p, minimize=True)
                 if initial_state is not None:
@@ -697,7 +749,7 @@ class ParallelFolIc3(object):
                 # edge = check_transition(self._solver, [p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
                 edge = await multi_check_transition([p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
                 if edge is not None:
-                    await log.found_edge(edge)
+                    log.found_edge(edge)
                     # s_i = self.add_state((edge,0))
                     # s_j = self.add_state((edge,1))
                     # self.add_transition(s_i, s_j)
@@ -710,7 +762,7 @@ class ParallelFolIc3(object):
                     continue
 
                 # If we get here, then p is a solution to our inductive generalization query        
-                await log.learned(p)
+                log.learned(p)
                 self.add_predicate(p, frame)
                 return
             else:
@@ -726,6 +778,12 @@ class ParallelFolIc3(object):
             if all(self.eval(p, pred) for p in self.frame_predicates(frame - 1)):
                 return pred
             del self._predecessor_cache[key]
+
+        # First, look for any known predecessors of the state
+        for pred in self._predecessors[state]:
+            if all(self.eval(p, pred) for p in self.frame_predicates(frame - 1)):
+                self._predecessor_cache[key] = pred
+                return pred            
 
         # We need to check for a predecessor
         s = self._states[state]
@@ -745,20 +803,20 @@ class ParallelFolIc3(object):
        
 
     async def block(self, frame: int, state: int) -> None:
+        print(f"Block: {state} in frame {frame}")
         if frame == 0:
-            # Note: this is only true if we are blocking a "must block" state. Heuristic states should not use this method
             assert all(self.eval(i, state) for i in self._initial_conditions)
             initial_reachable = set(self._reachable)
-            self._reachable.add(state)
-            self._reachable_worklist.add(state)
-            self.push_reachable()
+            self.push_reachable(state)
             print(f"Now have {len(self._reachable)} reachable states")
             # Mark any predicates as bad that don't satisfy all the reachable states
             for new_r in self._reachable - initial_reachable:
+                print(f"New reachable state: {new_r}")
                 st = self._states[new_r][0].as_state(self._states[new_r][1])
                 for index, p in enumerate(self._predicates):
                     if not st.eval(p):
                         self._bad_predicates.add(index)
+            self.print_predicates()
             return
         pred = await self.get_predecessor(frame, state)
         if pred is None:
@@ -766,44 +824,98 @@ class ParallelFolIc3(object):
         else:
             await self.block(frame - 1, pred)
 
-    async def heuristic_pushing_to_the_top_worker(self) -> None:
+    async def blockable_state(self, frame: int, state: int) -> Optional[Tuple[int, int]]:
+        if frame == 0:
+            assert all(self.eval(i, state) for i in self._initial_conditions)
+            initial_reachable = set(self._reachable)
+            self.push_reachable(state)
+            # Mark any predicates as bad that don't satisfy all the reachable states
+            for new_r in self._reachable - initial_reachable:
+                print(f"New reachable state: {new_r}")
+                st = self._states[new_r][0].as_state(self._states[new_r][1])
+                for index, p in enumerate(self._predicates):
+                    if not st.eval(p):
+                        self._bad_predicates.add(index)
+            return None
+        pred = await self.get_predecessor(frame, state)
+        if pred is None:
+            return (frame, state)
+        else:
+            return await self.block(frame - 1, pred)
+
+    def heuristically_blockable(self, pred: int) -> bool:
+        if pred in self._safeties or pred in self._initial_conditions or pred in self._bad_predicates:
+            return False
+        fn = self._frame_numbers[pred]
+        if fn is None or pred not in self._pushing_blocker:
+            return False
+        st = self._pushing_blocker[pred]
+        if st in self._reachable:
+            return False
+        return True
+
+    async def heuristic_pushing_to_the_top_worker(self, kind: bool) -> None:
         while True:
-            for index in random.sample(range(len(self._predicates)), len(self._predicates)):
-                if index in self._safeties or index in self._initial_conditions or index in self._bad_predicates:
+            priorities = random.sample(range(len(self._predicates)), len(self._predicates)) if kind \
+                         else sorted(range(len(self._predicates)), key=lambda pred: ParallelFolIc3.frame_key(self._frame_numbers[pred]), reverse=kind)
+            for pred in priorities:
+                if not self.heuristically_blockable(pred):
                     continue
-                fn = self._frame_numbers[index]
-                if fn is None or index not in self._pushing_blocker:
+                fn, st = self._frame_numbers[pred], self._pushing_blocker[pred]
+                if (fn, st) in self._current_heuristic_tasks:
                     continue
-                st = self._pushing_blocker[index]
                 print(f"Heuristically blocking state {st} in frame {fn}")
-                await self.block(fn, st)
-                await self.push()
-                self.print_predicates()
+                self._current_heuristic_tasks.add((fn, st))
+                try:
+                    await self.block(fn, st)
+                finally:
+                    self._current_heuristic_tasks.remove((fn, st))
                 break
             else:
-                await asyncio.sleep(1)
+                await self._event_frames.wait()
+
+    async def inexpensive_reachability(self) -> None:
+        while True:
+            await self._event_frames.wait()
+            for pred in range(len(self._predicates)):
+                if not self.heuristically_blockable(pred):
+                    continue
+                fn, st = self._frame_numbers[pred], self._pushing_blocker[pred]
+                
+                # This has the side effect of finding a reachable path if one exists
+                r = await self.blockable_state(fn, st)
+                if r is None and st in self._reachable:
+                    print("Inexpensive reachability found a new reachable state")
+                    
+
+                
+
     # This is the main loop responsible for learning classic IC3 lemmas by blocking bad states or backwardly reachable from bad
     async def learn(self) -> None:
         for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
-            i = self._frame_numbers[safety]
+            fn = self._frame_numbers[safety]
             # This is called after push, so if either of these is not satisfied we should have exited
-            assert i is not None
-            assert(safety in self._pushing_blocker)
+            assert fn is not None
+            if safety not in self._pushing_blocker:
+                print(f"Cannot learn because pushing not yet complete")
+                await self.push()
+                return
             blocker = self._pushing_blocker[safety]
-            await self.block(i, blocker)
-            await self.push()
-            self.print_predicates()
+            print(f"Blocking {blocker} in frame {fn} for learning")
+            await self.block(fn, blocker)
             return
         assert False
 
     async def run(self) -> None:
-        print(f"Running p-fol-ic3 on {os.path.basename(utils.args.filename)}")
+        print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
+        print(f"Command line: {' '.join(sys.argv)}")
         start = time.time()
         self.init()
         await self.push()
         self.print_predicates()
-        hueristics = [asyncio.create_task(self.heuristic_pushing_to_the_top_worker()), 
-                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker())]
+        hueristics = [asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
+                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
+                      asyncio.create_task(self.inexpensive_reachability())]
         while True:
             print(f"time: {time.time() - start:0.2f} sec")
             if self.is_complete():
@@ -824,12 +936,16 @@ class ParallelFolIc3(object):
         else:
             print("Program is UNKNOWN.")
 
-    
+
 def p_fol_ic3(solver: Solver) -> None:
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
-    p = ParallelFolIc3()
-    asyncio.run(p.run())
+    async def main():
+        # We need to do this inside a function so that the events in the constructor of
+        # p use the same event loop as p.run()
+        p = ParallelFolIc3()
+        await p.run()
+    asyncio.run(main())
     
 def fol_ic3(solver: Solver) -> None:
     prog = syntax.the_program
