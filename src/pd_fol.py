@@ -579,7 +579,7 @@ class ParallelFolIc3(object):
                 return
             await self._event_frames.wait()  
 
-    async def parallel_inductive_generalize_worker(self, name: str, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, sep: Separator) -> Expr:
+    async def parallel_inductive_generalize_worker(self, name: str, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, state: int, sep: Separator) -> Expr:
         log_filename = f"sep-{''.join(random.choice('0123456789ABCDEF') for x in range(8))}.log"
         def subprocess_worker(conn: Connection) -> None:
             # Redirect output to either a log or empty
@@ -589,6 +589,8 @@ class ParallelFolIc3(object):
             states: List[PDState] = []
             s = FOLSeparator(states, sep=sep)
             t = UnlimitedTimer()
+            gen = LatticeEdgeGeneralizer()
+            solver = Solver()
             while True:
                 v = conn.recv()
                 if 'state' in v:
@@ -602,6 +604,14 @@ class ParallelFolIc3(object):
                     print(f"Total separation time so far: {t.elapsed()}")
                     sys.stdout.flush()
                     conn.send(p)
+                if 'gen' in v:
+                    (st, frame_exprs, p) = v['gen']
+                    r = gen.find_generalized_implication(solver, st, frame_exprs, p)
+                    if r is None:
+                        conn.send(None)
+                    else:
+                        tr, _ = r
+                        conn.send(tr)
 
         (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
         proc = Process(target=subprocess_worker, args = (conn_worker,))
@@ -658,7 +668,19 @@ class ParallelFolIc3(object):
                 
                 # F_i-1 ^ p => wp(p)?
                 frame_preds = set(self.frame_predicates(frame-1))
-                edge = await multi_check_transition([p, *(self._predicates[j] for j in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+                
+                if 'generalize-edges' in utils.args.expt_flags:
+                    conn_main.send({'gen': (self._states[state], [self._predicates[x] for x in frame_preds], p)})
+                    edge = await async_recv(conn_main)
+                else: 
+                    edge = await multi_check_transition([p, *(self._predicates[j] for j in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+
+
+                if frame_preds != set(self.frame_predicates(frame-1)) or initial_reachable != self._reachable:
+                    # During the await of multi_check_transiton, another concurrent task has updated the frame or reachable states. Thus
+                    # we can't be sure we have a correct solution, so go to the top and try again.
+                    continue
+                
                 if edge is not None:
                     log.found_edge(edge)
                     a = len(local_states)
@@ -666,11 +688,6 @@ class ParallelFolIc3(object):
                     b = len(local_states)
                     local_states.append((edge, 1))
                     constraints.append(ImplicationStructs(a,b))
-                    continue
-
-                if frame_preds != set(self.frame_predicates(frame-1)) or initial_reachable != self._reachable:
-                    # During the await of multi_check_transiton, another concurrent task has updated the frame or reachable states. Thus
-                    # we can't be sure we have a correct solution, so go to the top and try again.
                     continue
 
                 # If we get here, then p is a solution to our inductive generalization query        
@@ -699,7 +716,7 @@ class ParallelFolIc3(object):
         def L(n: str, logic: str, expt_flags: Set[str], blocked_symbols: Set[str]) -> None:
             ctor = ImplicationSeparator if 'impmatrix' in expt_flags else HybridSeparator
             backing_sep = ctor(sig, logic = logic, expt_flags= expt_flags | utils.args.expt_flags, blocked_symbols=list(blocked_symbols))
-            task = asyncio.create_task(self.parallel_inductive_generalize_worker(n, local_states, constraints, log, frame, backing_sep))
+            task = asyncio.create_task(self.parallel_inductive_generalize_worker(n, local_states, constraints, log, frame, state, backing_sep))
             #cancellers.append(asyncio.create_task(self.cancel_if_blocked(frame, state, task)))
             workers.append(task)
         
