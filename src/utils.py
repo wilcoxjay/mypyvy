@@ -12,7 +12,7 @@ import xml
 import xml.sax
 import xml.sax.saxutils
 
-from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
+from typing import List, Optional, Set, Iterable, Generic, Iterator, Tuple, TypeVar, NoReturn, \
                    Any, Callable, cast, Sequence
 
 
@@ -114,6 +114,7 @@ class MypyvyArgs(object):
     max_clauses: int
     max_depth: int
     dynamic: bool
+    epr_edges: List[Tuple[str,str]]
     separator: str
     log_dir: str
     expt_flags: Set[str]

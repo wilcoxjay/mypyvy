@@ -1,7 +1,8 @@
 
+from separators.separate import Constraint, HybridSeparator, Logic, Pos, Neg, Imp, ParallelSeparator, PrefixConstraints, Separator
 from syntax import *
 from logic import *
-from typing import Dict, List, Tuple, TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection
+from typing import Dict, List, Tuple, Iterable, Optional, Collection
 
 try:
     import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
@@ -293,14 +294,15 @@ def model_to_state(m: separators.logic.Model) -> PDState:
 
 class FOLSeparator(object):
     '''Class used to call into the folseparators code'''
-    def __init__(self, states: List[PDState], local_states: List[PDState] = [], sep: Optional[separators.separate.Separator] = None) -> None:
+    def __init__(self, states: List[PDState], local_states: List[PDState] = [], sep: Optional[Union[Separator, ParallelSeparator]] = None) -> None:
         prog = syntax.the_program
         self.states = states
         self.local_states = local_states
         self.ids: Dict[int, int] = {}
         self.sig = prog_to_sig(prog, two_state=False)
+        self.logic = utils.args.logic
         if sep is None:
-            self.separator: separators.separate.Separator = separators.separate.HybridSeparator(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
+            self.separator: Union[Separator, ParallelSeparator] = HybridSeparator(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
         else:
             self.separator = sep
 
@@ -319,17 +321,28 @@ class FOLSeparator(object):
                  imp: Collection[Tuple[int, int]],
                  complexity: int
     ) -> Optional[Expr]:
-        timer = separators.timer.UnlimitedTimer()
-        with timer:
-            f = self.separator.separate(
-                pos=[self._state_id(i) for i in pos],
-                neg=[self._state_id(i) for i in neg],
-                imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
-                max_depth=utils.args.max_depth,
-                max_clauses=utils.args.max_clauses,
-                max_complexity=complexity,
-                timer=timer
-            )
+        if isinstance(self.separator, Separator):
+            timer = separators.timer.UnlimitedTimer()
+            with timer:
+                f = self.separator.separate(
+                    pos=[self._state_id(i) for i in pos],
+                    neg=[self._state_id(i) for i in neg],
+                    imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
+                    max_depth=utils.args.max_depth,
+                    max_clauses=utils.args.max_clauses,
+                    max_complexity=complexity,
+                    timer=timer
+                )
+        elif isinstance(self.separator, ParallelSeparator):
+            constraints: List[Constraint] = [Pos(self._state_id(i)) for i in pos]
+            constraints.extend([Neg(self._state_id(i)) for i in neg])
+            constraints.extend([Imp(self._state_id(i), self._state_id(j)) for i,j in imp])
+            qe = [(self.sig.sort_indices[x],self.sig.sort_indices[y]) for (x,y) in utils.args.epr_edges]
+            pc = PrefixConstraints(Logic.EPR, min_depth = 0 if 'six' in self.separator._expt_flags else 6, max_alt = 2, max_repeated_sorts = 2, disallowed_quantifier_edges= qe)
+            f = self.separator.separate(constraints, pc)
+        else:
+            assert False
+
         if f is None:
             if False:
                 _pos=[self._state_id(i) for i in pos]
