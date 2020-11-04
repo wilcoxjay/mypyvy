@@ -3,9 +3,9 @@ import argparse
 from asyncio.exceptions import CancelledError
 from io import TextIOWrapper
 import multiprocessing
-from operator import truediv
 import os.path
 import random
+from subprocess import CalledProcessError
 import time
 from multiprocessing import Process
 from multiprocessing.connection import Connection
@@ -181,24 +181,6 @@ class TaskScheduler(object):
         random.shuffle(active_tasks)
         return active_tasks[0] if len(active_tasks) > 0 else None
 
-class WorkerArgs(NamedTuple):
-    name: str
-    logic: str
-    expt_flags: Set[str]
-    blocked_symbols: List[str]
-# class Constraint(object):
-#     pass
-# class Pos(Constraint):
-#     def __init__(self, s: int):
-#         self.s = s
-# class NegativeStruct(Constraint):
-#     def __init__(self, s: int):
-#         self.s = s
-# class ImplicationStructs(Constraint):
-#     def __init__(self, s: int, t: int):
-#         self.s = s
-#         self.t = t
-
 async def async_recv(conn: Connection) -> Any:
     loop = asyncio.get_event_loop()
     event = asyncio.Event()
@@ -258,10 +240,10 @@ async def multi_check_transition(old_hyps: Iterable[Expr],
             p.start()
             v = await async_recv(conn_main)
             return v
-        except CancelledError as e:
+        except CancelledError:
             if p.is_alive():
                 p.kill()
-            raise e
+            raise
     z3solver = Solver(use_cvc4=False)
     cvc4solver = Solver(use_cvc4=True)
     t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
@@ -285,9 +267,9 @@ async def multi_check_implication(hyps: Iterable[Expr],
             p.start()
             result = await async_recv(conn_main)
             return result
-        except CancelledError as e:
+        except CancelledError:
             p.kill()
-            raise e
+            raise
     z3solver = Solver(use_cvc4=False)
     cvc4solver = Solver(use_cvc4=True)
     t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
@@ -755,7 +737,6 @@ class ParallelFolIc3(object):
             L('imp6', 'epr', set(['impmatrix', 'six']), set())
             # L('alt1', 'fol', set(['alternation1']), set())
             # L('m4', 'fol', set(['matrixsize4']), set())
-            # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
         else:
             L('A-imp', 'universal', set(['impmatrix']), set())
             L('A-full', 'universal', set(), set())
@@ -1013,8 +994,6 @@ class ParallelFolIc3(object):
         assert False
 
     async def run(self) -> None:
-        print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
-        print(f"Command line: {' '.join(sys.argv)}")
         start = time.time()
         self.init()
         await self.push_pull()
@@ -1051,13 +1030,29 @@ def p_fol_ic3(solver: Solver) -> None:
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
         sys.stdout = TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
+    print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
+    print(f"Command line: {' '.join(sys.argv)}")
+    try:
+        path = os.path.dirname(os.path.realpath(__file__))
+        wd = os.getcwd() if path == '' else path
+        print(f"Hash: {subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=wd, encoding='utf8').strip()}")
+    except (CalledProcessError, FileNotFoundError):
+        print(f"Hash: unknown")
     async def main() -> None:
         # We need to do this inside a function so that the events in the constructor of
         # p use the same event loop as p.run()
         p = ParallelFolIc3()
         await p.run()
     asyncio.run(main())
-    
+
+
+class WorkerArgs(NamedTuple):
+    name: str
+    logic: str
+    expt_flags: Set[str]
+    blocked_symbols: List[str]
+
+
 def fol_ic3(solver: Solver) -> None:
     prog = syntax.the_program
 
