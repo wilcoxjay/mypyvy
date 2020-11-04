@@ -1,22 +1,29 @@
 
+from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Iterator, NamedTuple, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
+
 import argparse
-from asyncio.exceptions import CancelledError
-from io import TextIOWrapper
-import multiprocessing
-import os.path
+import subprocess
+import sys
+import os
 import random
-from subprocess import CalledProcessError
 import time
+import io
+import asyncio
+from collections import defaultdict
+import multiprocessing
 from multiprocessing import Process
 from multiprocessing.connection import Connection
-from typing import Awaitable, DefaultDict, NamedTuple, TextIO
-import asyncio
-from separators.separate import HybridSeparator, Separator
-from separators.timer import UnlimitedTimer
 
-from syntax import *
-from logic import *
-from fol_trans import *
+import z3
+import utils
+import logic
+from logic import Expr, Solver, Trace, check_implication
+import syntax
+from syntax import DefinitionDecl
+from fol_trans import FOLSeparator, eval_predicate, formula_to_predicate, model_to_state, predicate_to_formula, prog_to_sig, PDState, state_to_model, transition_to_formula, two_state_trace_to_model
+import separators
+from separators import Formula, Signature, Constraint, HybridSeparator, Neg, Pos, Imp, ParallelSeparator, Separator, UnlimitedTimer
+from separators.separate import predecessor_formula, successor_formula
 
 def initial_conditions() -> List[Expr]:
     prog = syntax.the_program
@@ -28,7 +35,7 @@ def check_initial(solver: Solver, p: Expr, minimize: Optional[bool] = None) -> O
     m = check_implication(solver, inits, [p], minimize=minimize)
     if m is None:
         return None
-    return Trace.from_z3([KEY_ONE], m)
+    return Trace.from_z3([logic.KEY_ONE], m)
 
 def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
     '''Used only in fol_ice, not cached'''
@@ -36,7 +43,7 @@ def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
     safety = tuple(inv.expr for inv in prog.invs() if inv.is_safety)
     z3m = check_implication(solver, ps, safety)
     if z3m is not None:
-        s = Trace.from_z3([KEY_ONE], z3m)
+        s = Trace.from_z3([logic.KEY_ONE], z3m)
         print(f'Found bad state satisfying {" and ".join(map(str,ps))}:')
         print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
         return s
@@ -44,10 +51,10 @@ def check_safe(solver: Solver, ps: List[Expr]) -> Optional[Trace]:
 
 # Returns a trace where index 0 = pre-state, 1 = post-state
 def two_state_trace_from_z3(m: z3.ModelRef) -> Trace:
-    return Trace.from_z3([KEY_OLD, KEY_NEW], m)
+    return Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], m)
 
 def check_two_state_implication_uncached(solver: Solver, ps: List[Expr], c: Expr, minimize: Optional[bool] = None, timeout: int = 0) -> Optional[Trace]:
-    edge = check_two_state_implication_all_transitions_unknown_is_unsat(solver, old_hyps = ps, new_conc = c, minimize=minimize, timeout=timeout)
+    edge = logic.check_two_state_implication_all_transitions_unknown_is_unsat(solver, old_hyps = ps, new_conc = c, minimize=minimize, timeout=timeout)
     return two_state_trace_from_z3(edge[0]) if edge is not None else None
 
 def check_transition(
@@ -58,7 +65,7 @@ def check_transition(
         timeout: int = 0,
         transition: Optional[DefinitionDecl] = None
 )-> Optional[Trace]:
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
     prog = syntax.the_program
     start = time.time()
     with s:
@@ -92,7 +99,7 @@ def check_two_state_implication_generalized(
         minimize: Optional[bool] = None,
         timeout: int = 0,
 ) -> Tuple[z3.CheckSatResult, Optional[z3.ModelRef]]:
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
     with s:
         for h in old_hyps:
             s.add(t.translate_expr(h, old=True))
@@ -208,7 +215,7 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
         exc: Optional[BaseException] = None
         for f in done:
             if f.cancelled():
-                exc = CancelledError()
+                exc = asyncio.CancelledError()
             elif f.exception() is None:
                 for unfinished in pending:
                     unfinished.cancel()
@@ -240,7 +247,7 @@ async def multi_check_transition(old_hyps: Iterable[Expr],
             p.start()
             v = await async_recv(conn_main)
             return v
-        except CancelledError:
+        except:
             if p.is_alive():
                 p.kill()
             raise
@@ -259,7 +266,7 @@ async def multi_check_implication(hyps: Iterable[Expr],
         # This function will be executed in a forked process
         def worker(conn: Connection) -> None:
             m = check_implication(s, hyps, [conc], minimize=min)
-            conn.send(Trace.from_z3([KEY_ONE], m) if m is not None else None)
+            conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
 
         (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
         p = Process(target=worker, args = (conn_worker,))
@@ -267,7 +274,7 @@ async def multi_check_implication(hyps: Iterable[Expr],
             p.start()
             result = await async_recv(conn_main)
             return result
-        except CancelledError:
+        except:
             p.kill()
             raise
     z3solver = Solver(use_cvc4=False)
@@ -294,7 +301,7 @@ class IGQueryLogger(object):
         st = tr[0].as_state(tr[1])
         size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
         self.print(f"Size of state to block {size_summary}")
-        # golden: List[separators.logic.Formula] = []
+        # golden: List[Formula] = []
         for inv in syntax.the_program.invs():
             if s._states[state][0].as_state(s._states[state][1]).eval(inv.expr) == False:
                 cex = await multi_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False)
@@ -825,9 +832,9 @@ class ParallelFolIc3(object):
 
         # We need to check for a predecessor
         s = self._states[state]
-        formula_to_block = Not(s[0].as_onestate_formula(s[1])) \
+        formula_to_block = syntax.Not(s[0].as_onestate_formula(s[1])) \
                         if utils.args.logic != "universal" else \
-                        Not(s[0].as_diagram(s[1]).to_ast())
+                        syntax.Not(s[0].as_diagram(s[1]).to_ast())
         # We do this in a loop to ensure that if someone concurrently modifies the frames, we still compute a correct
         # predecessor.
         while True:
@@ -1029,14 +1036,14 @@ class ParallelFolIc3(object):
 def p_fol_ic3(solver: Solver) -> None:
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
-        sys.stdout = TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
+        sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
     print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
     print(f"Command line: {' '.join(sys.argv)}")
     try:
         path = os.path.dirname(os.path.realpath(__file__))
         wd = os.getcwd() if path == '' else path
         print(f"Hash: {subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=wd, encoding='utf8').strip()}")
-    except (CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError):
         print(f"Hash: unknown")
     async def main() -> None:
         # We need to do this inside a function so that the events in the constructor of
@@ -1162,9 +1169,9 @@ def fol_ic3(solver: Solver) -> None:
         
         if not t.predecessors_eliminated:
             s = states[t.state]
-            formula_to_block = Not(s[0].as_onestate_formula(s[1])) \
+            formula_to_block = syntax.Not(s[0].as_onestate_formula(s[1])) \
                            if utils.args.logic != "universal" else \
-                           Not(s[0].as_diagram(s[1]).to_ast())
+                           syntax.Not(s[0].as_diagram(s[1]).to_ast())
             edge = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1), formula_to_block, minimize=False)
             if edge is None:
                 t.predecessors_eliminated = True
@@ -1245,7 +1252,7 @@ def fol_ic3(solver: Solver) -> None:
             cex = check_implication(solver, frame_predicates(i-1), [p])
             if cex is not None:
                 print("Adding new free pre-state")
-                t = Trace.from_z3([KEY_ONE], cex)
+                t = Trace.from_z3([logic.KEY_ONE], cex)
                 add_state((t,0))
                 continue
             # F_i-1 => wp(p)?
@@ -1353,7 +1360,7 @@ def fol_ic3(solver: Solver) -> None:
             if s.startswith("Candidate"):
                 self._out.write(f"[{self._name}] {s}\n")
                 self._out.flush()
-    def sig_symbols(s: separators.logic.Signature) -> List[str]:
+    def sig_symbols(s: Signature) -> List[str]:
         r: List[str] = []
         r.extend(s.relations.keys())
         r.extend(s.functions.keys())
@@ -1409,10 +1416,10 @@ def fol_ic3(solver: Solver) -> None:
 
     def inductive_generalize_parallel(t: BlockTask) -> None:
         sig = prog_to_sig(syntax.the_program, two_state=False)
-        golden: List[separators.logic.Formula] = []
+        golden: List[Formula] = []
         for inv in syntax.the_program.invs():
             if states[t.state][0].as_state(states[t.state][1]).eval(inv.expr) == False:
-                cex = check_two_state_implication_all_transitions(solver, [*frame_predicates(t.frame-1), inv.expr], inv.expr, minimize=False)
+                cex = logic.check_two_state_implication_all_transitions(solver, [*frame_predicates(t.frame-1), inv.expr], inv.expr, minimize=False)
                 g_as_formula = predicate_to_formula(inv.expr)
                 golden.append(g_as_formula)
                 print("Possible formula is:", g_as_formula, '(relatively inductive)' if cex is None else '(not relatively inductive)')
@@ -1539,7 +1546,7 @@ def fol_ic3(solver: Solver) -> None:
             for i in range(len(frame_numbers)):
                 if frame_numbers[i] == frame:
                     # try to push i
-                    cex = check_two_state_implication_all_transitions(solver, frame_predicates(frame), predicates[i], minimize=False)
+                    cex = logic.check_two_state_implication_all_transitions(solver, frame_predicates(frame), predicates[i], minimize=False)
                     if cex is None:
                         frame_numbers[i] += 1
                         print(f"pushed {predicates[i]} to F_{frame_numbers[i]}")
@@ -1600,7 +1607,7 @@ def fol_ic3(solver: Solver) -> None:
                 if not any(inv_frame == f for f in frame_numbers):
                     continue
                 ps = frame_predicates(inv_frame)
-                if all(check_two_state_implication_all_transitions(solver, ps, p, minimize=False) is None for p in ps):
+                if all(logic.check_two_state_implication_all_transitions(solver, ps, p, minimize=False) is None for p in ps):
                     
                     ps = frame_predicates(inv_frame)
                     print(f"[IC3] Found inductive invariant in frame {inv_frame}!")
@@ -1678,7 +1685,7 @@ class LatticeEdgeGeneralizer(EdgeGeneralizer):
         post = p
         pre_dist, post_dist = 0,0
         while True:
-            x = [formula_to_predicate(x) for x in separators.separate.successor_formula(self.sig, predicate_to_formula(post))]
+            x = [formula_to_predicate(x) for x in successor_formula(self.sig, predicate_to_formula(post))]
             random.shuffle(x)
             for next_p in x:
                 if eval_predicate(state, next_p): # TODO: should this be eval next_p or not eval next_p or eval post?
@@ -1691,7 +1698,7 @@ class LatticeEdgeGeneralizer(EdgeGeneralizer):
                 break
         print("Optimizing pre-state")
         while True:
-            x = [formula_to_predicate(x) for x in separators.separate.predecessor_formula(self.sig, predicate_to_formula(pre))]
+            x = [formula_to_predicate(x) for x in predecessor_formula(self.sig, predicate_to_formula(pre))]
             random.shuffle(x)
             for next_p in x:
                 if await check_sat(next_p, post):
@@ -1755,7 +1762,7 @@ class CombiningEdgeGeneralizer(EdgeGeneralizer):
                 elif self._prop_solver.check(*self._vars_for_edge(trans, candidate_pre, candidate_post)) == z3.unsat:
                     res = z3.unsat
                 else:
-                    res, unused = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(candidate_pre), Or(*self._to_exprs(min_core[1] + post)), minimize=False, timeout=10000)
+                    res, unused = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(candidate_pre), syntax.Or(*self._to_exprs(min_core[1] + post)), minimize=False, timeout=10000)
                     if res == z3.unsat:
                         self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, candidate_pre, candidate_post))))
                 if res == z3.sat:
@@ -1774,7 +1781,7 @@ class CombiningEdgeGeneralizer(EdgeGeneralizer):
                     print(f"Skipping known unsat for {trans.name}")
                     # skip the rest of the checks. We know that its unsat so don't need to add it again
                     continue
-                res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), Or(*self._to_exprs(post)), minimize=False, timeout=10000)
+                res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), logic.Or(*self._to_exprs(post)), minimize=False, timeout=10000)
                 if tr_prime is not None:
                     tr = two_state_trace_from_z3(tr_prime)
                     tr_trans = trans
@@ -1875,8 +1882,8 @@ def fol_ice(solver: Solver) -> None:
     mp = FOLSeparator(states)
 
     start_time = time.time()
-    separation_timer = separators.timer.UnlimitedTimer()
-    generalization_timer = separators.timer.UnlimitedTimer()
+    separation_timer = UnlimitedTimer()
+    generalization_timer = UnlimitedTimer()
     def print_time() -> None:
         print(f"[time] Elapsed: {time.time()-start_time:0.3f}, sep: {separation_timer.elapsed():0.3f}, gen: {generalization_timer.elapsed():0.3f}")
 
@@ -1888,7 +1895,7 @@ def fol_ice(solver: Solver) -> None:
             print_time()
             print("[ICE] Eliminated all bad states")
             return
-        trace = Trace.from_z3([KEY_ONE], m)
+        trace = Trace.from_z3([logic.KEY_ONE], m)
         print(f"The size of the diagram is {len(list(trace.as_diagram().conjuncts()))}, with {len(trace.as_diagram().binder.vs)} existentials")
         neg = [add_state((trace, 0))]
         generalizer = LatticeEdgeGeneralizer()
