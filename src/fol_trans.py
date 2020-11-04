@@ -319,7 +319,8 @@ class FOLSeparator(object):
                  pos: Collection[int],
                  neg: Collection[int],
                  imp: Collection[Tuple[int, int]],
-                 complexity: int
+                 complexity: int = 1000,
+                 pc: PrefixConstraints = PrefixConstraints()
     ) -> Optional[Expr]:
         if isinstance(self.separator, Separator):
             timer = separators.timer.UnlimitedTimer()
@@ -337,8 +338,6 @@ class FOLSeparator(object):
             constraints: List[Constraint] = [Pos(self._state_id(i)) for i in pos]
             constraints.extend([Neg(self._state_id(i)) for i in neg])
             constraints.extend([Imp(self._state_id(i), self._state_id(j)) for i,j in imp])
-            qe = [(self.sig.sort_indices[x],self.sig.sort_indices[y]) for (x,y) in utils.args.epr_edges]
-            pc = PrefixConstraints(Logic.EPR, min_depth = 0 if 'six' in self.separator._expt_flags else 6, max_alt = 2, max_repeated_sorts = 2, disallowed_quantifier_edges= qe)
             f = self.separator.separate(constraints, pc)
         else:
             assert False

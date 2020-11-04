@@ -9,6 +9,7 @@ import random
 import time
 import io
 import asyncio
+import itertools
 from collections import defaultdict
 import multiprocessing
 from multiprocessing import Process
@@ -23,7 +24,7 @@ from syntax import DefinitionDecl
 from fol_trans import FOLSeparator, eval_predicate, formula_to_predicate, model_to_state, predicate_to_formula, prog_to_sig, PDState, state_to_model, transition_to_formula, two_state_trace_to_model
 import separators
 from separators import Formula, Signature, Constraint, HybridSeparator, Neg, Pos, Imp, ParallelSeparator, Separator, UnlimitedTimer
-from separators.separate import predecessor_formula, successor_formula
+from separators.separate import Logic, PrefixConstraints, predecessor_formula, successor_formula
 
 
 def check_initial(solver: Solver, p: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
@@ -199,7 +200,6 @@ async def async_recv(conn: Connection) -> Any:
         # seems to silently do nothing.
         loop.remove_reader(conn.fileno())
     
-
 T = TypeVar('T')
 async def async_race(aws: Sequence[Awaitable[T]]) -> T:
     '''Returns the first value from `aws` and cancels the other tasks.
@@ -348,6 +348,9 @@ class ParallelFolIc3(object):
         self._current_pull_heuristic_tasks: Set[Tuple[int,int]] = set() # Which (frame, state) pairs are being worked on by the pull heuristic?
         self._push_pull_lock = asyncio.Lock()
         
+        # Logging etc
+        self._start: float = 0
+        
 
 
     # Frame number manipulations (make None === infinity)
@@ -421,6 +424,7 @@ class ParallelFolIc3(object):
             print(f"[IC3] predicate {fn_str} {code} {p}")
         print(f"[IC3] Reachable states: {len(self._reachable)}")
         print("[IC3] ----")
+        print(f"time: {time.time() - self._start:0.2f} sec")
 
     def push_reachable(self, state:int) -> None:
         # Mark state reachable
@@ -595,7 +599,7 @@ class ParallelFolIc3(object):
                 return
             await self._event_frames.wait()  
 
-    async def parallel_inductive_generalize_worker(self, name: str, logic: str, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, state: int, sep: Union[Separator, ParallelSeparator], ignored_pred: int = -1) -> Expr:
+    async def parallel_inductive_generalize_worker(self, name: str, pc: PrefixConstraints, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, state: int, sep: Union[Separator, ParallelSeparator], ignored_pred: int = -1) -> Expr:
         log_filename = f"sep-{''.join(random.choice('0123456789ABCDEF') for x in range(8))}.log"
         def subprocess_worker(conn: Connection) -> None:
             # Redirect output to either a log or empty
@@ -604,10 +608,13 @@ class ParallelFolIc3(object):
             print(f"pid: {os.getpid()}")
             states: List[PDState] = []
             s = FOLSeparator(states, sep=sep)
-            s.logic = logic
             t = UnlimitedTimer()
             gen = LatticeEdgeGeneralizer()
             solver = Solver()
+            if pc.logic == Logic.EPR:
+                qe = [(s.sig.sort_indices[x], s.sig.sort_indices[y]) for (x,y) in itertools.product(s.sig.sort_names, s.sig.sort_names) if (x,y) not in utils.args.epr_edges]
+                pc.disallowed_quantifier_edges = qe
+            
             while True:
                 v = conn.recv()
                 if 'state' in v:
@@ -616,7 +623,7 @@ class ParallelFolIc3(object):
                     pos, neg, imp = v['sep']
                     print(f"Separating with {len(pos) + len(neg) + len(imp)} constraints")
                     with t:
-                        p = s.separate(pos, neg, imp, complexity=1000)
+                        p = s.separate(pos, neg, imp, pc=pc)
                     print(f"Found separator: {p}")
                     print(f"Total separation time so far: {t.elapsed()}")
                     sys.stdout.flush()
@@ -726,24 +733,32 @@ class ParallelFolIc3(object):
         workers: List[Awaitable[Optional[Expr]]] = []
         workers.append(self.wait_blocked(frame, state, ignored_pred))
         #cancellers: List[asyncio.Task] = []
-        def L(n: str, logic: str, expt_flags: Set[str], blocked_symbols: Set[str]) -> None:
+        def L(n: str, pc: PrefixConstraints, expt_flags: Set[str], blocked_symbols: Set[str]) -> None:
             #ctor = ImplicationSeparator if 'impmatrix' in expt_flags else HybridSeparator
             if 'impmatrix' in expt_flags:
                 backing_sep: Union[Separator, ParallelSeparator] = ParallelSeparator(sig, expt_flags= expt_flags | utils.args.expt_flags, blocked_symbols=list(blocked_symbols))
             else:
-                backing_sep = HybridSeparator(sig, logic = logic, expt_flags= expt_flags | utils.args.expt_flags, blocked_symbols=list(blocked_symbols))
-            task = asyncio.create_task(self.parallel_inductive_generalize_worker(n, logic, local_states, constraints, log, frame, state, backing_sep, ignored_pred))
+                backing_sep = HybridSeparator(sig, logic = 'universal' if pc.logic == Logic.Universal else 'fol', expt_flags= expt_flags | utils.args.expt_flags, blocked_symbols=list(blocked_symbols))
+            task = asyncio.create_task(self.parallel_inductive_generalize_worker(n, pc, local_states, constraints, log, frame, state, backing_sep, ignored_pred))
             workers.append(task)
         
         if utils.args.logic == 'fol' or utils.args.logic == 'epr':
             # L('full', 'fol', set(), set())
-            L('imp', 'epr', set(['impmatrix']), set())
-            L('imp6', 'epr', set(['impmatrix', 'six']), set())
+            # L('imp', 'universal', set(['impmatrix']), set())
+            # L('imp6', 'epr', set(['impmatrix', 'six']), set())
+            # L('imp6', 'epr', set(['impmatrix', 'six']), set())
             # L('alt1', 'fol', set(['alternation1']), set())
             # L('m4', 'fol', set(['matrixsize4']), set())
+
+            # For stopabble paxos
+            L('univ', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
+            L('eprg', PrefixConstraints(Logic.EPR, max_repeated_sorts=2, max_alt = 2), set(['impmatrix']), set())
+            L('alt6', PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2), set(['impmatrix']), set())
+            L('imp6', PrefixConstraints(Logic.EPR, min_depth=6, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
+            L('imp7', PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
         else:
-            L('A-imp', 'universal', set(['impmatrix']), set())
-            L('A-full', 'universal', set(), set())
+            L('imp6', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
+            L('A-full', PrefixConstraints(Logic.Universal), set(), set())
             
         # L('A-full', 'universal', set(), set())
         # L('A-imp', 'universal', set(['impmatrix']), set())
@@ -955,7 +970,7 @@ class ParallelFolIc3(object):
         assert False
 
     async def run(self) -> None:
-        start = time.time()
+        self._start = time.time()
         self.init()
         await self.push_pull()
         self.print_predicates()
@@ -967,7 +982,6 @@ class ParallelFolIc3(object):
                     #   asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       asyncio.create_task(self.inexpensive_reachability())]
         while True:
-            print(f"time: {time.time() - start:0.2f} sec")
             if self.is_complete():
                 break
             # We need to block with a new predicate.
@@ -975,7 +989,7 @@ class ParallelFolIc3(object):
 
         for h in hueristics:
             h.cancel()
-        print(f"Elapsed: {time.time() - start:0.2f} sec")
+        print(f"Elapsed: {time.time() - self._start:0.2f} sec")
         if self.is_program_safe():
             print("Program is SAFE.")
             for i, p, index in zip(self._frame_numbers, self._predicates, range(len(self._predicates))):
