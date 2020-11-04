@@ -25,10 +25,7 @@ import separators
 from separators import Formula, Signature, Constraint, HybridSeparator, Neg, Pos, Imp, ParallelSeparator, Separator, UnlimitedTimer
 from separators.separate import predecessor_formula, successor_formula
 
-def initial_conditions() -> List[Expr]:
-    prog = syntax.the_program
-    return [init.expr for init in prog.inits()]
-    
+
 def check_initial(solver: Solver, p: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     prog = syntax.the_program
     inits = tuple(init.expr for init in prog.inits())
@@ -669,7 +666,7 @@ class ParallelFolIc3(object):
                     log.print("Used existing constraint (initial or reachable state)")
                     continue
                 # F_0 => p
-                initial_state = await multi_check_implication(initial_conditions(), p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+                initial_state = await multi_check_implication([init.expr for init in syntax.the_program.inits()], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
                 if initial_state is not None:
                     log.print("Adding initial state")
                     s = self.add_state((initial_state,0))
@@ -767,49 +764,6 @@ class ParallelFolIc3(object):
         await self.push_pull()
         self.print_predicates()
     
-    # async def inductive_generalize(self, frame: int, state: int) -> None:
-    #     local_states: List[PDState] = []
-    #     sep = FOLSeparator(self._states, local_states)
-    #     edges: List[Tuple[int, int]] = []
-    #     log = IGQueryLogger()
-    #     await log.start(self, frame, state)
-    #     while True:
-    #         p = sep.separate(pos=self._initial_states, neg=[state], imp=edges, complexity=1000)
-    #         if p is not None:
-    #             log.found_candidate(p, "sep")
-    #             # F_0 => p
-    #             initial_state = await multi_check_implication(initial_conditions(), p, minimize=True)
-    #             if initial_state is not None:
-    #                 log.found_intial(initial_state)
-    #                 s = self.add_state((initial_state,0))
-    #                 self._initial_states.add(s)
-    #                 continue
-                
-    #             # F_i-1 ^ p => wp(p)?
-    #             # gen = TrivialEdgeGeneralizer()
-    #             # res = gen.find_generalized_implication(self._solver, self._states[state], [self._predicates[j] for j in self.frame_predicates(frame-1)], p)
-    #             # edge = check_transition(self._solver, [p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
-    #             edge = await multi_check_transition([p, *(self._predicates[j] for j in self.frame_predicates(frame-1))], p, minimize=True)
-    #             if edge is not None:
-    #                 log.found_edge(edge)
-    #                 # s_i = self.add_state((edge,0))
-    #                 # s_j = self.add_state((edge,1))
-    #                 # self.add_transition(s_i, s_j)
-    #                 # edges.append((s_i, s_j))
-    #                 a = -(len(local_states) + 1)
-    #                 local_states.append((edge, 0))
-    #                 b = -(len(local_states) + 1)
-    #                 local_states.append((edge, 1))
-    #                 edges.append((a,b))
-    #                 continue
-
-    #             # If we get here, then p is a solution to our inductive generalization query        
-    #             log.learned(p)
-    #             self.add_predicate(p, frame)
-    #             return
-    #         else:
-    #             assert False
-
     async def get_predecessor(self, frame: int, state: int) -> Optional[int]:
         assert frame != 0
         key = (frame-1, state)
