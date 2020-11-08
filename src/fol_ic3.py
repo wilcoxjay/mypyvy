@@ -788,9 +788,9 @@ class ParallelFolIc3(object):
 
             # For stopabble paxos
             L('univ', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
-            L('eprg', PrefixConstraints(Logic.EPR, max_repeated_sorts=2, max_alt = 2), set(['impmatrix']), set())
+            L('uni6', PrefixConstraints(Logic.Universal, min_depth=6), set(['impmatrix']), set())
+            L('eprg', PrefixConstraints(Logic.EPR, max_alt = 2, max_repeated_sorts=2), set(['impmatrix']), set())
             L('alt6', PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2), set(['impmatrix']), set())
-            L('imp6', PrefixConstraints(Logic.EPR, min_depth=6, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
             L('imp7', PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
         else:
             L('imp', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
