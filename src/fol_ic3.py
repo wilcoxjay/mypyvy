@@ -193,7 +193,7 @@ class TaskScheduler(object):
 
 async def async_recv(conn: Connection) -> Any:
     loop = asyncio.get_event_loop()
-    event = asyncio.Event()
+    event = asyncio.Event(loop=loop)
     try:
         loop.add_reader(conn.fileno(), event.set)
         await event.wait()
@@ -210,7 +210,7 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
     '''Returns the first value from `aws` and cancels the other tasks.
     
     Ignores exceptions from the awaitables, unless all awaitables produce an exception,
-    which causes `async_race` to raise the exception from an arbitrary task.
+    which causes `async_race` to raise the exception from an arbitrary awaitable.
     `aws` must be non-empty. '''
     tasks: List[Future[T]] = [a if isinstance(a, Task) else asyncio.create_task(a) for a in aws]
     while True:
@@ -251,49 +251,37 @@ class ScopedProcess:
         self._proc: Process
     @staticmethod
     def _kill_own_pgroup(signal_num: int, frame: Any) -> NoReturn:
-        signal.signal(signal_num, signal.SIG_IGN)
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         os.killpg(os.getpgid(os.getpid()), signal.SIGTERM)
         os._exit(0)
     def __enter__(self) -> Connection:
         (self._conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-        h = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         def proc(c: Connection) -> None:
             os.setpgid(0, 0)
             signal.signal(signal.SIGTERM, ScopedProcess._kill_own_pgroup)
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
             self._target(c)
 
         self._proc = Process(target=proc, args = (conn_worker,))
         self._proc.start()
-        signal.signal(signal.SIGTERM, h)
         conn_worker.close()
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
         return self._conn_main
     def __exit__(self, a: Any, b: Any, c: Any) -> None:
-        self._proc.terminate()
-        # if self._proc.pid is not None:
-        #     try:
-        #         os.kill(self._proc.pid, signal.SIGTERM)
-        #     except ProcessLookupError:
-        #         pass
-        #     else:
-        #         self._proc.join()
-            # os.killpg(self._proc.pid, signal.SIGSTOP)
-            # os.killpg(self._proc.pid, signal.SIGKILL)
-        
-        # self._proc.terminate()
-        # self._proc.join(0.1)
-        # if self._proc.is_alive():
-        #     self._proc.kill()
-        # if self._proc.pid is not None:
-        #     _child_procs.remove(self._proc.pid)
+        self._conn_main.close()
+        try:
+            os.killpg(self._proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self._proc.join()
+        self._proc.close()
     
 
-async def multi_check_transition(old_hyps: Iterable[Expr],
-        new_conc: Expr,
-        minimize: Optional[bool] = None,
-        timeout: int = 0, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
+async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
     async def check(s: Solver, min: bool) -> Optional[Trace]:        
         def worker(conn: Connection) -> None:
-            conn.send(check_transition(s, old_hyps, new_conc, minimize=min, timeout=timeout, transition=transition))
+            conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
         with ScopedProcess(worker) as conn:
             return await async_recv(conn)
     z3solver = Solver(use_cvc4=False)
@@ -302,26 +290,13 @@ async def multi_check_transition(old_hyps: Iterable[Expr],
     t2 = asyncio.create_task(check(cvc4solver, min=False), name="cvc4")
     return await async_race([t1, t2])
 
-async def multi_check_implication(hyps: Iterable[Expr],
-        conc: Expr,
-        minimize: Optional[bool] = None,
-        timeout: int = 0) -> Optional[Trace]:
+async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     async def check(s: Solver, min: bool) -> Optional[Trace]:
         def worker(conn: Connection) -> None:
             m = check_implication(s, hyps, [conc], minimize=min)
             conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
         with ScopedProcess(worker) as conn:
             return await async_recv(conn)
-
-        # (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-        # p = Process(target=worker, args = (conn_worker,))
-        # try:
-        #     p.start()
-        #     result = await async_recv(conn_main)
-        #     return result
-        # except:
-        #     p.kill()
-        #     raise
     z3solver = Solver(use_cvc4=False)
     cvc4solver = Solver(use_cvc4=True)
     t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
@@ -819,7 +794,7 @@ class ParallelFolIc3(object):
             L('imp7', PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
         else:
             L('imp', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
-            L('A-full', PrefixConstraints(Logic.Universal), set(), set())
+            # L('A-full', PrefixConstraints(Logic.Universal), set(), set())
             
         # L('A-full', 'universal', set(), set())
         # L('A-imp', 'universal', set(['impmatrix']), set())
