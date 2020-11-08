@@ -162,7 +162,8 @@ invariant proposal(I,R,V1) & proposal(I,R,V2) -> V1 = V2
 invariant vote(N,I,R,V) -> proposal(I,R,V)
 
 # decisions come from quorums of votes:
-invariant [free-lemma] forall I:inst, R:round, V:value. (exists N:node. decision(N,I,R,V)) -> exists Q:quorum. forall N:node. member(N, Q) -> vote(N,I,R,V)
+# invariant forall I:inst, R:round, V:value. (exists N:node. decision(N,I,R,V)) -> exists Q:quorum. forall N:node. member(N, Q) -> vote(N,I,R,V)
+invariant forall I:inst, R:round, V:value. exists Q:quorum. forall N1:node, N2:node. decision(N1,I,R,V) & member(N2, Q) -> vote(N2,I,R,V)
 
 # properties of one_b_msg
 invariant one_b_msg(N,R2,M) & maxr(M,I) = none & !le(R2,R1) -> !vote(N,I,R1,V2)

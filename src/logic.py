@@ -608,7 +608,7 @@ class Solver(object):
             self.cvc4_proc = None
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
-            self.cvc4_proc = subprocess.Popen([CVC4EXEC], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            self.cvc4_proc = subprocess.Popen(['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--full-saturate-quant', '--produce-models'], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         return self.cvc4_proc
 
     def debug_recent(self) -> Tuple[str, Optional[str], Optional[str]]:
@@ -697,6 +697,7 @@ class Solver(object):
                 print(f'(set-option :rlimit {timeout})', file=proc.stdin)
             print(cvc4script, file=proc.stdin)
             # print(cvc4script)
+            assert proc.stdout is not None
             ans = proc.stdout.readline().strip()
             ans_map = {
                 'sat': z3.sat,
@@ -806,6 +807,7 @@ class Solver(object):
             for s in parser.parse():
                 if isinstance(s, sexp.EOF):
                     # print('got intermediate EOF')
+                    assert proc.stdout is not None
                     line = cvc4_postprocess(proc.stdout.readline())
                     lines.append(line)
                     if line == '':

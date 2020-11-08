@@ -2437,7 +2437,7 @@ def sort_from_z3sort(prog: Program, z3sort: z3.SortRef) -> SortDecl:
     return prog.scope.get_sort_checked(str(z3sort))
 
 def qa_edges_expr(prog: Program, expr: Expr) -> Iterator[Tuple[str, str]]:
-    lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope))
+    lator = Z3Translator(cast(Scope[z3.ExprRef], prog.scope), 'new', 'old')
     z3expr = lator.translate_expr(expr)
     for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
         yield (sort_from_z3sort(prog, ssortz3).name,

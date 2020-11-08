@@ -1,5 +1,8 @@
 
-from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Iterator, NamedTuple, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
+from asyncio.exceptions import CancelledError
+from asyncio.futures import Future
+from asyncio.tasks import Task
+from typing import Any, Awaitable, Callable, DefaultDict, Dict, Iterable, Iterator, NamedTuple, NoReturn, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
 
 import argparse
 import subprocess
@@ -10,10 +13,12 @@ import time
 import io
 import asyncio
 import itertools
+import signal
 from collections import defaultdict
 import multiprocessing
 from multiprocessing import Process
 from multiprocessing.connection import Connection
+import networkx # type: ignore
 
 import z3
 import utils
@@ -65,7 +70,7 @@ def check_transition(
 )-> Optional[Trace]:
     t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
     prog = syntax.the_program
-    start = time.time()
+    # start = time.time()
     with s:
         for h in old_hyps:
             s.add(t.translate_expr(h, old=True))
@@ -207,8 +212,14 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
     Ignores exceptions from the awaitables, unless all awaitables produce an exception,
     which causes `async_race` to raise the exception from an arbitrary task.
     `aws` must be non-empty. '''
+    tasks: List[Future[T]] = [a if isinstance(a, Task) else asyncio.create_task(a) for a in aws]
     while True:
-        done, pending = await asyncio.wait(aws, return_when=asyncio.FIRST_COMPLETED)
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        except CancelledError:
+            for task in tasks:
+                task.cancel()
+            raise
         exc: Optional[BaseException] = None
         for f in done:
             if f.cancelled():
@@ -224,30 +235,67 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
                 raise exc
             else:
                 raise ValueError("Empty sequence passed to async_race()")
-        aws = list(pending)
+        tasks = list(pending)
             
+
+class ScopedProcess:
+    '''Allows a target function to be run in a `with` statement:
+       
+       with ScopedProcess(lambda c: c.send(os.getpid())) as conn:
+           print("Child pid:", conn.recv())
+
+       Interacts properly with asyncio and cancellation.'''
+    def __init__(self, target: Callable[[Connection], None]):
+        self._target = target
+        self._conn_main: Connection
+        self._proc: Process
+    @staticmethod
+    def _kill_own_pgroup(signal_num: int, frame: Any) -> NoReturn:
+        signal.signal(signal_num, signal.SIG_IGN)
+        os.killpg(os.getpgid(os.getpid()), signal.SIGTERM)
+        os._exit(0)
+    def __enter__(self) -> Connection:
+        (self._conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
+        h = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        def proc(c: Connection) -> None:
+            os.setpgid(0, 0)
+            signal.signal(signal.SIGTERM, ScopedProcess._kill_own_pgroup)
+            self._target(c)
+
+        self._proc = Process(target=proc, args = (conn_worker,))
+        self._proc.start()
+        signal.signal(signal.SIGTERM, h)
+        conn_worker.close()
+        return self._conn_main
+    def __exit__(self, a: Any, b: Any, c: Any) -> None:
+        self._proc.terminate()
+        # if self._proc.pid is not None:
+        #     try:
+        #         os.kill(self._proc.pid, signal.SIGTERM)
+        #     except ProcessLookupError:
+        #         pass
+        #     else:
+        #         self._proc.join()
+            # os.killpg(self._proc.pid, signal.SIGSTOP)
+            # os.killpg(self._proc.pid, signal.SIGKILL)
+        
+        # self._proc.terminate()
+        # self._proc.join(0.1)
+        # if self._proc.is_alive():
+        #     self._proc.kill()
+        # if self._proc.pid is not None:
+        #     _child_procs.remove(self._proc.pid)
+    
 
 async def multi_check_transition(old_hyps: Iterable[Expr],
         new_conc: Expr,
         minimize: Optional[bool] = None,
         timeout: int = 0, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
     async def check(s: Solver, min: bool) -> Optional[Trace]:        
-        
-        # This function will be executed in a forked process
         def worker(conn: Connection) -> None:
-            # time.sleep(random.random())
             conn.send(check_transition(s, old_hyps, new_conc, minimize=min, timeout=timeout, transition=transition))
-            
-        (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-        p = Process(target=worker, args = (conn_worker,))
-        try:
-            p.start()
-            v = await async_recv(conn_main)
-            return v
-        except:
-            if p.is_alive():
-                p.kill()
-            raise
+        with ScopedProcess(worker) as conn:
+            return await async_recv(conn)
     z3solver = Solver(use_cvc4=False)
     cvc4solver = Solver(use_cvc4=True)
     t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
@@ -259,21 +307,21 @@ async def multi_check_implication(hyps: Iterable[Expr],
         minimize: Optional[bool] = None,
         timeout: int = 0) -> Optional[Trace]:
     async def check(s: Solver, min: bool) -> Optional[Trace]:
-               
-        # This function will be executed in a forked process
         def worker(conn: Connection) -> None:
             m = check_implication(s, hyps, [conc], minimize=min)
             conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
+        with ScopedProcess(worker) as conn:
+            return await async_recv(conn)
 
-        (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-        p = Process(target=worker, args = (conn_worker,))
-        try:
-            p.start()
-            result = await async_recv(conn_main)
-            return result
-        except:
-            p.kill()
-            raise
+        # (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
+        # p = Process(target=worker, args = (conn_worker,))
+        # try:
+        #     p.start()
+        #     result = await async_recv(conn_main)
+        #     return result
+        # except:
+        #     p.kill()
+        #     raise
     z3solver = Solver(use_cvc4=False)
     cvc4solver = Solver(use_cvc4=True)
     t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
@@ -337,6 +385,7 @@ class ParallelFolIc3(object):
         # Caches and derived information
         self._eval_cache: Dict[Tuple[int, int], bool] = {} # Record eval for a (predicate, state)
         self._pushing_blocker: Dict[int, int] = {} # State for a predicate in F_i that prevents it pushing to F_i+1
+        self._former_pushing_blocker: DefaultDict[int, Set[int]] = defaultdict(set) # Pushing blockers from prior frames
         self._pulling_blocker: Dict[int, Tuple[int, int]] = {} # State for a predicate in F_i that prevents it pulling to F_i-1
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
@@ -465,8 +514,19 @@ class ParallelFolIc3(object):
                 if all(self.eval(F_i_pred, blocker) for F_i_pred in self.frame_predicates(i)):
                     continue
                 # The blocker is invalidated
+                self._former_pushing_blocker[index].add(self._pushing_blocker[index])
                 del self._pushing_blocker[index]
             # Either there is no known blocker or it was just invalidated by some new predicate in F_i
+            # First check if any former blockers still work
+            for former_blocker in self._former_pushing_blocker[index]:
+                if all(self.eval(F_i_pred, former_blocker) for F_i_pred in self.frame_predicates(i)):
+                    print(f"Using former blocker {former_blocker}")
+                    self._pushing_blocker[index] = former_blocker
+            # We found a former one to use
+            if index in self._pushing_blocker:
+                continue
+
+
             # Check if any new blocker exists
             # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
             fp = set(self.frame_predicates(i))
@@ -623,6 +683,7 @@ class ParallelFolIc3(object):
                     pos, neg, imp = v['sep']
                     print(f"Separating with {len(pos) + len(neg) + len(imp)} constraints")
                     with t:
+                        # print(f"pc.logic: {pc.logic}")
                         p = s.separate(pos, neg, imp, pc=pc)
                     print(f"Found separator: {p}")
                     print(f"Total separation time so far: {t.elapsed()}")
@@ -757,7 +818,7 @@ class ParallelFolIc3(object):
             L('imp6', PrefixConstraints(Logic.EPR, min_depth=6, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
             L('imp7', PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
         else:
-            L('imp6', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
+            L('imp', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
             L('A-full', PrefixConstraints(Logic.Universal), set(), set())
             
         # L('A-full', 'universal', set(), set())
@@ -1749,7 +1810,7 @@ class CombiningEdgeGeneralizer(EdgeGeneralizer):
                     print(f"Skipping known unsat for {trans.name}")
                     # skip the rest of the checks. We know that its unsat so don't need to add it again
                     continue
-                res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), logic.Or(*self._to_exprs(post)), minimize=False, timeout=10000)
+                res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), syntax.Or(*self._to_exprs(post)), minimize=False, timeout=10000)
                 if tr_prime is not None:
                     tr = two_state_trace_from_z3(tr_prime)
                     tr_trans = trans
@@ -1949,6 +2010,11 @@ def fol_extract(solver: Solver) -> None:
             f.write(f"\n; Conjecture {name}\n")
             f.write(f"(conjecture {repr(predicate_to_formula(x.expr))})\n")
         names.add(name)
+    if utils.args.logic == 'epr':
+        graph = prog.decls_quantifier_alternation_graph([x.expr for x in prog.invs()] + [syntax.Not(x.expr) for x in prog.invs()])
+        print(f"Is acyclic: {networkx.is_directed_acyclic_graph(graph)}")
+        arg = ','.join(f'{a}->{b}' for (a,b) in graph.edges)
+        print(f"--epr-edges='{arg}'")
 
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
