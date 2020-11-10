@@ -1698,7 +1698,7 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
         pretties = {
             'IMPLIES': '->',
             'IFF': '<->',
-            'EQUAL': '==',
+            'EQUAL': '=',
             'NOTEQ': '!=',
             'GE': '>=',
             'GT': '>',
