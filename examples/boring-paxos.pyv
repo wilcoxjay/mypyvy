@@ -49,6 +49,18 @@ invariant [protocol_conj69] protocol_one_b(N,R,MAXR,V) & MAXR != round_zero -> a
 invariant [protocol_conj70] protocol_one_b(N,R,round_zero,V) & round_lt(R2, R) -> !abs_vote(N,R2,V2)
 invariant [protocol_conj71] protocol_one_b(N,R,MAXR,V) -> round_lt(MAXR, R)
 
+# for every assert, there is an additional safety property that checks that the path condition implies it.
+# in this file, the path condition is always just the preconditions
+
+safety [cast_vote_asserts]
+  forall n,r,v.
+    & (forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
+    & protocol_current_round(n) = r
+    & protocol_proposal(r,v)
+    ->
+    & ~abs_left_rnd(n,r)
+    & abs_proposal(r,v)
+
 transition ext_protocol_cast_vote(n:node,v:value,r:round)
   modifies protocol_vote, abs_vote
   & (forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
@@ -56,12 +68,18 @@ transition ext_protocol_cast_vote(n:node,v:value,r:round)
   & protocol_proposal(r,v)
   & (new(protocol_vote(N,R,V)) <-> protocol_vote(N,R,V) | N = n & R = r & V = v)
   # call abs_cast_vote(n, v, r)
-    # jrw: TODO: encode these asserts
     # assert ~abs.left_rnd(n,r);
     # assert abs.proposal(r,v);
     & (new(abs_vote(N,R,V)) <-> abs_vote(N,R,V) | N = n & R = r & V = v)
     # jrw: next line not needed because abs_decision not modified
     # assume abs.decision(N1,R1,V1) & abs.decision(N2,R2,V2) -> V1 = V2
+
+safety [decide_assert]
+  forall r,v,q.
+  & (forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
+  & (forall N. member(N,q) -> protocol_vote(N,r,v))
+  ->
+  forall N. member(N,q) -> abs_vote(N,r,v)
 
 transition ext_protocol_decide(n:node,v:value,r:round,q:quorum)
   modifies protocol_decision, abs_decision
@@ -69,10 +87,25 @@ transition ext_protocol_decide(n:node,v:value,r:round,q:quorum)
   & (forall N. member(N,q) -> protocol_vote(N,r,v))
   & (forall N,R,V. new(protocol_decision(N,R,V)) <-> protocol_decision(N,R,V) | N = n & R = r & V = v)
   # call abs.decide(n, r, v, q)
-     # jrw: TODO: encode this assert
      # assert forall N. member(N,q) -> abs.vote(N,r,v);
-    & (forall N,R,V. new(abs_decision(N,R,V)) <-> abs_decision(N,R,V) | N = n & R = r & V = v)     
+    & (forall N,R,V. new(abs_decision(N,R,V)) <-> abs_decision(N,R,V) | N = n & R = r & V = v)
     & new(forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
+
+safety [propose_asserts]
+  forall r,q,maxr,v.
+  & (forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
+  & (forall V. !protocol_proposal(r,V))
+  & (forall N. member(N,q) -> (exists V,MAXR. protocol_one_b(N,r,MAXR,V)))
+  # TODO(jrw): think about the quantifier alternations here, since it's in negative position
+  & (| (forall N. member(N,q) -> (exists V. protocol_one_b(N,r,round_zero,V)))
+     | (& (exists N. member(N,q) & round_lt(maxr, r) & protocol_one_b(N,r,maxr,v))
+        & (forall V,N,R. member(N,q) & round_lt(R, r) & protocol_one_b(N,r,R,V) -> (round_lt(R, maxr) | R = maxr))))
+  ->
+  & (forall V. ~abs_proposal(r,V))
+  & (forall N,R. member(N,q) & round_lt(R, r) -> abs_left_rnd(N,R))
+  & (| (forall V,N,R. ~(member(N,q) & round_lt(R, r) & abs_vote(N,R,V)))
+     | (& (exists N. member(N,q) & round_lt(maxr, r) & abs_vote(N,maxr,v))
+        & (forall V,N,R. member(N,q) & round_lt(R, r) & abs_vote(N,R,V) -> (round_lt(R, maxr) | R = maxr))))
 
 transition ext_protocol_propose(r:round,q:quorum,maxr:round,v:value)
   modifies protocol_proposal, abs_proposal
@@ -80,14 +113,13 @@ transition ext_protocol_propose(r:round,q:quorum,maxr:round,v:value)
   & (forall V. !protocol_proposal(r,V))
   & (forall N. member(N,q) -> (exists V,MAXR. protocol_one_b(N,r,MAXR,V)))
   & ((forall N. member(N,q) -> (exists V. protocol_one_b(N,r,round_zero,V))) |
-      (exists N. member(N,q) & round_lt(maxr, r) & protocol_one_b(N,r,maxr,v)) & 
+      (exists N. member(N,q) & round_lt(maxr, r) & protocol_one_b(N,r,maxr,v)) &
       (forall V,N,R. member(N,q) & round_lt(R, r) & protocol_one_b(N,r,R,V) -> (round_lt(R, maxr) | R = maxr)))
   & (forall R,V. new(protocol_proposal(R,V)) <-> protocol_proposal(R,V) | R = r & V = v)
   # call abs.propose(r, q, maxr, v)
-    # jrw: TODO: encode these asserts
     # assert ~abs.proposal(r,V);
     # assert forall N,R. member(N,q) & R:round < r -> abs.left_rnd(N,R);
-    # assert (forall V,N,R. ~(member(N,q) & R:round < r & abs.vote(N,R,V))) | 
+    # assert (forall V,N,R. ~(member(N,q) & R:round < r & abs.vote(N,R,V))) |
     #        (exists N. member(N,q) & maxr < r & abs.vote(N,maxr,v)) & (forall V,N,R. member(N,q) & R < r & abs.vote(N,R,V) -> R <= maxr);
     & (forall R,V. new(abs_proposal(R,V)) <-> abs_proposal(R,V) | R = r & V = v)
     # jrw: next line not needed because abs_decision not modified
@@ -98,6 +130,15 @@ transition ext_protocol_send_1a(r:round)
   & (forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
   & (forall R. new(protocol_one_a(R)) <-> protocol_one_a(R) | R = r)
 
+safety [send_1b_asserts]
+  forall n,r,maxr,maxv.
+  & (forall N1,R1,V1,N2,R2,V2. abs_decision(N1,R1,V1) & abs_decision(N2,R2,V2) -> V1 = V2)
+  & round_lt(protocol_current_round(n), r)
+  & protocol_one_a(r)
+  & (maxr = round_zero & (forall V,R. !(round_lt(R, r) & protocol_vote(n,R,V))) | maxr != round_zero & (round_lt(maxr, r) & protocol_vote(n,maxr,maxv)) &
+      (forall V,R. round_lt(R, r) & protocol_vote(n,R,V) -> (round_lt(R, maxr) | R = maxr)))
+  ->
+  !abs_left_rnd(n,r)
 
 transition ext_protocol_send_1b(n:node,r:round,maxr:round,maxv:value)
   modifies protocol_current_round, protocol_one_b, abs_left_rnd
@@ -120,6 +161,23 @@ transition ext_protocol_send_1b(n:node,r:round,maxr:round,maxv:value)
 
 # jrw: how to test this file?
 
-# jrw: in current version of file (without asserts encoded), updr finds (in 5 seconds) 
-#      that the invariant protocol.decision -> abs.decision is enough.
-#      so, the asserts are definitiely next on the list.
+# jrw: updr finds the following invariant proving all safety properties in under 2 minutes.
+
+# invariant !(exists node0, round1, value0. !abs_left_rnd(node0, round_zero) & protocol_one_b(node0, round1, round_zero, value0))
+# invariant !(exists node0, round2. abs_left_rnd(node0, round_zero) & !protocol_one_a(round2) & protocol_current_round(node0) = round2)
+# invariant !(exists node0, round1, round2. round_lt(round1, round2) & !abs_left_rnd(node0, round1) & protocol_current_round(node0) = round2)
+# invariant !(exists node0, round1, round2. !round_lt(round1, round2) & abs_left_rnd(node0, round1) & protocol_current_round(node0) = round2)
+# invariant !(exists round1, value0. !abs_proposal(round1, value0) & protocol_proposal(round1, value0))
+# invariant !(exists round1, value0. abs_proposal(round1, value0) & !protocol_proposal(round1, value0))
+# invariant !(exists node0, round1, value0. !abs_vote(node0, round1, value0) & protocol_vote(node0, round1, value0))
+# invariant !(exists node0, round2, value0. abs_vote(node0, round2, value0) & !protocol_vote(node0, round2, value0))
+# invariant !(exists node0, round2, value0. !abs_proposal(round2, value0) & abs_vote(node0, round2, value0))
+# invariant !(exists node0, round2, round3, value0. round_zero != round2 & protocol_one_b(node0, round3, round2, value0) & !protocol_vote(node0, round2, value0))
+# invariant !(exists node0, round0, round1, value0, value1. round_lt(round0, round1) & protocol_one_b(node0, round1, round_zero, value1) & protocol_vote(node0, round0, value0))
+# invariant !(exists node1, round2, round3, value0. round_zero != round3 & !round_lt(round3, round2) & protocol_one_b(node1, round2, round3, value0))
+# invariant !(exists node0, round1, value0. !abs_decision(node0, round1, value0) & protocol_decision(node0, round1, value0))
+# invariant !(exists N1, R1, V1, N2, R2, V2. protocol_decision(N1, R1, V1) & protocol_decision(N2, R2, V2) & V1 != V2)
+# invariant !(exists node0, round1, round2, round3, value0, value1. round_lt(round2, round1) & !round_lt(round2, round3) & !protocol_one_b(node0, round1, round2, value1) & protocol_one_b(node0, round1, round3, value1) & protocol_vote(node0, round2, value0))
+# invariant !(exists node0, round1, round2, round3, value0. round_lt(round2, round1) & !abs_left_rnd(node0, round2) & protocol_one_b(node0, round1, round3, value0))
+
+# jrw: one interesting thing to note about this invariant is that it does not mention the quorum sort at all
