@@ -333,7 +333,7 @@ async def _writeexactly(write_fd: int, buf: bytes) -> None:
                 raise EOFError()
         return
     finally:
-        loop.remove_reader(write_fd)
+        loop.remove_writer(write_fd)
 
 # async def test():
 #     (a, b) = os.pipe()
@@ -831,8 +831,8 @@ class ParallelFolIc3(object):
             
             while True:
                 v = await conn.recv()
-                if 'state' in v:
-                    states.append(v['state'])
+                if 'states' in v:
+                    states.extend(v['states'])
                 if 'sep' in v:
                     pos, neg, imp = v['sep']
                     print(f"Separating with {len(pos) + len(neg) + len(imp)} constraints")
@@ -863,8 +863,9 @@ class ParallelFolIc3(object):
             while True:
                 # Update any states in the worker
                 while states_seen < len(local_states):
-                    await conn.send({'state': local_states[states_seen]})
-                    states_seen += 1
+                    x = len(local_states)
+                    await conn.send({'states': local_states[states_seen:x]})
+                    states_seen = x
                 cs = ([c.i for c in constraints if isinstance(c, Pos)],
                       [c.i for c in constraints if isinstance(c, Neg)],
                       [(c.i,c.j) for c in constraints if isinstance(c, Imp)])
@@ -904,7 +905,7 @@ class ParallelFolIc3(object):
                 else: 
                     start = time.time()
                     edge = await multi_check_transition([p, *(self._predicates[j] for j in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
-                    print(f"Check in {name} took {time.time()-start:0.3f}s")
+                    log.print(f"Check in {name} took {time.time()-start:0.3f}s")
 
 
                 if frame_preds != set(self.frame_predicates(frame-1)) or initial_reachable != self._reachable:
@@ -940,6 +941,8 @@ class ParallelFolIc3(object):
         log.print(f"Rationale: {rationale}")
         if utils.args.log_dir:
             print(f"Inductive generalize log in <{log.name}> blocking {state} in frame {frame} for {rationale}")
+        else:
+            print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}")
         
         # Seed our states with the state to block and known initial states
         local_states.append(self._states[state])
@@ -977,7 +980,10 @@ class ParallelFolIc3(object):
             L('alt6', PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2), set(['impmatrix']), set())
             L('imp7', PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2), set(['impmatrix']), set())
         else:
-            L('imp', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
+            L('impA', PrefixConstraints(Logic.Universal), set(['impmatrix']), set())
+            L('imM2', PrefixConstraints(Logic.Universal, max_repeated_sorts=2), set(['impmatrix']), set())
+            L('imp4', PrefixConstraints(Logic.Universal, min_depth=5, max_repeated_sorts=2), set(['impmatrix']), set())
+            L('imp5', PrefixConstraints(Logic.Universal, min_depth=6, max_repeated_sorts=2), set(['impmatrix']), set())
             # L('A-full', PrefixConstraints(Logic.Universal), set(), set())
             
         # L('A-full', 'universal', set(), set())
@@ -1060,7 +1066,7 @@ class ParallelFolIc3(object):
         self.print_predicates()
             
     async def block(self, frame: int, state: int, rationale: str) -> None:
-        print(f"Block: {state} in frame {frame} for {rationale}")
+        # print(f"Block: {state} in frame {frame} for {rationale}")
         if frame == 0:
             assert all(self.eval(i, state) for i in self._initial_conditions)
             self.mark_reachable_and_bad(state, rationale)
@@ -1184,7 +1190,7 @@ class ParallelFolIc3(object):
                 await self.push_pull()
                 return
             blocker = self._pushing_blocker[safety]
-            print(f"Blocking {blocker} in frame {fn} for learning")
+            # print(f"Blocking {blocker} in frame {fn} for learning")
             await self.block(fn, blocker, "learning")
             return
         assert False
@@ -1195,9 +1201,9 @@ class ParallelFolIc3(object):
         await self.push_pull()
         self.print_predicates()
         hueristics = [
-                    #   asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
+                       asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
                     #   asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
-                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
+                       asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
                     #   asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                     #   asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       asyncio.create_task(self.inexpensive_reachability())]
@@ -1221,7 +1227,7 @@ class ParallelFolIc3(object):
             print("Program is UNKNOWN.")
 
 
-def p_fol_ic3(solver: Solver) -> None:
+def p_fol_ic3(_: Solver) -> None:
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
@@ -1241,11 +1247,11 @@ def p_fol_ic3(solver: Solver) -> None:
     asyncio.run(main())
 
 
-class WorkerArgs(NamedTuple):
-    name: str
-    logic: str
-    expt_flags: Set[str]
-    blocked_symbols: List[str]
+# class WorkerArgs(NamedTuple):
+#     name: str
+#     logic: str
+#     expt_flags: Set[str]
+#     blocked_symbols: List[str]
 
 
 # def fol_ic3(solver: Solver) -> None:
