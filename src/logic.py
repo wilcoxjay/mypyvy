@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import dataclasses
+import random
 import time
 import itertools
 import io
@@ -608,7 +609,7 @@ class Solver(object):
             self.cvc4_proc = None
     def get_cvc4_proc(self) -> subprocess.Popen:
         if self.cvc4_proc is None:
-            self.cvc4_proc = subprocess.Popen(['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--full-saturate-quant', '--produce-models'], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            self.cvc4_proc = subprocess.Popen(['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--full-saturate-quant', '--produce-models', f'--seed={random.randint(0,4000000000)}'], bufsize=1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         return self.cvc4_proc
 
     def debug_recent(self) -> Tuple[str, Optional[str], Optional[str]]:

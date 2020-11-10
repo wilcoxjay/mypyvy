@@ -1,6 +1,7 @@
 
 from asyncio.exceptions import CancelledError
 from asyncio.futures import Future
+from asyncio.streams import StreamWriter
 from asyncio.tasks import Task
 from typing import Any, Awaitable, Callable, DefaultDict, Dict, Iterable, Iterator, NamedTuple, NoReturn, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
 
@@ -116,80 +117,80 @@ def check_two_state_implication_generalized(
             return (z3.sat, s.model(minimize=minimize))
         return (res, None)
 
-class BlockTask(object):
-    def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask'], heuristic: bool = False):
-        self.is_must = is_must
-        self.state = state
-        self.frame = frame
-        self.predecessors_eliminated = False
-        self.child_count = 0
-        self.heuristic_child_count = 0
-        self.parent = parent
-        if parent is not None:
-            parent.child_count += 1
-            if heuristic:
-                parent.heuristic_child_count += 1
-        self.sep: Optional[FOLSeparator] = None
-        self.is_unsep = False
-        self.imp_constraints: List[Tuple[int, int]] = []
-        self.prior_predicates: List[Expr] = []
-        self.prior_eval_cache: List[Tuple[Set[int], Set[int]]] = []
-        self.ci_cache: Dict[Tuple[int, int], bool] = {}
-        self.generalize_bound = -1
-        self.generalizer: Optional[EdgeGeneralizer] = None
-        self.heuristic = heuristic
+# class BlockTask(object):
+#     def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask'], heuristic: bool = False):
+#         self.is_must = is_must
+#         self.state = state
+#         self.frame = frame
+#         self.predecessors_eliminated = False
+#         self.child_count = 0
+#         self.heuristic_child_count = 0
+#         self.parent = parent
+#         if parent is not None:
+#             parent.child_count += 1
+#             if heuristic:
+#                 parent.heuristic_child_count += 1
+#         self.sep: Optional[FOLSeparator] = None
+#         self.is_unsep = False
+#         self.imp_constraints: List[Tuple[int, int]] = []
+#         self.prior_predicates: List[Expr] = []
+#         self.prior_eval_cache: List[Tuple[Set[int], Set[int]]] = []
+#         self.ci_cache: Dict[Tuple[int, int], bool] = {}
+#         self.generalize_bound = -1
+#         self.generalizer: Optional['EdgeGeneralizer'] = None
+#         self.heuristic = heuristic
         
-    def destroy(self) -> None:
-        if self.parent is not None:
-            self.parent.child_count -= 1
-            if self.heuristic:
-                self.parent.heuristic_child_count -= 1
-    def reset_prior(self) -> None:
-        self.prior_predicates = []
-        self.prior_eval_cache = []
-        self.ci_cache = {}
-    def __str__(self) -> str:
-        t = f"[{'!' if self.is_must else '*' if not self.heuristic else '?'} F_{self.frame} s={self.state}]"
-        if self.parent is not None:
-            return f"{str(self.parent)} -> {t}"
-        return t
+#     def destroy(self) -> None:
+#         if self.parent is not None:
+#             self.parent.child_count -= 1
+#             if self.heuristic:
+#                 self.parent.heuristic_child_count -= 1
+#     def reset_prior(self) -> None:
+#         self.prior_predicates = []
+#         self.prior_eval_cache = []
+#         self.ci_cache = {}
+#     def __str__(self) -> str:
+#         t = f"[{'!' if self.is_must else '*' if not self.heuristic else '?'} F_{self.frame} s={self.state}]"
+#         if self.parent is not None:
+#             return f"{str(self.parent)} -> {t}"
+#         return t
 
-class TaskScheduler(object):
-    def __init__(self) -> None:
-        self.tasks: List[BlockTask] = []
-        self.states: Dict[int, int] = {}
-    def destroy(self, task: BlockTask) -> None:
-        destroyed = set([task])
-        changed = True
-        while changed:
-            changed = False
-            for t in self.tasks:
-                if t.parent is not None and t.parent in destroyed and t not in destroyed:
-                    destroyed.add(t)
-                    changed = True
-        self.tasks = [t for t in self.tasks if t not in destroyed]
-        for t in destroyed:
-            t.destroy()
-            self.states[t.state] = self.states[t.state] - 1
-    def add(self, task: BlockTask) -> None:
-        self.tasks.append(task)
-        self.states[task.state] = self.states.get(task.state, 0) + 1
-    def state_has_task(self, state: int) -> bool:
-        return state in self.states and self.states[state] > 0
-    def __iter__(self) -> Iterator[BlockTask]:
-        return iter(self.tasks)
-    def get_next(self) -> Optional[BlockTask]:
-        def heuristic(t: BlockTask) -> bool:
-            if t.heuristic: return True
-            if t.parent is not None: return heuristic(t.parent)
-            return False
-        should_be_heuristic = random.choice([True, False])
-        active_tasks = [tt for tt in self.tasks if tt.child_count - tt.heuristic_child_count == 0 and (heuristic(tt) == should_be_heuristic)]
-        if len(active_tasks) == 0:
-            should_be_heuristic = not should_be_heuristic
-            active_tasks = [tt for tt in self.tasks if tt.child_count - tt.heuristic_child_count == 0 and (heuristic(tt) == should_be_heuristic)]
-        random.shuffle(active_tasks)
-        return active_tasks[0] if len(active_tasks) > 0 else None
+# class TaskScheduler(object):
+#     def __init__(self) -> None:
+#         self.tasks: List[BlockTask] = []
+#         self.states: Dict[int, int] = {}
+#     def destroy(self, task: BlockTask) -> None:
+#         destroyed = set([task])
+#         changed = True
+#         while changed:
+#             changed = False
+#             for t in self.tasks:
+#                 if t.parent is not None and t.parent in destroyed and t not in destroyed:
+#                     destroyed.add(t)
+#                     changed = True
+#         self.tasks = [t for t in self.tasks if t not in destroyed]
+#         for t in destroyed:
+#             t.destroy()
+#             self.states[t.state] = self.states[t.state] - 1
+#     def add(self, task: BlockTask) -> None:
+#         self.tasks.append(task)
+#         self.states[task.state] = self.states.get(task.state, 0) + 1
+#     def state_has_task(self, state: int) -> bool:
+#         return state in self.states and self.states[state] > 0
+#     def __iter__(self) -> Iterator[BlockTask]:
+#         return iter(self.tasks)
+#     def get_next(self) -> Optional[BlockTask]:
+#         def heuristic(t: BlockTask) -> bool:
+#             if t.heuristic: return True
+#             if t.parent is not None: return heuristic(t.parent)
+#             return False
+#         should_be_heuristic = random.choice([True, False])
+#         active_tasks = [tt for tt in self.tasks if tt.child_count - tt.heuristic_child_count == 0 and (heuristic(tt) == should_be_heuristic)]
+#         if len(active_tasks) == 0:
+#             should_be_heuristic = not should_be_heuristic
+#             active_tasks = [tt for tt in self.tasks if tt.child_count - tt.heuristic_child_count == 0 and (heuristic(tt) == should_be_heuristic)]
+#         random.shuffle(active_tasks)
+#         return active_tasks[0] if len(active_tasks) > 0 else None
 
 async def async_recv(conn: Connection) -> Any:
     loop = asyncio.get_event_loop()
@@ -236,7 +237,16 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
             else:
                 raise ValueError("Empty sequence passed to async_race()")
         tasks = list(pending)
-            
+
+class AsyncConnection:
+    def __init__(self, read: int, write: int) -> None:
+        self.r = read
+        self.writer = StreamWriter()
+    async def recv(self) -> Any:
+        pass
+    async def send(self, v: Any) -> None:
+        pass
+
 
 class ScopedProcess:
     '''Allows a target function to be run in a `with` statement:
@@ -245,7 +255,7 @@ class ScopedProcess:
            print("Child pid:", conn.recv())
 
        Interacts properly with asyncio and cancellation.'''
-    def __init__(self, target: Callable[[Connection], None]):
+    def __init__(self, target: Callable[[Connection], Union[None, Awaitable[None]]]):
         self._target = target
         self._conn_main: Connection
         self._proc: Process
@@ -261,7 +271,9 @@ class ScopedProcess:
             os.setpgid(0, 0)
             signal.signal(signal.SIGTERM, ScopedProcess._kill_own_pgroup)
             signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
-            self._target(c)
+            r = self._target(c)
+            if r is not None:
+                asyncio.run(r)
 
         self._proc = Process(target=proc, args = (conn_worker,))
         self._proc.start()
@@ -271,38 +283,54 @@ class ScopedProcess:
     def __exit__(self, a: Any, b: Any, c: Any) -> None:
         self._conn_main.close()
         try:
-            os.killpg(self._proc.pid, signal.SIGKILL)
+            p = self._proc.pid
+            if p is not None:
+                os.killpg(p, signal.SIGKILL)
+                os.kill(p, signal.SIGKILL)
         except ProcessLookupError:
             pass
         self._proc.join()
         self._proc.close()
     
-
 async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
-    async def check(s: Solver, min: bool) -> Optional[Trace]:        
-        def worker(conn: Connection) -> None:
+    graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
+    assert networkx.is_directed_acyclic_graph(graph), 'Not in EPR!'
+    # start = time.time()
+    async def check(use_cvc4: bool, min: bool, wait_time: float = 0, loop: bool = False) -> Optional[Trace]:        
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+        async def worker(conn: Connection) -> None:
+            s = Solver(use_cvc4=use_cvc4)
+            if loop:
+                x = 0
+                while True:
+                    x += 1
             conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
         with ScopedProcess(worker) as conn:
-            return await async_recv(conn)
-    z3solver = Solver(use_cvc4=False)
-    cvc4solver = Solver(use_cvc4=True)
-    t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
-    t2 = asyncio.create_task(check(cvc4solver, min=False), name="cvc4")
-    return await async_race([t1, t2])
+            print(f" --- use cvc4 {use_cvc4}, min {min}, loop {loop}")
+            r = await async_recv(conn)
+            print(f"use cvc4 {use_cvc4}, min {min}, loop {loop}, r == UNSAT: {r is None}")
+            return r
+    # fail_index = random.randint(0,2)
+    r = await async_race([#check(use_cvc4=False, min=True if minimize else False, loop=fail_index == 0),
+                          check(use_cvc4=True, min=False),
+                          check(use_cvc4=False, min=False)])
+    # print(f"Check transition in: {time.time() - start:0.3f}s")
+    return r
+
+async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
+    pass
 
 async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
-    async def check(s: Solver, min: bool) -> Optional[Trace]:
+    async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
         def worker(conn: Connection) -> None:
+            s = Solver(use_cvc4=use_cvc4)
             m = check_implication(s, hyps, [conc], minimize=min)
             conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
         with ScopedProcess(worker) as conn:
             return await async_recv(conn)
-    z3solver = Solver(use_cvc4=False)
-    cvc4solver = Solver(use_cvc4=True)
-    t1 = asyncio.create_task(check(z3solver, min=True if minimize else False), name="z3")
-    t2 = asyncio.create_task(check(cvc4solver, min=False), name="cvc4")
-    return await async_race([t1, t2])
-
+    return await async_race([check(use_cvc4=False, min=True if minimize else False),
+                             check(use_cvc4=True, min=False)])
 
 class IGQueryLogger(object):
     def __init__(self) -> None:
@@ -332,8 +360,6 @@ class IGQueryLogger(object):
     def close(self) -> None:
         self.print("Closing log.", flush=True)
         self.f.close() 
-
-
 
 
 class ParallelFolIc3(object):
@@ -372,11 +398,9 @@ class ParallelFolIc3(object):
         self._current_pull_heuristic_tasks: Set[Tuple[int,int]] = set() # Which (frame, state) pairs are being worked on by the pull heuristic?
         self._push_pull_lock = asyncio.Lock()
         
-        # Logging etc
+        # Logging, etc
         self._start: float = 0
         
-
-
     # Frame number manipulations (make None === infinity)
     @staticmethod
     def frame_max(a: FrameNum, b: FrameNum) -> FrameNum:
@@ -536,56 +560,54 @@ class ParallelFolIc3(object):
                 self._event_frames.clear()
         return made_changes 
 
-    async def pull_once(self) -> bool:
-        made_changes = False
-        for index, p in sorted(enumerate(self._predicates), key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x[0]]), reverse=True):
-            fn = self._frame_numbers[index]
-            # No need to pull things that aren't bad, already only in F_0 or not in F_inf
-            if fn is None or fn == 0 or index not in self._bad_predicates:
-                continue
-            if index in self._pulling_blocker:
-                blocker, dependant_pred = self._pulling_blocker[index]
-                # Check if blocking state is reachable. TODO: what does this mean?
-                if blocker in self._reachable:
-                    print(f"Pulling blocker was reachable for state {blocker} in frame {fn} ???")
-                    continue
-                # Check if the blocker state is still in F_i \ p and if the dependent predicate is in the next frame
-                if all(self.eval(F_i_pred, blocker) for F_i_pred in self.frame_predicates(fn) if F_i_pred != index):
-                    continue
-                if dependant_pred in self.frame_predicates(fn + 1):
-                    continue
-
-                # The blocker is invalidated
-                del self._pulling_blocker[index]
-            # Either there is no known blocker or it was just invalidated; check if any new blocker exists
-            fp = set(self.frame_predicates(fn)).difference([index])
-            fp_next = set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2))
-            cex: Optional[Trace] = None
-            dependent_pred = -1
-            for q in fp_next:
-                cex = await multi_check_transition(list(self._predicates[j] for j in fp), self._predicates[q], minimize='no-minimize-block' not in utils.args.expt_flags)
-                if cex is not None:
-                    dependent_pred = q
-                    break
-            # Check if set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration if so
-            if fp != set(self.frame_predicates(fn)).difference([index]) or fp_next != set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2)):
-                made_changes = True
-                continue
-            if cex is None:
-                print(f"Pulled {p} to frame {fn - 1}")
-                self._frame_numbers[index] = fn - 1
-                self._event_frames.set()
-                self._event_frames.clear()
-                made_changes = True
-            else:
-                blocker = self.add_state((cex, 0))
-                # Unlike pushing, we don't need to add the sucessor state because we don't expect either to
-                # be reachable.
-                # blocker_successor = self.add_state((cex, 1))
-                # self.add_transition(blocker, blocker_successor)
-                self._pulling_blocker[index] = (blocker, dependent_pred)
-
-        return made_changes 
+    # async def pull_once(self) -> bool:
+    #     made_changes = False
+    #     for index, p in sorted(enumerate(self._predicates), key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x[0]]), reverse=True):
+    #         fn = self._frame_numbers[index]
+    #         # No need to pull things that aren't bad, already only in F_0 or not in F_inf
+    #         if fn is None or fn == 0 or index not in self._bad_predicates:
+    #             continue
+    #         if index in self._pulling_blocker:
+    #             blocker, dependant_pred = self._pulling_blocker[index]
+    #             # Check if blocking state is reachable. TODO: what does this mean?
+    #             if blocker in self._reachable:
+    #                 print(f"Pulling blocker was reachable for state {blocker} in frame {fn} ???")
+    #                 continue
+    #             # Check if the blocker state is still in F_i \ p and if the dependent predicate is in the next frame
+    #             if all(self.eval(F_i_pred, blocker) for F_i_pred in self.frame_predicates(fn) if F_i_pred != index):
+    #                 continue
+    #             if dependant_pred in self.frame_predicates(fn + 1):
+    #                 continue
+    #             # The blocker is invalidated
+    #             del self._pulling_blocker[index]
+    #         # Either there is no known blocker or it was just invalidated; check if any new blocker exists
+    #         fp = set(self.frame_predicates(fn)).difference([index])
+    #         fp_next = set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2))
+    #         cex: Optional[Trace] = None
+    #         dependent_pred = -1
+    #         for q in fp_next:
+    #             cex = await multi_check_transition(list(self._predicates[j] for j in fp), self._predicates[q], minimize='no-minimize-block' not in utils.args.expt_flags)
+    #             if cex is not None:
+    #                 dependent_pred = q
+    #                 break
+    #         # Check if set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration if so
+    #         if fp != set(self.frame_predicates(fn)).difference([index]) or fp_next != set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2)):
+    #             made_changes = True
+    #             continue
+    #         if cex is None:
+    #             print(f"Pulled {p} to frame {fn - 1}")
+    #             self._frame_numbers[index] = fn - 1
+    #             self._event_frames.set()
+    #             self._event_frames.clear()
+    #             made_changes = True
+    #         else:
+    #             blocker = self.add_state((cex, 0))
+    #             # Unlike pushing, we don't need to add the sucessor state because we don't expect either to
+    #             # be reachable.
+    #             # blocker_successor = self.add_state((cex, 1))
+    #             # self.add_transition(blocker, blocker_successor)
+    #             self._pulling_blocker[index] = (blocker, dependent_pred)
+    #     return made_changes 
 
     def check_for_f_infinity(self) -> bool:
         made_changes = False
@@ -672,28 +694,25 @@ class ParallelFolIc3(object):
                     else:
                         tr, _ = r
                         conn.send(tr)
-
-        (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-        proc = Process(target=subprocess_worker, args = (conn_worker,))
         states_seen = 0
         # Experiment: disable sharing
         constraints = list(constraints)
         local_states = list(local_states)
-        try:
-            proc.start()
+        
+        with ScopedProcess(subprocess_worker) as conn:
             if utils.args.log_dir:
                 print(f"Separation log in <{log_filename}> ({name})")
                 log.print(f"Separation log in <{log_filename}> ({name})")
             while True:
                 # Update any states in the worker
                 while states_seen < len(local_states):
-                    conn_main.send({'state': local_states[states_seen]})
+                    conn.send({'state': local_states[states_seen]})
                     states_seen += 1
                 cs = ([c.i for c in constraints if isinstance(c, Pos)],
                       [c.i for c in constraints if isinstance(c, Neg)],
                       [(c.i,c.j) for c in constraints if isinstance(c, Imp)])
-                conn_main.send({'sep': cs})
-                p = await async_recv(conn_main)
+                conn.send({'sep': cs})
+                p = await async_recv(conn)
                 log.print(f"Candidate (from {name}) {p}")
                 
                 already_blocked = False
@@ -723,10 +742,12 @@ class ParallelFolIc3(object):
                 frame_preds = set(self.frame_predicates(frame-1))
                 
                 if 'generalize-edges' in utils.args.expt_flags:
-                    conn_main.send({'gen': (self._states[state], [self._predicates[x] for x in frame_preds], p)})
-                    edge = await async_recv(conn_main)
+                    conn.send({'gen': (self._states[state], [self._predicates[x] for x in frame_preds], p)})
+                    edge = await async_recv(conn)
                 else: 
+                    start = time.time()
                     edge = await multi_check_transition([p, *(self._predicates[j] for j in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+                    print(f"Check in {name} took {time.time()-start:0.3f}s")
 
 
                 if frame_preds != set(self.frame_predicates(frame-1)) or initial_reachable != self._reachable:
@@ -745,8 +766,14 @@ class ParallelFolIc3(object):
 
                 # If we get here, then p is a solution to our inductive generalization query        
                 return p
-        finally:
-            proc.kill()
+
+        # (conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
+        # proc = Process(target=subprocess_worker, args = (conn_worker,))
+        # try:
+        #     proc.start()
+            
+        # finally:
+        #     proc.kill()
 
     async def parallel_inductive_generalize(self, frame: int, state: int, ignored_pred: int = -1, rationale: str = '') -> None:
         local_states: List[PDState] = []
@@ -1064,566 +1091,566 @@ class WorkerArgs(NamedTuple):
     blocked_symbols: List[str]
 
 
-def fol_ic3(solver: Solver) -> None:
-    prog = syntax.the_program
+# def fol_ic3(solver: Solver) -> None:
+#     prog = syntax.the_program
 
-    system_unsafe  = False
-    predicates: List[Expr] = []
-    frame_numbers: List[int] = [] # for each predicate, what is the highest frame?
-    frame_n: int = 1 # highest frame
+#     system_unsafe  = False
+#     predicates: List[Expr] = []
+#     frame_numbers: List[int] = [] # for each predicate, what is the highest frame?
+#     frame_n: int = 1 # highest frame
 
-    def frame_predicates_indices(i: int) -> List[int]:
-        return [p for p,f in enumerate(frame_numbers) if i <= f]
-    def frame_predicates(i: int) -> List[Expr]:
-        return [predicates[x] for x in frame_predicates_indices(i)]
-    def add_predicate_to_frame(p: Expr, f: int) -> int:
-        for i in range(len(predicates)):
-            if p == predicates[i]:
-                frame_numbers[i] = max(frame_numbers[i], f)
-                return i
-        i = len(predicates)
-        predicates.append(p)
-        frame_numbers.append(f)
-        return i
+#     def frame_predicates_indices(i: int) -> List[int]:
+#         return [p for p,f in enumerate(frame_numbers) if i <= f]
+#     def frame_predicates(i: int) -> List[Expr]:
+#         return [predicates[x] for x in frame_predicates_indices(i)]
+#     def add_predicate_to_frame(p: Expr, f: int) -> int:
+#         for i in range(len(predicates)):
+#             if p == predicates[i]:
+#                 frame_numbers[i] = max(frame_numbers[i], f)
+#                 return i
+#         i = len(predicates)
+#         predicates.append(p)
+#         frame_numbers.append(f)
+#         return i
 
-    initial_states: List[int] = []
-    reachability: Dict[int, Optional[int]] = {} # none means truly reachable
-    K_bound = 0
-    K_limit = 0
-    states: List[PDState] = []
-    transitions: List[Tuple[int,int]] = []
-    eval_cache: Dict[Tuple[int,int], bool] = {}
+#     initial_states: List[int] = []
+#     reachability: Dict[int, Optional[int]] = {} # none means truly reachable
+#     K_bound = 0
+#     K_limit = 0
+#     states: List[PDState] = []
+#     transitions: List[Tuple[int,int]] = []
+#     eval_cache: Dict[Tuple[int,int], bool] = {}
 
-    def add_initial(s: PDState) -> int:
-        i = len(states)
-        states.append(s)
-        initial_states.append(i)
-        reachability[i] = None
-        return i
-    def add_state(s: PDState) -> int:
-        i = len(states)
-        states.append(s)
-        return i       
-    def add_transition(pre: int, post: int) -> None:
-        transitions.append((pre, post))
+#     def add_initial(s: PDState) -> int:
+#         i = len(states)
+#         states.append(s)
+#         initial_states.append(i)
+#         reachability[i] = None
+#         return i
+#     def add_state(s: PDState) -> int:
+#         i = len(states)
+#         states.append(s)
+#         return i       
+#     def add_transition(pre: int, post: int) -> None:
+#         transitions.append((pre, post))
 
-    def eval_pred_state(pred_idx: int, state_idx: int) -> bool:
-        if (pred_idx, state_idx) not in eval_cache:
-            eval_cache[(pred_idx, state_idx)] = eval_predicate(states[state_idx], predicates[pred_idx])
-        return eval_cache[(pred_idx, state_idx)]
+#     def eval_pred_state(pred_idx: int, state_idx: int) -> bool:
+#         if (pred_idx, state_idx) not in eval_cache:
+#             eval_cache[(pred_idx, state_idx)] = eval_predicate(states[state_idx], predicates[pred_idx])
+#         return eval_cache[(pred_idx, state_idx)]
         
-    def frame_states_indices(frame:int) -> Sequence[int]:
-        pred_indices = frame_predicates_indices(frame)
-        return [i for i, s in enumerate(states) if all(eval_pred_state(p, i) for p in pred_indices)]
-    def frame_states(frame:int) -> Sequence[PDState]:
-        return [states[a] for a in frame_states_indices(frame)]
+#     def frame_states_indices(frame:int) -> Sequence[int]:
+#         pred_indices = frame_predicates_indices(frame)
+#         return [i for i, s in enumerate(states) if all(eval_pred_state(p, i) for p in pred_indices)]
+#     def frame_states(frame:int) -> Sequence[PDState]:
+#         return [states[a] for a in frame_states_indices(frame)]
     
-    def frame_transitions_indices(frame:int) -> Sequence[Tuple[int, int]]:
-        pred_indices = frame_predicates_indices(frame)
-        return [(a, b) for a, b in transitions if all(eval_pred_state(p, a) for p in pred_indices)]
-    def frame_transitions(frame:int) -> Sequence[Tuple[PDState, PDState]]:
-        return [(states[a], states[b]) for a, b in frame_transitions_indices(frame)]
-    def abstractly_reachable() -> Sequence[int]:
-        return tuple(x for x, k in reachability.items() if k is None or k >= K_bound)
-    def lower_bound_reachability(state: int, bound: Optional[int]) -> None:
-        c = reachability.get(state, 0)
-        reachability[state] = (None if c is None or bound is None else max(bound, c))
-        print(f"State {state} is reachable at {reachability[state]}")
+#     def frame_transitions_indices(frame:int) -> Sequence[Tuple[int, int]]:
+#         pred_indices = frame_predicates_indices(frame)
+#         return [(a, b) for a, b in transitions if all(eval_pred_state(p, a) for p in pred_indices)]
+#     def frame_transitions(frame:int) -> Sequence[Tuple[PDState, PDState]]:
+#         return [(states[a], states[b]) for a, b in frame_transitions_indices(frame)]
+#     def abstractly_reachable() -> Sequence[int]:
+#         return tuple(x for x, k in reachability.items() if k is None or k >= K_bound)
+#     def lower_bound_reachability(state: int, bound: Optional[int]) -> None:
+#         c = reachability.get(state, 0)
+#         reachability[state] = (None if c is None or bound is None else max(bound, c))
+#         print(f"State {state} is reachable at {reachability[state]}")
 
-    tasks = TaskScheduler()
-    def process_task() -> bool:
-        nonlocal tasks, system_unsafe, K_bound
+#     tasks = TaskScheduler()
+#     def process_task() -> bool:
+#         nonlocal tasks, system_unsafe, K_bound
         
-        t = tasks.get_next()
-        if t is None:
-            print("Couldn't find leaf task")
-            return False
+#         t = tasks.get_next()
+#         if t is None:
+#             print("Couldn't find leaf task")
+#             return False
             
-        print(f"Working on {t.state} in frame {t.frame}; {t}")
-        if not all(eval_pred_state(p_i, t.state) for p_i in frame_predicates_indices(t.frame)):
-            print(f"State {t.state} blocked in F_{t.frame}")
-            tasks.destroy(t)
-            return True
+#         print(f"Working on {t.state} in frame {t.frame}; {t}")
+#         if not all(eval_pred_state(p_i, t.state) for p_i in frame_predicates_indices(t.frame)):
+#             print(f"State {t.state} blocked in F_{t.frame}")
+#             tasks.destroy(t)
+#             return True
         
-        for inv in prog.invs():
-            if inv.name is not None:
-                print(f" - {'T' if eval_predicate(states[t.state], inv.expr) else 'F'} [{inv.name}]")
+#         for inv in prog.invs():
+#             if inv.name is not None:
+#                 print(f" - {'T' if eval_predicate(states[t.state], inv.expr) else 'F'} [{inv.name}]")
 
-        if t.frame == 0 or (t.state in abstractly_reachable()):
-            # because of the previous if check, we know t.state is an initial state if frame == 0 and reachable otherwise
-            if t.is_must:
-                if K_bound < K_limit:
-                    K_bound += 1
-                    for t in tasks:
-                        t.is_unsep = False # Need to reset this flag, which is cached state depending on K_bound
-                    print(f"[IC3] Increasing K_bound to {K_bound}")
-                    return True
-                else:
-                    print("[IC3] Transition system is UNSAFE!")
-                    system_unsafe = True
-                    return True
-            else:
-                if t.frame == 0:
-                    lower_bound_reachability(t.state, None) # we've discovered a new initial state
-                if t.parent is not None and (t.state, t.parent.state) in transitions:
-                    lower_bound_reachability(t.parent.state, reachability[t.state])
-                print(f"[IC3] Found reachable state {t.state} in F_{t.frame} (now have {len(reachability)} reachable states)")
-                tasks.destroy(t)
-                return True
+#         if t.frame == 0 or (t.state in abstractly_reachable()):
+#             # because of the previous if check, we know t.state is an initial state if frame == 0 and reachable otherwise
+#             if t.is_must:
+#                 if K_bound < K_limit:
+#                     K_bound += 1
+#                     for t in tasks:
+#                         t.is_unsep = False # Need to reset this flag, which is cached state depending on K_bound
+#                     print(f"[IC3] Increasing K_bound to {K_bound}")
+#                     return True
+#                 else:
+#                     print("[IC3] Transition system is UNSAFE!")
+#                     system_unsafe = True
+#                     return True
+#             else:
+#                 if t.frame == 0:
+#                     lower_bound_reachability(t.state, None) # we've discovered a new initial state
+#                 if t.parent is not None and (t.state, t.parent.state) in transitions:
+#                     lower_bound_reachability(t.parent.state, reachability[t.state])
+#                 print(f"[IC3] Found reachable state {t.state} in F_{t.frame} (now have {len(reachability)} reachable states)")
+#                 tasks.destroy(t)
+#                 return True
         
-        if not t.predecessors_eliminated:
-            s = states[t.state]
-            formula_to_block = syntax.Not(s[0].as_onestate_formula(s[1])) \
-                           if utils.args.logic != "universal" else \
-                           syntax.Not(s[0].as_diagram(s[1]).to_ast())
-            edge = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1), formula_to_block, minimize=False)
-            if edge is None:
-                t.predecessors_eliminated = True
-                return True
-            s_i = add_state((edge, 0))
-            add_transition(s_i, t.state)
-            assert t.frame > 0
-            print(f"Eliminating predecessor {s_i} from F_{t.frame - 1}")
-            tasks.add(BlockTask(t.is_must, s_i, t.frame - 1, t))
-            return True
+#         if not t.predecessors_eliminated:
+#             s = states[t.state]
+#             formula_to_block = syntax.Not(s[0].as_onestate_formula(s[1])) \
+#                            if utils.args.logic != "universal" else \
+#                            syntax.Not(s[0].as_diagram(s[1]).to_ast())
+#             edge = check_two_state_implication_uncached(solver, frame_predicates(t.frame-1), formula_to_block, minimize=False)
+#             if edge is None:
+#                 t.predecessors_eliminated = True
+#                 return True
+#             s_i = add_state((edge, 0))
+#             add_transition(s_i, t.state)
+#             assert t.frame > 0
+#             print(f"Eliminating predecessor {s_i} from F_{t.frame - 1}")
+#             tasks.add(BlockTask(t.is_must, s_i, t.frame - 1, t))
+#             return True
         
-        if t.is_unsep:
-            abs_reach = abstractly_reachable()
-            remaining = len([i for (i,j) in t.imp_constraints if i not in abs_reach])
-            print(f"[IC3] UNSEP {t} remaining={remaining}")
+#         if t.is_unsep:
+#             abs_reach = abstractly_reachable()
+#             remaining = len([i for (i,j) in t.imp_constraints if i not in abs_reach])
+#             print(f"[IC3] UNSEP {t} remaining={remaining}")
 
-            for (i,j) in t.imp_constraints:
-                if not all(eval_pred_state(p_i, i) for p_i in frame_predicates_indices(t.frame-1)):
-                    # one of the constraints has been blocked by a new learned formula. The whole
-                    # separation problem could now be satisfiable. Reset the flag on this task
-                    print("Constraint blocked, computing new separability")
-                    t.reset_prior()
-                    t.is_unsep = False
-                    return True
-            for (i,j) in t.imp_constraints:
-                if i in abs_reach:
-                    continue
-                print(f"Trying to block {i} in F_{t.frame-1}")
-                tasks.add(BlockTask(False, i, t.frame-1, t))
-                return True
+#             for (i,j) in t.imp_constraints:
+#                 if not all(eval_pred_state(p_i, i) for p_i in frame_predicates_indices(t.frame-1)):
+#                     # one of the constraints has been blocked by a new learned formula. The whole
+#                     # separation problem could now be satisfiable. Reset the flag on this task
+#                     print("Constraint blocked, computing new separability")
+#                     t.reset_prior()
+#                     t.is_unsep = False
+#                     return True
+#             for (i,j) in t.imp_constraints:
+#                 if i in abs_reach:
+#                     continue
+#                 print(f"Trying to block {i} in F_{t.frame-1}")
+#                 tasks.add(BlockTask(False, i, t.frame-1, t))
+#                 return True
             
-            # couldn't block any, so this state is abstractly reachable
-            print("[IC3] Found new (abstractly) reachable state")
-            lower_bound_reachability(t.state, K_bound)
-            return True
+#             # couldn't block any, so this state is abstractly reachable
+#             print("[IC3] Found new (abstractly) reachable state")
+#             lower_bound_reachability(t.state, K_bound)
+#             return True
 
-        if 'parallelism' in utils.args.expt_flags:
-            inductive_generalize_parallel(t)
-        elif utils.args.inductive_generalize:
-            ii = inductive_generalize(t)
-            if ii is not None:
-                push()
-        else:
-            generalize(t.state, t.frame)
-        return True
+#         if 'parallelism' in utils.args.expt_flags:
+#             inductive_generalize_parallel(t)
+#         elif utils.args.inductive_generalize:
+#             ii = inductive_generalize(t)
+#             if ii is not None:
+#                 push()
+#         else:
+#             generalize(t.state, t.frame)
+#         return True
 
-    def print_learn_predicate(p: Expr) -> None:
-        I_imp_p = "."
-        p_imp_I = "."
-        I = [i.expr for i in prog.invs()]
-        # if check_implication(solver, I, [p], minimize=False) is None:
-        #     I_imp_p = ">"
-        # for i in I:
-        #     if check_implication(solver, [p], [i], minimize=False) is None:
-        #         p_imp_I = "<"
-        #         break
-        print(f"[IC3] Learned predicate (I{I_imp_p}{p_imp_I}p): {p}")
+#     def print_learn_predicate(p: Expr) -> None:
+#         I_imp_p = "."
+#         p_imp_I = "."
+#         I = [i.expr for i in prog.invs()]
+#         # if check_implication(solver, I, [p], minimize=False) is None:
+#         #     I_imp_p = ">"
+#         # for i in I:
+#         #     if check_implication(solver, [p], [i], minimize=False) is None:
+#         #         p_imp_I = "<"
+#         #         break
+#         print(f"[IC3] Learned predicate (I{I_imp_p}{p_imp_I}p): {p}")
 
-    def generalize(s: int, i: int) -> None:
-        print("Generalizing")
-        # find p s.t. p is negative on s, init => p, F_i-1 => p, and F_i-1 => wp(p)
-        sep = FOLSeparator(states)
+#     def generalize(s: int, i: int) -> None:
+#         print("Generalizing")
+#         # find p s.t. p is negative on s, init => p, F_i-1 => p, and F_i-1 => wp(p)
+#         sep = FOLSeparator(states)
 
-        while True:
-            print("Separating")
-            pos = list(frame_states_indices(i-1)) + [x for y in frame_transitions_indices(i-1) for x in y]
-            p = sep.separate(pos=pos, neg=[s], imp=[], complexity = K_bound)
-            if p is None: raise RuntimeError("couldn't separate in generalize()")
-            print(f"Candidate predicate is: {p}")
+#         while True:
+#             print("Separating")
+#             pos = list(frame_states_indices(i-1)) + [x for y in frame_transitions_indices(i-1) for x in y]
+#             p = sep.separate(pos=pos, neg=[s], imp=[], complexity = K_bound)
+#             if p is None: raise RuntimeError("couldn't separate in generalize()")
+#             print(f"Candidate predicate is: {p}")
 
-            # F_0 => p?
-            state = check_initial(solver, p)
-            if state is not None:
-                print("Adding new initial state")
-                add_initial((state, 0))
-                continue
-            # F_i-1 => p?
-            cex = check_implication(solver, frame_predicates(i-1), [p])
-            if cex is not None:
-                print("Adding new free pre-state")
-                t = Trace.from_z3([logic.KEY_ONE], cex)
-                add_state((t,0))
-                continue
-            # F_i-1 => wp(p)?
-            tr = check_two_state_implication_uncached(solver, frame_predicates(i-1), p)
-            if tr is not None:
-                print("Adding new edge")
-                s_i, s_j = add_state((tr,0)), add_state((tr,1))
-                add_transition(s_i, s_j)
-                continue
+#             # F_0 => p?
+#             state = check_initial(solver, p)
+#             if state is not None:
+#                 print("Adding new initial state")
+#                 add_initial((state, 0))
+#                 continue
+#             # F_i-1 => p?
+#             cex = check_implication(solver, frame_predicates(i-1), [p])
+#             if cex is not None:
+#                 print("Adding new free pre-state")
+#                 t = Trace.from_z3([logic.KEY_ONE], cex)
+#                 add_state((t,0))
+#                 continue
+#             # F_i-1 => wp(p)?
+#             tr = check_two_state_implication_uncached(solver, frame_predicates(i-1), p)
+#             if tr is not None:
+#                 print("Adding new edge")
+#                 s_i, s_j = add_state((tr,0)), add_state((tr,1))
+#                 add_transition(s_i, s_j)
+#                 continue
 
-            print_learn_predicate(p)
-            idx = add_predicate_to_frame(p, i)
-            push()
-            return
+#             print_learn_predicate(p)
+#             idx = add_predicate_to_frame(p, i)
+#             push()
+#             return
 
-    def inductive_generalize(t: BlockTask) -> Optional[int]:
-        # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
-        print("Inductive generalizing")
-        if t.sep is None:
-            t.sep = FOLSeparator(states)
-            # Note, we may want to seed this set with some subset of the known frame transitions
-            # which are most likely to constrain the solution, while avoiding adding all constraints
-            # if there are very many of them.
-            t.imp_constraints = []
+#     def inductive_generalize(t: BlockTask) -> Optional[int]:
+#         # find p s.t. p is negative on s, init => p, F_i-1 ^ p => wp(p)
+#         print("Inductive generalizing")
+#         if t.sep is None:
+#             t.sep = FOLSeparator(states)
+#             # Note, we may want to seed this set with some subset of the known frame transitions
+#             # which are most likely to constrain the solution, while avoiding adding all constraints
+#             # if there are very many of them.
+#             t.imp_constraints = []
 
-        all_transitions = list(frame_transitions_indices(t.frame-1))
-        # First, filter out elements of t.imp_constraints that are no longer active.
-        t.imp_constraints = [x for x in t.imp_constraints if x in all_transitions]
+#         all_transitions = list(frame_transitions_indices(t.frame-1))
+#         # First, filter out elements of t.imp_constraints that are no longer active.
+#         t.imp_constraints = [x for x in t.imp_constraints if x in all_transitions]
 
-        abs_reach = abstractly_reachable()
+#         abs_reach = abstractly_reachable()
 
-        p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
-        if p is None:
-            t.is_unsep = True
-            # compute unsep core
-            remaining = list(t.imp_constraints)
-            core: List[Tuple[int,int]] = []
-            while len(remaining) > 0:
-                print(f"Checking unsep core {len(core)}/{len(remaining)}/{len(t.imp_constraints)}")
-                if t.sep.separate(pos=abs_reach, neg=[t.state], imp = core + remaining[:-1], complexity=K_bound) is not None:
-                    core.append(remaining[-1])
-                remaining.pop()
-            print (f"[IC3] Unsep core is size {len(core)} out of {len(t.imp_constraints)}")
-            t.imp_constraints = core
-            return None
+#         p = t.sep.separate(pos=abs_reach, neg=[t.state], imp = t.imp_constraints, complexity=K_bound)
+#         if p is None:
+#             t.is_unsep = True
+#             # compute unsep core
+#             remaining = list(t.imp_constraints)
+#             core: List[Tuple[int,int]] = []
+#             while len(remaining) > 0:
+#                 print(f"Checking unsep core {len(core)}/{len(remaining)}/{len(t.imp_constraints)}")
+#                 if t.sep.separate(pos=abs_reach, neg=[t.state], imp = core + remaining[:-1], complexity=K_bound) is not None:
+#                     core.append(remaining[-1])
+#                 remaining.pop()
+#             print (f"[IC3] Unsep core is size {len(core)} out of {len(t.imp_constraints)}")
+#             t.imp_constraints = core
+#             return None
         
-        p_respects_all_transitions = True
-        for (s_i, s_j) in reversed(all_transitions): # try most recent first
-            if (s_i, s_j) in t.imp_constraints:
-                continue
-            if eval_predicate(states[s_i], p) and not eval_predicate(states[s_j], p):
-                p_respects_all_transitions = False
-                t.imp_constraints.append((s_i, s_j))
-                # print_constraint_matrix(t)
-                # simplify_constraints(t, all_transitions, set(abs_reach))
-                break # only add up to one transition at a time
-        if not p_respects_all_transitions:
-            # exit and go back up to the top of this function, but with new constraints
-            print("Added cached transition to constraints")
-            return None
+#         p_respects_all_transitions = True
+#         for (s_i, s_j) in reversed(all_transitions): # try most recent first
+#             if (s_i, s_j) in t.imp_constraints:
+#                 continue
+#             if eval_predicate(states[s_i], p) and not eval_predicate(states[s_j], p):
+#                 p_respects_all_transitions = False
+#                 t.imp_constraints.append((s_i, s_j))
+#                 # print_constraint_matrix(t)
+#                 # simplify_constraints(t, all_transitions, set(abs_reach))
+#                 break # only add up to one transition at a time
+#         if not p_respects_all_transitions:
+#             # exit and go back up to the top of this function, but with new constraints
+#             print("Added cached transition to constraints")
+#             return None
         
-        print(f"Candidate predicate is: {p}")
-        p_ind = len(t.prior_predicates)
-        t.prior_predicates.append(p)
-        t.prior_eval_cache.append((set(), set()))
+#         print(f"Candidate predicate is: {p}")
+#         p_ind = len(t.prior_predicates)
+#         t.prior_predicates.append(p)
+#         t.prior_eval_cache.append((set(), set()))
 
-        # init => p?
-        state = check_initial(solver, p)
-        if state is not None:
-            print("Adding new initial state")
-            general = generalize_initial(solver, (state, 0))
-            print("Initial generalized model:")
-            print(general)
+#         # init => p?
+#         state = check_initial(solver, p)
+#         if state is not None:
+#             print("Adding new initial state")
+#             general = generalize_initial(solver, (state, 0))
+#             print("Initial generalized model:")
+#             print(general)
 
-            add_initial((state, 0))
-            return None
-        # F_i-1 ^ p => wp(p)?
+#             add_initial((state, 0))
+#             return None
+#         # F_i-1 ^ p => wp(p)?
         
-        if t.generalizer is None:
-            t.generalizer = TrivialEdgeGeneralizer()
-        res = t.generalizer.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
-        if res is not None:
-            print("Adding new edge")
-            tr, trans = res
+#         if t.generalizer is None:
+#             t.generalizer = TrivialEdgeGeneralizer()
+#         res = t.generalizer.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
+#         if res is not None:
+#             print("Adding new edge")
+#             tr, trans = res
 
-            if False:
-                two_state_model = generalize_cti(solver, trans, tr, frame_predicates(t.frame-1))
-                print("CTI generalized model:")
-                print(two_state_model)
+#             if False:
+#                 two_state_model = generalize_cti(solver, trans, tr, frame_predicates(t.frame-1))
+#                 print("CTI generalized model:")
+#                 print(two_state_model)
 
-            s_i, s_j = add_state((tr,0)), add_state((tr,1))
-            add_transition(s_i, s_j)
-            t.imp_constraints.append((s_i, s_j))
-            return None
+#             s_i, s_j = add_state((tr,0)), add_state((tr,1))
+#             add_transition(s_i, s_j)
+#             t.imp_constraints.append((s_i, s_j))
+#             return None
         
-        print_learn_predicate(p)
-        idx = add_predicate_to_frame(p, t.frame)
-        return idx
-    class Logger(object):
-        def __init__(self, out: TextIO, name: str):
-            self._out = out
-            self.encoding = out.encoding
-            self._name = name
-        def write(self, s: str) -> None:
-            if s.startswith("Candidate"):
-                self._out.write(f"[{self._name}] {s}\n")
-                self._out.flush()
-    def sig_symbols(s: Signature) -> List[str]:
-        r: List[str] = []
-        r.extend(s.relations.keys())
-        r.extend(s.functions.keys())
-        r.extend(s.constants.keys())
-        return r
+#         print_learn_predicate(p)
+#         idx = add_predicate_to_frame(p, t.frame)
+#         return idx
+#     class Logger(object):
+#         def __init__(self, out: TextIO, name: str):
+#             self._out = out
+#             self.encoding = out.encoding
+#             self._name = name
+#         def write(self, s: str) -> None:
+#             if s.startswith("Candidate"):
+#                 self._out.write(f"[{self._name}] {s}\n")
+#                 self._out.flush()
+#     def sig_symbols(s: Signature) -> List[str]:
+#         r: List[str] = []
+#         r.extend(s.relations.keys())
+#         r.extend(s.functions.keys())
+#         r.extend(s.constants.keys())
+#         return r
 
     
 
-    def separation_worker(args: WorkerArgs, pipe: Connection) -> None:
-        sig = prog_to_sig(syntax.the_program, two_state=False)
-        true_stdout = sys.stdout
-        sys.stdout = Logger(true_stdout, args.name) # type: ignore
-        nonlocal K_bound
-        K_bound = 1000
-        if False: # 'impmatrix' in args.expt_flags:
-            pass #backing_sep: Separator = ImplicationSeparator(sig, logic = args.logic, expt_flags= args.expt_flags, blocked_symbols=args.blocked_symbols)
-        else:
-            backing_sep = HybridSeparator(sig, logic = args.logic, expt_flags= args.expt_flags, blocked_symbols=args.blocked_symbols)
-        local_states: List[PDState] = []
-        constraints: List[Constraint] = []
-        sep = FOLSeparator(local_states, sep=backing_sep)
-        print("Starting worker")
-        while True:
-            req = pipe.recv()
-            if isinstance(req, Constraint):
-                constraints.append(req)
-            elif req is None:
-                print("Separating")
-                p = sep.separate(pos = [c.i for c in constraints if isinstance(c, Pos)],
-                                 neg = [c.i for c in constraints if isinstance(c, Neg)],
-                                 imp = [(c.i, c.j) for c in constraints if isinstance(c, Imp)], complexity=K_bound)
-                if p is not None:
-                    pipe.send((args.name, p))
-                else:
-                    print(f"[error] Separator could not separate in {args.name}", file=sys.stderr)
-            elif isinstance(req, tuple):
-                while len(local_states) < req[0] + 1:
-                    local_states.append(req[1])
-                local_states[req[0]] = req[1]
-            else:
-                assert False
+#     def separation_worker(args: WorkerArgs, pipe: Connection) -> None:
+#         sig = prog_to_sig(syntax.the_program, two_state=False)
+#         true_stdout = sys.stdout
+#         sys.stdout = Logger(true_stdout, args.name) # type: ignore
+#         nonlocal K_bound
+#         K_bound = 1000
+#         if False: # 'impmatrix' in args.expt_flags:
+#             pass #backing_sep: Separator = ImplicationSeparator(sig, logic = args.logic, expt_flags= args.expt_flags, blocked_symbols=args.blocked_symbols)
+#         else:
+#             backing_sep = HybridSeparator(sig, logic = args.logic, expt_flags= args.expt_flags, blocked_symbols=args.blocked_symbols)
+#         local_states: List[PDState] = []
+#         constraints: List[Constraint] = []
+#         sep = FOLSeparator(local_states, sep=backing_sep)
+#         print("Starting worker")
+#         while True:
+#             req = pipe.recv()
+#             if isinstance(req, Constraint):
+#                 constraints.append(req)
+#             elif req is None:
+#                 print("Separating")
+#                 p = sep.separate(pos = [c.i for c in constraints if isinstance(c, Pos)],
+#                                  neg = [c.i for c in constraints if isinstance(c, Neg)],
+#                                  imp = [(c.i, c.j) for c in constraints if isinstance(c, Imp)], complexity=K_bound)
+#                 if p is not None:
+#                     pipe.send((args.name, p))
+#                 else:
+#                     print(f"[error] Separator could not separate in {args.name}", file=sys.stderr)
+#             elif isinstance(req, tuple):
+#                 while len(local_states) < req[0] + 1:
+#                     local_states.append(req[1])
+#                 local_states[req[0]] = req[1]
+#             else:
+#                 assert False
                 
-    class WorkerHandle(object):
-        def __init__(self, name: str, proc: Process, conn: Connection):
-            self.name = name
-            self.proc = proc
-            self.conn = conn
-            self.states_seen: int = 0
-            self.constraints_seen: int = 0
+#     class WorkerHandle(object):
+#         def __init__(self, name: str, proc: Process, conn: Connection):
+#             self.name = name
+#             self.proc = proc
+#             self.conn = conn
+#             self.states_seen: int = 0
+#             self.constraints_seen: int = 0
             
-        def fileno(self) -> int:
-            return self.conn.fileno()
+#         def fileno(self) -> int:
+#             return self.conn.fileno()
 
-    def inductive_generalize_parallel(t: BlockTask) -> None:
-        sig = prog_to_sig(syntax.the_program, two_state=False)
-        golden: List[Formula] = []
-        for inv in syntax.the_program.invs():
-            if states[t.state][0].as_state(states[t.state][1]).eval(inv.expr) == False:
-                cex = logic.check_two_state_implication_all_transitions(solver, [*frame_predicates(t.frame-1), inv.expr], inv.expr, minimize=False)
-                g_as_formula = predicate_to_formula(inv.expr)
-                golden.append(g_as_formula)
-                print("Possible formula is:", g_as_formula, '(relatively inductive)' if cex is None else '(not relatively inductive)')
+#     def inductive_generalize_parallel(t: BlockTask) -> None:
+#         sig = prog_to_sig(syntax.the_program, two_state=False)
+#         golden: List[Formula] = []
+#         for inv in syntax.the_program.invs():
+#             if states[t.state][0].as_state(states[t.state][1]).eval(inv.expr) == False:
+#                 cex = logic.check_two_state_implication_all_transitions(solver, [*frame_predicates(t.frame-1), inv.expr], inv.expr, minimize=False)
+#                 g_as_formula = predicate_to_formula(inv.expr)
+#                 golden.append(g_as_formula)
+#                 print("Possible formula is:", g_as_formula, '(relatively inductive)' if cex is None else '(not relatively inductive)')
         
-        print("Starting parallel inductive_generalize...")
-        workers: List[WorkerHandle] = []
-        def L(a: WorkerArgs) -> None:
-            (main, worker) = multiprocessing.Pipe(duplex = True)
-            p = Process(target=separation_worker, args = (a, worker))
-            workers.append(WorkerHandle(a.name, p, main))
-            p.start()
+#         print("Starting parallel inductive_generalize...")
+#         workers: List[WorkerHandle] = []
+#         def L(a: WorkerArgs) -> None:
+#             (main, worker) = multiprocessing.Pipe(duplex = True)
+#             p = Process(target=separation_worker, args = (a, worker))
+#             workers.append(WorkerHandle(a.name, p, main))
+#             p.start()
 
 
-        all_syms = sig_symbols(sig)
-        for g in cast(List[str], []): #all_syms: #golden:
-            #syms = symbols(g)
-            #blocked_symbols = list(set(all_syms) - set(syms))
-            blocked_symbols = [g]
-            if utils.args.logic == 'universal':
-                pass
-            if utils.args.logic == 'fol':
-                L(WorkerArgs('full-b', 'fol', set(), blocked_symbols))
-                L(WorkerArgs('alt1-b', 'fol', set(['alternation1']), blocked_symbols))
-                L(WorkerArgs('m4-b', 'fol', set(['matrixsize4']), blocked_symbols))
-                # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
+#         all_syms = sig_symbols(sig)
+#         for g in cast(List[str], []): #all_syms: #golden:
+#             #syms = symbols(g)
+#             #blocked_symbols = list(set(all_syms) - set(syms))
+#             blocked_symbols = [g]
+#             if utils.args.logic == 'universal':
+#                 pass
+#             if utils.args.logic == 'fol':
+#                 L(WorkerArgs('full-b', 'fol', set(), blocked_symbols))
+#                 L(WorkerArgs('alt1-b', 'fol', set(['alternation1']), blocked_symbols))
+#                 L(WorkerArgs('m4-b', 'fol', set(['matrixsize4']), blocked_symbols))
+#                 # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
             
-            L(WorkerArgs('Afull-b', 'universal', set(), blocked_symbols))
-            L(WorkerArgs('Am4-b', 'universal', set(['matrixsize4']), blocked_symbols))
+#             L(WorkerArgs('Afull-b', 'universal', set(), blocked_symbols))
+#             L(WorkerArgs('Am4-b', 'universal', set(['matrixsize4']), blocked_symbols))
         
-        if utils.args.logic == 'fol':
-            L(WorkerArgs('full', 'fol', set(), []))
-            L(WorkerArgs('alt1', 'fol', set(['alternation1']), []))
-            L(WorkerArgs('m4', 'fol', set(['matrixsize4']), []))
-            # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
+#         if utils.args.logic == 'fol':
+#             L(WorkerArgs('full', 'fol', set(), []))
+#             L(WorkerArgs('alt1', 'fol', set(['alternation1']), []))
+#             L(WorkerArgs('m4', 'fol', set(['matrixsize4']), []))
+#             # L(WorkerArgs('imp', 'fol', set(['impmatrix']), blocked_symbols))
         
-        L(WorkerArgs('Afull', 'universal', set(), []))
-        L(WorkerArgs('Am4', 'universal', set(['matrixsize4']), []))
-        L(WorkerArgs('Am2', 'universal', set(['matrixsize2']), []))
+#         L(WorkerArgs('Afull', 'universal', set(), []))
+#         L(WorkerArgs('Am4', 'universal', set(['matrixsize4']), []))
+#         L(WorkerArgs('Am2', 'universal', set(['matrixsize2']), []))
 
-        local_states: List[PDState] = [states[t.state]]
-        constraints: List[Constraint] = [Neg(0)]
+#         local_states: List[PDState] = [states[t.state]]
+#         constraints: List[Constraint] = [Neg(0)]
 
-        def update_worker(w: WorkerHandle) -> None:
-            '''Send the latest state and constraints to the workers'''
-            while w.states_seen < len(local_states):
-                w.conn.send((w.states_seen, local_states[w.states_seen]))
-                w.states_seen += 1
-            while w.constraints_seen < len(constraints):
-                w.conn.send(constraints[w.constraints_seen])
-                w.constraints_seen += 1
+#         def update_worker(w: WorkerHandle) -> None:
+#             '''Send the latest state and constraints to the workers'''
+#             while w.states_seen < len(local_states):
+#                 w.conn.send((w.states_seen, local_states[w.states_seen]))
+#                 w.states_seen += 1
+#             while w.constraints_seen < len(constraints):
+#                 w.conn.send(constraints[w.constraints_seen])
+#                 w.constraints_seen += 1
 
-        def is_solution(p: Expr) -> bool:
-            pass
-            # First check the current constraints, and see if p respects all of those:
-            for c in constraints:
-                if isinstance(c, Pos):
-                    if not eval_predicate(local_states[c.i], p):
-                        return False
-                elif isinstance(c, Neg):
-                    if eval_predicate(local_states[c.i], p):
-                        assert False and "candidates should always respect the negative constraint"
-                        return False
-                elif isinstance(c, Imp):
-                    if eval_predicate(local_states[c.i], p) and not eval_predicate(local_states[c.j], p):
-                        return False
+#         def is_solution(p: Expr) -> bool:
+#             pass
+#             # First check the current constraints, and see if p respects all of those:
+#             for c in constraints:
+#                 if isinstance(c, Pos):
+#                     if not eval_predicate(local_states[c.i], p):
+#                         return False
+#                 elif isinstance(c, Neg):
+#                     if eval_predicate(local_states[c.i], p):
+#                         assert False and "candidates should always respect the negative constraint"
+#                         return False
+#                 elif isinstance(c, Imp):
+#                     if eval_predicate(local_states[c.i], p) and not eval_predicate(local_states[c.j], p):
+#                         return False
 
-            # The predicate satisfies all existing constraints. Now check for real.
-            state = check_initial(solver, p)
-            if state is not None:
-                print("Adding new initial state")
-                s = len(local_states)
-                local_states.append((state, 0))
-                constraints.append(Pos(s))
-                return False
+#             # The predicate satisfies all existing constraints. Now check for real.
+#             state = check_initial(solver, p)
+#             if state is not None:
+#                 print("Adding new initial state")
+#                 s = len(local_states)
+#                 local_states.append((state, 0))
+#                 constraints.append(Pos(s))
+#                 return False
             
-            # F_i-1 ^ p => wp(p)?
-            gen = TrivialEdgeGeneralizer()
-            res = gen.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
-            if res is not None:
-                print("Adding new edge")
-                tr, trans = res
-                s = len(local_states)
-                local_states.append((tr,0))
-                tt = len(local_states)
-                local_states.append((tr,1))
-                constraints.append(Imp(s,tt))
-                return False
+#             # F_i-1 ^ p => wp(p)?
+#             gen = TrivialEdgeGeneralizer()
+#             res = gen.find_generalized_implication(solver, states[t.state], frame_predicates(t.frame-1), p)
+#             if res is not None:
+#                 print("Adding new edge")
+#                 tr, trans = res
+#                 s = len(local_states)
+#                 local_states.append((tr,0))
+#                 tt = len(local_states)
+#                 local_states.append((tr,1))
+#                 constraints.append(Imp(s,tt))
+#                 return False
 
-            # If we get here, then p is a solution to our inductive generalization query        
-            return True
+#             # If we get here, then p is a solution to our inductive generalization query        
+#             return True
         
-        for w in workers:
-            update_worker(w)
-            w.conn.send(None) # start them all working
-        print(f"Started initial workers (x{len(workers)})")
-        while True:
-            ready = multiprocessing.connection.wait([w.conn for w in workers])
-            for r in ready:
-                for w in workers:
-                    if w.conn is r:
-                        worker = w
-                        break
-                else:
-                    assert False
-                (_, p) = worker.conn.recv()
-                print(f"[IC3] Candidate: {p}")
-                assert isinstance(p, Expr)
-                if is_solution(p):
-                    print(f"Accepting predicate from {worker.name}")
-                    for w in workers:
-                        w.proc.kill()
+#         for w in workers:
+#             update_worker(w)
+#             w.conn.send(None) # start them all working
+#         print(f"Started initial workers (x{len(workers)})")
+#         while True:
+#             ready = multiprocessing.connection.wait([w.conn for w in workers])
+#             for r in ready:
+#                 for w in workers:
+#                     if w.conn is r:
+#                         worker = w
+#                         break
+#                 else:
+#                     assert False
+#                 (_, p) = worker.conn.recv()
+#                 print(f"[IC3] Candidate: {p}")
+#                 assert isinstance(p, Expr)
+#                 if is_solution(p):
+#                     print(f"Accepting predicate from {worker.name}")
+#                     for w in workers:
+#                         w.proc.kill()
                     
-                    print_learn_predicate(p)
-                    add_predicate_to_frame(p, t.frame)
-                    print("Finished parallel inductive_generalize.")
-                    push()
-                    return
-                update_worker(worker)
-                worker.conn.send(None)
+#                     print_learn_predicate(p)
+#                     add_predicate_to_frame(p, t.frame)
+#                     print("Finished parallel inductive_generalize.")
+#                     push()
+#                     return
+#                 update_worker(worker)
+#                 worker.conn.send(None)
         
-    def push() -> None:
-        made_changes = False
-        for frame in range(frame_n):
-            for i in range(len(frame_numbers)):
-                if frame_numbers[i] == frame:
-                    # try to push i
-                    cex = logic.check_two_state_implication_all_transitions(solver, frame_predicates(frame), predicates[i], minimize=False)
-                    if cex is None:
-                        frame_numbers[i] += 1
-                        print(f"pushed {predicates[i]} to F_{frame_numbers[i]}")
-                        made_changes = True
-        if made_changes:
-            pass
-            #print("[IC3] Pushed predicates forward")
-            #print_predicates()
+#     def push() -> None:
+#         made_changes = False
+#         for frame in range(frame_n):
+#             for i in range(len(frame_numbers)):
+#                 if frame_numbers[i] == frame:
+#                     # try to push i
+#                     cex = logic.check_two_state_implication_all_transitions(solver, frame_predicates(frame), predicates[i], minimize=False)
+#                     if cex is None:
+#                         frame_numbers[i] += 1
+#                         print(f"pushed {predicates[i]} to F_{frame_numbers[i]}")
+#                         made_changes = True
+#         if made_changes:
+#             pass
+#             #print("[IC3] Pushed predicates forward")
+#             #print_predicates()
 
-    def print_predicates() -> None:
-        print ("[IC3] ---- Frame summary")
-        for f,p in sorted(zip(frame_numbers, predicates), key = lambda x: x[0]):
-            print(f"[IC3] predicate {f} {p}")
-        print("[IC3] ----")
+#     def print_predicates() -> None:
+#         print ("[IC3] ---- Frame summary")
+#         for f,p in sorted(zip(frame_numbers, predicates), key = lambda x: x[0]):
+#             print(f"[IC3] predicate {f} {p}")
+#         print("[IC3] ----")
 
-    def print_summary() -> None:
-        print(f"[IC3] time: {time.time() - start_time:0.3f} sec")
-        print(f"[IC3] predicates considered: {len(predicates)}")
-        print(f"[IC3] states considered: {len(states)}")
-        print(f"[IC3] frames opened: {frame_n}")
+#     def print_summary() -> None:
+#         print(f"[IC3] time: {time.time() - start_time:0.3f} sec")
+#         print(f"[IC3] predicates considered: {len(predicates)}")
+#         print(f"[IC3] states considered: {len(states)}")
+#         print(f"[IC3] frames opened: {frame_n}")
 
-    for init_decl in prog.inits():
-        predicates.append(init_decl.expr)
-        frame_numbers.append(0)
-    if 'no-safeties' not in utils.args.expt_flags:
-        for safety_decl in prog.safeties():
-            predicates.append(safety_decl.expr)
-            frame_numbers.append(0)
-    if 'free-lemma' in utils.args.expt_flags:
-        for inv_decl in prog.invs():
-            if inv_decl.name == 'free_lemma':
-                predicates.append(inv_decl.expr)
-                frame_numbers.append(0)
+#     for init_decl in prog.inits():
+#         predicates.append(init_decl.expr)
+#         frame_numbers.append(0)
+#     if 'no-safeties' not in utils.args.expt_flags:
+#         for safety_decl in prog.safeties():
+#             predicates.append(safety_decl.expr)
+#             frame_numbers.append(0)
+#     if 'free-lemma' in utils.args.expt_flags:
+#         for inv_decl in prog.invs():
+#             if inv_decl.name == 'free_lemma':
+#                 predicates.append(inv_decl.expr)
+#                 frame_numbers.append(0)
         
-    K_limit = utils.args.max_complexity
-    K_bound = 1 if utils.args.dynamic else K_limit
-    print(f"[IC3] Inferring with K_bound = {K_bound} up to {K_limit} ({'dynamic' if utils.args.dynamic else 'static'}), with max clauses={utils.args.max_clauses}, depth={utils.args.max_depth}")
-    start_time = time.time()
-    while not system_unsafe:
-        print(f"[time] Elapsed: {time.time()-start_time:0.3f}")
-        # Try to block things, if there are things to block
-        if process_task():
-            continue
+#     K_limit = utils.args.max_complexity
+#     K_bound = 1 if utils.args.dynamic else K_limit
+#     print(f"[IC3] Inferring with K_bound = {K_bound} up to {K_limit} ({'dynamic' if utils.args.dynamic else 'static'}), with max clauses={utils.args.max_clauses}, depth={utils.args.max_depth}")
+#     start_time = time.time()
+#     while not system_unsafe:
+#         print(f"[time] Elapsed: {time.time()-start_time:0.3f}")
+#         # Try to block things, if there are things to block
+#         if process_task():
+#             continue
     
-        # Push any predicates that may have just been discovered
-        push()
+#         # Push any predicates that may have just been discovered
+#         push()
         
-        # Check for bad states in the final frame.
-        bad_state = check_safe(solver, frame_predicates(frame_n))
-        if bad_state is not None:
-            s_i = add_state((bad_state, 0))
-            tasks.add(BlockTask(True, s_i, frame_n, None))
-        else:
-            print_predicates()
-            print("Checking for an inductive frame")
-            for inv_frame in reversed(range(1,frame_n + 1)):
-                # skip frames identical to a previous one
-                if not any(inv_frame == f for f in frame_numbers):
-                    continue
-                ps = frame_predicates(inv_frame)
-                if all(logic.check_two_state_implication_all_transitions(solver, ps, p, minimize=False) is None for p in ps):
+#         # Check for bad states in the final frame.
+#         bad_state = check_safe(solver, frame_predicates(frame_n))
+#         if bad_state is not None:
+#             s_i = add_state((bad_state, 0))
+#             tasks.add(BlockTask(True, s_i, frame_n, None))
+#         else:
+#             print_predicates()
+#             print("Checking for an inductive frame")
+#             for inv_frame in reversed(range(1,frame_n + 1)):
+#                 # skip frames identical to a previous one
+#                 if not any(inv_frame == f for f in frame_numbers):
+#                     continue
+#                 ps = frame_predicates(inv_frame)
+#                 if all(logic.check_two_state_implication_all_transitions(solver, ps, p, minimize=False) is None for p in ps):
                     
-                    ps = frame_predicates(inv_frame)
-                    print(f"[IC3] Found inductive invariant in frame {inv_frame}!")
-                    for p in ps:
-                        print(f"[IC3] invariant {p}")
-                    print_summary()
-                    return
-            print(f"[IC3] Expanding new frame {frame_n+1}")
-            push()
-            frame_n += 1
-    # Loops exits if the protocol is unsafe. Still print statistics
-    print_summary()
+#                     ps = frame_predicates(inv_frame)
+#                     print(f"[IC3] Found inductive invariant in frame {inv_frame}!")
+#                     for p in ps:
+#                         print(f"[IC3] invariant {p}")
+#                     print_summary()
+#                     return
+#             print(f"[IC3] Expanding new frame {frame_n+1}")
+#             push()
+#             frame_n += 1
+#     # Loops exits if the protocol is unsafe. Still print statistics
+#     print_summary()
 
 class EdgeGeneralizer(object):
     '''Abstract base class for methods that find generalized CTIs (i.e. counterexample edges) to And(fp) => wp(p).'''
@@ -1996,11 +2023,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     result : List[argparse.ArgumentParser] = []
 
-    s = subparsers.add_parser('fol-ic3', help='Run IC3 inference with folseparators')
-    s.set_defaults(main=fol_ic3)
-    s.add_argument('--inductive-generalize', action=utils.YesNoAction, default=True,
-                   help='Use inductive generalization when blocking states')
-    result.append(s)
+    # s = subparsers.add_parser('fol-ic3', help='Run IC3 inference with folseparators')
+    # s.set_defaults(main=fol_ic3)
+    # s.add_argument('--inductive-generalize', action=utils.YesNoAction, default=True,
+    #                help='Use inductive generalization when blocking states')
+    # result.append(s)
 
     s = subparsers.add_parser('fol-ice', help='Run ICE invariant learning with folseparators')
     s.set_defaults(main=fol_ice)
@@ -2026,9 +2053,8 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         return r
 
     for s in result:
-       
         # FOL specific options
-        s.add_argument("--logic", choices=('fol', 'epr', 'universal', 'existential'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+        s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
         s.add_argument("--separator", choices=('naive', 'generalized', 'hybrid'), default="hybrid", help="Use the specified separator algorithm")
         s.add_argument("--max-complexity", type=int, default=100, help="Maximum formula complexity")
         s.add_argument("--max-clauses", type=int, default=100, help="Maximum formula matrix clauses")
