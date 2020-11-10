@@ -1,7 +1,6 @@
 
 from asyncio.exceptions import CancelledError
 from asyncio.futures import Future
-from asyncio.streams import StreamWriter
 from asyncio.tasks import Task
 from typing import Any, Awaitable, Callable, DefaultDict, Dict, Iterable, Iterator, NamedTuple, NoReturn, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
 
@@ -12,6 +11,9 @@ import os
 import random
 import time
 import io
+import struct
+import fcntl
+import pickle
 import asyncio
 import itertools
 import signal
@@ -22,9 +24,10 @@ from multiprocessing.connection import Connection
 import networkx # type: ignore
 
 import z3
+from sexp import EOF
 import utils
 import logic
-from logic import Expr, Solver, Trace, check_implication
+from logic import Expr, Solver, Trace, assert_any_transition, check_implication
 import syntax
 from syntax import DefinitionDecl
 from fol_trans import FOLSeparator, eval_predicate, formula_to_predicate, model_to_state, predicate_to_formula, prog_to_sig, PDState, state_to_model, transition_to_formula, two_state_trace_to_model
@@ -192,19 +195,19 @@ def check_two_state_implication_generalized(
 #         random.shuffle(active_tasks)
 #         return active_tasks[0] if len(active_tasks) > 0 else None
 
-async def async_recv(conn: Connection) -> Any:
-    loop = asyncio.get_event_loop()
-    event = asyncio.Event(loop=loop)
-    try:
-        loop.add_reader(conn.fileno(), event.set)
-        await event.wait()
-        return conn.recv()
-    finally:
-        # We need to do this in finally so that if we are cancelled, the
-        # reader is removed. This is because for some reason the asyncio
-        # loop can have at most one reader per fileno, and adding another
-        # seems to silently do nothing.
-        loop.remove_reader(conn.fileno())
+# async def async_recv(conn: Connection) -> Any:
+#     loop = asyncio.get_event_loop()
+#     event = asyncio.Event(loop=loop)
+#     try:
+#         loop.add_reader(conn.fileno(), event.set)
+#         await event.wait()
+#         return conn.recv()
+#     finally:
+#         # We need to do this in finally so that if we are cancelled, the
+#         # reader is removed. This is because for some reason the asyncio
+#         # loop can have at most one reader per fileno, and adding another
+#         # seems to silently do nothing.
+#         loop.remove_reader(conn.fileno())
     
 T = TypeVar('T')
 async def async_race(aws: Sequence[Awaitable[T]]) -> T:
@@ -238,60 +241,214 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
                 raise ValueError("Empty sequence passed to async_race()")
         tasks = list(pending)
 
+# class AsyncConnectionOld:
+#     HEADER_FMT = '<Q'
+#     HEADER_SIZE = struct.calcsize(HEADER_FMT)
+#     def __init__(self) -> None:
+#         self.reader: asyncio.streams.StreamReader
+#         self.writer: asyncio.streams.StreamWriter
+#         self.fds: Tuple[int, int]
+#     async def connect(self, read: int, write: int) -> None:
+#         loop = asyncio.get_event_loop()
+#         self.reader = asyncio.StreamReader()
+#         await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(self.reader), os.fdopen(read, 'rb', 0))
+
+#         fl = fcntl.fcntl(write, fcntl.F_GETFL)
+#         fcntl.fcntl(write, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+#         writer_transport, writer_protocol = await loop.connect_write_pipe(
+#             lambda: asyncio.streams.FlowControlMixin(),
+#             os.fdopen(write, 'wb', 0))
+#         self.writer = asyncio.streams.StreamWriter(writer_transport, writer_protocol, None, loop)
+#         self.fds = (read, write)
+
+#     async def recv(self) -> Any:
+#         header = await self.reader.readexactly(AsyncConnectionOld.HEADER_SIZE)
+#         data = await self.reader.readexactly(struct.unpack(AsyncConnectionOld.HEADER_FMT, header)[0])
+#         return pickle.loads(data)
+
+#     async def send(self, v: Any) -> None:
+#         pickled = pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
+#         self.writer.write(struct.pack(AsyncConnectionOld.HEADER_FMT, len(pickled)))
+#         self.writer.write(pickled)
+#         await self.writer.drain()
+#     def close(self) -> None:
+#         del self.reader
+#         del self.writer
+
+
+async def _readexactly(read_fd: int, size: int) -> bytes:
+    if size == 0: return bytes()
+    try:
+        initial_read = os.read(read_fd, size)
+        if len(initial_read) == 0:
+            raise EOFError()
+    except BlockingIOError:
+        initial_read = bytes()
+    if len(initial_read) == size:
+        return initial_read
+    buf = bytearray(initial_read)
+    loop = asyncio.get_event_loop()
+    event = asyncio.Event(loop=loop)
+    try: 
+        loop.add_reader(read_fd, event.set)
+        while len(buf) < size:
+            await event.wait()
+            event.clear()
+            try:
+                more = os.read(read_fd, size - len(buf))
+                if len(more) == 0:
+                    raise EOFError()
+                buf += more
+            except BlockingIOError:
+                pass
+        return bytes(buf)
+    finally:
+        loop.remove_reader(read_fd)
+
+async def _writeexactly(write_fd: int, buf: bytes) -> None:
+    if len(buf) == 0: return
+    try:
+        written = os.write(write_fd, buf)
+    except BlockingIOError:
+        written = 0
+    except BrokenPipeError:
+        raise EOFError()
+    # print(f"Wrote {written} bytes")
+    if written == len(buf):
+        return
+    loop = asyncio.get_event_loop()
+    event = asyncio.Event(loop=loop)
+    try: 
+        loop.add_writer(write_fd, event.set)
+        while written < len(buf):
+            # print("Awaiting to write")
+            await event.wait()
+            event.clear()
+            try:
+                w = os.write(write_fd, buf[written:])
+                written += w
+            except BlockingIOError:
+                pass
+            except BrokenPipeError:
+                raise EOFError()
+        return
+    finally:
+        loop.remove_reader(write_fd)
+
+# async def test():
+#     (a, b) = os.pipe()
+#     os.set_blocking(a, False)
+#     os.set_blocking(b, False)
+#     async def reader() -> None:
+#         while True:
+#             v = await _readexactly(a, 10000)
+#             print("Got 10000 bytes")
+#     t = asyncio.create_task(reader())
+#     await _writeexactly(b, bytes(1000000))
+#     t.cancel()
+#     os.close(a)
+#     try:
+#         await _writeexactly(b, bytes(1000000))
+#     except EOFError:
+#         print("got eof when writing")
+#     while True: pass
+# asyncio.run(test())
+
+
 class AsyncConnection:
+    HEADER_FMT = '<Q'
+    HEADER_SIZE = struct.calcsize(HEADER_FMT)
     def __init__(self, read: int, write: int) -> None:
-        self.r = read
-        self.writer = StreamWriter()
+        self._read_fd = read
+        os.set_blocking(read, False)
+        self._write_fd = write
+        os.set_blocking(write, False)
+
     async def recv(self) -> Any:
-        pass
+        header = await _readexactly(self._read_fd, AsyncConnection.HEADER_SIZE)
+        data = await _readexactly(self._read_fd, struct.unpack(AsyncConnection.HEADER_FMT, header)[0])
+        return pickle.loads(data)
+
     async def send(self, v: Any) -> None:
-        pass
+        pickled = pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
+        await _writeexactly(self._write_fd, struct.pack(AsyncConnection.HEADER_FMT, len(pickled)))
+        await _writeexactly(self._write_fd, pickled)
+
+    def close(self) -> None:
+        os.close(self._read_fd)
+        os.close(self._write_fd)
+
+    @staticmethod
+    def pipe_pair() -> Tuple['AsyncConnection', 'AsyncConnection']:
+        (dn_r, dn_w) = os.pipe() # Down pipe (written on top, read on bottom)
+        (up_r, up_w) = os.pipe() # Up pipe (written on bottom, read on top)
+        return (AsyncConnection(up_r, dn_w), AsyncConnection(dn_r, up_w))
 
 
 class ScopedProcess:
     '''Allows a target function to be run in a `with` statement:
        
-       with ScopedProcess(lambda c: c.send(os.getpid())) as conn:
-           print("Child pid:", conn.recv())
+       async def child(): await c.send(os.getpid())
+       with ScopedProcess() as conn:
+           print("Child pid:", await conn.recv())
 
        Interacts properly with asyncio and cancellation.'''
-    def __init__(self, target: Callable[[Connection], Union[None, Awaitable[None]]]):
+    def __init__(self, target: Callable[[AsyncConnection], Union[None, Awaitable[None]]], well_behaved: bool = False):
         self._target = target
-        self._conn_main: Connection
+        self._conn_main: AsyncConnection
         self._proc: Process
+        self._well_behaved = well_behaved
     @staticmethod
     def _kill_own_pgroup(signal_num: int, frame: Any) -> NoReturn:
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         os.killpg(os.getpgid(os.getpid()), signal.SIGTERM)
         os._exit(0)
-    def __enter__(self) -> Connection:
-        (self._conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
-        def proc(c: Connection) -> None:
+    def __enter__(self) -> AsyncConnection:
+        #(self._conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
+
+        (self._conn_main, conn_worker) = AsyncConnection.pipe_pair()
+
+        def proc() -> None:
             os.setpgid(0, 0)
             signal.signal(signal.SIGTERM, ScopedProcess._kill_own_pgroup)
             signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
-            r = self._target(c)
-            if r is not None:
-                asyncio.run(r)
+            async def run() -> None:                    
+                # c = AsyncConnection2(dn_r, up_w)
+                # await c.connect(dn_r, up_w)
+                r = self._target(conn_worker)
+                if r is not None:
+                    await r
+            asyncio.run(run())
 
-        self._proc = Process(target=proc, args = (conn_worker,))
+        self._proc = Process(target=proc, args = ())
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         self._proc.start()
-        conn_worker.close()
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        conn_worker.close()
+        # self._conn_main = AsyncConnection2(up_r, dn_w)
+        # await self._conn_main.connect(up_r, dn_w)
+
         return self._conn_main
     def __exit__(self, a: Any, b: Any, c: Any) -> None:
         self._conn_main.close()
-        try:
-            p = self._proc.pid
-            if p is not None:
-                os.killpg(p, signal.SIGKILL)
-                os.kill(p, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        p = self._proc.pid
+        if p is not None and not self._well_behaved:
+            try: os.killpg(p, signal.SIGKILL)
+            except ProcessLookupError: pass
+            try: os.kill(p, signal.SIGKILL)
+            except ProcessLookupError: pass
         self._proc.join()
         self._proc.close()
-    
+
+class ScopedTask:
+    def __init__(self, aws: Union[Task, Awaitable]) -> None:
+        self.task: Task = aws if isinstance(aws, Task) else asyncio.create_task(aws)
+    def __enter__(self) -> Task:
+        return self.task
+    def __exit__(self, a: Any, b: Any, c: Any) -> None:
+        self.task.cancel()
+
+
 async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
     graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
     assert networkx.is_directed_acyclic_graph(graph), 'Not in EPR!'
@@ -299,17 +456,17 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
     async def check(use_cvc4: bool, min: bool, wait_time: float = 0, loop: bool = False) -> Optional[Trace]:        
         if wait_time > 0:
             await asyncio.sleep(wait_time)
-        async def worker(conn: Connection) -> None:
+        async def worker(conn: AsyncConnection) -> None:
             s = Solver(use_cvc4=use_cvc4)
             if loop:
                 x = 0
                 while True:
                     x += 1
-            conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
+            await conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
         with ScopedProcess(worker) as conn:
-            print(f" --- use cvc4 {use_cvc4}, min {min}, loop {loop}")
-            r = await async_recv(conn)
-            print(f"use cvc4 {use_cvc4}, min {min}, loop {loop}, r == UNSAT: {r is None}")
+            # print(f" --- use cvc4 {use_cvc4}, min {min}, loop {loop}")
+            r = await conn.recv()
+            # print(f"use cvc4 {use_cvc4}, min {min}, loop {loop}, r == UNSAT: {r is None}")
             return r
     # fail_index = random.randint(0,2)
     r = await async_race([#check(use_cvc4=False, min=True if minimize else False, loop=fail_index == 0),
@@ -323,12 +480,12 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
 
 async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
-        def worker(conn: Connection) -> None:
+        async def worker(conn: AsyncConnection) -> None:
             s = Solver(use_cvc4=use_cvc4)
             m = check_implication(s, hyps, [conc], minimize=min)
-            conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
+            await conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
         with ScopedProcess(worker) as conn:
-            return await async_recv(conn)
+            return await conn.recv()
     return await async_race([check(use_cvc4=False, min=True if minimize else False),
                              check(use_cvc4=True, min=False)])
 
@@ -658,7 +815,7 @@ class ParallelFolIc3(object):
 
     async def parallel_inductive_generalize_worker(self, name: str, pc: PrefixConstraints, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, state: int, sep: Union[Separator, ParallelSeparator], ignored_pred: int = -1) -> Expr:
         log_filename = f"sep-{''.join(random.choice('0123456789ABCDEF') for x in range(8))}.log"
-        def subprocess_worker(conn: Connection) -> None:
+        async def subprocess_worker(conn: AsyncConnection) -> None:
             # Redirect output to either a log or empty
             sys.stdout = open(os.path.join(utils.args.log_dir, log_filename) if utils.args.log_dir else os.devnull, "w")
             print(f"Log of separator {name} blocking a state in frame {frame}")
@@ -673,7 +830,7 @@ class ParallelFolIc3(object):
                 pc.disallowed_quantifier_edges = qe
             
             while True:
-                v = conn.recv()
+                v = await conn.recv()
                 if 'state' in v:
                     states.append(v['state'])
                 if 'sep' in v:
@@ -685,15 +842,15 @@ class ParallelFolIc3(object):
                     print(f"Found separator: {p}")
                     print(f"Total separation time so far: {t.elapsed()}")
                     sys.stdout.flush()
-                    conn.send(p)
+                    await conn.send(p)
                 if 'gen' in v:
                     (st, frame_exprs, pred) = v['gen']
                     r: Optional[Tuple[Trace, DefinitionDecl]] = asyncio.run(gen.async_find_generalized_implication(solver, st, frame_exprs, pred))
                     if r is None:
-                        conn.send(None)
+                        await conn.send(None)
                     else:
                         tr, _ = r
-                        conn.send(tr)
+                        await conn.send(tr)
         states_seen = 0
         # Experiment: disable sharing
         constraints = list(constraints)
@@ -706,13 +863,13 @@ class ParallelFolIc3(object):
             while True:
                 # Update any states in the worker
                 while states_seen < len(local_states):
-                    conn.send({'state': local_states[states_seen]})
+                    await conn.send({'state': local_states[states_seen]})
                     states_seen += 1
                 cs = ([c.i for c in constraints if isinstance(c, Pos)],
                       [c.i for c in constraints if isinstance(c, Neg)],
                       [(c.i,c.j) for c in constraints if isinstance(c, Imp)])
-                conn.send({'sep': cs})
-                p = await async_recv(conn)
+                await conn.send({'sep': cs})
+                p = await conn.recv()
                 log.print(f"Candidate (from {name}) {p}")
                 
                 already_blocked = False
@@ -742,8 +899,8 @@ class ParallelFolIc3(object):
                 frame_preds = set(self.frame_predicates(frame-1))
                 
                 if 'generalize-edges' in utils.args.expt_flags:
-                    conn.send({'gen': (self._states[state], [self._predicates[x] for x in frame_preds], p)})
-                    edge = await async_recv(conn)
+                    await conn.send({'gen': (self._states[state], [self._predicates[x] for x in frame_preds], p)})
+                    edge = await conn.recv()
                 else: 
                     start = time.time()
                     edge = await multi_check_transition([p, *(self._predicates[j] for j in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
