@@ -1,8 +1,5 @@
 
-from asyncio.exceptions import CancelledError
-from asyncio.futures import Future
-from asyncio.tasks import Task
-from typing import Any, Awaitable, Callable, DefaultDict, Dict, Iterable, Iterator, NamedTuple, NoReturn, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
+from typing import Any, Awaitable, Callable, DefaultDict, Dict, Iterable, Iterator, NoReturn, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
 
 import argparse
 import subprocess
@@ -12,28 +9,25 @@ import random
 import time
 import io
 import struct
-import fcntl
 import pickle
 import asyncio
 import itertools
 import signal
-from collections import defaultdict
+from collections import Counter, defaultdict
 import multiprocessing
-from multiprocessing import Process
-from multiprocessing.connection import Connection
+import typing
 import networkx # type: ignore
 
 import z3
-from sexp import EOF
 import utils
 import logic
-from logic import Expr, Solver, Trace, assert_any_transition, check_implication
+from logic import Expr, Solver, Trace, check_implication
 import syntax
 from syntax import DefinitionDecl
 from fol_trans import FOLSeparator, eval_predicate, formula_to_predicate, model_to_state, predicate_to_formula, prog_to_sig, PDState, state_to_model, transition_to_formula, two_state_trace_to_model
 import separators
 from separators import Formula, Signature, Constraint, HybridSeparator, Neg, Pos, Imp, ParallelSeparator, Separator, UnlimitedTimer
-from separators.separate import Logic, PrefixConstraints, predecessor_formula, successor_formula
+from separators.separate import FixedImplicationSeparator, Logic, PrefixConstraints, PrefixSolver, predecessor_formula, successor_formula
 
 
 def check_initial(solver: Solver, p: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
@@ -216,11 +210,11 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
     Ignores exceptions from the awaitables, unless all awaitables produce an exception,
     which causes `async_race` to raise the exception from an arbitrary awaitable.
     `aws` must be non-empty. '''
-    tasks: List[Future[T]] = [a if isinstance(a, Task) else asyncio.create_task(a) for a in aws]
+    tasks: List[asyncio.Future[T]] = [a if isinstance(a, asyncio.Task) else asyncio.create_task(a) for a in aws]
     while True:
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        except CancelledError:
+        except asyncio.CancelledError:
             for task in tasks:
                 task.cancel()
             raise
@@ -396,7 +390,7 @@ class ScopedProcess:
     def __init__(self, target: Callable[[AsyncConnection], Union[None, Awaitable[None]]], well_behaved: bool = False):
         self._target = target
         self._conn_main: AsyncConnection
-        self._proc: Process
+        self._proc: multiprocessing.Process
         self._well_behaved = well_behaved
     @staticmethod
     def _kill_own_pgroup(signal_num: int, frame: Any) -> NoReturn:
@@ -420,7 +414,7 @@ class ScopedProcess:
                     await r
             asyncio.run(run())
 
-        self._proc = Process(target=proc, args = ())
+        self._proc = multiprocessing.Process(target=proc, args = ())
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         self._proc.start()
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
@@ -441,37 +435,31 @@ class ScopedProcess:
         self._proc.close()
 
 class ScopedTask:
-    def __init__(self, aws: Union[Task, Awaitable]) -> None:
-        self.task: Task = aws if isinstance(aws, Task) else asyncio.create_task(aws)
-    def __enter__(self) -> Task:
-        return self.task
-    def __exit__(self, a: Any, b: Any, c: Any) -> None:
-        self.task.cancel()
+    def __init__(self, aws: Awaitable) -> None:
+        self.fut = asyncio.ensure_future(aws)
+    async def __aenter__(self) -> None:
+        return None
+    async def __aexit__(self, a: Any, b: Any, c: Any) -> None:
+        self.fut.cancel()
+        try: await self.fut
+        except asyncio.CancelledError: pass
 
 
 async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
-    graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
-    assert networkx.is_directed_acyclic_graph(graph), 'Not in EPR!'
+    # graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
+    # assert networkx.is_directed_acyclic_graph(graph), 'Not in EPR!'
+
     # start = time.time()
-    async def check(use_cvc4: bool, min: bool, wait_time: float = 0, loop: bool = False) -> Optional[Trace]:        
-        if wait_time > 0:
-            await asyncio.sleep(wait_time)
+    async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
         async def worker(conn: AsyncConnection) -> None:
             s = Solver(use_cvc4=use_cvc4)
-            if loop:
-                x = 0
-                while True:
-                    x += 1
             await conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
         with ScopedProcess(worker) as conn:
-            # print(f" --- use cvc4 {use_cvc4}, min {min}, loop {loop}")
             r = await conn.recv()
-            # print(f"use cvc4 {use_cvc4}, min {min}, loop {loop}, r == UNSAT: {r is None}")
             return r
-    # fail_index = random.randint(0,2)
-    r = await async_race([#check(use_cvc4=False, min=True if minimize else False, loop=fail_index == 0),
-                          check(use_cvc4=True, min=False),
-                          check(use_cvc4=False, min=False)])
+    r = await async_race([check(use_cvc4=False, min=True if minimize else False),
+                          check(use_cvc4=True, min=False)
+                          ])
     # print(f"Check transition in: {time.time() - start:0.3f}s")
     return r
 
@@ -517,6 +505,34 @@ class IGQueryLogger(object):
     def close(self) -> None:
         self.print("Closing log.", flush=True)
         self.f.close() 
+
+async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int) -> Optional[Expr]:
+    print(f"Inductive generalizing to block {state} in frame {frame}", file=x)
+    tr = s._states[state]
+    st = tr[0].as_state(tr[1])
+    size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
+    print(f"Size of state to block {size_summary}", file=x)
+    # golden: List[Formula] = []
+    f: Optional[Expr] = None
+    for inv in syntax.the_program.invs():
+        if s._states[state][0].as_state(s._states[state][1]).eval(inv.expr) == False:
+            cex = await multi_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False)
+            print("Possible formula is:", inv.expr, '(relatively inductive)' if cex is None else '(not relatively inductive)', file=x)
+            if cex is None:
+                f = inv.expr
+    return f
+
+def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, PDState], List[PDState]]) -> bool:
+    if isinstance(c, Pos):
+        if not eval_predicate(states[c.i], p):
+            return False            
+    elif isinstance(c, Neg):
+        if eval_predicate(states[c.i], p):
+            return False
+    elif isinstance(c, Imp):
+        if eval_predicate(states[c.i], p) and not eval_predicate(states[c.j], p):
+            return False
+    return True
 
 
 class ParallelFolIc3(object):
@@ -627,7 +643,7 @@ class ParallelFolIc3(object):
             code = 'S' if index in self._safeties else 'i' if index in self._initial_conditions else 'b' if index in self._bad_predicates else ' '
             fn_str = f"{i:2}" if i is not None else ' +'
             print(f"[IC3] predicate {fn_str} {code} {p}")
-        print(f"[IC3] Reachable states: {len(self._reachable)}")
+        print(f"[IC3] Reachable states: {len(self._reachable)}, initial states: {len(self._initial_states)}")
         print("[IC3] ----")
         print(f"time: {time.time() - self._start:0.2f} sec")
 
@@ -812,6 +828,195 @@ class ParallelFolIc3(object):
             if not all(self.eval(pred, state) for pred in self.frame_predicates(frame) if pred != ignored_pred):
                 return
             await self._event_frames.wait()  
+
+    async def IG2_worker(self, conn: AsyncConnection) -> None:
+        sig = prog_to_sig(syntax.the_program, two_state=False)
+        sep = FixedImplicationSeparator(sig, (), PrefixConstraints(), set(), [])
+        constraints: Set[Constraint] = set()
+        sep_constraints: Set[Constraint] = set()
+        mapping: Dict[int, int] = {}
+        states: Dict[int, PDState] = {}
+        while True:
+            v = await conn.recv()
+            if 'prefix' in v:
+                (prefix, pc) = v['prefix']
+                del sep
+                sep = FixedImplicationSeparator(sig, prefix, pc, set(), [])
+                sep_constraints = set()
+                mapping = {}
+            if 'constraints' in v:
+                (cons, extra_states) = v['constraints']
+                states.update(extra_states)
+                constraints = set(cons)
+            if 'sep' in v:
+                minimized = False
+                while True:
+                    sep_r = sep.separate(minimize=minimized)
+                    if sep_r is None:
+                        await conn.send({'unsep': sep_constraints})
+                        break
+                    
+                    p = formula_to_predicate(sep_r)
+                    # print(f"Internal candidate: {p}")
+                    for c in constraints:
+                        if c in sep_constraints: continue
+                        if not satisifies_constraint(c, p, states):
+                            # print(f"Adding internal constraint {c}")
+                            for s in c.states():
+                                if s not in mapping:
+                                    mapping[s] = sep.add_model(state_to_model(states[s]))
+                            sep.add_constraint(c.map(mapping))
+                            sep_constraints.add(c)
+                            minimized = False
+                            break
+                    else:
+                        # All known constraints are satisfied
+                        if not minimized:
+                            minimized = True
+                            continue # continue the loop, now asking for a minimized separator
+                        else:
+                            await conn.send({'candidate': p})
+                            break
+                    
+            
+            # if 'cti' in v:
+            #     (f, p) = v['cti']
+            #     r = await multi_check_transition(f, p)
+            #     await conn.send(r)
+
+
+    async def IG2_manager(self, frame: int, state: int) -> Expr:
+        sig = prog_to_sig(syntax.the_program, two_state=False)
+        def states_of(cs: Sequence[Constraint]) -> Set[int]: return set(s for c in cs for s in c.states())
+        positive = self._initial_states | self._reachable
+        states = [self._states[state], *(self._states[i] for i in positive)]
+        constraints = [Neg(0), *(Pos(i+1) for i in range(len(positive)))]
+        
+        popularity: typing.Counter[Constraint] = Counter()
+        
+        prefix_solver = PrefixSolver(sig)
+        # pc = PrefixConstraints(Logic.Universal)
+        frame_preds = set(self.frame_predicates(frame-1))
+        
+        local_eval_cache: Dict[Tuple[int, int], bool] = {}
+        def local_eval(pred: int, local_state: int) -> bool:
+            if (pred, local_state) not in local_eval_cache:
+                local_eval_cache[(pred, local_state)] = eval_predicate(states[local_state], self._predicates[pred])
+            return local_eval_cache[(pred, local_state)]
+
+        solution: asyncio.Future[Expr] = asyncio.Future()
+        
+        t = io.StringIO()
+        golden = await IG_query_summary(t, self, frame, state)
+        print(t.getvalue(), end='')
+
+        async def check_candidate(p: Expr) -> Optional[Constraint]:
+            # F_0 => p?
+            initial_state = await multi_check_implication([init.expr for init in syntax.the_program.inits()], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+            if initial_state is not None:
+                print("Adding initial state")
+                i = len(states)
+                states.append((initial_state, 0))
+                return Pos(i)
+            
+            # F_i-1 ^ p => wp(p)?
+            start = time.time()
+            edge = await multi_check_transition([p, *(self._predicates[fp] for fp in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+            print(f"Check took {time.time()-start:0.3f}s")
+            # if golden is not None and edge is not None:
+            #     print(f"Golden {eval_predicate((edge, 0), golden)} -> {eval_predicate((edge, 1), golden)}")
+            if edge is not None:
+                print("Adding edge")
+                a = len(states)
+                states.append((edge, 0))
+                b = len(states)
+                states.append((edge, 1))
+                return Imp(a,b)
+
+            # print("Found candidate")
+            return None
+
+        async def worker_handler(pc: PrefixConstraints) -> None:
+            nonlocal solution, constraints, popularity
+            known_states: Set[int] = set()
+            with ScopedProcess(self.IG2_worker) as conn:
+                async def send_constraints(cs: Sequence[Constraint]) -> None:
+                    new_states = states_of(cs).difference(known_states)
+                    extra_states = {i: states[i] for i in new_states}
+                    known_states.update(new_states)
+                    await conn.send({'constraints': (cs, extra_states)})
+                while True:
+                    # Get a prefix from the solver
+                    pre = prefix_solver.get_prefix(constraints, pc)
+                    if pre is None:
+                        return
+                    print(f"Worker trying: {pre}")
+                    prefix_solver.reserve(pre)
+                    await conn.send({'prefix': (pre, pc)})
+                    while True:
+                        cs = list(constraints)
+                        cs.sort(key = lambda x: popularity[x], reverse=True)
+                        await send_constraints(cs)
+                        await conn.send({'sep': None})
+                        v = await conn.recv()
+                        if 'candidate' in v:
+                            p = v['candidate']
+                            new_constraint = await check_candidate(p)
+                            if new_constraint is None:
+                                solution.set_result(p)
+                                return
+                            else:
+                                constraints.append(new_constraint)
+                                # if golden is not None:
+                                #     if not satisifies_constraints([new_constraint], golden, states):
+                                #         print(f"! -- oops {new_constraint} isn't satisfied by {golden}")
+                        elif 'unsep' in v:
+                            core = v['unsep']
+                            print(f"UNSEP, {pre} with |core|={len(core)}")
+                            # if False:
+                            #     test_sep = FixedImplicationSeparator(sig, pre, pc)
+                            #     m = {i: test_sep.add_model(state_to_model(states[i])) for i in range(len(states))}
+                            #     for c in cs:
+                            #         test_sep.add_constraint(c.map(m))
+                            #     assert test_sep.separate() is None
+                            prefix_solver.unsep(pre, core)
+                            for c in core:
+                                popularity[c] += 1
+                            break
+                        else:
+                            assert False
+                    # print(f"Done with: {pre}")
+                    prefix_solver.unreserve(pre)
+        
+        async def frame_updater() -> None:
+            nonlocal constraints, frame_preds
+            def in_frame(current_frame: Set[int], c: Constraint) -> bool:
+                pass
+                if isinstance(c, Imp):
+                    return all(local_eval(fp, c.i) for fp in current_frame)
+                else:
+                    return True
+            while True:
+                current_frame = set(self.frame_predicates(frame-1))
+                if frame_preds != current_frame:
+                    constraints = [c for c in constraints if in_frame(current_frame, c)]
+                    frame_preds = current_frame
+                else:
+                    await self._event_frames.wait()
+
+        pcs = [PrefixConstraints(Logic.Universal),
+               PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
+               PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
+               PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5)]
+        handlers = [worker_handler(pc) for pc in pcs]
+        handlers.append(frame_updater())
+
+        async with ScopedTask(asyncio.gather(*handlers)):
+            return await solution
+                    
+        
+
+        
 
     async def parallel_inductive_generalize_worker(self, name: str, pc: PrefixConstraints, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, state: int, sep: Union[Separator, ParallelSeparator], ignored_pred: int = -1) -> Expr:
         log_filename = f"sep-{''.join(random.choice('0123456789ABCDEF') for x in range(8))}.log"
@@ -1004,7 +1209,36 @@ class ParallelFolIc3(object):
         self.add_predicate(p, frame)
         await self.push_pull()
         self.print_predicates()
-    
+
+
+    async def parallel_inductive_generalize2(self, frame: int, state: int, ignored_pred: int = -1, rationale: str = '') -> None:
+        log = IGQueryLogger()
+        await log.start(self, frame, state)
+        log.print(f"Rationale: {rationale}")
+        if utils.args.log_dir:
+            print(f"Inductive generalize log in <{log.name}> blocking {state} in frame {frame} for {rationale}")
+        else:
+            print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}")
+                
+        workers: List[Awaitable[Optional[Expr]]] = []
+        workers.append(self.wait_blocked(frame, state, ignored_pred))
+        workers.append(self.IG2_manager(frame, state))
+
+        p = await async_race(workers)
+        if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame) if pred != ignored_pred):
+            print(f"State {state} was blocked in frame {frame} by concurrent task")
+            log.print(f"State {state} was blocked in frame {frame} by concurrent task")
+            log.close()
+            return
+        
+        print(f"Learned new predicate {p} in frame {frame} blocking {state} for {rationale}")
+        log.print(f"Learned new predicate {p}")
+        log.print(f"Elapsed: {time.time() - log.start_time}", flush=True)
+        log.close()
+        self.add_predicate(p, frame)
+        await self.push_pull()
+        self.print_predicates()
+
     async def get_predecessor(self, frame: int, state: int) -> Optional[int]:
         assert frame != 0
         key = (frame-1, state)
@@ -1073,7 +1307,7 @@ class ParallelFolIc3(object):
             return
         pred = await self.get_predecessor(frame, state)
         if pred is None:
-            await self.parallel_inductive_generalize(frame, state, rationale=rationale)
+            await self.parallel_inductive_generalize2(frame, state, rationale=rationale)
         else:
             await self.block(frame - 1, pred, rationale)
 
@@ -1200,12 +1434,10 @@ class ParallelFolIc3(object):
         self.init()
         await self.push_pull()
         self.print_predicates()
-        hueristics = [
-                       asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
-                    #   asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
-                       asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
-                    #   asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
-                    #   asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
+        hueristics = [asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
+                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
+                      # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
+                      # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       asyncio.create_task(self.inexpensive_reachability())]
         while True:
             if self.is_complete():
