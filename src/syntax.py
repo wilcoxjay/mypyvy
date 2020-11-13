@@ -2376,6 +2376,13 @@ class Program(object):
         res = quantifier_alternation_graph(self, [axiom.expr for axiom in self.axioms()] +
                                                  [cast(Expr, rel.derived_axiom) for rel in self.derived_relations()] +
                                                  additional)
+        for trans in self.transitions():
+            lator = Z3Translator(cast(Scope[z3.ExprRef], self.scope), 'new', 'old')
+            z3expr = lator.translate_transition(trans)
+            for (ssortz3, tsortz3) in z3_utils.z3_quantifier_alternations(z3expr):
+                res.add_edge(sort_from_z3sort(self, ssortz3).name,
+                             sort_from_z3sort(self, tsortz3).name) # TODO: consider overriding equals instead of using the names
+
         for f in self.functions():
             for asort in f.arity:
                 esort = f.sort

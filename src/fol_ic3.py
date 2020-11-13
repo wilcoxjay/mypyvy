@@ -87,7 +87,7 @@ def check_transition(
                 res = s.check(timeout=timeout)
                 if res == z3.sat:
                     #print(f"Found model in {time.time() - start:0.3f} sec")
-                    return two_state_trace_from_z3(s.model(minimize=minimize))
+                    return two_state_trace_from_z3(s.model(minimize=minimize, relations_to_minimize=[]))
                 assert res == z3.unsat
     #print(f"Found model in {time.time() - start:0.3f} sec")                    
     return None
@@ -447,9 +447,17 @@ class ScopedTask:
 
 async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
     # graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
-    # assert networkx.is_directed_acyclic_graph(graph), 'Not in EPR!'
+    # if not networkx.is_directed_acyclic_graph(graph):
+    #     print('ERROR -- Not in EPR! (trans)')
+    #     for hyp in old_hyps:
+    #         print(hyp)
+    #     print(new_conc)
+    #     print(' --- ')
+    
+    file = f"out/query-{random.randint(0,1000000000-1):09}.pickle"
+    with open(file, 'wb') as f:
+        pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # start = time.time()
     async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
         async def worker(conn: AsyncConnection) -> None:
             s = Solver(use_cvc4=use_cvc4)
@@ -457,16 +465,31 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
         with ScopedProcess(worker) as conn:
             r = await conn.recv()
             return r
-    r = await async_race([check(use_cvc4=False, min=True if minimize else False),
-                          check(use_cvc4=True, min=False)
-                          ])
-    # print(f"Check transition in: {time.time() - start:0.3f}s")
-    return r
+    try:
+        start = time.time()
+        result =  await async_race([check(use_cvc4=False, min=True if minimize else False),
+                                check(use_cvc4=True, min=False)])
+        return result
+    finally:
+        elapsed = time.time() - start
+        if elapsed < 5:
+            os.remove(file)
+        else:
+            os.rename(file, f"out/hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle")
+    
 
 async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
     pass
 
 async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
+    # graph = syntax.the_program.decls_quantifier_alternation_graph(list(hyps) + [syntax.Not(conc)])
+    # if not networkx.is_directed_acyclic_graph(graph):
+    #     print('ERROR -- Not in EPR! (impl)')
+    #     for hyp in hyps:
+    #         print(hyp)
+    #     print(conc)
+    #     print(' --- ')
+   
     async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
         async def worker(conn: AsyncConnection) -> None:
             s = Solver(use_cvc4=use_cvc4)
@@ -551,6 +574,7 @@ class ParallelFolIc3(object):
         self._initial_conditions: Set[int] = set() # predicates that are initial conditions in F_0
         self._safeties: Set[int] = set() # predicates that are safety properties
         self._reachable: Set[int] = set() # Known reachable states (not necessarily including initial states)
+        self._useful_reachable: Set[int] = set() # Known reachable states that we think are useful as constraints
 
         self._bad_predicates: Set[int] = set() # Predicates that violate a known reachable state
         self._redundant_predicates: Set[int] = set() # Predicates implied by another predicate in F_inf
@@ -635,15 +659,15 @@ class ParallelFolIc3(object):
 
     def print_predicates(self) -> None:
         print ("[IC3] ---- Frame summary")
-        cnt = len([i for (i,fn) in enumerate(self._frame_numbers) if fn == 0 and i in self._bad_predicates])
-        print(f"[IC3] predicate  0 b ... (x{cnt})")
+        # cnt = len([i for (i,fn) in enumerate(self._frame_numbers) if fn == 0 and i in self._bad_predicates])
+        # print(f"[IC3] predicate  0 b ... (x{cnt})")
         for i, p, index in sorted(zip(self._frame_numbers, self._predicates, range(len(self._predicates))), key = lambda x: ParallelFolIc3.frame_key(x[0])):
             if i == 0 and index in self._bad_predicates:
                 continue
-            code = 'S' if index in self._safeties else 'i' if index in self._initial_conditions else 'b' if index in self._bad_predicates else ' '
+            code = '$' if index in self._safeties else 'i' if index in self._initial_conditions else 'b' if index in self._bad_predicates else ' '
             fn_str = f"{i:2}" if i is not None else ' +'
             print(f"[IC3] predicate {fn_str} {code} {p}")
-        print(f"[IC3] Reachable states: {len(self._reachable)}, initial states: {len(self._initial_states)}")
+        print(f"[IC3] Reachable states: {len(self._reachable)}, initial states: {len(self._initial_states)}, useful reachable: {len(self._useful_reachable)}")
         print("[IC3] ----")
         print(f"time: {time.time() - self._start:0.2f} sec")
 
@@ -733,54 +757,54 @@ class ParallelFolIc3(object):
                 self._event_frames.clear()
         return made_changes 
 
-    # async def pull_once(self) -> bool:
-    #     made_changes = False
-    #     for index, p in sorted(enumerate(self._predicates), key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x[0]]), reverse=True):
-    #         fn = self._frame_numbers[index]
-    #         # No need to pull things that aren't bad, already only in F_0 or not in F_inf
-    #         if fn is None or fn == 0 or index not in self._bad_predicates:
-    #             continue
-    #         if index in self._pulling_blocker:
-    #             blocker, dependant_pred = self._pulling_blocker[index]
-    #             # Check if blocking state is reachable. TODO: what does this mean?
-    #             if blocker in self._reachable:
-    #                 print(f"Pulling blocker was reachable for state {blocker} in frame {fn} ???")
-    #                 continue
-    #             # Check if the blocker state is still in F_i \ p and if the dependent predicate is in the next frame
-    #             if all(self.eval(F_i_pred, blocker) for F_i_pred in self.frame_predicates(fn) if F_i_pred != index):
-    #                 continue
-    #             if dependant_pred in self.frame_predicates(fn + 1):
-    #                 continue
-    #             # The blocker is invalidated
-    #             del self._pulling_blocker[index]
-    #         # Either there is no known blocker or it was just invalidated; check if any new blocker exists
-    #         fp = set(self.frame_predicates(fn)).difference([index])
-    #         fp_next = set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2))
-    #         cex: Optional[Trace] = None
-    #         dependent_pred = -1
-    #         for q in fp_next:
-    #             cex = await multi_check_transition(list(self._predicates[j] for j in fp), self._predicates[q], minimize='no-minimize-block' not in utils.args.expt_flags)
-    #             if cex is not None:
-    #                 dependent_pred = q
-    #                 break
-    #         # Check if set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration if so
-    #         if fp != set(self.frame_predicates(fn)).difference([index]) or fp_next != set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2)):
-    #             made_changes = True
-    #             continue
-    #         if cex is None:
-    #             print(f"Pulled {p} to frame {fn - 1}")
-    #             self._frame_numbers[index] = fn - 1
-    #             self._event_frames.set()
-    #             self._event_frames.clear()
-    #             made_changes = True
-    #         else:
-    #             blocker = self.add_state((cex, 0))
-    #             # Unlike pushing, we don't need to add the sucessor state because we don't expect either to
-    #             # be reachable.
-    #             # blocker_successor = self.add_state((cex, 1))
-    #             # self.add_transition(blocker, blocker_successor)
-    #             self._pulling_blocker[index] = (blocker, dependent_pred)
-    #     return made_changes 
+    async def pull_once(self) -> bool:
+        made_changes = False
+        for index, p in sorted(enumerate(self._predicates), key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x[0]]), reverse=True):
+            fn = self._frame_numbers[index]
+            # No need to pull things that aren't bad, already only in F_0 or not in F_inf
+            if fn is None or fn == 0 or index not in self._bad_predicates:
+                continue
+            if index in self._pulling_blocker:
+                blocker, dependant_pred = self._pulling_blocker[index]
+                # Check if blocking state is reachable. TODO: what does this mean?
+                if blocker in self._reachable:
+                    print(f"Pulling blocker was reachable for state {blocker} in frame {fn} ???")
+                    continue
+                # Check if the blocker state is still in F_i \ p and if the dependent predicate is in the next frame
+                if all(self.eval(F_i_pred, blocker) for F_i_pred in self.frame_predicates(fn) if F_i_pred != index):
+                    continue
+                if dependant_pred in self.frame_predicates(fn + 1):
+                    continue
+                # The blocker is invalidated
+                del self._pulling_blocker[index]
+            # Either there is no known blocker or it was just invalidated; check if any new blocker exists
+            fp = set(self.frame_predicates(fn)).difference([index])
+            fp_next = set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2))
+            cex: Optional[Trace] = None
+            dependent_pred = -1
+            for q in fp_next:
+                cex = await multi_check_transition(list(self._predicates[j] for j in fp), self._predicates[q], minimize='no-minimize-block' not in utils.args.expt_flags)
+                if cex is not None:
+                    dependent_pred = q
+                    break
+            # Check if set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration if so
+            if fp != set(self.frame_predicates(fn)).difference([index]) or fp_next != set(self.frame_predicates(fn+1)).difference(self.frame_predicates(fn+2)):
+                made_changes = True
+                continue
+            if cex is None:
+                print(f"Pulled {p} to frame {fn - 1}")
+                self._frame_numbers[index] = fn - 1
+                self._event_frames.set()
+                self._event_frames.clear()
+                made_changes = True
+            else:
+                blocker = self.add_state((cex, 0))
+                # Unlike pushing, we don't need to add the sucessor state because we don't expect either to
+                # be reachable.
+                # blocker_successor = self.add_state((cex, 1))
+                # self.add_transition(blocker, blocker_successor)
+                self._pulling_blocker[index] = (blocker, dependent_pred)
+        return made_changes 
 
     def check_for_f_infinity(self) -> bool:
         made_changes = False
@@ -801,7 +825,7 @@ class ParallelFolIc3(object):
         async with self._push_pull_lock:
             while True:
                 pushed = await self.push_once()
-                pulled = False # await self.pull_once()
+                pulled = (await self.pull_once()) if 'pulling' in utils.args.expt_flags else False
                 made_infinite = self.check_for_f_infinity()
                 # We did something, so go see if more can happen
                 if pushed or pulled or made_infinite:
@@ -888,11 +912,12 @@ class ParallelFolIc3(object):
     async def IG2_manager(self, frame: int, state: int) -> Expr:
         sig = prog_to_sig(syntax.the_program, two_state=False)
         def states_of(cs: Sequence[Constraint]) -> Set[int]: return set(s for c in cs for s in c.states())
-        positive = self._initial_states | self._reachable
+        positive = self._initial_states | self._useful_reachable
         states = [self._states[state], *(self._states[i] for i in positive)]
         constraints = [Neg(0), *(Pos(i+1) for i in range(len(positive)))]
         
         popularity: typing.Counter[Constraint] = Counter()
+        popularity[Neg(0)] = 1000 # ensure the state to block is always one of the first constraints
         
         prefix_solver = PrefixSolver(sig)
         # pc = PrefixConstraints(Logic.Universal)
@@ -917,6 +942,8 @@ class ParallelFolIc3(object):
                 print("Adding initial state")
                 i = len(states)
                 states.append((initial_state, 0))
+                # x = self.add_state((initial_state, 0))
+                # self._initial_states.add(x)
                 return Pos(i)
             
             # F_i-1 ^ p => wp(p)?
@@ -938,25 +965,32 @@ class ParallelFolIc3(object):
 
         async def worker_handler(pc: PrefixConstraints) -> None:
             nonlocal solution, constraints, popularity
-            known_states: Set[int] = set()
+
             with ScopedProcess(self.IG2_worker) as conn:
+                # Keep track of which states the worker knows about, so we only send necessary ones
+                worker_known_states: Set[int] = set()
                 async def send_constraints(cs: Sequence[Constraint]) -> None:
-                    new_states = states_of(cs).difference(known_states)
+                    new_states = states_of(cs).difference(worker_known_states)
                     extra_states = {i: states[i] for i in new_states}
-                    known_states.update(new_states)
+                    worker_known_states.update(new_states)
+                    # print(f"Constraints are: {cs}")
                     await conn.send({'constraints': (cs, extra_states)})
+                
+                local_constraints: List[Constraint] = []
                 while True:
                     # Get a prefix from the solver
-                    pre = prefix_solver.get_prefix(constraints, pc)
+                    current_constr = local_constraints + constraints
+                    pre = prefix_solver.get_prefix(current_constr, pc)
                     if pre is None:
                         return
-                    print(f"Worker trying: {pre}")
+                    pre_pp = ".".join(sig.sort_names[sort_i] for (ifa, sort_i) in pre)
+                    print(f"Trying: {pre_pp}")
                     prefix_solver.reserve(pre)
                     await conn.send({'prefix': (pre, pc)})
                     while True:
-                        cs = list(constraints)
-                        cs.sort(key = lambda x: popularity[x], reverse=True)
-                        await send_constraints(cs)
+                        current_constr = constraints + local_constraints
+                        current_constr.sort(key = lambda x: popularity[x], reverse=True)
+                        await send_constraints(current_constr)
                         await conn.send({'sep': None})
                         v = await conn.recv()
                         if 'candidate' in v:
@@ -966,20 +1000,21 @@ class ParallelFolIc3(object):
                                 solution.set_result(p)
                                 return
                             else:
-                                constraints.append(new_constraint)
+                                # print(f"Adding {new_constraint}")
+                                local_constraints.append(new_constraint)
                                 # if golden is not None:
                                 #     if not satisifies_constraints([new_constraint], golden, states):
                                 #         print(f"! -- oops {new_constraint} isn't satisfied by {golden}")
                         elif 'unsep' in v:
                             core = v['unsep']
-                            print(f"UNSEP, {pre} with |core|={len(core)}")
+                            print(f"UNSEP: {pre_pp} with |core|={len(core)}")
                             # if False:
                             #     test_sep = FixedImplicationSeparator(sig, pre, pc)
                             #     m = {i: test_sep.add_model(state_to_model(states[i])) for i in range(len(states))}
                             #     for c in cs:
                             #         test_sep.add_constraint(c.map(m))
                             #     assert test_sep.separate() is None
-                            prefix_solver.unsep(pre, core)
+                            prefix_solver.unsep(core, pc, pre)
                             for c in core:
                                 popularity[c] += 1
                             break
@@ -1001,14 +1036,40 @@ class ParallelFolIc3(object):
                 if frame_preds != current_frame:
                     constraints = [c for c in constraints if in_frame(current_frame, c)]
                     frame_preds = current_frame
+                    if (await self.get_predecessor(frame, state)) is not None:
+                        print("State to block has a predecessor via concurrent task")
+                        solution.cancel()
                 else:
                     await self._event_frames.wait()
 
-        pcs = [PrefixConstraints(Logic.Universal),
-               PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
-               PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
-               PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5)]
-        handlers = [worker_handler(pc) for pc in pcs]
+        if utils.args.logic == 'universal':
+            pcs = [PrefixConstraints(Logic.Universal),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5)
+                  ]
+        elif utils.args.logic == 'epr':
+            pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=3),
+                   PrefixConstraints(Logic.EPR, min_depth=0, max_alt=2, max_repeated_sorts=3),
+                   PrefixConstraints(Logic.EPR, min_depth=6, max_alt=1, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.EPR, min_depth=8, max_alt=2, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.EPR, min_depth=8, max_alt=1, max_repeated_sorts=2)
+                  ]
+        elif utils.args.logic == 'fol':
+            pcs = [PrefixConstraints(Logic.FOL),
+                   PrefixConstraints(Logic.FOL, max_repeated_sorts = 2),
+                   PrefixConstraints(Logic.FOL, max_repeated_sorts = 2, min_depth=4),
+                   PrefixConstraints(Logic.FOL, max_repeated_sorts = 2, min_depth=5)
+                  ]
+        else:
+            assert False
+        for pc in pcs:
+            if pc.logic == Logic.EPR:
+                qe = [(sig.sort_indices[x], sig.sort_indices[y]) for (x,y) in itertools.product(sig.sort_names, sig.sort_names) if (x,y) not in utils.args.epr_edges]
+                pc.disallowed_quantifier_edges = qe
+        multiplier = 2
+        handlers = [worker_handler(pc) for pc in pcs * multiplier]
         handlers.append(frame_updater())
 
         async with ScopedTask(asyncio.gather(*handlers)):
@@ -1297,6 +1358,7 @@ class ParallelFolIc3(object):
                 if index not in self._bad_predicates and index not in self._initial_conditions and not st.eval(p):
                     print(f"Marked {p} as bad")
                     self._bad_predicates.add(index)
+                    self._useful_reachable.add(new_r)
         self.print_predicates()
             
     async def block(self, frame: int, state: int, rationale: str) -> None:
@@ -1435,7 +1497,7 @@ class ParallelFolIc3(object):
         await self.push_pull()
         self.print_predicates()
         hueristics = [asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
-                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
+                      #asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
                       # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       asyncio.create_task(self.inexpensive_reachability())]

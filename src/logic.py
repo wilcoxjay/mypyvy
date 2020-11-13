@@ -850,7 +850,8 @@ class Solver(object):
                                 z3r = z3r.decl()
                             if z3r in ds:
                                 rels_to_minimize.append(z3r)
-
+            else:
+                rels_to_minimize = []
             return self._minimal_model(assumptions, sorts_to_minimize, rels_to_minimize)
         else:
             return self.z3solver.model()
