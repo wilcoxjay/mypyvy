@@ -1046,7 +1046,8 @@ class ParallelFolIc3(object):
             pcs = [PrefixConstraints(Logic.Universal),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5)
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=6),
                   ]
         elif utils.args.logic == 'epr':
             pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=3),
@@ -1068,7 +1069,7 @@ class ParallelFolIc3(object):
             if pc.logic == Logic.EPR:
                 qe = [(sig.sort_indices[x], sig.sort_indices[y]) for (x,y) in itertools.product(sig.sort_names, sig.sort_names) if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 2
+        multiplier = 3
         handlers = [worker_handler(pc) for pc in pcs * multiplier]
         handlers.append(frame_updater())
 
