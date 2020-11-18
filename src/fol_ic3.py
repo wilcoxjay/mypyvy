@@ -209,8 +209,8 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
     #         print(hyp)
     #     print(new_conc)
     #     print(' --- ')
-    
-    file = f"out/query-{random.randint(0,1000000000-1):09}.pickle"
+    prefix = "/tmp" if utils.args.log_dir == "" else utils.args.log_dir
+    file = os.path.join(prefix, f"query-{random.randint(0,1000000000-1):09}.pickle")
     with open(file, 'wb') as f:
         pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -231,7 +231,7 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
         if elapsed < 5:
             os.remove(file)
         else:
-            os.rename(file, f"out/hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle")
+            os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle"))
     
 
 async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
@@ -752,7 +752,8 @@ class ParallelFolIc3(object):
                             p = v['candidate']
                             new_constraint = await check_candidate(p)
                             if new_constraint is None:
-                                solution.set_result(p)
+                                if not solution.done():
+                                    solution.set_result(p)
                                 return
                             else:
                                 # print(f"Adding {new_constraint}")
