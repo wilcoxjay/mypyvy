@@ -1,5 +1,5 @@
 
-from typing import Any, Awaitable, Callable, DefaultDict, Dict, Iterable, Iterator, NoReturn, Sequence, TextIO, List, Optional, Set, Tuple, TypeVar, Union, cast
+from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import subprocess
@@ -8,17 +8,15 @@ import os
 import random
 import time
 import io
-import struct
 import pickle
 import asyncio
 import itertools
-import signal
 from collections import Counter, defaultdict
-import multiprocessing
 import typing
 import networkx # type: ignore
 
 import z3
+from async_tools import AsyncConnection, ScopedProcess, ScopedTask, async_race
 import utils
 import logic
 from logic import Expr, Solver, Trace, check_implication
@@ -87,32 +85,32 @@ def check_transition(
                 res = s.check(timeout=timeout)
                 if res == z3.sat:
                     #print(f"Found model in {time.time() - start:0.3f} sec")
-                    return two_state_trace_from_z3(s.model(minimize=minimize, relations_to_minimize=[]))
+                    return two_state_trace_from_z3(s.model(minimize=minimize))
                 assert res == z3.unsat
     #print(f"Found model in {time.time() - start:0.3f} sec")                    
     return None
 
-def check_two_state_implication_generalized(
-        s: Solver,
-        trans: DefinitionDecl,
-        old_hyps: Iterable[Expr],
-        new_conc: Expr,
-        minimize: Optional[bool] = None,
-        timeout: int = 0,
-) -> Tuple[z3.CheckSatResult, Optional[z3.ModelRef]]:
-    t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
-    with s:
-        for h in old_hyps:
-            s.add(t.translate_expr(h, old=True))
-        s.add(z3.Not(t.translate_expr(new_conc)))
-        s.add(t.translate_transition(trans))
+# def check_two_state_implication_generalized(
+#         s: Solver,
+#         trans: DefinitionDecl,
+#         old_hyps: Iterable[Expr],
+#         new_conc: Expr,
+#         minimize: Optional[bool] = None,
+#         timeout: int = 0,
+# ) -> Tuple[z3.CheckSatResult, Optional[z3.ModelRef]]:
+#     t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
+#     with s:
+#         for h in old_hyps:
+#             s.add(t.translate_expr(h, old=True))
+#         s.add(z3.Not(t.translate_expr(new_conc)))
+#         s.add(t.translate_transition(trans))
 
-        print(f'check_two_state_implication_generalized: checking {trans.name}... ', end='')
-        res = s.check(timeout=timeout)
-        print(res)
-        if res == z3.sat:
-            return (z3.sat, s.model(minimize=minimize))
-        return (res, None)
+#         print(f'check_two_state_implication_generalized: checking {trans.name}... ', end='')
+#         res = s.check(timeout=timeout)
+#         print(res)
+#         if res == z3.sat:
+#             return (z3.sat, s.model(minimize=minimize))
+#         return (res, None)
 
 # class BlockTask(object):
 #     def __init__(self, is_must: bool, state: int, frame: int, parent: Optional['BlockTask'], heuristic: bool = False):
@@ -202,248 +200,6 @@ def check_two_state_implication_generalized(
 #         # loop can have at most one reader per fileno, and adding another
 #         # seems to silently do nothing.
 #         loop.remove_reader(conn.fileno())
-    
-T = TypeVar('T')
-async def async_race(aws: Sequence[Awaitable[T]]) -> T:
-    '''Returns the first value from `aws` and cancels the other tasks.
-    
-    Ignores exceptions from the awaitables, unless all awaitables produce an exception,
-    which causes `async_race` to raise the exception from an arbitrary awaitable.
-    `aws` must be non-empty. '''
-    tasks: List[asyncio.Future[T]] = [a if isinstance(a, asyncio.Task) else asyncio.create_task(a) for a in aws]
-    while True:
-        try:
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        except asyncio.CancelledError:
-            for task in tasks:
-                task.cancel()
-            raise
-        exc: Optional[BaseException] = None
-        for f in done:
-            if f.cancelled():
-                exc = asyncio.CancelledError()
-            elif f.exception() is None:
-                for unfinished in pending:
-                    unfinished.cancel()
-                return f.result()
-            else:
-                exc = f.exception()
-        if len(pending) == 0:
-            if exc is not None:
-                raise exc
-            else:
-                raise ValueError("Empty sequence passed to async_race()")
-        tasks = list(pending)
-
-# class AsyncConnectionOld:
-#     HEADER_FMT = '<Q'
-#     HEADER_SIZE = struct.calcsize(HEADER_FMT)
-#     def __init__(self) -> None:
-#         self.reader: asyncio.streams.StreamReader
-#         self.writer: asyncio.streams.StreamWriter
-#         self.fds: Tuple[int, int]
-#     async def connect(self, read: int, write: int) -> None:
-#         loop = asyncio.get_event_loop()
-#         self.reader = asyncio.StreamReader()
-#         await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(self.reader), os.fdopen(read, 'rb', 0))
-
-#         fl = fcntl.fcntl(write, fcntl.F_GETFL)
-#         fcntl.fcntl(write, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-#         writer_transport, writer_protocol = await loop.connect_write_pipe(
-#             lambda: asyncio.streams.FlowControlMixin(),
-#             os.fdopen(write, 'wb', 0))
-#         self.writer = asyncio.streams.StreamWriter(writer_transport, writer_protocol, None, loop)
-#         self.fds = (read, write)
-
-#     async def recv(self) -> Any:
-#         header = await self.reader.readexactly(AsyncConnectionOld.HEADER_SIZE)
-#         data = await self.reader.readexactly(struct.unpack(AsyncConnectionOld.HEADER_FMT, header)[0])
-#         return pickle.loads(data)
-
-#     async def send(self, v: Any) -> None:
-#         pickled = pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
-#         self.writer.write(struct.pack(AsyncConnectionOld.HEADER_FMT, len(pickled)))
-#         self.writer.write(pickled)
-#         await self.writer.drain()
-#     def close(self) -> None:
-#         del self.reader
-#         del self.writer
-
-
-async def _readexactly(read_fd: int, size: int) -> bytes:
-    if size == 0: return bytes()
-    try:
-        initial_read = os.read(read_fd, size)
-        if len(initial_read) == 0:
-            raise EOFError()
-    except BlockingIOError:
-        initial_read = bytes()
-    if len(initial_read) == size:
-        return initial_read
-    buf = bytearray(initial_read)
-    loop = asyncio.get_event_loop()
-    event = asyncio.Event(loop=loop)
-    try: 
-        loop.add_reader(read_fd, event.set)
-        while len(buf) < size:
-            await event.wait()
-            event.clear()
-            try:
-                more = os.read(read_fd, size - len(buf))
-                if len(more) == 0:
-                    raise EOFError()
-                buf += more
-            except BlockingIOError:
-                pass
-        return bytes(buf)
-    finally:
-        loop.remove_reader(read_fd)
-
-async def _writeexactly(write_fd: int, buf: bytes) -> None:
-    if len(buf) == 0: return
-    try:
-        written = os.write(write_fd, buf)
-    except BlockingIOError:
-        written = 0
-    except BrokenPipeError:
-        raise EOFError()
-    # print(f"Wrote {written} bytes")
-    if written == len(buf):
-        return
-    loop = asyncio.get_event_loop()
-    event = asyncio.Event(loop=loop)
-    try: 
-        loop.add_writer(write_fd, event.set)
-        while written < len(buf):
-            # print("Awaiting to write")
-            await event.wait()
-            event.clear()
-            try:
-                w = os.write(write_fd, buf[written:])
-                written += w
-            except BlockingIOError:
-                pass
-            except BrokenPipeError:
-                raise EOFError()
-        return
-    finally:
-        loop.remove_writer(write_fd)
-
-# async def test():
-#     (a, b) = os.pipe()
-#     os.set_blocking(a, False)
-#     os.set_blocking(b, False)
-#     async def reader() -> None:
-#         while True:
-#             v = await _readexactly(a, 10000)
-#             print("Got 10000 bytes")
-#     t = asyncio.create_task(reader())
-#     await _writeexactly(b, bytes(1000000))
-#     t.cancel()
-#     os.close(a)
-#     try:
-#         await _writeexactly(b, bytes(1000000))
-#     except EOFError:
-#         print("got eof when writing")
-#     while True: pass
-# asyncio.run(test())
-
-
-class AsyncConnection:
-    HEADER_FMT = '<Q'
-    HEADER_SIZE = struct.calcsize(HEADER_FMT)
-    def __init__(self, read: int, write: int) -> None:
-        self._read_fd = read
-        os.set_blocking(read, False)
-        self._write_fd = write
-        os.set_blocking(write, False)
-
-    async def recv(self) -> Any:
-        header = await _readexactly(self._read_fd, AsyncConnection.HEADER_SIZE)
-        data = await _readexactly(self._read_fd, struct.unpack(AsyncConnection.HEADER_FMT, header)[0])
-        return pickle.loads(data)
-
-    async def send(self, v: Any) -> None:
-        pickled = pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
-        await _writeexactly(self._write_fd, struct.pack(AsyncConnection.HEADER_FMT, len(pickled)))
-        await _writeexactly(self._write_fd, pickled)
-
-    def close(self) -> None:
-        os.close(self._read_fd)
-        os.close(self._write_fd)
-
-    @staticmethod
-    def pipe_pair() -> Tuple['AsyncConnection', 'AsyncConnection']:
-        (dn_r, dn_w) = os.pipe() # Down pipe (written on top, read on bottom)
-        (up_r, up_w) = os.pipe() # Up pipe (written on bottom, read on top)
-        return (AsyncConnection(up_r, dn_w), AsyncConnection(dn_r, up_w))
-
-
-class ScopedProcess:
-    '''Allows a target function to be run in a `with` statement:
-       
-       async def child(): await c.send(os.getpid())
-       with ScopedProcess() as conn:
-           print("Child pid:", await conn.recv())
-
-       Interacts properly with asyncio and cancellation.'''
-    def __init__(self, target: Callable[[AsyncConnection], Union[None, Awaitable[None]]], well_behaved: bool = False):
-        self._target = target
-        self._conn_main: AsyncConnection
-        self._proc: multiprocessing.Process
-        self._well_behaved = well_behaved
-    @staticmethod
-    def _kill_own_pgroup(signal_num: int, frame: Any) -> NoReturn:
-        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
-        os.killpg(os.getpgid(os.getpid()), signal.SIGTERM)
-        os._exit(0)
-    def __enter__(self) -> AsyncConnection:
-        #(self._conn_main, conn_worker) = multiprocessing.Pipe(duplex = True)
-
-        (self._conn_main, conn_worker) = AsyncConnection.pipe_pair()
-
-        def proc() -> None:
-            os.setpgid(0, 0)
-            signal.signal(signal.SIGTERM, ScopedProcess._kill_own_pgroup)
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
-            async def run() -> None:                    
-                # c = AsyncConnection2(dn_r, up_w)
-                # await c.connect(dn_r, up_w)
-                r = self._target(conn_worker)
-                if r is not None:
-                    await r
-            asyncio.run(run())
-
-        self._proc = multiprocessing.Process(target=proc, args = ())
-        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
-        self._proc.start()
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
-        conn_worker.close()
-        # self._conn_main = AsyncConnection2(up_r, dn_w)
-        # await self._conn_main.connect(up_r, dn_w)
-
-        return self._conn_main
-    def __exit__(self, a: Any, b: Any, c: Any) -> None:
-        self._conn_main.close()
-        p = self._proc.pid
-        if p is not None and not self._well_behaved:
-            try: os.killpg(p, signal.SIGKILL)
-            except ProcessLookupError: pass
-            try: os.kill(p, signal.SIGKILL)
-            except ProcessLookupError: pass
-        self._proc.join()
-        self._proc.close()
-
-class ScopedTask:
-    def __init__(self, aws: Awaitable) -> None:
-        self.fut = asyncio.ensure_future(aws)
-    async def __aenter__(self) -> None:
-        return None
-    async def __aexit__(self, a: Any, b: Any, c: Any) -> None:
-        self.fut.cancel()
-        try: await self.fut
-        except asyncio.CancelledError: pass
-
 
 async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
     # graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
@@ -529,8 +285,8 @@ class IGQueryLogger(object):
         self.print("Closing log.", flush=True)
         self.f.close() 
 
-async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int) -> Optional[Expr]:
-    print(f"Inductive generalizing to block {state} in frame {frame}", file=x)
+async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int, rationale: str) -> Optional[Expr]:
+    print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}", file=x)
     tr = s._states[state]
     st = tr[0].as_state(tr[1])
     size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
@@ -909,7 +665,7 @@ class ParallelFolIc3(object):
             #     await conn.send(r)
 
 
-    async def IG2_manager(self, frame: int, state: int) -> Expr:
+    async def IG2_manager(self, frame: int, state: int, rationale: str) -> Expr:
         sig = prog_to_sig(syntax.the_program, two_state=False)
         def states_of(cs: Sequence[Constraint]) -> Set[int]: return set(s for c in cs for s in c.states())
         positive = self._initial_states | self._useful_reachable
@@ -920,7 +676,6 @@ class ParallelFolIc3(object):
         popularity[Neg(0)] = 1000 # ensure the state to block is always one of the first constraints
         
         prefix_solver = PrefixSolver(sig)
-        # pc = PrefixConstraints(Logic.Universal)
         frame_preds = set(self.frame_predicates(frame-1))
         
         local_eval_cache: Dict[Tuple[int, int], bool] = {}
@@ -932,7 +687,7 @@ class ParallelFolIc3(object):
         solution: asyncio.Future[Expr] = asyncio.Future()
         
         t = io.StringIO()
-        golden = await IG_query_summary(t, self, frame, state)
+        golden = await IG_query_summary(t, self, frame, state, rationale)
         print(t.getvalue(), end='')
 
         async def check_candidate(p: Expr) -> Optional[Constraint]:
@@ -1048,6 +803,8 @@ class ParallelFolIc3(object):
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=6),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=7),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 3, min_depth=7),
                   ]
         elif utils.args.logic == 'epr':
             pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=3),
@@ -1069,7 +826,7 @@ class ParallelFolIc3(object):
             if pc.logic == Logic.EPR:
                 qe = [(sig.sort_indices[x], sig.sort_indices[y]) for (x,y) in itertools.product(sig.sort_names, sig.sort_names) if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 3
+        multiplier = 1
         handlers = [worker_handler(pc) for pc in pcs * multiplier]
         handlers.append(frame_updater())
 
@@ -1090,7 +847,7 @@ class ParallelFolIc3(object):
             states: List[PDState] = []
             s = FOLSeparator(states, sep=sep)
             t = UnlimitedTimer()
-            gen = LatticeEdgeGeneralizer()
+            # gen = LatticeEdgeGeneralizer()
             solver = Solver()
             if pc.logic == Logic.EPR:
                 qe = [(s.sig.sort_indices[x], s.sig.sort_indices[y]) for (x,y) in itertools.product(s.sig.sort_names, s.sig.sort_names) if (x,y) not in utils.args.epr_edges]
@@ -1110,14 +867,14 @@ class ParallelFolIc3(object):
                     print(f"Total separation time so far: {t.elapsed()}")
                     sys.stdout.flush()
                     await conn.send(p)
-                if 'gen' in v:
-                    (st, frame_exprs, pred) = v['gen']
-                    r: Optional[Tuple[Trace, DefinitionDecl]] = asyncio.run(gen.async_find_generalized_implication(solver, st, frame_exprs, pred))
-                    if r is None:
-                        await conn.send(None)
-                    else:
-                        tr, _ = r
-                        await conn.send(tr)
+                # if 'gen' in v:
+                #     (st, frame_exprs, pred) = v['gen']
+                #     r: Optional[Tuple[Trace, DefinitionDecl]] = asyncio.run(gen.async_find_generalized_implication(solver, st, frame_exprs, pred))
+                #     if r is None:
+                #         await conn.send(None)
+                #     else:
+                #         tr, _ = r
+                #         await conn.send(tr)
         states_seen = 0
         # Experiment: disable sharing
         constraints = list(constraints)
@@ -1273,30 +1030,30 @@ class ParallelFolIc3(object):
         self.print_predicates()
 
 
-    async def parallel_inductive_generalize2(self, frame: int, state: int, ignored_pred: int = -1, rationale: str = '') -> None:
-        log = IGQueryLogger()
-        await log.start(self, frame, state)
-        log.print(f"Rationale: {rationale}")
-        if utils.args.log_dir:
-            print(f"Inductive generalize log in <{log.name}> blocking {state} in frame {frame} for {rationale}")
-        else:
-            print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}")
+    async def parallel_inductive_generalize2(self, frame: int, state: int, rationale: str = '') -> None:
+        # log = IGQueryLogger()
+        # await log.start(self, frame, state)
+        # log.print(f"Rationale: {rationale}")
+        # if utils.args.log_dir:
+        #     print(f"Inductive generalize log in <{log.name}> blocking {state} in frame {frame} for {rationale}")
+        # else:
+        #     print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}")
                 
         workers: List[Awaitable[Optional[Expr]]] = []
-        workers.append(self.wait_blocked(frame, state, ignored_pred))
-        workers.append(self.IG2_manager(frame, state))
+        workers.append(self.wait_blocked(frame, state))
+        workers.append(self.IG2_manager(frame, state, rationale))
 
         p = await async_race(workers)
-        if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame) if pred != ignored_pred):
+        if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
             print(f"State {state} was blocked in frame {frame} by concurrent task")
-            log.print(f"State {state} was blocked in frame {frame} by concurrent task")
-            log.close()
+            # log.print(f"State {state} was blocked in frame {frame} by concurrent task")
+            # log.close()
             return
         
-        print(f"Learned new predicate {p} in frame {frame} blocking {state} for {rationale}")
-        log.print(f"Learned new predicate {p}")
-        log.print(f"Elapsed: {time.time() - log.start_time}", flush=True)
-        log.close()
+        print(f"Learned new predicate {p} blocking {state} in frame {frame} for {rationale}")
+        # log.print(f"Learned new predicate {p}")
+        # log.print(f"Elapsed: {time.time() - log.start_time}", flush=True)
+        # log.close()
         self.add_predicate(p, frame)
         await self.push_pull()
         self.print_predicates()
@@ -1397,11 +1154,17 @@ class ParallelFolIc3(object):
         return True
 
     async def heuristic_pushing_to_the_top_worker(self, kind: bool) -> None:
+        # print("Starting heuristics")
         while True:
             priorities = random.sample(range(len(self._predicates)), len(self._predicates)) if kind \
                          else sorted(range(len(self._predicates)), key=lambda pred: ParallelFolIc3.frame_key(self._frame_numbers[pred]))
             # print("Checking for something to do")
+            frame_N = min((self._frame_numbers[s] for s in self._safeties), key = ParallelFolIc3.frame_key)
+            # print(f"Frame_N: {frame_N}")
             for pred in priorities:
+                # Don't push anything past the earliest safety
+                if self.frame_leq(frame_N, self._frame_numbers[pred]):
+                    continue
                 if not self.heuristically_blockable(pred):
                     continue
                 fn, st = self._frame_numbers[pred], self._pushing_blocker[pred]
@@ -1498,7 +1261,8 @@ class ParallelFolIc3(object):
         await self.push_pull()
         self.print_predicates()
         hueristics = [asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
-                      #asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
+                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
+                      # asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
                       # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
                       asyncio.create_task(self.inexpensive_reachability())]
@@ -2110,223 +1874,223 @@ def p_fol_ic3(_: Solver) -> None:
 #     # Loops exits if the protocol is unsafe. Still print statistics
 #     print_summary()
 
-class EdgeGeneralizer(object):
-    '''Abstract base class for methods that find generalized CTIs (i.e. counterexample edges) to And(fp) => wp(p).'''
-    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]: pass
+# class EdgeGeneralizer(object):
+#     '''Abstract base class for methods that find generalized CTIs (i.e. counterexample edges) to And(fp) => wp(p).'''
+#     def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]: pass
 
-class TrivialEdgeGeneralizer(EdgeGeneralizer):
-    '''Generates edges as the first thing that comes from the solver without actually generalizing.'''
-    def __init__(self) -> None:
-        pass
-    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
-        for trans in syntax.the_program.transitions():
-            res, tr = check_two_state_implication_generalized(solver, trans, fp + [p], p, minimize=False, timeout=10000)
-            if tr is not None:
-                return two_state_trace_from_z3(tr), trans
-        return None
+# class TrivialEdgeGeneralizer(EdgeGeneralizer):
+#     '''Generates edges as the first thing that comes from the solver without actually generalizing.'''
+#     def __init__(self) -> None:
+#         pass
+#     def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
+#         for trans in syntax.the_program.transitions():
+#             res, tr = check_two_state_implication_generalized(solver, trans, fp + [p], p, minimize=False, timeout=10000)
+#             if tr is not None:
+#                 return two_state_trace_from_z3(tr), trans
+#         return None
 
-class LatticeEdgeGeneralizer(EdgeGeneralizer):
-    '''Generalizes edges by climbing the lattice of implications.'''
-    def __init__(self) -> None:
-        self.sig = prog_to_sig(syntax.the_program)
-    async def async_find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
-        result: Optional[Tuple[int, Trace, DefinitionDecl]] = None
+# class LatticeEdgeGeneralizer(EdgeGeneralizer):
+#     '''Generalizes edges by climbing the lattice of implications.'''
+#     def __init__(self) -> None:
+#         self.sig = prog_to_sig(syntax.the_program)
+#     async def async_find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
+#         result: Optional[Tuple[int, Trace, DefinitionDecl]] = None
         
-        N = 5 if 'repeatlattice5' in utils.args.expt_flags else 2 if 'repeatlattice2' in utils.args.expt_flags else 1
-        for rep in range(N):
-            r = await self._lattice_climb(solver, state, fp, p)
-            if result is None:
-                result = r
-            elif r is None:
-                pass
-            elif r[0] > result[0]:
-                result = r
+#         N = 5 if 'repeatlattice5' in utils.args.expt_flags else 2 if 'repeatlattice2' in utils.args.expt_flags else 1
+#         for rep in range(N):
+#             r = await self._lattice_climb(solver, state, fp, p)
+#             if result is None:
+#                 result = r
+#             elif r is None:
+#                 pass
+#             elif r[0] > result[0]:
+#                 result = r
         
-        if result is not None:
-            print(f"Final lattice distance is {result[0]}")
-            return result[1], result[2]
-        return None
-    async def _lattice_climb(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[int, Trace, DefinitionDecl]]:
-        tr = await multi_check_transition(fp + [p], p, minimize=False)
-        if tr is None: return None # early out if UNSAT
+#         if result is not None:
+#             print(f"Final lattice distance is {result[0]}")
+#             return result[1], result[2]
+#         return None
+#     async def _lattice_climb(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[int, Trace, DefinitionDecl]]:
+#         tr = await multi_check_transition(fp + [p], p, minimize=False)
+#         if tr is None: return None # early out if UNSAT
         
-        all_transitions = []
-        tr_trans = next(syntax.the_program.transitions())
-        for trans in syntax.the_program.transitions():
-            tr_prime = await multi_check_transition(fp + [p], p, minimize=False, transition=trans)
-            if tr_prime is not None:
-                all_transitions.append(trans)
-                tr = tr_prime
-                tr_trans = trans
+#         all_transitions = []
+#         tr_trans = next(syntax.the_program.transitions())
+#         for trans in syntax.the_program.transitions():
+#             tr_prime = await multi_check_transition(fp + [p], p, minimize=False, transition=trans)
+#             if tr_prime is not None:
+#                 all_transitions.append(trans)
+#                 tr = tr_prime
+#                 tr_trans = trans
                         
-        async def check_sat(a: Expr, b: Expr) -> bool: # returns true if satisfiable, and stores transition in `tr` and `tr_trans`
-            nonlocal tr, tr_trans
-            for trans in all_transitions:
-                tr_prime = await multi_check_transition(fp + [a], b, minimize=False, transition=trans)
-                if tr_prime is None:
-                    continue
-                tr = tr_prime
-                tr_trans = trans
-                return True
-            return False
-        print("Optimizing post-state")
-        pre = p
-        post = p
-        pre_dist, post_dist = 0,0
-        while True:
-            x = [formula_to_predicate(x) for x in successor_formula(self.sig, predicate_to_formula(post))]
-            random.shuffle(x)
-            for next_p in x:
-                if eval_predicate(state, next_p): # TODO: should this be eval next_p or not eval next_p or eval post?
-                    continue
-                if await check_sat(pre, next_p):
-                    post = next_p
-                    post_dist += 1
-                    break
-            else:
-                break
-        print("Optimizing pre-state")
-        while True:
-            x = [formula_to_predicate(x) for x in predecessor_formula(self.sig, predicate_to_formula(pre))]
-            random.shuffle(x)
-            for next_p in x:
-                if await check_sat(next_p, post):
-                    pre = next_p
-                    pre_dist += 1
-                    break
-            else:
-                break
-        print(f"Found edge between predicates {pre} --> {post}")
-        print(f"Done optimizing edge, lattice distance is {post_dist + pre_dist} (post {post_dist}, pre {pre_dist})")
-        return post_dist + pre_dist, tr, tr_trans
+#         async def check_sat(a: Expr, b: Expr) -> bool: # returns true if satisfiable, and stores transition in `tr` and `tr_trans`
+#             nonlocal tr, tr_trans
+#             for trans in all_transitions:
+#                 tr_prime = await multi_check_transition(fp + [a], b, minimize=False, transition=trans)
+#                 if tr_prime is None:
+#                     continue
+#                 tr = tr_prime
+#                 tr_trans = trans
+#                 return True
+#             return False
+#         print("Optimizing post-state")
+#         pre = p
+#         post = p
+#         pre_dist, post_dist = 0,0
+#         while True:
+#             x = [formula_to_predicate(x) for x in successor_formula(self.sig, predicate_to_formula(post))]
+#             random.shuffle(x)
+#             for next_p in x:
+#                 if eval_predicate(state, next_p): # TODO: should this be eval next_p or not eval next_p or eval post?
+#                     continue
+#                 if await check_sat(pre, next_p):
+#                     post = next_p
+#                     post_dist += 1
+#                     break
+#             else:
+#                 break
+#         print("Optimizing pre-state")
+#         while True:
+#             x = [formula_to_predicate(x) for x in predecessor_formula(self.sig, predicate_to_formula(pre))]
+#             random.shuffle(x)
+#             for next_p in x:
+#                 if await check_sat(next_p, post):
+#                     pre = next_p
+#                     pre_dist += 1
+#                     break
+#             else:
+#                 break
+#         print(f"Found edge between predicates {pre} --> {post}")
+#         print(f"Done optimizing edge, lattice distance is {post_dist + pre_dist} (post {post_dist}, pre {pre_dist})")
+#         return post_dist + pre_dist, tr, tr_trans
 
-class CombiningEdgeGeneralizer(EdgeGeneralizer):
-    '''Generalizes edges by combining them into one query. Not recommended.'''
-    def __init__(self) -> None:
-        self._prior_predicates : List[Expr] = []
-        self._prop_solver: z3.Solver = z3.Solver()
+# class CombiningEdgeGeneralizer(EdgeGeneralizer):
+#     '''Generalizes edges by combining them into one query. Not recommended.'''
+#     def __init__(self) -> None:
+#         self._prior_predicates : List[Expr] = []
+#         self._prop_solver: z3.Solver = z3.Solver()
         
-        all_transitions = list(syntax.the_program.transitions())
-        self._trans_id = dict(zip([t.name for t in all_transitions], range(len(all_transitions))))
-        assert len(self._trans_id) == len(all_transitions) # ensure name is unique id
+#         all_transitions = list(syntax.the_program.transitions())
+#         self._trans_id = dict(zip([t.name for t in all_transitions], range(len(all_transitions))))
+#         assert len(self._trans_id) == len(all_transitions) # ensure name is unique id
         
-        self._prior_edges: List[Tuple[DefinitionDecl, List[int], List[int]]] = []
+#         self._prior_edges: List[Tuple[DefinitionDecl, List[int], List[int]]] = []
 
-    def _to_exprs(self, l: List[int]) -> List[Expr]: return [self._prior_predicates[i] for i in l]
-    def _pred_var(self, i: int, is_pre: bool) -> z3.ExprRef:
-        return z3.Bool(f"P_{i}_{1 if is_pre else 0}")
-    def _trans_var(self, trans: DefinitionDecl) -> z3.ExprRef:
-        return z3.Bool(f"T_{self._trans_id[trans.name]}")
+#     def _to_exprs(self, l: List[int]) -> List[Expr]: return [self._prior_predicates[i] for i in l]
+#     def _pred_var(self, i: int, is_pre: bool) -> z3.ExprRef:
+#         return z3.Bool(f"P_{i}_{1 if is_pre else 0}")
+#     def _trans_var(self, trans: DefinitionDecl) -> z3.ExprRef:
+#         return z3.Bool(f"T_{self._trans_id[trans.name]}")
 
-    def _vars_for_edge(self, trans: DefinitionDecl, pre: List[int], post: List[int]) -> List[z3.ExprRef]:
-        return [self._trans_var(trans)] + [self._pred_var(i, True) for i in pre] + [self._pred_var(i, False) for i in post]
+#     def _vars_for_edge(self, trans: DefinitionDecl, pre: List[int], post: List[int]) -> List[z3.ExprRef]:
+#         return [self._trans_var(trans)] + [self._pred_var(i, True) for i in pre] + [self._pred_var(i, False) for i in post]
     
-    def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
-        p_ind = len(self._prior_predicates)
-        self._prior_predicates.append(p)
-        tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
-        if tr is None: return None # early out if UNSAT
-        all_transitions = list(syntax.the_program.transitions())
-        tr_trans = all_transitions[0] # dummy
+#     def find_generalized_implication(self, solver: Solver, state: PDState, fp: List[Expr], p: Expr) -> Optional[Tuple[Trace, DefinitionDecl]]:
+#         p_ind = len(self._prior_predicates)
+#         self._prior_predicates.append(p)
+#         tr = check_two_state_implication_uncached(solver, fp + [p], p, minimize=False)
+#         if tr is None: return None # early out if UNSAT
+#         all_transitions = list(syntax.the_program.transitions())
+#         tr_trans = all_transitions[0] # dummy
 
-        def min_unsat_core(trans: DefinitionDecl, pre: List[int], post: List[int]) -> Tuple[List[int], List[int]]:
-            pre, post = list(pre), list(post)
-            min_core : Tuple[List[int], List[int]] = ([],[])
-            print(f"Minimizing unsat core ({pre} => {post})...")
-            while True:
+#         def min_unsat_core(trans: DefinitionDecl, pre: List[int], post: List[int]) -> Tuple[List[int], List[int]]:
+#             pre, post = list(pre), list(post)
+#             min_core : Tuple[List[int], List[int]] = ([],[])
+#             print(f"Minimizing unsat core ({pre} => {post})...")
+#             while True:
                 
-                if len(pre) > 0:
-                    c = pre.pop()
-                    c = post.pop() # FOR UNIFORM PRE/POST
-                    from_pre = True
-                elif len(post) > 0:
-                    c = post.pop()
-                    from_pre = False
-                else:
-                    break
+#                 if len(pre) > 0:
+#                     c = pre.pop()
+#                     c = post.pop() # FOR UNIFORM PRE/POST
+#                     from_pre = True
+#                 elif len(post) > 0:
+#                     c = post.pop()
+#                     from_pre = False
+#                 else:
+#                     break
 
-                candidate_pre, candidate_post = min_core[0] + pre, min_core[1] + post
-                if len(candidate_pre) == 0 or len(candidate_post) == 0:
-                    res = z3.sat # don't run empty queries. Helpful when |pre| = |post| = 1
-                elif self._prop_solver.check(*self._vars_for_edge(trans, candidate_pre, candidate_post)) == z3.unsat:
-                    res = z3.unsat
-                else:
-                    res, unused = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(candidate_pre), syntax.Or(*self._to_exprs(min_core[1] + post)), minimize=False, timeout=10000)
-                    if res == z3.unsat:
-                        self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, candidate_pre, candidate_post))))
-                if res == z3.sat:
-                    if from_pre:
-                        min_core[0].append(c)
-                        min_core[1].append(c) # FOR UNIFORM PRE/POST
-                    else:
-                        min_core[1].append(c)
-            print(f"Core is ({min_core[0]} => {min_core[1]})...")
-            return min_core
-        def check_sat(pre: List[int], post: List[int], skip: bool = True) -> bool: # returns true if satisfiable, and stores transition in `tr`
-            nonlocal tr, tr_trans
-            success = False
-            for trans in all_transitions:
-                if self._prop_solver.check(*self._vars_for_edge(trans, pre, post)) == z3.unsat:
-                    print(f"Skipping known unsat for {trans.name}")
-                    # skip the rest of the checks. We know that its unsat so don't need to add it again
-                    continue
-                res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), syntax.Or(*self._to_exprs(post)), minimize=False, timeout=10000)
-                if tr_prime is not None:
-                    tr = two_state_trace_from_z3(tr_prime)
-                    tr_trans = trans
-                    success = True
-                    if skip: break
-                elif res is z3.unknown:
-                    if False:
-                        # "normal way"
-                        if skip: break
-                    else:
-                        # treat unknown like unsat. may block future possible edges but be faster
-                        # probably should not try to minimize unsat (unknown?) core in this case
-                        #pre_p, post_p = min_unsat_core(trans, pre, post)
-                        pre_p, post_p = pre, post
-                        print(f"Adding unknown UNSAT block for {trans.name}, [{' ^ '.join(map(str,pre_p))}] => [{' | '.join(map(str,post_p))}]")
-                        self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, pre_p, post_p))))
-                elif res is z3.unsat:
-                    pre_p, post_p = min_unsat_core(trans, pre, post)
-                    print(f"Adding UNSAT for {trans.name}, [{' ^ '.join(map(str,pre_p))}] => [{' | '.join(map(str,post_p))}]")
-                    self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, pre_p, post_p))))
-            return success
+#                 candidate_pre, candidate_post = min_core[0] + pre, min_core[1] + post
+#                 if len(candidate_pre) == 0 or len(candidate_post) == 0:
+#                     res = z3.sat # don't run empty queries. Helpful when |pre| = |post| = 1
+#                 elif self._prop_solver.check(*self._vars_for_edge(trans, candidate_pre, candidate_post)) == z3.unsat:
+#                     res = z3.unsat
+#                 else:
+#                     res, unused = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(candidate_pre), syntax.Or(*self._to_exprs(min_core[1] + post)), minimize=False, timeout=10000)
+#                     if res == z3.unsat:
+#                         self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, candidate_pre, candidate_post))))
+#                 if res == z3.sat:
+#                     if from_pre:
+#                         min_core[0].append(c)
+#                         min_core[1].append(c) # FOR UNIFORM PRE/POST
+#                     else:
+#                         min_core[1].append(c)
+#             print(f"Core is ({min_core[0]} => {min_core[1]})...")
+#             return min_core
+#         def check_sat(pre: List[int], post: List[int], skip: bool = True) -> bool: # returns true if satisfiable, and stores transition in `tr`
+#             nonlocal tr, tr_trans
+#             success = False
+#             for trans in all_transitions:
+#                 if self._prop_solver.check(*self._vars_for_edge(trans, pre, post)) == z3.unsat:
+#                     print(f"Skipping known unsat for {trans.name}")
+#                     # skip the rest of the checks. We know that its unsat so don't need to add it again
+#                     continue
+#                 res, tr_prime = check_two_state_implication_generalized(solver, trans, fp + self._to_exprs(pre), syntax.Or(*self._to_exprs(post)), minimize=False, timeout=10000)
+#                 if tr_prime is not None:
+#                     tr = two_state_trace_from_z3(tr_prime)
+#                     tr_trans = trans
+#                     success = True
+#                     if skip: break
+#                 elif res is z3.unknown:
+#                     if False:
+#                         # "normal way"
+#                         if skip: break
+#                     else:
+#                         # treat unknown like unsat. may block future possible edges but be faster
+#                         # probably should not try to minimize unsat (unknown?) core in this case
+#                         #pre_p, post_p = min_unsat_core(trans, pre, post)
+#                         pre_p, post_p = pre, post
+#                         print(f"Adding unknown UNSAT block for {trans.name}, [{' ^ '.join(map(str,pre_p))}] => [{' | '.join(map(str,post_p))}]")
+#                         self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, pre_p, post_p))))
+#                 elif res is z3.unsat:
+#                     pre_p, post_p = min_unsat_core(trans, pre, post)
+#                     print(f"Adding UNSAT for {trans.name}, [{' ^ '.join(map(str,pre_p))}] => [{' | '.join(map(str,post_p))}]")
+#                     self._prop_solver.add(z3.Not(z3.And(self._vars_for_edge(trans, pre_p, post_p))))
+#             return success
         
-        # this call sets tr_trans correctly and also generates UNSATs for all transitions it can (due to skip=False).
-        if not check_sat([p_ind], [p_ind], skip=False):
-            # if we get timeouts, return what we already have from check_two_state_implication_uncached
-            # we need to do this because if this function fails we won't have set tr_trans correctlys
-            return tr, tr_trans
+#         # this call sets tr_trans correctly and also generates UNSATs for all transitions it can (due to skip=False).
+#         if not check_sat([p_ind], [p_ind], skip=False):
+#             # if we get timeouts, return what we already have from check_two_state_implication_uncached
+#             # we need to do this because if this function fails we won't have set tr_trans correctlys
+#             return tr, tr_trans
         
-        pre, post = [p_ind],[p_ind]
+#         pre, post = [p_ind],[p_ind]
         
-        print("Trying to augment existing edges")
-        for edge_i in reversed(range(max(0, len(self._prior_edges) - 3), len(self._prior_edges))):
-            (trans_edge, pre_edge, post_edge) = self._prior_edges[edge_i]
-            if check_sat(pre_edge + [p_ind], post_edge + [p_ind]):
-                print("Augmented edge")
-                pre, post = pre_edge, post_edge
-                # remove the edge from prior; it will be added back at the end after it's expanded
-                del self._prior_edges[edge_i]
-                break
+#         print("Trying to augment existing edges")
+#         for edge_i in reversed(range(max(0, len(self._prior_edges) - 3), len(self._prior_edges))):
+#             (trans_edge, pre_edge, post_edge) = self._prior_edges[edge_i]
+#             if check_sat(pre_edge + [p_ind], post_edge + [p_ind]):
+#                 print("Augmented edge")
+#                 pre, post = pre_edge, post_edge
+#                 # remove the edge from prior; it will be added back at the end after it's expanded
+#                 del self._prior_edges[edge_i]
+#                 break
 
-        print("Optimizing edge")
-        remaining_priors = list(range(p_ind))
-        while len(remaining_priors) > 0:
-            c = remaining_priors.pop()
-            if c in post: continue
-            if check_sat(pre + [c], post+[c]):
-                post = post + [c]
-                pre = pre + [c]
+#         print("Optimizing edge")
+#         remaining_priors = list(range(p_ind))
+#         while len(remaining_priors) > 0:
+#             c = remaining_priors.pop()
+#             if c in post: continue
+#             if check_sat(pre + [c], post+[c]):
+#                 post = post + [c]
+#                 pre = pre + [c]
         
-        assert tr is not None
-        pre_size = len(tr.as_diagram(0).binder.vs)
-        post_size = len(tr.as_diagram(1).binder.vs)
+#         assert tr is not None
+#         pre_size = len(tr.as_diagram(0).binder.vs)
+#         post_size = len(tr.as_diagram(1).binder.vs)
 
-        print(f"Done optimizing edge |pre|={len(pre)}, |post|={len(post)}, size pre = {pre_size}, size post = {post_size}")
-        self._prior_edges.append((tr_trans, pre, post))
-        return tr, tr_trans
+#         print(f"Done optimizing edge |pre|={len(pre)}, |post|={len(post)}, size pre = {pre_size}, size post = {post_size}")
+#         self._prior_edges.append((tr_trans, pre, post))
+#         return tr, tr_trans
 
 def generalize_initial(solver: Solver, m: PDState) -> separators.logic.Model:
     prog = syntax.the_program
@@ -2356,92 +2120,92 @@ def generalize_cti(solver: Solver, trans: DefinitionDecl, tr: Trace, frame: Sequ
     # assert separators.check.check(transition_to_formula(trans), M)
     return separators.learn.generalize_model(M, e, two_state=True, label='CTI')
 
-def fol_ice(solver: Solver) -> None:
+# def fol_ice(solver: Solver) -> None:
     
-    states: List[PDState] = []
-    def add_state(s: PDState) -> int:
-        i = len(states)
-        states.append(s)
-        return i
+#     states: List[PDState] = []
+#     def add_state(s: PDState) -> int:
+#         i = len(states)
+#         states.append(s)
+#         return i
 
-    rest = [inv.expr for inv in syntax.the_program.invs() if inv.name != 'hard']
-    hard = next(inv for inv in syntax.the_program.invs() if inv.name == 'hard').expr
-    pos: List[int] = [] # keep reachable states
-    imp: List[Tuple[int, int]] = []
-    mp = FOLSeparator(states)
+#     rest = [inv.expr for inv in syntax.the_program.invs() if inv.name != 'hard']
+#     hard = next(inv for inv in syntax.the_program.invs() if inv.name == 'hard').expr
+#     pos: List[int] = [] # keep reachable states
+#     imp: List[Tuple[int, int]] = []
+#     mp = FOLSeparator(states)
 
-    start_time = time.time()
-    separation_timer = UnlimitedTimer()
-    generalization_timer = UnlimitedTimer()
-    def print_time() -> None:
-        print(f"[time] Elapsed: {time.time()-start_time:0.3f}, sep: {separation_timer.elapsed():0.3f}, gen: {generalization_timer.elapsed():0.3f}")
+#     start_time = time.time()
+#     separation_timer = UnlimitedTimer()
+#     generalization_timer = UnlimitedTimer()
+#     def print_time() -> None:
+#         print(f"[time] Elapsed: {time.time()-start_time:0.3f}, sep: {separation_timer.elapsed():0.3f}, gen: {generalization_timer.elapsed():0.3f}")
 
-    print(f'Looking for golden formula {hard}')
-    print(f'Experimental flags: {", ".join(utils.args.expt_flags)}')
-    while True:
-        m = check_implication(solver, rest, [hard])
-        if m is None:
-            print_time()
-            print("[ICE] Eliminated all bad states")
-            return
-        trace = Trace.from_z3([logic.KEY_ONE], m)
-        print(f"The size of the diagram is {len(list(trace.as_diagram().conjuncts()))}, with {len(trace.as_diagram().binder.vs)} existentials")
-        neg = [add_state((trace, 0))]
-        generalizer = LatticeEdgeGeneralizer()
+#     print(f'Looking for golden formula {hard}')
+#     print(f'Experimental flags: {", ".join(utils.args.expt_flags)}')
+#     while True:
+#         m = check_implication(solver, rest, [hard])
+#         if m is None:
+#             print_time()
+#             print("[ICE] Eliminated all bad states")
+#             return
+#         trace = Trace.from_z3([logic.KEY_ONE], m)
+#         print(f"The size of the diagram is {len(list(trace.as_diagram().conjuncts()))}, with {len(trace.as_diagram().binder.vs)} existentials")
+#         neg = [add_state((trace, 0))]
+#         generalizer = LatticeEdgeGeneralizer()
         
-        #imp = [] # Try resetting edges on each solution
-        #mp = FOLSeparator(states) # Try resetting separator
+#         #imp = [] # Try resetting edges on each solution
+#         #mp = FOLSeparator(states) # Try resetting separator
         
-        while True:
-            print_time()
-            print(f'Separating with |pos|={len(pos)}, |neg|={len(neg)}, |imp|={len(imp)}')
-            with separation_timer:
-                q = mp.separate(pos=pos, neg=neg, imp=imp, complexity=utils.args.max_complexity)
-            if q is None:
-                print(f'FOLSeparator returned none')
-                return
-            print(f'FOLSeparator returned {q}')
+#         while True:
+#             print_time()
+#             print(f'Separating with |pos|={len(pos)}, |neg|={len(neg)}, |imp|={len(imp)}')
+#             with separation_timer:
+#                 q = mp.separate(pos=pos, neg=neg, imp=imp, complexity=utils.args.max_complexity)
+#             if q is None:
+#                 print(f'FOLSeparator returned none')
+#                 return
+#             print(f'FOLSeparator returned {q}')
             
-            res_init = check_initial(solver, q)
-            if res_init is not None:
-                M_general = generalize_initial(solver, (res_init, 0))
-                print("Initial state generalized model:")
-                print(M_general)
-                if 'eagerinitial' in utils.args.expt_flags:
-                    for completion in separators.learn.expand_completions(M_general):
-                        print('Adding completion', completion)
-                        pos.append(add_state(model_to_state(completion)))
-                else:
-                    pos.append(add_state((res_init,0)))                
-                continue
+#             res_init = check_initial(solver, q)
+#             if res_init is not None:
+#                 M_general = generalize_initial(solver, (res_init, 0))
+#                 print("Initial state generalized model:")
+#                 print(M_general)
+#                 if 'eagerinitial' in utils.args.expt_flags:
+#                     for completion in separators.learn.expand_completions(M_general):
+#                         print('Adding completion', completion)
+#                         pos.append(add_state(model_to_state(completion)))
+#                 else:
+#                     pos.append(add_state((res_init,0)))                
+#                 continue
             
-            with generalization_timer:
-                res = generalizer.find_generalized_implication(solver, states[neg[0]], rest, q)
-            if res is None:
-                print(f'[ICE] Eliminated state with {q}')
-                rest.append(q)
-                break
+#             with generalization_timer:
+#                 res = generalizer.find_generalized_implication(solver, states[neg[0]], rest, q)
+#             if res is None:
+#                 print(f'[ICE] Eliminated state with {q}')
+#                 rest.append(q)
+#                 break
             
-            tr, trans = res
-            two_state_model = generalize_cti(solver, trans, tr, rest)
-            print("CTI generalized model:")
-            print(two_state_model)
-            # pre = separators.learn.two_state_pre(two_state_model)
-            # print("Pre-state projection:\n{pre}")
-            # post = separators.learn.two_state_post(two_state_model)
-            # print("Post-state projection:\n{post}")
-            # print(f"Generalized CTI to {len(list(separators.learn.expand_completions(pre)))} pre and {len(list(separators.learn.expand_completions(post)))} post")
+#             tr, trans = res
+#             two_state_model = generalize_cti(solver, trans, tr, rest)
+#             print("CTI generalized model:")
+#             print(two_state_model)
+#             # pre = separators.learn.two_state_pre(two_state_model)
+#             # print("Pre-state projection:\n{pre}")
+#             # post = separators.learn.two_state_post(two_state_model)
+#             # print("Post-state projection:\n{post}")
+#             # print(f"Generalized CTI to {len(list(separators.learn.expand_completions(pre)))} pre and {len(list(separators.learn.expand_completions(post)))} post")
             
-            if 'eagercti' in utils.args.expt_flags:
-                print("Expanding a CTI")
-                raise NotImplemented
-            else:
-                st1, st2 = add_state((tr, 0)), add_state((tr, 1))
-                if 'goldenimptopos' in utils.args.expt_flags and eval_predicate(states[st1], hard):
-                    print("Golden formula was true for pre-state; adding positive constraint")
-                    pos.extend([st1, st2])
-                else:
-                    imp.append((st1, st2))
+#             if 'eagercti' in utils.args.expt_flags:
+#                 print("Expanding a CTI")
+#                 raise NotImplemented
+#             else:
+#                 st1, st2 = add_state((tr, 0)), add_state((tr, 1))
+#                 if 'goldenimptopos' in utils.args.expt_flags and eval_predicate(states[st1], hard):
+#                     print("Golden formula was true for pre-state; adding positive constraint")
+#                     pos.extend([st1, st2])
+#                 else:
+#                     imp.append((st1, st2))
 
 def fol_extract(solver: Solver) -> None:
     import os.path
@@ -2476,6 +2240,11 @@ def fol_extract(solver: Solver) -> None:
         arg = ','.join(f'{a}->{b}' for (a,b) in graph.edges)
         print(f"--epr-edges='{arg}'")
 
+def fol_learn(solver: Solver) -> None:
+    pass
+
+def fol_benchmark_solver(solver: Solver) -> None:
+    pass
 
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
 
@@ -2487,9 +2256,9 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     #                help='Use inductive generalization when blocking states')
     # result.append(s)
 
-    s = subparsers.add_parser('fol-ice', help='Run ICE invariant learning with folseparators')
-    s.set_defaults(main=fol_ice)
-    result.append(s)
+    # s = subparsers.add_parser('fol-ice', help='Run ICE invariant learning with folseparators')
+    # s.set_defaults(main=fol_ice)
+    # result.append(s)
 
     s = subparsers.add_parser('p-fol-ic3', help='Run parallel IC3 inference with folseparators')
     s.set_defaults(main=p_fol_ic3)
@@ -2497,6 +2266,15 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     s = subparsers.add_parser('fol-extract', help='Extract conjuncts to a file')
     s.set_defaults(main=fol_extract)
+    result.append(s)
+
+
+    s = subparsers.add_parser('fol-learn', help='Learn a given formula')
+    s.set_defaults(main=fol_learn)
+    result.append(s)
+
+    s = subparsers.add_parser('fol-benchmark-solver', help='Test SMT solver backend')
+    s.set_defaults(main=fol_benchmark_solver)
     result.append(s)
 
 
@@ -2521,5 +2299,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
         s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Experimental flags")
         s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
+        s.add_argument("--index", dest="log_dir", type=int, default=-1, help="Invariant index")
+        s.add_argument("--inv", dest="log_dir", type=str, default="", help="Invariant name")
 
     return result
