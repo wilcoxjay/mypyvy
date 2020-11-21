@@ -1,4 +1,6 @@
 
+from asyncio.exceptions import CancelledError
+from io import TextIOBase
 from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
@@ -21,7 +23,7 @@ import utils
 import logic
 from logic import Expr, Solver, Trace, check_implication
 import syntax
-from syntax import DefinitionDecl
+from syntax import BinaryExpr, DefinitionDecl, IfThenElse, Let, NaryExpr, QuantifierExpr, UnaryExpr
 from fol_trans import FOLSeparator, eval_predicate, formula_to_predicate, model_to_state, predicate_to_formula, prog_to_sig, PDState, state_to_model, transition_to_formula, two_state_trace_to_model
 import separators
 from separators import Formula, Signature, Constraint, HybridSeparator, Neg, Pos, Imp, ParallelSeparator, Separator, UnlimitedTimer
@@ -209,7 +211,7 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
     #         print(hyp)
     #     print(new_conc)
     #     print(' --- ')
-    prefix = "/tmp" if utils.args.log_dir == "" else utils.args.log_dir
+    prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
     file = os.path.join(prefix, f"query-{random.randint(0,1000000000-1):09}.pickle")
     with open(file, 'wb') as f:
         pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -352,7 +354,10 @@ class ParallelFolIc3(object):
         self._push_pull_lock = asyncio.Lock()
         
         # Logging, etc
-        self._start: float = 0
+        self._start_time: float = 0
+        self._sep_log: TextIOBase = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w')
+        self._ig_log: TextIOBase = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w')
+        self._next_ig_query_index = 0
         
     # Frame number manipulations (make None === infinity)
     @staticmethod
@@ -425,7 +430,7 @@ class ParallelFolIc3(object):
             print(f"[IC3] predicate {fn_str} {code} {p}")
         print(f"[IC3] Reachable states: {len(self._reachable)}, initial states: {len(self._initial_states)}, useful reachable: {len(self._useful_reachable)}")
         print("[IC3] ----")
-        print(f"time: {time.time() - self._start:0.2f} sec")
+        print(f"time: {time.time() - self._start_time:0.2f} sec")
 
     def push_reachable(self, state:int) -> None:
         # Mark state reachable
@@ -611,7 +616,7 @@ class ParallelFolIc3(object):
 
     async def IG2_worker(self, conn: AsyncConnection) -> None:
         sig = prog_to_sig(syntax.the_program, two_state=False)
-        sep = FixedImplicationSeparator(sig, (), PrefixConstraints(), set(), [])
+        sep = FixedImplicationSeparator(sig, (), PrefixConstraints(), 0, set(), [])
         constraints: Set[Constraint] = set()
         sep_constraints: Set[Constraint] = set()
         mapping: Dict[int, int] = {}
@@ -621,7 +626,7 @@ class ParallelFolIc3(object):
             if 'prefix' in v:
                 (prefix, pc) = v['prefix']
                 del sep
-                sep = FixedImplicationSeparator(sig, prefix, pc, set(), [])
+                sep = FixedImplicationSeparator(sig, prefix, pc, 1, set(), [])
                 sep_constraints = set()
                 mapping = {}
             if 'constraints' in v:
@@ -655,7 +660,7 @@ class ParallelFolIc3(object):
                             minimized = True
                             continue # continue the loop, now asking for a minimized separator
                         else:
-                            await conn.send({'candidate': p})
+                            await conn.send({'candidate': p, 'constraints': sep_constraints})
                             break
                     
             
@@ -666,8 +671,15 @@ class ParallelFolIc3(object):
 
 
     async def IG2_manager(self, frame: int, state: int, rationale: str) -> Expr:
-        sig = prog_to_sig(syntax.the_program, two_state=False)
+        identity = self._next_ig_query_index
+        self._next_ig_query_index += 1
+
+        def ig_print(*args: Any, **kwargs: Any) -> None:
+            print(f"[{rationale[0].upper()}({identity})]", *args, **kwargs, file=self._ig_log, flush=True)
+            
+
         def states_of(cs: Sequence[Constraint]) -> Set[int]: return set(s for c in cs for s in c.states())
+        sig = prog_to_sig(syntax.the_program, two_state=False)
         positive = self._initial_states | self._useful_reachable
         states = [self._states[state], *(self._states[i] for i in positive)]
         constraints = [Neg(0), *(Pos(i+1) for i in range(len(positive)))]
@@ -686,15 +698,13 @@ class ParallelFolIc3(object):
 
         solution: asyncio.Future[Expr] = asyncio.Future()
         
-        t = io.StringIO()
-        golden = await IG_query_summary(t, self, frame, state, rationale)
-        print(t.getvalue(), end='')
+
 
         async def check_candidate(p: Expr) -> Optional[Constraint]:
             # F_0 => p?
             initial_state = await multi_check_implication([init.expr for init in syntax.the_program.inits()], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
             if initial_state is not None:
-                print("Adding initial state")
+                ig_print("Adding initial state")
                 i = len(states)
                 states.append((initial_state, 0))
                 # x = self.add_state((initial_state, 0))
@@ -704,11 +714,11 @@ class ParallelFolIc3(object):
             # F_i-1 ^ p => wp(p)?
             start = time.time()
             edge = await multi_check_transition([p, *(self._predicates[fp] for fp in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
-            print(f"Check took {time.time()-start:0.3f}s")
+            ig_print(f"Check took {time.time()-start:0.3f}s")
             # if golden is not None and edge is not None:
             #     print(f"Golden {eval_predicate((edge, 0), golden)} -> {eval_predicate((edge, 1), golden)}")
             if edge is not None:
-                print("Adding edge")
+                ig_print("Adding edge")
                 a = len(states)
                 states.append((edge, 0))
                 b = len(states)
@@ -739,8 +749,8 @@ class ParallelFolIc3(object):
                     if pre is None:
                         return
                     pre_pp = ".".join(sig.sort_names[sort_i] for (ifa, sort_i) in pre)
-                    print(f"Trying: {pre_pp}")
-                    prefix_solver.reserve(pre)
+                    ig_print(f"Trying: {pre_pp}")
+                    reservation = prefix_solver.reserve(pre, pc)
                     await conn.send({'prefix': (pre, pc)})
                     while True:
                         current_constr = constraints + local_constraints
@@ -749,10 +759,12 @@ class ParallelFolIc3(object):
                         await conn.send({'sep': None})
                         v = await conn.recv()
                         if 'candidate' in v:
-                            p = v['candidate']
+                            p, sep_constraints = v['candidate'], v['constraints']
                             new_constraint = await check_candidate(p)
                             if new_constraint is None:
                                 if not solution.done():
+                                    ig_print(f"SEP with |constr|={len(sep_constraints)}")
+                                    ig_print(f"Learned {p}")
                                     solution.set_result(p)
                                 return
                             else:
@@ -763,7 +775,7 @@ class ParallelFolIc3(object):
                                 #         print(f"! -- oops {new_constraint} isn't satisfied by {golden}")
                         elif 'unsep' in v:
                             core = v['unsep']
-                            print(f"UNSEP: {pre_pp} with |core|={len(core)}")
+                            ig_print(f"UNSEP: {pre_pp} with |core|={len(core)}")
                             # if False:
                             #     test_sep = FixedImplicationSeparator(sig, pre, pc)
                             #     m = {i: test_sep.add_model(state_to_model(states[i])) for i in range(len(states))}
@@ -777,7 +789,7 @@ class ParallelFolIc3(object):
                         else:
                             assert False
                     # print(f"Done with: {pre}")
-                    prefix_solver.unreserve(pre)
+                    prefix_solver.unreserve(reservation)
         
         async def frame_updater() -> None:
             nonlocal constraints, frame_preds
@@ -793,10 +805,24 @@ class ParallelFolIc3(object):
                     constraints = [c for c in constraints if in_frame(current_frame, c)]
                     frame_preds = current_frame
                     if (await self.get_predecessor(frame, state)) is not None:
-                        print("State to block has a predecessor via concurrent task")
+                        print("State to block has a predecessor via concurrent task", file=self._ig_log)
                         solution.cancel()
                 else:
                     await self._event_frames.wait()
+
+        async def logger() -> None:
+            query_start = time.time()
+            ig_print(f"started at: {query_start - self._start_time:0.2f}s")
+            t = io.StringIO()
+            golden = await IG_query_summary(t, self, frame, state, rationale)
+            ig_print(t.getvalue(), end='')
+            while True:
+                try: await asyncio.sleep(30)
+                except asyncio.CancelledError: 
+                    ig_print(f"finished in: {time.time() - query_start:0.2f}s")
+                    return
+                ig_print(f"time: {time.time() - query_start:0.2f}s")
+
 
         if utils.args.logic == 'universal':
             pcs = [PrefixConstraints(Logic.Universal),
@@ -830,13 +856,11 @@ class ParallelFolIc3(object):
         multiplier = 1
         handlers = [worker_handler(pc) for pc in pcs * multiplier]
         handlers.append(frame_updater())
+        handlers.append(logger())
 
         async with ScopedTask(asyncio.gather(*handlers)):
             return await solution
-                    
-        
 
-        
 
     async def parallel_inductive_generalize_worker(self, name: str, pc: PrefixConstraints, local_states: List[PDState], constraints: List[Constraint], log: IGQueryLogger, frame: int, state: int, sep: Union[Separator, ParallelSeparator], ignored_pred: int = -1) -> Expr:
         log_filename = f"sep-{''.join(random.choice('0123456789ABCDEF') for x in range(8))}.log"
@@ -1257,7 +1281,7 @@ class ParallelFolIc3(object):
         assert False
 
     async def run(self) -> None:
-        self._start = time.time()
+        self._start_time = time.time()
         self.init()
         await self.push_pull()
         self.print_predicates()
@@ -1275,7 +1299,11 @@ class ParallelFolIc3(object):
 
         for h in hueristics:
             h.cancel()
-        print(f"Elapsed: {time.time() - self._start:0.2f} sec")
+        for h in hueristics:
+            try: await h
+            except asyncio.CancelledError: pass
+
+        print(f"Elapsed: {time.time() - self._start_time:0.2f} sec")
         if self.is_program_safe():
             print("Program is SAFE.")
             for i, p, index in zip(self._frame_numbers, self._predicates, range(len(self._predicates))):
