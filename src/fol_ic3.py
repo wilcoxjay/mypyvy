@@ -2240,34 +2240,62 @@ def fol_extract(solver: Solver) -> None:
     import os.path
     prog = syntax.the_program
     sig = prog_to_sig(prog)
-    names: Set[str] = set()
-    next = 0
-    def generate() -> str:
-        nonlocal next, names
-        n = f"c{next}"
-        next += 1
-        if n in names:
-            return generate()
-        else:
-            return n
-    for x in prog.invs():
-        name = x.name if x.name is not None else generate()
-        with open(f"out/extracts/{os.path.splitext(os.path.basename(utils.args.filename))[0]}-{name}.fol", "w") as f:
-                
-            f.write("; File: " + utils.args.filename + "\n")
-            f.write("; Original: " + " ".join(str(x).split("\n")) + "\n")
-            f.write(str(sig))
-            f.write("; End sig\n\n; Axioms\n")
-            for ax in prog.axioms():
-                f.write(f"(axiom {repr(predicate_to_formula(ax.expr))})\n")
-            f.write(f"\n; Conjecture {name}\n")
-            f.write(f"(conjecture {repr(predicate_to_formula(x.expr))})\n")
-        names.add(name)
+    base_name = os.path.splitext(os.path.basename(utils.args.filename))[0].replace('_','-')
+    
+    if 'generate-problems' in utils.args.expt_flags:
+        names: Set[str] = set()
+        next = 0
+        def generate() -> str:
+            nonlocal next, names
+            n = f"c{next}"
+            next += 1
+            if n in names:
+                return generate()
+            else:
+                return n
+        
+        for x in prog.invs():
+            name = x.name if x.name is not None else generate()
+            with open(f"out/extracts/{os.path.splitext(os.path.basename(utils.args.filename))[0]}-{name}.fol", "w") as f:
+                    
+                f.write("; File: " + utils.args.filename + "\n")
+                f.write("; Original: " + " ".join(str(x).split("\n")) + "\n")
+                f.write(str(sig))
+                f.write("; End sig\n\n; Axioms\n")
+                for ax in prog.axioms():
+                    f.write(f"(axiom {repr(predicate_to_formula(ax.expr))})\n")
+                f.write(f"\n; Conjecture {name}\n")
+                f.write(f"(conjecture {repr(predicate_to_formula(x.expr))})\n")
+            names.add(name)
     if utils.args.logic == 'epr':
         graph = prog.decls_quantifier_alternation_graph([x.expr for x in prog.invs()] + [syntax.Not(x.expr) for x in prog.invs()])
         print(f"Is acyclic: {networkx.is_directed_acyclic_graph(graph)}")
         arg = ','.join(f'{a}->{b}' for (a,b) in graph.edges)
         print(f"--epr-edges='{arg}'")
+    
+    def count_quantifiers(e: Expr) -> int:
+        if isinstance(e, QuantifierExpr):
+            return len(e.binder.vs) + count_quantifiers(e.body)
+        elif isinstance(e, UnaryExpr):
+            return count_quantifiers(e.arg)
+        elif isinstance(e, BinaryExpr):
+            return count_quantifiers(e.arg1) + count_quantifiers(e.arg2)
+        elif isinstance(e, NaryExpr):
+            return sum(count_quantifiers(a) for a in e.args)
+        elif isinstance(e, IfThenElse):
+            return count_quantifiers(e.branch) + count_quantifiers(e.then) + count_quantifiers(e.els)
+        elif isinstance(e, Let):
+            return count_quantifiers(e.body)
+        else:
+            return 0
+
+    conjuncts, quants = 0, 0
+    for x in prog.invs():
+        if x.is_safety: continue
+        conjuncts += 1
+        quants = max(quants, count_quantifiers(x.expr))
+    sig = prog_to_sig(syntax.the_program)
+    print(f"{base_name}, {conjuncts}, {quants}, {len(sig.sorts)}, {len(sig.relations) + len(sig.constants) + len(sig.functions)}")
 
 def fol_learn(solver: Solver) -> None:
     pass
