@@ -85,7 +85,6 @@ async def _writeexactly(write_fd: int, buf: bytes) -> None:
 #     while True: pass
 # asyncio.run(test())
 
-
 class AsyncConnection:
     HEADER_FMT = '<Q'
     HEADER_SIZE = struct.calcsize(HEADER_FMT)
@@ -115,7 +114,6 @@ class AsyncConnection:
         (up_r, up_w) = os.pipe() # Up pipe (written on bottom, read on top)
         return (AsyncConnection(up_r, dn_w), AsyncConnection(dn_r, up_w))
 
-    
 T = TypeVar('T')
 async def async_race(aws: Sequence[Awaitable[T]]) -> T:
     '''Returns the first value from `aws` and cancels the other tasks.
@@ -147,42 +145,6 @@ async def async_race(aws: Sequence[Awaitable[T]]) -> T:
             else:
                 raise ValueError("Empty sequence passed to async_race()")
         tasks = list(pending)
-
-# class AsyncConnectionOld:
-#     HEADER_FMT = '<Q'
-#     HEADER_SIZE = struct.calcsize(HEADER_FMT)
-#     def __init__(self) -> None:
-#         self.reader: asyncio.streams.StreamReader
-#         self.writer: asyncio.streams.StreamWriter
-#         self.fds: Tuple[int, int]
-#     async def connect(self, read: int, write: int) -> None:
-#         loop = asyncio.get_event_loop()
-#         self.reader = asyncio.StreamReader()
-#         await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(self.reader), os.fdopen(read, 'rb', 0))
-
-#         fl = fcntl.fcntl(write, fcntl.F_GETFL)
-#         fcntl.fcntl(write, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-#         writer_transport, writer_protocol = await loop.connect_write_pipe(
-#             lambda: asyncio.streams.FlowControlMixin(),
-#             os.fdopen(write, 'wb', 0))
-#         self.writer = asyncio.streams.StreamWriter(writer_transport, writer_protocol, None, loop)
-#         self.fds = (read, write)
-
-#     async def recv(self) -> Any:
-#         header = await self.reader.readexactly(AsyncConnectionOld.HEADER_SIZE)
-#         data = await self.reader.readexactly(struct.unpack(AsyncConnectionOld.HEADER_FMT, header)[0])
-#         return pickle.loads(data)
-
-#     async def send(self, v: Any) -> None:
-#         pickled = pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
-#         self.writer.write(struct.pack(AsyncConnectionOld.HEADER_FMT, len(pickled)))
-#         self.writer.write(pickled)
-#         await self.writer.drain()
-#     def close(self) -> None:
-#         del self.reader
-#         del self.writer
-
-
 
 class ScopedProcess:
     '''Allows a target function to be run in a `with` statement:
@@ -248,5 +210,3 @@ class ScopedTask:
         self.fut.cancel()
         try: await self.fut
         except asyncio.CancelledError: pass
-
-
