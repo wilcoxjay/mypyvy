@@ -1,8 +1,7 @@
 
-from separators.separate import Constraint, HybridSeparator, Logic, Pos, Neg, Imp, ParallelSeparator, PrefixConstraints, Separator
 from syntax import *
 from logic import *
-from typing import Dict, List, Tuple, Iterable, Optional, Collection
+from typing import Dict, List, Tuple, Iterable
 
 try:
     import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
@@ -291,79 +290,3 @@ def model_to_state(m: separators.logic.Model) -> PDState:
                 tr.immut_func_interps.setdefault(fdecl,[]).append(([m.names[i] for i in args], m.names[val]))
     return (tr, 0)
 
-
-class FOLSeparator(object):
-    '''Class used to call into the folseparators code'''
-    def __init__(self, states: List[PDState], local_states: List[PDState] = [], sep: Optional[Union[Separator, ParallelSeparator]] = None) -> None:
-        prog = syntax.the_program
-        self.states = states
-        self.local_states = local_states
-        self.ids: Dict[int, int] = {}
-        self.sig = prog_to_sig(prog, two_state=False)
-        self.logic = utils.args.logic
-        if sep is None:
-            self.separator: Union[Separator, ParallelSeparator] = HybridSeparator(self.sig, logic=utils.args.logic, quiet=True, expt_flags=utils.args.expt_flags)
-        else:
-            self.separator = sep
-
-    def _state_id(self, i: int) -> int:
-        assert 0 <= i < len(self.states) or 0 <= -i-1 < len(self.local_states)
-        if i not in self.ids:
-            # add a new state
-            m = state_to_model(self.states[i] if 0 <= i else self.local_states[-i-1])
-            assert separators.logic.model_is_complete_wrt_sig(m, self.sig)
-            self.ids[i] = self.separator.add_model(m)
-        return self.ids[i]
-
-    def separate(self,
-                 pos: Collection[int],
-                 neg: Collection[int],
-                 imp: Collection[Tuple[int, int]],
-                 complexity: int = 1000,
-                 pc: PrefixConstraints = PrefixConstraints()
-    ) -> Optional[Expr]:
-        if isinstance(self.separator, Separator):
-            timer = separators.timer.UnlimitedTimer()
-            with timer:
-                f = self.separator.separate(
-                    pos=[self._state_id(i) for i in pos],
-                    neg=[self._state_id(i) for i in neg],
-                    imp=[(self._state_id(i), self._state_id(j)) for i, j in imp],
-                    max_depth=utils.args.max_depth,
-                    max_clauses=utils.args.max_clauses,
-                    max_complexity=complexity,
-                    timer=timer
-                )
-        elif isinstance(self.separator, ParallelSeparator):
-            constraints: List[Constraint] = [Pos(self._state_id(i)) for i in pos]
-            constraints.extend([Neg(self._state_id(i)) for i in neg])
-            constraints.extend([Imp(self._state_id(i), self._state_id(j)) for i,j in imp])
-            f = self.separator.separate(constraints, pc)
-        else:
-            assert False
-
-        if f is None:
-            if False:
-                _pos=[self._state_id(i) for i in pos]
-                _neg=[self._state_id(i) for i in neg]
-                _imp=[(self._state_id(i), self._state_id(j)) for i, j in imp]
-                    
-                fi = open("/tmp/error.fol", "w")
-                fi.write(str(self.sig))
-                for i,j in self.ids.items():
-                    m = self.state_to_model(self.states[i])
-                    m.label = str(j)
-                    fi.write(str(m))
-                fi.write(f"(constraint {' '.join(str(x) for x in _pos)})\n")
-                fi.write(f"(constraint {' '.join('(not '+str(x)+')' for x in _neg)})\n")
-                fi.write(f"(constraint {' '.join('(implies '+str(x)+' '+str(y)+')' for x, y in _imp)})\n")
-            return None
-        else:
-            p = formula_to_predicate(f)
-            # for i in pos:
-            #    assert eval_predicate(self.states[i], p)
-            # for i in neg:
-            #    assert not eval_predicate(self.states[i], p)
-            # for i, j in imp:
-            #    assert (not eval_predicate(self.states[i], p)) or eval_predicate(self.states[j], p)
-            return p
