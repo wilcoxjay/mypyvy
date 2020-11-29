@@ -26,7 +26,7 @@
   (save-excursion (search-forward s (line-end-position) 't)))
 
 (defconst mypyvy-keyword-regex
-  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|definition\\|invariant\\|axiom\\|old\\|forall\\|exists\\|true\\|false\\|onestate\\|twostate\\|theorem\\|assume\\|automaton\\|global\\|safety\\|phase\\|self\\|derived\\|sketch\\|trace\\|assert\\|any\\|if\\|then\\|else\\|let\\|in\\|sat\\|unsat\\|distinct\\)\\>")
+  "\\<\\(modifies\\|sort\\|mutable\\|immutable\\|relation\\|constant\\|function\\|init\\|transition\\|definition\\|invariant\\|axiom\\|new\\|forall\\|exists\\|true\\|false\\|zerostate\\|onestate\\|twostate\\|theorem\\|assume\\|global\\|safety\\|self\\|derived\\|trace\\|assert\\|any\\|if\\|then\\|else\\|let\\|in\\|sat\\|unsat\\|distinct\\)\\>")
 
 (defconst mypyvy-font-lock-keywords
   `((,mypyvy-keyword-regex . font-lock-keyword-face)))
@@ -64,12 +64,11 @@
 (defun mypyvy-infer-invariant ()
   (interactive)
   (let ((b (generate-new-buffer "*mypyvy-output*")))
-    (call-process (or flycheck-mypyvy-executable "mypyvy") nil b t "updr" "--use-z3-unsat-cores" "--block-may-cexs" (buffer-file-name))
+    (call-process (or flycheck-mypyvy-executable "mypyvy") nil b t "updr" "--use-z3-unsat-cores" (buffer-file-name))
     (with-current-buffer b
       (goto-char (point-min))
       (if (search-forward "frame is safe and inductive. done!" nil t)
           (progn
-            (forward-line)
             (forward-line)
             (delete-region (point-min) (point)))
         (error "could not infer invariant!")))

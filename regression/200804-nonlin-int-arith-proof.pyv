@@ -1,0 +1,19 @@
+# MYPYVY: verify --seed=0 --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+mutable constant x: int
+mutable constant y: int
+
+init x = 0 & y = 5
+
+transition north()
+  modifies y
+  new(y) = y + 1
+
+transition south_east()
+  modifies x, y
+  & new(x) = x + 1
+  & new(y) = y - 1
+
+safety x * x + y * y > 9
+
+invariant x + y >= 5

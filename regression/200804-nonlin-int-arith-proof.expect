@@ -1,0 +1,11 @@
+checking init:
+  implies invariant on line 17... ok.
+  implies invariant on line 19... ok.
+checking transition north:
+  preserves invariant on line 17... ok.
+  preserves invariant on line 19... ok.
+checking transition south_east:
+  preserves invariant on line 17... ok.
+  preserves invariant on line 19... ok.
+all ok!
+mypyvy exiting with status 0

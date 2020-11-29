@@ -14,33 +14,33 @@ init server_holds_lock
 
 transition send_lock(n: node)
   modifies lock_msg
-  lock_msg(N) <-> old(lock_msg(N)) | N = n
+  new(lock_msg(N)) <-> lock_msg(N) | N = n
 
 transition recv_lock(n: node)
   modifies lock_msg, server_holds_lock, grant_msg
-  old(server_holds_lock) &
-  old(lock_msg(n)) &
-  !server_holds_lock &
-  (lock_msg(N) <-> old(lock_msg(N)) & N != n) &
-  (grant_msg(N) <-> old(grant_msg(N)) | N = n)
+  server_holds_lock &
+  lock_msg(n) &
+  !new(server_holds_lock) &
+  (new(lock_msg(N)) <-> lock_msg(N) & N != n) &
+  (new(grant_msg(N)) <-> grant_msg(N) | N = n)
 
 transition recv_grant(n: node)
   modifies grant_msg, holds_lock
-  old(grant_msg(n)) &
-  (grant_msg(N) <-> old(grant_msg(N)) & N != n) &
-  (holds_lock(N) <-> old(holds_lock(N)) | N = n)
+  grant_msg(n) &
+  (new(grant_msg(N)) <-> grant_msg(N) & N != n) &
+  (new(holds_lock(N)) <-> holds_lock(N) | N = n)
 
 transition unlock(n: node)
   modifies holds_lock, unlock_msg
-  old(holds_lock(n)) &
-  (holds_lock(N) <-> old(holds_lock(N)) & N != n) &
-  (unlock_msg(N) <-> old(unlock_msg(N)) | N = n)
+  holds_lock(n) &
+  (new(holds_lock(N)) <-> holds_lock(N) & N != n) &
+  (new(unlock_msg(N)) <-> unlock_msg(N) | N = n)
 
 transition recv_unlock(n: node)
   modifies unlock_msg, server_holds_lock
-  old(unlock_msg(n)) &
-  (unlock_msg(N) <-> old(unlock_msg(N)) & N != n) &
-  server_holds_lock
+  unlock_msg(n) &
+  (new(unlock_msg(N)) <-> unlock_msg(N) & N != n) &
+  new(server_holds_lock)
 
 safety [mutex] holds_lock(N1) & holds_lock(N2) -> N1 = N2
 

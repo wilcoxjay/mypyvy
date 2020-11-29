@@ -1,0 +1,18 @@
+# MYPYVY: typecheck --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+sort t
+
+immutable constant a: t
+mutable relation err
+init ~err
+
+definition is_a(x: t) = x = a
+
+definition is_a_2(err: t) = err = a # this should not be allowed, as err is a global symbol
+
+transition trans(a: t)
+    # this transition will be disabled if will hold if macro expansion does not implement lexical scoping
+    # we work around this issue by forbidding shadowing of global declarations
+    modifies err
+    new(err) & ~is_a(a)
+
+invariant ~err

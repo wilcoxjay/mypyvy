@@ -1,0 +1,10 @@
+# MYPYVY: verify --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+sort s
+
+immutable constant c: s
+
+transition foo()
+  # only mutable symbols should be allowed in modifies clauses.
+  # this used to give a confusing error message about havocing.
+  modifies c
+  true

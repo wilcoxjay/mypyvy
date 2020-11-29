@@ -1,13 +1,11 @@
 *~
 *.pyc
+*.out
 .mypy_cache/
 .z3-trace
 parser.out
 parsetab.py
 lextab.py
 regression/*.output
-lockserv*.log
-examples/*.cache
-/*.out
-/cvc4-1.7-x86_64-linux-opt
+*.cache
 out/

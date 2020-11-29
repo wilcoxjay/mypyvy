@@ -13,25 +13,25 @@ init owner(N1, K) & owner(N2, K) -> N1 = N2
 
 transition reshard(k: key, v: value, n_old: node, n_new: node)
   modifies table, owner, transfer_msg
-  old(table(n_old, k, v)) &
-  (table(N, K, V) <-> old(table(N, K, V)) & !(N = n_old & K = k & V = v)) &
-  (owner(N, K) <-> old(owner(N, K)) & !(N = n_old & K = k)) &
-  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) | (N = n_new & K = k & V = v))
+  table(n_old, k, v) &
+  (new(table(N, K, V)) <-> table(N, K, V) & !(N = n_old & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) & !(N = n_old & K = k)) &
+  (new(transfer_msg(N, K, V)) <-> transfer_msg(N, K, V) | (N = n_new & K = k & V = v))
 
 
 transition recv_transfer_msg(n: node, k: key, v: value)
   modifies table, owner, transfer_msg
-  old(transfer_msg(n, k, v)) &
-  (transfer_msg(N, K, V) <-> old(transfer_msg(N, K, V)) & (!(N = n & K = k & V = v) | true)) &  # UNSAFE
-  (table(N, K, V) <-> old(table(N, K, V)) | (N = n & K = k & V = v)) &
-  (owner(N, K) <-> old(owner(N, K)) | (N = n & K = k))
+  transfer_msg(n, k, v) &
+  (new(transfer_msg(N, K, V)) <-> transfer_msg(N, K, V) & (!(N = n & K = k & V = v) | true)) &  # UNSAFE
+  (new(table(N, K, V)) <-> table(N, K, V) | (N = n & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) | (N = n & K = k))
 
 
 transition put(n: node, k: key, v: value)
   modifies table
-  old(owner(n, k)) &
-  (!(N = n & K = k) -> (table(N, K, V) <-> old(table(N, K, V)))) &
-  (table(n, k, V) <-> V = v)
+  owner(n, k) &
+  (!(N = n & K = k) -> (new(table(N, K, V)) <-> table(N, K, V))) &
+  (new(table(n, k, V)) <-> V = v)
 
 safety [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
 

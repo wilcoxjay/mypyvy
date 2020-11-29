@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from syntax import *
 from logic import *
+from translator import Z3Translator
 
 from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
 
@@ -37,8 +38,27 @@ def powerset(iterable: Iterable[A]) -> Iterator[Tuple[A, ...]]:
     return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
 
 
-PDState = Trace
+PDState = Trace  # TODO: change this to logic.State!
 Predicate = Expr
+
+
+def unpack_cti(z3model: z3.ModelRef, *, keep_prestate_in_poststate: bool = False) -> Tuple[PDState, PDState]:
+    '''
+    Unpack a z3model with two states to (prestate, poststate).
+
+    Both prestate and poststate are are currently logic.Trace objects,
+    but in the future they will be logic.State
+    objects. keep_prestate_in_poststate maintains legacy compatability
+    with representing a poststate by a 2-state trace where the first
+    one (index 0) is the poststate and the second one (index 1) is the
+    prestate.
+    '''
+    prestate = Z3Translator.model_to_trace(z3model, 1)
+    if keep_prestate_in_poststate:
+        poststate = Z3Translator.model_to_trace(z3model, 2)._as_trace((1, 0))  # TODO: eliminate Trace._as_trace
+    else:
+        poststate = Z3Translator.model_to_trace(z3model, 2)._as_trace((1,))  # TODO: eliminate Trace._as_trace
+    return prestate, poststate
 
 
 cache_path: Optional[Path] = None
@@ -189,12 +209,12 @@ def cheap_check_implication(
         concs: Iterable[Expr],
 ) -> bool:
     s = get_solver()
-    t = s.get_translator(KEY_ONE)
-    with s:
+    t = s.get_translator(1)
+    with s.new_frame():
         for e in hyps:
             s.add(t.translate_expr(e))
         for e in concs:
-            with s:
+            with s.new_frame():
                 s.add(z3.Not(t.translate_expr(e)))
                 if s.check() != z3.unsat:
                     return False
@@ -218,7 +238,7 @@ def eval_in_state(s: Optional[Solver], m: PDState, p: Expr) -> bool:
         #
         # if m.z3model is not None:
         #     try:
-        #         cache[k] = eval_quant(m.z3model, s.get_translator(m.keys[0]).translate_expr(p))
+        #         cache[k] = eval_quant(m.z3model, s.get_translator((m.keys[0],)).translate_expr(p))
         #     except:
         #         print(m)
         #         raise
@@ -237,8 +257,8 @@ _cache_initial: List[PDState] = []
 # TODO: could also cache expressions already found to be initial
 def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
     prog = syntax.the_program
-    inits = tuple(init.expr for init in prog.inits())
-    # inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
     for s in _cache_initial:
         if not eval_in_state(solver, s, p):
             print(f'Found cached initial state violating {p}:')
@@ -252,7 +272,7 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
                 print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
                 print(eval_in_state, solver, s, p)
             assert False
-        s = Trace.from_z3([KEY_ONE], z3m)
+        s = Z3Translator.model_to_trace(z3m, 1)
         _cache_initial.append(s)
         print(f'Found new initial state violating {p}:')
         print('-'*80 + '\n' + str(s) + '\n' + '-'*80)
@@ -270,8 +290,8 @@ def is_substructure(s: PDState, t: PDState) -> bool:
     )
     if not cheap_check:
         return False
-    diag_s = s.as_diagram(0).to_ast()
-    diag_t = t.as_diagram(0).to_ast()
+    diag_s = Diagram(s.as_state(0)).to_ast()
+    diag_t = Diagram(t.as_state(0)).to_ast()
     if diag_s == diag_t:
         return True
     return cheap_check_implication([diag_t], [diag_s])
@@ -311,9 +331,7 @@ def check_two_state_implication_multiprocessing_helper(
         return None
     else:
         z3m, _ = res
-        prestate = Trace.from_z3([KEY_OLD], z3m)
-        poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
-        return (prestate, poststate)
+        return unpack_cti(z3m, keep_prestate_in_poststate=True)
 def check_two_state_implication_multiprocessing(
         s: Solver,
         old_hyps: Iterable[Expr],
@@ -349,8 +367,8 @@ def check_two_state_implication(
         minimize: Optional[bool] = None,
 ) -> Optional[Tuple[PDState,PDState]]:
     prog = syntax.the_program
-    inits = tuple(init.expr for init in prog.inits())
-    # inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    # inits = tuple(init.expr for init in prog.inits())
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
     if not isinstance(precondition, PDState):
         precondition = tuple(precondition)
@@ -505,10 +523,7 @@ def check_dual_edge_old(
             if res is not None:
                 if utils.args.cache_only_discovered:
                     assert False
-                z3m, _ = res
-                prestate = Trace.from_z3([KEY_OLD], z3m)
-                # poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
-                poststate = Trace.from_z3([KEY_NEW], z3m) # TODO: can we do this? this seems better than dragging the prestate along
+                prestate, poststate = unpack_cti(res[0], keep_prestate_in_poststate=True)
                 print(f'check_dual_edge_old: found new {msg} violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
@@ -569,15 +584,15 @@ def check_dual_edge_multiprocessing_helper(
     z3.set_param('sat.random_seed',seed)
     s.z3solver.set(seed=seed) # type: ignore
     s.z3solver.set(random_seed=seed) # type: ignore
-    t = s.get_translator(KEY_NEW, KEY_OLD)
+    t = s.get_translator(2)
     for q in qs:
-        s.add(t.translate_expr(q, old=True))
-    s.add(t.translate_transition(trans))
+        s.add(t.translate_expr(q))
+    s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
     for i, p in enumerate(ps):
-        s.add(t.translate_expr(p, old=True))
-        s.add(t.translate_expr(p, old=False))
+        s.add(t.translate_expr(p))
+        s.add(t.translate_expr(New(p)))
     q = qs[i_q]
-    s.add(z3.Not(t.translate_expr(q, old=False)))
+    s.add(z3.Not(t.translate_expr(New(q))))
     print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: checking')
     if save_smt2:
         smt2 = s.z3solver.to_smt2()
@@ -590,9 +605,7 @@ def check_dual_edge_multiprocessing_helper(
     if z3res == z3.unsat:
         return None
     else:
-        z3model = s.model(minimize=minimize)
-        prestate = Trace.from_z3([KEY_OLD], z3model)
-        poststate = Trace.from_z3([KEY_NEW], z3model)
+        prestate, poststate = unpack_cti(s.model(minimize=minimize))
         print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_multiprocessing_helper: i_transition={i_transition}, i_q={i_q}: found model')
         return prestate, poststate
 def check_dual_edge_multiprocessing(
@@ -783,17 +796,17 @@ def check_dual_edge(
             cti_solvers: List[Solver] = []
             for trans in prog.transitions():
                 _cti_solver = Solver()
-                t = _cti_solver.get_translator(KEY_NEW, KEY_OLD)
+                t = _cti_solver.get_translator(2)
                 for q in qs:
-                    _cti_solver.add(t.translate_expr(q, old=True))
-                _cti_solver.add(t.translate_transition(trans))
+                    _cti_solver.add(t.translate_expr(q))
+                _cti_solver.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
                 p_indicators = [z3.Bool(f'@p_{i}') for i in range(len(ps))]
                 for i, p in enumerate(ps):
-                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
-                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
+                    _cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(New(p))))
                 q_indicators = [z3.Bool(f'@q_{i}') for i in range(len(qs))]
                 for i, q in enumerate(qs):
-                    _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(q, old=False))))
+                    _cti_solver.add(z3.Implies(q_indicators[i], z3.Not(t.translate_expr(New(q)))))
                 cti_solvers.append(_cti_solver)
             def check(ps_seed: FrozenSet[int], minimize: bool) -> Optional[Tuple[PDState, PDState]]:
                 if True:
@@ -825,9 +838,7 @@ def check_dual_edge(
                         print(f'[{datetime.now()}] check_dual_edge: {z3res}')
                         if z3res == z3.unsat:
                             continue
-                        z3model = cti_solver.model(indicators, minimize)
-                        prestate = Trace.from_z3([KEY_OLD], z3model)
-                        poststate = Trace.from_z3([KEY_NEW], z3model)
+                        prestate, poststate = unpack_cti(cti_solver.model(indicators, minimize))
                         if minimize:
                             # TODO: should we put it in the cache anyway? for now not
                             _cache_transitions.append((prestate, poststate))
@@ -893,7 +904,7 @@ def check_dual_edge(
 #
 
 @dataclass(frozen=True)
-class HoareQuery(object):
+class HoareQuery:
     '''Class that represents a check during check_dual_edge_optimize'''
     p: FrozenSet[int]
     q_pre: Tuple[FrozenSet[int],...]
@@ -1032,6 +1043,10 @@ def check_dual_edge_optimize_multiprocessing_helper(
         q1: CheckDualEdgeOptimizeJoinableQueue,
         q2: CheckDualEdgeOptimizeQueue,
 ) -> None:
+    if use_cvc4:
+        minimize = utils.args.cvc4_minimize_models
+    else:
+        minimize = True
     try:
         assert len(hq.q_pre) == len(top_clauses)
         def send_result(hq: HoareQuery, valid: bool, cti: Optional[Tuple[PDState, PDState]] = None) -> None:
@@ -1080,20 +1095,20 @@ def check_dual_edge_optimize_multiprocessing_helper(
             else:
                 # print(f'[{datetime.now()}] {greeting}: using cvc4 (random seed set by run_cvc4.sh)')
                 pass
-            t = s.get_translator(KEY_NEW, KEY_OLD)
+            t = s.get_translator(2)
             # add transition relation
-            s.add(t.translate_transition(list(prog.transitions())[hq.i_transition]))
+            s.add(t.translate_expr(list(prog.transitions())[hq.i_transition].as_twostate_formula(prog.scope)))
             # add ps
             for i in sorted(hq.p):
-                s.add(t.translate_expr(ps[i], old=True))
-                s.add(t.translate_expr(ps[i], old=False))
+                s.add(t.translate_expr(ps[i]))
+                s.add(t.translate_expr(New(ps[i])))
             # add precondition constraints
             for k in range(mp.m):
-                s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+                s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k])))
             # add postcondition constraints, note we must violate all clauses (the selection of which one to violate is represented by making the others empty
             for k in range(mp.m):
                 if len(hq.q_post[k]) > 0:
-                    s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
+                    s.add(z3.Not(t.translate_expr(New(mp.to_clause(k, hq.q_post[k])))))
             return s, t
         s, t = get_solver(hq)
         if save_smt2:
@@ -1146,9 +1161,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             return
 
         # get model
-        z3model = s.model(minimize=True)
-        prestate = Trace.from_z3([KEY_OLD], z3model)
-        poststate = Trace.from_z3([KEY_NEW], z3model)
+        prestate, poststate = unpack_cti(s.model(minimize=minimize))
         validate_cti(prestate, poststate)
 
         if not optimize:
@@ -1194,7 +1207,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 if known_to_be_unsat(hq_try):
                     continue
                 s.push()
-                s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq_try.q_post[k]), old=False)))
+                s.add(z3.Not(t.translate_expr(New(mp.to_clause(k, hq_try.q_post[k])))))
                 # print(f'[{datetime.now()}] {greeting}: trying to weaken postcondition k={k}, d={sorted(d)}')
                 z3res = s.check()
                 # print(f'[{datetime.now()}] {greeting}: got {z3res}')
@@ -1204,9 +1217,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 else:
                     # print(f'[{datetime.now()}] {greeting}: weakening postcondition k={k}, d={sorted(d)}')
                     hq = hq_try
-                    z3model = s.model(minimize=True)
-                    prestate = Trace.from_z3([KEY_OLD], z3model)
-                    poststate = Trace.from_z3([KEY_NEW], z3model)
+                    prestate, poststate = unpack_cti(s.model(minimize=minimize))
                     validate_cti(prestate, poststate)
                     for dd in to_try:
                         if not eval_in_state(None, poststate, mp.to_clause(k, hq.q_post[k] | dd)):
@@ -1218,7 +1229,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
             # print(f'[{datetime.now()}] {greeting}: optimal q_post[{k}]: {sorted(hq.q_post[k])}')
-            s.add(z3.Not(t.translate_expr(mp.to_clause(k, hq.q_post[k]), old=False)))
+            s.add(z3.Not(t.translate_expr(New(mp.to_clause(k, hq.q_post[k])))))
             assert s.check() == z3.sat
         # print(f'[{datetime.now()}] {greeting}: optimizing precondition')
         for k in range(mp.m):  # TODO: random shuffle?
@@ -1234,7 +1245,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 if known_to_be_unsat(hq_try):
                     continue
                 s.push()
-                s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k]), old=True))
+                s.add(t.translate_expr(mp.to_clause(k, hq_try.q_pre[k])))
                 # print(f'[{datetime.now()}] {greeting}: trying to strengthen precondition k={k}, d={sorted(d)}')
                 z3res = s.check()
                 # print(f'[{datetime.now()}] {greeting}: got {z3res}')
@@ -1244,9 +1255,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                 else:
                     # print(f'[{datetime.now()}] {greeting}: strengthening precondition k={k}, d={sorted(d)}')
                     hq = hq_try
-                    z3model = s.model(minimize=True)
-                    prestate = Trace.from_z3([KEY_OLD], z3model)
-                    poststate = Trace.from_z3([KEY_NEW], z3model)
+                    prestate, poststate = unpack_cti(s.model(minimize=minimize))
                     validate_cti(prestate, poststate)
                     for dd in to_try:
                         if eval_in_state(None, prestate, mp.to_clause(k, hq.q_pre[k] - dd)):
@@ -1258,7 +1267,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
                     send_result(hq, False, (prestate, poststate))
                 s.pop()
             # print(f'[{datetime.now()}] {greeting}: optimal q_pre[{k}]: {sorted(hq.q_pre[k])}')
-            s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k]), old=True))
+            s.add(t.translate_expr(mp.to_clause(k, hq.q_pre[k])))
             assert s.check() == z3.sat
         # print(f'[{datetime.now()}] {greeting}: found optimal cti')
     finally:
@@ -1266,7 +1275,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
         print(f'[{datetime.now()}] {greeting}: finished and joined q1, returning')
 
 @dataclass
-class RunningProcess(object):
+class RunningProcess:
     process: multiprocessing.Process
     q1: CheckDualEdgeOptimizeJoinableQueue
     q2: CheckDualEdgeOptimizeQueue
@@ -1825,22 +1834,32 @@ def check_k_state_implication(
     if om is None:
         return None
     else:
-        # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
-        # this file to use logic.State for its states, this will be easy to re-enable.
-        assert False
-        z3m = om.z3model
-        assert z3m is not None
-        keys = list(om.keys)
+        # ODED: not sure if this is correct (see previous version below)
         states = tuple(
-            Trace.from_z3(keys[i:], z3m)
-            for i in reversed(range(len(keys)))
+            om._as_trace(tuple(reversed(range(i + 1))))
+            for i in range(om.num_states)
         )
         print(f'Found new {k}-{msg} violating {p}:')
         print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
         return states
 
+        # # TODO(jrw): I disabled this while removing the z3 model from Trace. Once we refactor
+        # # this file to use logic.State for its states, this will be easy to re-enable.
+        # reveal_type(om)
+        # assert False
+        # z3m = om.z3model
+        # assert z3m is not None
+        # keys = list(om.keys)
+        # states = tuple(
+        #     Trace.from_z3(keys[i:], z3m)
+        #     for i in reversed(range(len(keys)))
+        # )
+        # print(f'Found new {k}-{msg} violating {p}:')
+        # print('-'*80 + '\n' + str(states[-1]) + '\n' + '-'*80)
+        # return states
 
-class MapSolver(object):
+
+class MapSolver:
     def __init__(self, n: int):
         """Initialization.
              Args:
@@ -1915,7 +1934,7 @@ def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_claus
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
-    #assert set(top_clause.body.free_ids()) == set(v.name for v in top_clause.binder.vs)
+    #assert free_ids(top_clause.body) == set(v.name for v in top_clause.binder.vs)
     literals = tuple(top_clause.body.args) # TODO: cannot sort sorted(top_clause.body.args)
     variables = tuple(top_clause.binder.vs)
     assert len(set(literals)) == len(literals)
@@ -1924,7 +1943,7 @@ def alpha_from_clause_marco(solver:Solver, states: Iterable[PDState] , top_claus
 
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
-        vs = [v for v in variables if v.name in set(n for lit in lits for n in lit.free_ids())]
+        vs = tuple(v for v in variables if v.name in set(n for lit in lits for n in free_ids(lit)))
         if len(vs) > 0:
             return Forall(vs, Or(*lits))
         else:
@@ -1950,8 +1969,8 @@ def subclauses(top_clause: Expr) -> Iterable[Expr]:
     print(f'subclauses: the powerset is of size {2**n}')
     assert n**2 < 10**6, f'{2**n}, really??'
     for lits in powerset(literals):
-        free = set(chain(*(lit.free_ids() for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        free = set(chain(*(free_ids(lit) for lit in lits)))
+        vs = tuple(v for v in variables if v.name in free)
         yield Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -1959,7 +1978,7 @@ def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr
     assert isinstance(top_clause, QuantifierExpr)
     assert isinstance(top_clause.body, NaryExpr)
     assert top_clause.body.op == 'OR'
-    #assert set(top_clause.body.free_ids()) == set(v.name for v in top_clause.binder.vs)
+    #assert free_ids(top_clause.body) == set(v.name for v in top_clause.binder.vs)
     literals = top_clause.body.args
     assert len(set(literals)) == len(literals)
 
@@ -1972,8 +1991,8 @@ def alpha_from_clause(solver:Solver, states: Iterable[PDState] , top_clause:Expr
     for lits in P:
         if any(s <= set(lits) for s in implied):
             continue
-        vs = [v for v in top_clause.binder.vs
-             if v.name in set(n for lit in lits for n in lit.free_ids())]
+        vs = tuple(v for v in top_clause.binder.vs
+                   if v.name in set(n for lit in lits for n in free_ids(lit)))
         if len(vs) > 0:
             clause : Expr = Forall(vs, Or(*lits))
         else:
@@ -2048,17 +2067,17 @@ def map_clause_state_interaction(variables: Tuple[SortedVar,...],
 
     def to_clause(s: Iterable[int]) -> Expr:
         lits = [literals[i] for i in sorted(s)]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        free = set(chain(*(free_ids(lit) for lit in lits)))
+        vs = tuple(v for v in variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     n = len(literals)
     all_n = frozenset(range(n))
     solver = Solver()
-    t = solver.get_translator(KEY_ONE)
+    t = solver.get_translator(1)
     solver.add(t.translate_expr(
-        state_or_predicate if isinstance(state_or_predicate, Expr) else
-        state_or_predicate.as_onestate_formula(0)
+        state_or_predicate.as_onestate_formula(0) if isinstance(state_or_predicate, PDState) else
+        state_or_predicate
     ))
 
     # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
@@ -2161,16 +2180,13 @@ def map_clause_state_interaction_instantiate(
         assert len(variables) == len(values)
         consts_and_vars: Dict[str, str] = dict(chain(
             ((var.name, val) for var, val in zip(variables, values)),
-            ((d.name, val) for d, val in state.immut_const_interps.items()),
-            ((d.name, val) for d, val in state.const_interps[0].items()),
+            ((d.name, val) for d, val in state.as_state(0).const_interps.items())
         ))
         functions: Dict[str, Dict[Tuple[str,...], str]] = dict(
-            (d.name, dict((tuple(args), val) for args, val in func))
-            for d, func in chain(state.immut_func_interps.items(), state.func_interps[0].items())
+            (d.name, v) for d, v in state.as_state(0).func_interps.items()
         )
         relations: Dict[str, Dict[Tuple[str,...], bool]] = dict(
-            (d.name, dict((tuple(args), val) for args, val in func))
-            for d, func in chain(state.immut_rel_interps.items(), state.rel_interps[0].items())
+            (d.name, v) for d, v in state.as_state(0).rel_interps.items()
         )
         def get_term(t: Expr) -> str:
             if isinstance(t, Id):
@@ -2224,7 +2240,7 @@ def map_clause_state_interaction_instantiate(
 
 
 
-class SubclausesMapTurbo(object):
+class SubclausesMapTurbo:
     '''
     Class used to store a map of subclauses of a certain clause, and
     obtain subclauses that are positive and negative on some given
@@ -2245,7 +2261,7 @@ class SubclausesMapTurbo(object):
         self.n = len(self.literals)
         self.all_n = set(range(self.n))  # used in complement fairly frequently
         self.optimize = optimize
-        self.solver: Any = z3.Optimize() if optimize else z3.Solver() # TODO - fix typing
+        self.solver = z3.Optimize() if optimize else z3.Solver()  # type: ignore # TODO - fix typing
         self.lit_vs = [z3.Bool(f'lit_{i}') for i in range(self.n)]
         self.state_vs: List[z3.ExprRef] = []
         self.predicate_vs: List[z3.ExprRef] = []
@@ -2422,12 +2438,12 @@ class SubclausesMapTurbo(object):
 
     def to_clause(self, s: Iterable[int]) -> Expr:
         lits = [self.literals[i] for i in sorted(s)]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
-        vs = [v for v in self.variables if v.name in free]
+        free = set(chain(*(free_ids(lit) for lit in lits)))
+        vs = tuple(v for v in self.variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
-class MultiSubclausesMapICE(object):
+class MultiSubclausesMapICE:
     '''Class used to store a map of subclauses of several clauses, and
     obtain a conjunction of subclauses that satisfy positive,
     negative, and implication constraints on some given states.
@@ -2451,14 +2467,28 @@ class MultiSubclausesMapICE(object):
         self.n = [len(self.literals[k]) for k in range(self.m)]
         self.all_n = [frozenset(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
         self.optimize = False # optimize
-        self.solver: Any = z3.Optimize() if self.optimize else z3.Solver() # TODO - fix typing
+        self.solver = z3.Optimize() if self.optimize else z3.Solver()  # type: ignore # TODO - fix typing
         self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)] # lit_vs[k][i] represents the i'th literal in the k'th clause
+        self.var_vs = [[z3.Bool(f'var_{k}_{i}') for i in range(len(self.variables[k]))] for k in range(self.m)] # var_vs[k][i] represents the i'th variable in the k'th clause
         self.state_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # state_vs[k][i] represents the value of the k'th clause in self.states[i]
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # predicate_vs[k][i] represents the implication of value of the k'th clause by self.predicates[i]
         self.states_mapped: Set[int] = set() # i for which states[i] has been mapped and self.state_vs[*][i] is constrained in the solver
 
         if utils.args.domain_independence:
             self._constrain_domain_independence()
+
+        self._constrain_variables()
+
+    def _constrain_variables(self) -> None:
+        for k in range(self.m):
+            d: Dict[str, int] = {
+                v.name: i
+                for i, v in enumerate(self.variables[k])
+            }
+            for i, l in enumerate(self.literals[k]):
+                for name in sorted(free_ids(l)):
+                    if name in d:
+                        self.solver.add(z3.Implies(self.lit_vs[k][i], self.var_vs[k][d[name]]))
 
     def _constrain_domain_independence(self) -> None:
         '''for each equality literal between two vars, if the literal is used, then some "domain constraining" literal for each var must also be used.'''
@@ -2484,7 +2514,7 @@ class MultiSubclausesMapICE(object):
 
         def domain_independent_literals_for_var(lits: Tuple[Expr, ...], v: str) -> Iterable[int]:
             for j, lit in enumerate(lits):
-                if v in lit.free_ids() and destruct_variable_equality(lit) is None:
+                if v in free_ids(lit) and destruct_variable_equality(lit) is None:
                     yield j
 
         for k in range(self.m):
@@ -2638,20 +2668,41 @@ class MultiSubclausesMapICE(object):
             self.solver.pop()
             print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
             return None
-        model = self.solver.model()
-        forced_to_false = [set(
-            i for i, v in enumerate(self.lit_vs[k])
-            if not z3.is_true(model[v])
-        ) for k in range(self.m)]
+        # minimize the number of quantifiers used (this was written for z3.Solver, not z3.Optimize)
+        for n in itertools.count():
+            if utils.args.max_quantifiers is not None and n > utils.args.max_quantifiers:
+                self.solver.pop()
+                print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: reached maximal number of quantifiers')
+                print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: done')
+                return None
+            self.solver.push()
+            for k in range(self.m):
+                self.solver.add(z3.AtMost(*self.var_vs[k], n))
+            print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing quantifiers, n={n})... ')
+            res = self.solver.check()
+            print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing quantifiers, n={n})... got {res}')
+            assert res in (z3.unsat, z3.sat)
+            if res == z3.sat:
+                model = self.solver.model()
+                forced_to_false = [set(
+                    i for i, v in enumerate(self.lit_vs[k])
+                    if not z3.is_true(model[v])
+                ) for k in range(self.m)]
+                self.solver.pop()
+                for k in range(self.m):
+                    self.solver.add(z3.AtMost(*self.var_vs[k], n))
+                break
+            else:
+                self.solver.pop()
         if not self.optimize:
             # minimize for strongest possible clause (and ignore other soft constraints)
             for k in range(self.m):
                 for i in range(self.n[k]):
                     if i not in forced_to_false[k]:
                         ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
-                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... ')
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing literals)... ')
                         res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
-                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing)... got {res}')
+                        print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing literals)... got {res}')
                         assert res in (z3.unsat, z3.sat)
                         if res == z3.sat:
                             model = self.solver.model()
@@ -2669,8 +2720,8 @@ class MultiSubclausesMapICE(object):
 
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
         lits = [self.literals[k][i] for i in sorted(s)]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
-        vs = [v for v in self.variables[k] if v.name in free]
+        free = set(chain(*(free_ids(lit) for lit in lits)))
+        vs = tuple(v for v in self.variables[k] if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
@@ -2792,7 +2843,7 @@ def forward_explore_marco(solver: Solver,
     # inits = tuple(init.expr for init in prog.inits())
     inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
 
-    class SubclausesMap(object):
+    class SubclausesMap:
         def __init__(self, top_clause: Expr):
             # TODO: why can't top_clause be quantifier free?
             assert isinstance(top_clause, QuantifierExpr)
@@ -2864,8 +2915,8 @@ def forward_explore_marco(solver: Solver,
 
         def to_clause(self, s: Set[int]) -> Expr:
             lits = [self.literals[i] for i in sorted(s)]
-            free = set(chain(*(lit.free_ids() for lit in lits)))
-            vs = [v for v in self.variables if v.name in free]
+            free = set(chain(*(free_ids(lit) for lit in lits)))
+            vs = tuple(v for v in self.variables if v.name in free)
             return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     def valid(clause: Expr) -> bool:
@@ -2908,7 +2959,7 @@ def forward_explore_marco(solver: Solver,
     # should bring this back at some point
     #
     # wp_valid_solver = Solver()
-    # t = wp_valid_solver.get_translator(KEY_NEW, KEY_OLD)
+    # t = wp_valid_solver.get_translator(2)
     # mp_indicators: Dict[SubclausesMap, z3.ExprRef] = {mp: z3.Bool(f'@mp_{i}') for i, mp in enumerate(maps)}
     # lit_indicators: Sequence[z3.ExprRef] = tuple(z3.Bool(f'@lit_{i}') for i in range(max(mp.n for mp in maps)))
     # for mp in maps:
@@ -2923,25 +2974,25 @@ def forward_explore_marco(solver: Solver,
     #     bs = t.bind(top_clause.binder)
     #     with t.scope.in_scope(top_clause.binder, bs):
     #         body = z3.Or(*(
-    #             z3.And(lit_indicators[i], t.translate_expr(lit))
+    #             z3.And(lit_indicators[i], t.translate_expr(lit, index=1))
     #             for i, lit in enumerate(mp.literals)
     #         ))
     #     wp_valid_solver.add(z3.Implies(mp_indicators[mp], z3.Not(z3.ForAll(bs, body))))
     # init_indicator = z3.Bool('@init')
     # for init in prog.inits():
-    #     wp_valid_solver.add(z3.Implies(init_indicator, t.translate_expr(init.expr, old=True)))
+    #     wp_valid_solver.add(z3.Implies(init_indicator, t.translate_expr(init.expr, index=0)))
     # precondition_indicators: Dict[Optional[PDState], z3.ExprRef] = {None: init_indicator}
     # def precondition_indicator(precondition: Optional[PDState]) -> z3.ExprRef:
     #     if precondition not in precondition_indicators:
     #         assert precondition is not None
     #         x = z3.Bool(f'@state_{id(precondition)})')
-    #         wp_valid_solver.add(z3.Implies(x, t.translate_expr(precondition.as_onestate_formula(0), old=True)))
+    #         wp_valid_solver.add(z3.Implies(x, t.translate_expr(precondition.as_onestate_formula(0), index=0)))
     #         precondition_indicators[precondition] = x
     #     return precondition_indicators[precondition]
     # transition_indicators = []
     # for i, trans in enumerate(prog.transitions()):
     #     transition_indicators.append(z3.Bool(f'@transition_{i}'))
-    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+    #     wp_valid_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
     # wp_checked_valid: Set[Tuple[Optional[PDState], SubclausesMap, Tuple[int,...]]] = set()
     # def wp_valid(mp: SubclausesMap, s: Set[int]) -> bool:
     #     # return True iff wp(clause) is implied by init and valid in all states
@@ -2969,7 +3020,7 @@ def forward_explore_marco(solver: Solver,
     #             else:
     #                 z3model = wp_valid_solver.model(indicators)
     #                 # assert all(not z3.is_false(z3model.eval(x)) for x in indicators), (indicators, z3model)
-    #                 prestate = Trace.from_z3([KEY_OLD], z3model)
+    #                 prestate = Trace.from_z3((KEY_OLD,), z3model)
     #                 poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3model)
     #                 _cache_transitions.append((prestate, poststate))
     #                 print(f'{"init" if precondition is None else "state"} violates WP of {mp.to_clause(s)}')
@@ -2988,7 +3039,7 @@ def forward_explore_marco(solver: Solver,
     #         wp_valid_solver.add(z3.Or(*(z3.Not(x) for x in indicators)))
     #         wp_valid_solver.add(z3.Implies(
     #             precondition_indicator(precondition),
-    #             t.translate_expr(mp.to_clause(s))
+    #             t.translate_expr(mp.to_clause(s), index=1)
     #         ))
 
     #     return True
@@ -3143,11 +3194,12 @@ def forward_explore(s: Solver,
 
         # check for 1 transition from an initial state or a state in states
         preconditions = chain(
-            (s for s in states if len(s.keys) == 1), # discovered initial states
+            (s for s in states if s.num_states == 1), # discovered initial states
             [None], # general initial state
-            (s for s in states if len(s.keys) > 1) # discovered non-initial states
+            (s for s in states if s.num_states > 1) # discovered non-initial states
         )
-        label = lambda s: 'init' if s is None else 'initial state' if len(s.keys) == 1 else 'state'
+        def label(s: Optional[PDState]) -> str:
+            return 'init' if s is None else 'initial state' if s.num_states == 1 else 'state'
         for precondition, p in product(preconditions, a):
             # print(f'Checking if {label(precondition)} satisfies WP of {p}... ',end='')
             res = check_two_state_implication(
@@ -3178,9 +3230,9 @@ def forward_explore(s: Solver,
 
         # check for k-transition from an initial state or a state in states
         preconditions = chain(
-            (s for s in states if len(s.keys) == 1), # discovered initial states
+            (s for s in states if s.num_states == 1), # discovered initial states
             [None], # general initial state
-            (s for s in states if len(s.keys) > 1) # discovered non-initial states
+            (s for s in states if s.num_states > 1) # discovered non-initial states
         )
         for k, precondition, p in product(range(2, utils.args.unroll_to_depth + 1), preconditions, a):
             print(f'Checking if {label(precondition)} satisfies WP_{k} of {p}... ',end='')
@@ -3341,7 +3393,7 @@ def repeated_houdini(s: Solver) -> str:
         else:
             new_clauses = []
             for m in unreachable:
-                cs = as_clauses(Not(m.as_diagram(0).to_ast()))
+                cs = as_clauses(Not(Diagram(m.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
                 if c not in clauses:
@@ -3398,7 +3450,7 @@ def repeated_houdini_bounds(solver: Solver) -> str:
                 substructure.append((j, i))
             if is_substructure(t, s):
                 substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
         assert len(cs) == 1
         c = cs[0]
         maps.append(SubclausesMapTurbo(c, states, predicates_of_state[i], True))
@@ -3962,7 +4014,7 @@ def cdcl_state_bounds(solver: Solver) -> str:
                     substructure.append((j, i))
                 if is_substructure(t, s):
                     substructure.append((i, j))
-            cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+            cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
             assert len(cs) == 1
             c = cs[0]
             maps.append(SubclausesMapTurbo(c, states, [], True))
@@ -4579,7 +4631,7 @@ def cdcl_predicate_bounds(solver: Solver) -> str:
                 substructure.append((j, i))
             if is_substructure(t, s):
                 substructure.append((i, j))
-        cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+        cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
         assert len(cs) == 1
         c = cs[0]
         maps.append(SubclausesMapTurbo(c, states, [], True))
@@ -5027,8 +5079,8 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting primal_dual_houdini\n')
 
-    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # must be in CNF for
-    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # must be in CNF for use in eval_in_state
+    safety = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs() if inv.is_safety))) # conver to CNF
+    inits = tuple(chain(*(as_clauses(init.expr) for init in prog.inits()))) # convert to CNF
     init_ps = [And(*inits)] # to be used with MultiSubclausesMapICE
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
@@ -5054,6 +5106,11 @@ def primal_dual_houdini(solver: Solver) -> str:
     dual_frames: List[List[int]] = [] # ints are indicites into states
     # TODO: daul_step_frames?
 
+    human_invariant = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs()))) # convert to CNF
+    human_invariant_to_predicate: Dict[int,int] = dict() # dict mapping index of human_invariant to index of predicates
+    human_invariant_proved: Set[int] = set() # indices into human_invariant that are implied by the current inductive_invariant
+    human_invariant_implies: Set[int] = set() # indices into predicates of predicates that are implied by the human invariant
+
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
 
     def add_state(s: PDState, internal_cti: bool) -> int:
@@ -5062,7 +5119,7 @@ def primal_dual_houdini(solver: Solver) -> str:
         #production# assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         note = ' (internal cti)' if internal_cti else ' (live state)'
         if s not in states:
-            print(f'[{datetime.now()}] add_state{note}: checking for substructures... ', end='')
+            print(f'[{datetime.now()}] add_state{note}: checking for substructures... ')
             work = list(chain(
                 ((s, t) for t in states),
                 ((t, s) for t in states),
@@ -5107,7 +5164,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     substructure.append((i, j))
                 for j in sorted(superstructures):
                     substructure.append((j, i))
-                cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+                cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
                 maps.append(MultiSubclausesMapICE([c], states, init_ps))
@@ -5150,6 +5207,8 @@ def primal_dual_houdini(solver: Solver) -> str:
     def _add_predicate(p: Predicate) -> int:
         nonlocal predicates
         nonlocal live_predicates
+        nonlocal human_invariant_to_predicate
+        nonlocal human_invariant_implies
         # nonlocal reason_for_predicate
         if p not in predicates:
             for j, q in enumerate(predicates):
@@ -5162,6 +5221,17 @@ def primal_dual_houdini(solver: Solver) -> str:
                 j = len(predicates)
                 print(f'[{datetime.now()}] add_predicate: adding new predicate {j}: {p}')
                 predicates.append(p)
+                if cheap_check_implication(human_invariant, [p]):
+                    human_invariant_implies.add(j)
+                    for i, q in enumerate(human_invariant):
+                        if cheap_check_implication([p], [q]) and cheap_check_implication([q], [p]):
+                            print(f'[{datetime.now()}] add_predicate: equivalent to human invariant predicate {i}: {p} <=> {q}')
+                            assert i not in human_invariant_to_predicate
+                            human_invariant_to_predicate[i] = j
+                            break
+                    else:
+                        print(f'[{datetime.now()}] add_predicate: implied by human invariant: => {p}')
+
         else:
             j = predicates.index(p)
             if j in live_predicates:
@@ -5802,6 +5872,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 states,
                 init_ps,
             )
+            n_literals = sum(mp.n)
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
                 s = frozenset(s) | reachable
                 res = mp.separate(
@@ -5819,7 +5890,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             # set up a cti_solver for fast and greedy discovery of ctis (alternative to check_dual_edge)
             # TODO: share this across different worklist items
             cti_solver = Solver() # TODO: maybe solver per transition
-            t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
+            t = cti_solver.get_translator(2)
             lit_indicators_pre =[[z3.Bool(f'@lit_pre_{k}_{i}') for i in range(mp.n[k])] for k in range(mp.m)]
             lit_indicators_post =[[z3.Bool(f'@lit_post_{k}_{i}') for i in range(mp.n[k])] for k in range(mp.m)]
             q_indicators_post = [z3.Bool(f'@q_post_{k}') for k in range(mp.m)]
@@ -5840,7 +5911,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 with (t.scope.in_scope(top_clause.binder, bs)
                       if isinstance(top_clause, QuantifierExpr) else nullcontext()):
                     body = z3.Or(*(
-                        z3.And(z3.Not(lit_indicators_pre[k][i]), t.translate_expr(lit, old=True)) # NB: polarity
+                        z3.And(z3.Not(lit_indicators_pre[k][i]), t.translate_expr(lit)) # NB: polarity
                         for i, lit in enumerate(mp.literals[k])
                     ))
                 e = z3.ForAll(bs, body) if len(bs) > 0 else body
@@ -5849,7 +5920,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 with (t.scope.in_scope(top_clause.binder, bs)
                       if isinstance(top_clause, QuantifierExpr) else nullcontext()):
                     body = z3.Or(*(
-                        z3.And(lit_indicators_post[k][i], t.translate_expr(lit, old=False))
+                        z3.And(lit_indicators_post[k][i], t.translate_expr(New(lit)))
                         for i, lit in enumerate(mp.literals[k])
                     ))
                 e = z3.ForAll(bs, body) if len(bs) > 0 else body
@@ -5858,14 +5929,14 @@ def primal_dual_houdini(solver: Solver) -> str:
             transition_indicators: List[z3.ExprRef] = []
             for i, trans in enumerate(prog.transitions()):
                 transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+                cti_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
             p_indicators: List[z3.ExprRef] = []
             def cti_solver_add_p(p: Predicate) -> None:
                 i = len(p_indicators)
                 assert ps[i] == p
                 p_indicators.append(z3.Bool(f'@p_{i}'))
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
-                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
+                cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(New(p))))
             for p in ps:
                 cti_solver_add_p(p)
             def add_p(p: Predicate) -> None:
@@ -5900,9 +5971,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                                 print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): adding extra: {extra}')
                                 indicators += (extra,)
                         assert cti_solver.check(indicators) == z3.sat
-                    z3model = cti_solver.model(indicators)
-                    prestate = Trace.from_z3([KEY_OLD], z3model)
-                    poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                    prestate, poststate = unpack_cti(cti_solver.model(indicators))
                     print(f'[{datetime.now()}] [PID={os.getpid()}] check_q (find_dual_edge): found new cti violating dual edge')
                     _cache_transitions.append((prestate, poststate))
                     for state in (prestate, poststate):
@@ -6003,7 +6072,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     if _cti is None:
                         assert _ps is not None
                         _qs = tuple(q)
-                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+                        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_literals={n_literals}, n_ctis={n_ctis}, found=True, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
                         print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new dual edge ({len(_ps)} predicates --> {len(_qs)} predicates):')
                         for p in _ps:
                             print(f'  {p}')
@@ -6086,7 +6155,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         new_goals = goals + (g,)
                         worklist.append(new_goals)
                 break
-        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_ctis={n_ctis}, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
+        print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: n_literals={n_literals}, n_ctis={n_ctis}, found=False, learned {len(internal_ctis) - n_internal_ctis} new internal ctis and {len(reachable) - n_reachable} new reachable states')
         if len(worklist) == 0:
             print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: no more worklist items, so cannot find dual edge')
         else:
@@ -6131,29 +6200,29 @@ def primal_dual_houdini(solver: Solver) -> str:
                         changes = True
             return x
         cti_solver = Solver() # TODO: maybe solver per transition
-        t = cti_solver.get_translator(KEY_NEW, KEY_OLD)
+        t = cti_solver.get_translator(2)
         q_indicators_pre = tuple(z3.Bool(f'@q_pre_{i}') for i in range(n)) # NB: polarity
         q_indicators_post = tuple(z3.Bool(f'@q_post_{i}') for i in range(n)) # NB: polarity
         # there is some craziness here about mixing a mypyvy clause with z3 indicator variables
         # add the cube defined by q_indicators_pre to the prestate
         for indicator, q in zip(q_indicators_pre, qs):
-            cti_solver.add(z3.Implies(indicator, t.translate_expr(q, old=True))) # NB: polarity
+            cti_solver.add(z3.Implies(indicator, t.translate_expr(q))) # NB: polarity
         # each q_indicator implies q has to be violated in the poststate
         for indicator, q in zip(q_indicators_post, qs):
-            cti_solver.add(z3.Implies(indicator, z3.Not(t.translate_expr(q, old=False)))) # NB: polarity
+            cti_solver.add(z3.Implies(indicator, z3.Not(t.translate_expr(New(q))))) # NB: polarity
         # add transition indicators
         transition_indicators: List[z3.ExprRef] = []
         for i, trans in enumerate(prog.transitions()):
             transition_indicators.append(z3.Bool(f'@transition_{i}_{trans.name}'))
-            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_transition(trans)))
+            cti_solver.add(z3.Implies(transition_indicators[i], t.translate_expr(trans.as_twostate_formula(prog.scope))))
         p_indicators: List[z3.ExprRef] = []
         def add_p(p: Predicate) -> None:
             assert len(p_indicators) == len(ps)
             i = len(ps)
             ps.append(p)
             p_indicators.append(z3.Bool(f'@p_{i}'))
-            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=True)))
-            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p, old=False)))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(p)))
+            cti_solver.add(z3.Implies(p_indicators[i], t.translate_expr(New(p))))
         def check_qs(qs_seed: FrozenSet[int], ps_seed: FrozenSet[int], optimize: bool = True) -> Optional[Tuple[PDState, PDState]]:
             for q_post_i, transition_indicator in product(sorted(qs_seed), transition_indicators):
                 q_indicator = q_indicators_post[q_post_i]
@@ -6183,9 +6252,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                             indicators += (extra,)
                     z3res = cti_solver.check(indicators) # note, this check is important, not just an assertion
                     assert z3res == z3.sat
-                z3model = cti_solver.model(indicators)
-                prestate = Trace.from_z3([KEY_OLD], z3model)
-                poststate = Trace.from_z3([KEY_NEW], z3model) # TODO: is this ok?
+                prestate, poststate = unpack_cti(cti_solver.model(indicators))
                 print(f'[{datetime.now()}] check_qs: found new cti violating dual edge')
                 _cache_transitions.append((prestate, poststate))
                 for state in (prestate, poststate):
@@ -6275,7 +6342,9 @@ def primal_dual_houdini(solver: Solver) -> str:
             # TODO: use unsat cores
             soft_neg = ctis - pos
             for i in sorted(ctis - pos):
-               if i in ctis and len(find_fixpoint(ctis - {i})) == 0 is None:
+               # if i in ctis and len(find_fixpoint(ctis - {i})) == 0 is None:  # TODO(jrw): this line makes no sense; it compares `0 is None` to an int...
+               # oded: I fixed it, but haven't tested it and it seems before this if was never taken, so it may be buggy
+               if i in ctis and len(find_fixpoint(ctis - {i})) == 0:  # TODO(jrw): this line makes no sense; it compares `0 is None` to an int...
                    ctis -= {i}
             #production# assert len(find_fixpoint(ctis)) == 0
             to_eliminate = ctis - pos
@@ -6363,9 +6432,70 @@ def primal_dual_houdini(solver: Solver) -> str:
         )
         assert len(internal_ctis & reachable) == 0
 
+    def print_status_and_check_termination() -> Optional[str]:
+        nonlocal human_invariant_proved
+        # print status
+        print(f'\n[{datetime.now()}] Current states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
+        for i in sorted(live_states | internal_ctis):
+            notes: List[str] = []
+            if i in live_states:
+                notes.append('live')
+            if i in reachable:
+                notes.append('reachable')
+            if i in internal_ctis:
+                notes.append('internal_cti')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
+        print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
+        for i, j, label in sorted(chain(
+                ((i, j, 'transition') for i, j in transitions),
+                ((i, j, 'substructure') for i, j in substructure),
+        )):
+            print(f'  {i:3} -> {j:3} ({label})')
+        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven, {len(live_predicates & human_invariant_implies)} implied by human invariant):')
+        for i in sorted(live_predicates):
+            max_frame = max((j for j, f in enumerate(frames) if predicates[i] in f), default=-1)
+            #production# assert max_frame < len(frames) - 1 or i in inductive_invariant
+            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
+            max_frame = max((j for j, f in enumerate(step_frames) if predicates[i] in f), default=-1)
+            #production# assert max_frame < len(step_frames) - 1 or i in inductive_invariant
+            if i not in inductive_invariant:
+                note += f' ({max_frame + 1})'
+            if i in human_invariant_implies:
+                note += f' (implied by human invariant)'
+            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
+        print(f'\n[{datetime.now()}] Current dual transitions ({len(dual_transitions)}):')
+        for ii, jj in dual_transitions:
+            print(f'  {sorted(ii)} -> {sorted(jj)}')
+        print()
+        for i, p in enumerate(human_invariant):
+            if i not in human_invariant_proved and len(inductive_invariant) > 0 and cheap_check_implication([predicates[j] for j in sorted(inductive_invariant)], [p]):
+                human_invariant_proved.add(i)
+        print(f'\n[{datetime.now()}] Current human invariant ({len(human_invariant)} total, {len(human_invariant_to_predicate)} learned, {len(human_invariant_proved)} proven):')
+        for i, p in enumerate(human_invariant):
+            notes = []
+            if i in human_invariant_proved:
+                notes.append('proved')
+            if i in human_invariant_to_predicate:
+                notes.append(f'learned as predicates[{human_invariant_to_predicate[i]}]')
+            note = '(' + ', '.join(notes) + ')'
+            print(f'  human_invariant[{i:3}]{note}: {p}')
+        print()
+        # check termination condition
+        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
+            print(f'[{datetime.now()}] Proved safety!')
+            return 'SAFE'
+        for i in reachable:
+            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
+                print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
+                return 'UNSAFE'
+        return None
+
     while True:
         # TODO: add a little BMC
         assert_invariants()
+
+        print(f'[{datetime.now()}] New global iteration')
 
         n_inductive_invariant = len(inductive_invariant)
         n_reachable = len(reachable)
@@ -6381,47 +6511,20 @@ def primal_dual_houdini(solver: Solver) -> str:
         assert_invariants()
 
         # print status and possibly terminate
-        # TODO: output information from dual_frames
-        print(f'\n[{datetime.now()}] Current states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
-        for i in sorted(live_states | internal_ctis):
-            notes: List[str] = []
-            if i in live_states:
-                notes.append('live')
-            if i in reachable:
-                notes.append('reachable')
-            if i in internal_ctis:
-                notes.append('internal_cti')
-            note = '(' + ', '.join(notes) + ')'
-            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
-        for i in reachable:
-            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
-                print(f'\n[{datetime.now()}] Found safety violation by reachable state (states[{i}]).')
-                dump_caches()
-                return 'UNSAFE'
-        print(f'\n[{datetime.now()}] Current transitions ({len(transitions)}) and substructures ({len(substructure)}):')
-        for i, j, label in sorted(chain(
-                ((i, j, 'transition') for i, j in transitions),
-                ((i, j, 'substructure') for i, j in substructure),
-        )):
-            print(f'  {i:3} -> {j:3} ({label})')
-        print(f'\n[{datetime.now()}] Current predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
-        for i in sorted(live_predicates):
-            max_frame = max(j for j, f in enumerate(frames) if predicates[i] in f)
-            #production# assert max_frame < len(frames) - 1 or i in inductive_invariant
-            note = (' (invariant)' if i in inductive_invariant else f' ({max_frame + 1})')
-            max_frame = max(j for j, f in enumerate(step_frames) if predicates[i] in f)
-            #production# assert max_frame < len(step_frames) - 1 or i in inductive_invariant
-            if i not in inductive_invariant:
-                note += f' ({max_frame + 1})'
-            print(f'  predicates[{i:3}]{note}: {predicates[i]}')
-        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
-            print('Proved safety!')
+        result = print_status_and_check_termination()
+        if result is not None:
             dump_caches()
-            return 'SAFE'
-        print()
+            return result
 
-        # try to increase bounds for some states, without discovering
-        # new CTIs, and add new predicates
+        # # if we learned a new inductive invariant or reachable state, "restart"
+        # if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
+        #     print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
+        #     # live_predicates = frozenset(
+        #     #     j for j in sorted(live_predicates)
+        #     #     if j in inductive_invariant or predicates[j] in safety
+        #     # )
+        #     live_states = reachable
+        #     continue
 
         n_predicates = len(predicates)
         n_live_predicates = len(live_predicates)
@@ -6448,50 +6551,35 @@ def primal_dual_houdini(solver: Solver) -> str:
               f'looping\n')
 
         # print status and possibly terminate
-        print(f'\n[{datetime.now()}] After Dual Houdini states ({len(live_states)} live, {len(reachable)} reachable, {len(internal_ctis)} internal_ctis):\n' + '-' * 8)
-        for i in sorted(live_states | internal_ctis):
-            notes = []
-            if i in live_states:
-                notes.append('live')
-            if i in reachable:
-                notes.append('reachable')
-            if i in internal_ctis:
-                notes.append('internal_cti')
-            note = '(' + ', '.join(notes) + ')'
-            print(f'states[{i:3}]{note}:\n{states[i]}\n' + '-' * 80)
-        for i in reachable:
-            if not cheap_check_implication([states[i].as_onestate_formula(0)], safety):
-                print(f'\nFound safety violation by reachable state (states[{i}]).')
-                dump_caches()
-                return 'UNSAFE'
-        print(f'\n[{datetime.now()}] After Dual Houdini transitions ({len(transitions)}) and substructures ({len(substructure)}):')
-        for i, j, label in sorted(chain(
-                ((i, j, 'transition') for i, j in transitions),
-                ((i, j, 'substructure') for i, j in substructure),
-        )):
-            print(f'  {i:3} -> {j:3} ({label})')
-        print(f'\n[{datetime.now()}] After Dual Houdini predicates ({len(live_predicates)} total, {len(inductive_invariant)} proven):')
-        for i in sorted(live_predicates):
-            print(f'  predicates[{i:3}]: {predicates[i]}')
-        if len(inductive_invariant) > 0 and cheap_check_implication([predicates[i] for i in sorted(inductive_invariant)], safety):
-            print('Proved safety!')
+        result = print_status_and_check_termination()
+        if result is not None:
             dump_caches()
-            return 'SAFE'
-        print()
+            return result
+
+        # # if we learned a new inductive invariant or reachable state, "restart"
+        # if len(inductive_invariant) > n_inductive_invariant or len(reachable) > n_reachable:
+        #     print(f'[{datetime.now()}] Restarting due to new reachble or inductive, cleaning up all non-reachable states')
+        #     # live_predicates = frozenset(
+        #     #     j for j in sorted(live_predicates)
+        #     #     if j in inductive_invariant or predicates[j] in safety
+        #     # )
+        #     live_states = reachable
+        #     continue
 
         if not any([
+            # TODO: think about this condition better
             n_predicates != len(predicates),
             n_live_predicates != len(live_predicates),
             n_inductive_invariant != len(inductive_invariant),
-            n_reachable != len(reachable),
-            n_live_states != len(live_states),
-            n_internal_ctis != len(internal_ctis),
+            # n_reachable != len(reachable),
+            # n_live_states != len(live_states),
+            # n_internal_ctis != len(internal_ctis),
         ]):
-            print('Fixed point of induction width reached without a safety proof!')
+            print(f'[{datetime.now()}] Fixed point of induction width reached without a safety proof!')
             dump_caches()
             return 'UNPROVABLE'
 
-# class DualEdgeFinder(object):
+# class DualEdgeFinder:
 #     '''Class used to store a map of subclauses of several clauses, and
 #     obtain a conjunction of subclauses that satisfy positive,
 #     negative, and implication constraints on some given states.
@@ -6576,7 +6664,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 
 #     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
 #         lits = [self.literals[k][i] for i in sorted(s)]
-#         free = set(chain(*(lit.free_ids() for lit in lits)))
+#         free = set(chain(*(free_ids(lit) for lit in lits)))
 #         vs = [v for v in self.variables[k] if v.name in free]
 #         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
@@ -6590,7 +6678,7 @@ Constraint = Union[
     None, # no constraint
 ]
 # a constraint for a set some elements to be there or not, and a constraint for NatInf is an upper bound
-class MonotoneFunction(object):
+class MonotoneFunction:
     '''This class represents information about a monotone function to
     {0,1}. The domain of the function is D_1 x ... x D_n, where each
     D_i is either the powerset domain of some (finite or countably
@@ -6826,7 +6914,7 @@ class MonotoneFunction(object):
 #     # true on A, and then does set cover using z3.
 #     top_clauses: List[Predicate] = []
 #     for s in B:
-#         cs = as_clauses(Not(s.as_diagram(0).to_ast()))
+#         cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
 #         assert len(cs) == 1
 #         c = cs[0]
 #         if c not in top_clauses:
@@ -6996,8 +7084,8 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
 
     def to_clause(s: Set[int]) -> Expr:
         lits = [literals[i] for i in s]
-        free = set(chain(*(lit.free_ids() for lit in lits)))
-        vs = [v for v in variables if v.name in free]
+        free = set(chain(*(free_ids(lit) for lit in lits)))
+        vs = tuple(v for v in variables if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
     def f(s: Set[int]) -> bool:
@@ -7016,7 +7104,7 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
         return to_clause(current)
 
 # This class was made obsolete by SubclausesMapTurbo
-# class SeparabilitySubclausesMap(object):
+# class SeparabilitySubclausesMap:
 #     '''
 #     Class used to store a map of subclauses of a certain clause, and
 #     obtain subclauses that are positive and negative on some given
@@ -7135,12 +7223,12 @@ def minimize_clause(p: Expr, states: Sequence[PDState]) -> Expr:
 
 #     def to_clause(self, s: Iterable[int]) -> Expr:
 #         lits = [self.literals[i] for i in sorted(s)]
-#         free = set(chain(*(lit.free_ids() for lit in lits)))
+#         free = set(chain(*(free_ids(lit) for lit in lits)))
 #         vs = [v for v in self.variables if v.name in free]
 #         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
-class SeparabilityMap(object):
+class SeparabilityMap:
     '''
     Marco map for function sep: 2^states x 2^states -> {0,1}
     0 means they can be separated, 1 means they cannot.
@@ -7157,7 +7245,7 @@ class SeparabilityMap(object):
     def _new_states(self) -> None:
         # create new SubclausesMapTurbo's
         for i in range(len(self.maps), len(self.states)):
-            cs = as_clauses(Not(self.states[i].as_diagram(0).to_ast()))
+            cs = as_clauses(Not(Diagram(self.states[i].as_state(0)).to_ast()))
             assert len(cs) == 1
             c = cs[0]
             self.maps.append(SubclausesMapTurbo(c, self.states, self.predicates))
@@ -7511,7 +7599,7 @@ def cdcl_invariant(solver: Solver) -> str:
             for pos, neg in new_predicates:
                 print(f'\nTrying to separate: pos={sorted(pos)}, neg={sorted(neg)}, ps={sorted(sharp_predicates)}')
                 p = sm.separate(pos, neg, sharp_predicates)
-                if not isinstance(p, Predicate):
+                if isinstance(p, tuple):
                     pos, neg, ps = p
                     print(f'\nLearned new inseparability: pos={sorted(pos)}, neg={sorted(neg)}, ps={sorted(ps)}')
                     inseparabilities.append((pos, neg, ps))
@@ -7640,7 +7728,7 @@ def cdcl_invariant(solver: Solver) -> str:
 # dual algorithm using monotone functions:
 #
 # Primal Dual Algorithm (WIP)
-# class PrimalDualBoundsAlgorithm(object):
+# class PrimalDualBoundsAlgorithm:
 #
 #
 #     '''
@@ -7734,7 +7822,7 @@ def cdcl_invariant(solver: Solver) -> str:
 #             print('-'*80 + '\n' + str(t) + '\n' + '-'*80)
 #             # for debugging:
 #             z3m, _ = res
-#             prestate = Trace.from_z3([KEY_OLD], z3m)
+#             prestate = Trace.from_z3((KEY_OLD,), z3m)
 #             poststate = Trace.from_z3([KEY_NEW, KEY_OLD], z3m)
 #             assert isomorphic_states(self.solver, s, prestate)
 #             assert isomorphic_states(self.solver, t, poststate)
@@ -7756,7 +7844,9 @@ def enumerate_reachable_states(s: Solver) -> None:
     # TODO: this does not use caches at all
     prog = syntax.the_program
     states: List[Trace] = []
-    with s:
+    t1 = s.get_translator(1)
+    t2 = s.get_translator(2)
+    with s.new_frame():
         for sort in prog.sorts():
             b = 2
             # an old hack for paxos that is commented out below
@@ -7765,7 +7855,7 @@ def enumerate_reachable_states(s: Solver) -> None:
             # else:
             #     b = 2
             print(f'bounding {sort} to candinality {b}')
-            s.add(s._sort_cardinality_constraint(sort.to_z3(), b))
+            s.add(s._sort_cardinality_constraint(Z3Translator.sort_to_z3(sort), b))
 
         unknown = False
 
@@ -7775,14 +7865,12 @@ def enumerate_reachable_states(s: Solver) -> None:
             # beyond initial states with 2 of everything). we should
             # collect states by the sizes of their universe
 
-            # s.add(z3.Not(t.translate_expr(m.as_diagram(0).to_ast(), old=False)))
-            s.add(z3.Not(t.translate_expr(m.as_onestate_formula(0), old=False)))
+            s.add(t.translate_expr(New(Not(m.as_onestate_formula(0)), t.num_states - 1)))
 
         print('looking for initial states')
-        with s:
-            t = s.get_translator(KEY_ONE)
+        with s.new_frame():
             for init in prog.inits():
-                s.add(t.translate_expr(init.expr))
+                s.add(t1.translate_expr(init.expr))
             while True:
                 print(f'{len(states)} total states so far')
                 res = s.check()
@@ -7792,26 +7880,24 @@ def enumerate_reachable_states(s: Solver) -> None:
                     unknown = True
                     break
                 else:
-                    m = Trace.from_z3([KEY_ONE], s.model(minimize=False))
+                    m = Z3Translator.model_to_trace(s.model(minimize=False), 1)
                     states.append(m)
-                    block_state(t, m)
+                    block_state(t1, m)
         print(f'done finding initial states! found {len(states)} states')
 
         print('looking for transitions to new states')
-        with s:
-            t = s.get_translator(KEY_NEW, KEY_OLD)
+        with s.new_frame():
             for state in states:
-                block_state(t, m)
+                block_state(t2, m)
 
             worklist = list(product(states, prog.transitions()))
             while len(worklist) > 0:
                 print(f'worklist has length {len(worklist)}')
                 state, ition = worklist.pop()
                 new_states = []
-                with s:
-                    s.add(t.translate_expr(state.as_onestate_formula(0), old=True))
-                    s.add(t.translate_transition(ition))
-
+                with s.new_frame():
+                    s.add(t2.translate_expr(state.as_onestate_formula(0)))
+                    s.add(t2.translate_expr(ition.as_twostate_formula(prog.scope)))
                     while True:
                         res = s.check()
                         if res == z3.unsat:
@@ -7819,13 +7905,12 @@ def enumerate_reachable_states(s: Solver) -> None:
                         elif res == z3.unknown:
                             unknown = True
                             break
-
-                        m = Trace.from_z3([KEY_NEW, KEY_OLD], s.model(minimize=False))
+                        _, m = unpack_cti(s.model(minimize=False), keep_prestate_in_poststate=True)
                         new_states.append(m)
-                        block_state(t, m)
+                        block_state(t2, m)
                 for state in new_states:
                     worklist.extend([(state, x) for x in prog.transitions()])
-                    block_state(t, m)
+                    block_state(t2, m)
                 states.extend(new_states)
                 if len(new_states) > 0:
                     print(f'found {len(new_states)} new states via transition {ition.name}')
@@ -7895,5 +7980,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
         s.add_argument('--all-subclauses',  action=utils.YesNoAction, default=False, help='Add all subclauses of predicates.')
         s.add_argument('--optimize-ctis',  action=utils.YesNoAction, default=True, help='Optimize internal ctis')
         s.add_argument('--domain-independence',  action=utils.YesNoAction, default=True, help='Restrict to domain independent clauses')
+        s.add_argument('--max-quantifiers', type=int, help='Maximal number of quantifiers allowed in the invariant')
+        s.add_argument('--cvc4-minimize-models',  action=utils.YesNoAction, default=True, help='Minimize models when using CVC4')
 
     return result

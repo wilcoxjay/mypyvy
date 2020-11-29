@@ -11,9 +11,10 @@ import sys
 import xml
 import xml.sax
 import xml.sax.saxutils
+import itertools
 
-from typing import List, Optional, Set, Iterable, Generic, Iterator, Tuple, TypeVar, NoReturn, \
-                   Any, Callable, cast, Sequence
+from typing import List, Optional, Set, Iterable, Generic, Iterator, TypeVar, NoReturn, \
+    Any, Callable, cast, Sequence, Tuple, Union
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -21,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 T = TypeVar('T')
 
 class OrderedSet(Generic[T], Iterable[T]):
-    def __init__(self, contents: Optional[Iterable[T]]=None) -> None:
+    def __init__(self, contents: Optional[Iterable[T]] = None) -> None:
         self.l: List[T] = []
         self.s: Set[T] = set()
 
@@ -55,8 +56,18 @@ class OrderedSet(Generic[T], Iterable[T]):
         return self
 
     def __sub__(self, other: Set[T]) -> OrderedSet[T]:
-        res = OrderedSet(self.__iter__())
+        res = OrderedSet(iter(self))
         res.__isub__(other)
+        return res
+
+    def __ior__(self, other: Iterable[T]) -> OrderedSet[T]:
+        for x in other:
+            self.add(x)
+        return self
+
+    def __or__(self, other: Iterable[T]) -> OrderedSet[T]:
+        res = OrderedSet(iter(self))
+        res.__ior__(other)
         return res
 
     def __iter__(self) -> Iterator[T]:
@@ -66,14 +77,13 @@ MySet = OrderedSet
 
 # Dummy class that is not used at run time. Allows us to statically declare and check
 # which options are available.
-class MypyvyArgs(object):
+class MypyvyArgs:
     forbid_parser_rebuild: bool
     log: str
     log_time: bool
     log_xml: bool
     seed: int
-    print_program_repr: bool
-    print_program: bool
+    print_program: Optional[str]
     key_prefix: str
     minimize_models: bool
     timeout: int
@@ -82,18 +92,15 @@ class MypyvyArgs(object):
     error_filename_basename: bool
     query_time: bool
     print_counterexample: bool
+    print_negative_tuples: bool
     print_cmdline: bool
     print_exit_code: bool
+    exit_0: bool
     simplify_diagram: bool
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
-    smoke_test: bool
     smoke_test_solver: bool
-    assert_inductive_trace: bool
     sketch: bool
-    block_may_cexs: bool
-    push_frame_zero: str
-    automaton: Any  # str or bool depending on updr vs. verify
     check_transition: Sequence[str]
     check_invariant: Sequence[str]
     safety: str
@@ -125,43 +132,73 @@ class MypyvyArgs(object):
     checkpoint_in: Optional[str]
     checkpoint_out: Optional[str]
     domain_independence: bool
+    max_quantifiers: Optional[int]
     cvc4: bool
+    cvc4_minimize_models: bool
     query: str
     output: str
-    def main(self, solver: Any) -> None: ...
-    def __contains__(self, key: str) -> bool: ...
+    push: bool
+    decrease_depth: bool
+    forward_depth: int
+    generalization_order: Optional[int]
+    relax: bool
+    relax_backwards: bool
+    relax_forwards: bool
+
+    def main(self, solver: Any) -> None:
+        ...
+
+    def __contains__(self, key: str) -> bool:
+        ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined
 
 Token = ply.lex.LexToken
+Span = Tuple[Token, Token]
+Location = Union[Token, Span]
 def clean_filename(filename: str) -> str:
     if args.error_filename_basename:
         return Path(filename).name
     else:
         return filename
 
-def tok_to_string(tok: Optional[Token]) -> str:
+def loc_to_string(loc: Optional[Location]) -> str:
+    tok = loc[0] if isinstance(loc, tuple) else loc
     return '%s:%s:%s' % (clean_filename(tok.filename), tok.lineno, tok.col) if tok is not None else 'None'
 
+# TODO: reset when syntax.the_program is reset -- even better, move to a Context with Program.
 error_count = 0
 
-def print_error(tok: Optional[Token], msg: str) -> None:
+def print_located_msg(header: str, loc: Optional[Location], msg: str) -> None:
+    loc_str = ' ' + loc_to_string(loc) if loc is not None else ''
+    print('%s%s: %s' % (header, loc_str, msg))
+
+# NOTE(error-reporting)
+# Despite it's benign-sounding name, this function is actually essential to
+# maintaining invariants in mypyvy. The fact that it prints a message to the terminal is actually
+# secondary. It's primary purpose is actually to increment the error_count. For example, the
+# typechecker maintains several invariants of the form "error_count = 0 -> good stuff".
+# See NOTE(typechecking-malformed-programs).
+def print_error(loc: Optional[Location], msg: str) -> None:
     global error_count
     error_count += 1
     if 'json' not in args or not args.json:
-        print('error%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
+        print_located_msg('error', loc, msg)
     if args.exit_on_error:
         exit(1)
 
-def print_error_and_exit(tok: Optional[Token], msg: str) -> NoReturn:
-    print_error(tok, msg)
+def print_error_and_exit(loc: Optional[Location], msg: str) -> NoReturn:
+    print_error(loc, msg)
     exit(1)
 
-def print_warning(tok: Optional[Token], msg: str) -> None:
-    print('warning%s: %s' % (' ' + tok_to_string(tok) if tok is not None else '', msg))
+def print_warning(loc: Optional[Location], msg: str) -> None:
+    print_located_msg('warning', loc, msg)
+
+def print_info(loc: Optional[Location], msg: str) -> None:
+    print_located_msg('info', loc, msg)
 
 
-class MyLogger(object):
+class MyLogger:
     ALWAYS_PRINT = 35
 
     def __init__(self, logger: logging.Logger, start: datetime) -> None:
@@ -174,22 +211,22 @@ class MyLogger(object):
     def isEnabledFor(self, lvl: int) -> bool:
         return self.logger.isEnabledFor(lvl)
 
-    def warning(self, msg: str, end: str='\n') -> None:
+    def warning(self, msg: str, end: str = '\n') -> None:
         self.log(logging.WARNING, msg, end=end)
 
-    def info(self, msg: str, end: str='\n') -> None:
+    def info(self, msg: str, end: str = '\n') -> None:
         self.log(logging.INFO, msg, end=end)
 
-    def debug(self, msg: str, end: str='\n') -> None:
+    def debug(self, msg: str, end: str = '\n') -> None:
         self.log(logging.DEBUG, msg, end=end)
 
-    def always_print(self, msg: str, end: str='\n') -> None:
+    def always_print(self, msg: str, end: str = '\n') -> None:
         self.log(MyLogger.ALWAYS_PRINT, msg, end=end)
 
     def time(self) -> float:
         return (datetime.now() - self.start).total_seconds()
 
-    def log_list(self, lvl: int, msgs: List[str], sep: str='\n', end: str='\n') -> None:
+    def log_list(self, lvl: int, msgs: List[str], sep: str = '\n', end: str = '\n') -> None:
         if args.log_xml:
             n = len(msgs)
             for i, msg in enumerate(msgs):
@@ -197,7 +234,7 @@ class MyLogger(object):
         else:
             self.log(lvl, sep.join(msgs), end=end)
 
-    def log(self, lvl: int, msg: str, end: str='\n') -> None:
+    def log(self, lvl: int, msg: str, end: str = '\n') -> None:
         if self.isEnabledFor(lvl):
             if args.log_xml:
                 msg = xml.sax.saxutils.escape(msg)
@@ -206,11 +243,11 @@ class MyLogger(object):
             else:
                 self.rawlog(lvl, msg, end=end)
 
-    def rawlog(self, lvl: int, msg: str, end: str='\n') -> None:
+    def rawlog(self, lvl: int, msg: str, end: str = '\n') -> None:
         self.logger.log(lvl, msg + end)
 
-class LogTag(object):
-    def __init__(self, logger: MyLogger, name: str, lvl: int=MyLogger.ALWAYS_PRINT, **kwargs: str) -> None:
+class LogTag:
+    def __init__(self, logger: MyLogger, name: str, lvl: int = MyLogger.ALWAYS_PRINT, **kwargs: str) -> None:
         self.logger = logger
         self.name = name
         self.lvl = lvl
@@ -232,7 +269,7 @@ logger = MyLogger(logging.getLogger('mypyvy'), datetime.now())
 
 FuncType = Callable[..., Any]
 F = TypeVar('F', bound=FuncType)
-def log_start_end_time(logger: MyLogger, lvl: int=logging.DEBUG) -> Callable[[F], F]:
+def log_start_end_time(logger: MyLogger, lvl: int = logging.DEBUG) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -245,7 +282,9 @@ def log_start_end_time(logger: MyLogger, lvl: int=logging.DEBUG) -> Callable[[F]
         return cast(F, wrapped)
     return dec
 
-def log_start_end_xml(logger: MyLogger, lvl: int=logging.DEBUG, tag: Optional[str]=None, **attrs: str) -> Callable[[F], F]:
+def log_start_end_xml(
+        logger: MyLogger, lvl: int = logging.DEBUG, tag: Optional[str] = None, **attrs: str
+) -> Callable[[F], F]:
     def dec(func: F) -> F:
         @functools.wraps(func)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -262,15 +301,16 @@ class YesNoAction(argparse.Action):
     https://thisdataguy.com/2017/07/03/no-options-with-argparse-and-python/
     https://stackoverflow.com/questions/9234258/in-python-argparse-is-it-possible-to-have-paired-no-something-something-arg
     '''
-    def __init__(self,
-                 option_strings: List[str],
-                 dest: str,
-                 nargs: Any = None,
-                 const: Any = None,
-                 default: bool = False,
-                 default_description: Optional[str] = None,
-                 help: Optional[str] = None,
-                 **kwargs: Any
+    def __init__(
+            self,
+            option_strings: List[str],
+            dest: str,
+            nargs: Any = None,
+            const: Any = None,
+            default: bool = False,
+            default_description: Optional[str] = None,
+            help: Optional[str] = None,
+            **kwargs: Any
     ) -> None:
         if nargs is not None:
             raise ValueError('nargs not allowed')
@@ -289,7 +329,7 @@ class YesNoAction(argparse.Action):
         self._yes = yes
         self._no = no
 
-    def __call__(self, parser: Any, namespace: Any, values: Any, option_string : Optional[str] = None) -> None:
+    def __call__(self, parser: Any, namespace: Any, values: Any, option_string: Optional[str] = None) -> None:
         assert option_string is not None, 'Cannot use Flag as a positional argument'
         assert option_string in [self._yes, self._no]
         setattr(namespace, self.dest, option_string == self._yes)
@@ -297,4 +337,11 @@ class YesNoAction(argparse.Action):
 def exit(returncode: int) -> NoReturn:
     if args.print_exit_code:
         print(f'mypyvy exiting with status {returncode}')
-    sys.exit(returncode)
+    if args.exit_0:
+        sys.exit(0)
+    else:
+        sys.exit(returncode)
+
+def generator_element(gen: Iterator[T], index: int) -> T:
+    # https://stackoverflow.com/questions/2300756/get-the-nth-item-of-a-generator-in-python
+    return next(itertools.islice(gen, index, None))

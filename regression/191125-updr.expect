@@ -1,0 +1,7 @@
+checking init:
+  implies invariant on line 26... ok.
+frame is safe and inductive. done!
+!(exists A0:A. !R(A0) & S(A0))
+!(exists X:A. T(X) & !R(X))
+updr found inductive invariant!
+mypyvy exiting with status 0

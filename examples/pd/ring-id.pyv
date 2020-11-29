@@ -1,0 +1,55 @@
+sort node
+sort identifier
+
+immutable relation le(identifier, identifier)
+
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation btw(node, node, node) @no_minimize
+immutable function id(node): identifier
+
+axiom [unique_ids] id(N1) = id(N2) -> N1 = N2
+
+axiom btw(W,X,Y) & btw(W,Y,Z) -> btw(W,X,Z)
+axiom btw(W,X,Y) -> !btw(W,Y,X)
+axiom btw(W,X,Y) | btw(W,Y,X) | W=X | W=Y | X=Y
+axiom btw(X,Y,Z) -> btw(Y,Z,X)
+
+mutable relation leader(node)
+mutable relation pending(identifier, node)
+
+init !leader(N)
+init !pending(I, N)
+
+transition send(n: node, next: node)
+  modifies pending
+  (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
+  (forall I, N. new(pending(I, N)) <-> pending(I, N) | I = id(n) & N = next)
+
+transition recv(i: identifier, n: node, next: node)
+  modifies leader, pending
+  (forall Z. n != next & ((Z != n & Z != next) -> btw(n,next,Z))) &
+  pending(i, n) &
+  if i = id(n) then
+    (forall N. new(leader(N)) <-> leader(N) | N = n) &
+    (forall I, N.  # message may or may not be removed, but not forwarded
+        !(I = i & N = n) ->
+        (new(pending(I, N)) <-> pending(I, N)))
+  else
+    (forall N. new(leader(N)) <-> leader(N)) &
+    if le(id(n), i) then
+        (forall I, N.  # message may or may not be removed, and it is forwarded
+            !(I = i & N = n) ->
+            (new(pending(I, N)) <-> pending(I, N) | I = i & N = next))
+    else
+        (forall I, N.  # message may or may not be removed, but not forwarded
+            !(I = i & N = n) ->
+            (new(pending(I, N)) <-> pending(I, N)))
+
+safety [one_leader] leader(L1) & leader(L2) -> L1 = L2
+invariant [leader_max] leader(L) -> le(id(N), id(L))
+invariant [self_pending_highest_id] pending(id(L), L) -> le(id(N), id(L))
+invariant [no_bypass] pending(id(S), D) & btw(S, N, D) -> le(id(N), id(S))

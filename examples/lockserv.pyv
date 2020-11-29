@@ -39,13 +39,13 @@ transition send_lock(n: node)
   modifies lock_msg
 
   # After the modifies clause comes the two-state formula. The 
-  # pre-state is referred to by old(...), while the post-state 
-  # is referred to directly.
+  # pre-state is referred to directly, while the post-state
+  # is referred to by new(...).
   # This line is a verbose and ugly way of saying "insert `n` 
   # into the lock_msg relation". Someday we'll have nice syntax.
   # (Remember that capital variables like `N` are implicitly 
   # universally quantified.)
-  lock_msg(N) <-> old(lock_msg(N)) | N = n
+  new(lock_msg(N)) <-> lock_msg(N) | N = n
 
 # In summary, the above transition means that at any time, any 
 # client can send a lock message to request the lock from the server.
@@ -59,11 +59,11 @@ transition send_lock(n: node)
 # grant message to the client.
 transition recv_lock(n: node)
   modifies lock_msg, server_holds_lock, grant_msg
-  old(server_holds_lock) &
-  old(lock_msg(n)) &
-  !server_holds_lock &
-  (lock_msg(N) <-> old(lock_msg(N)) & N != n) &  # verbose syntax for "remove `n` from lock_msg relation"
-  (grant_msg(N) <-> old(grant_msg(N)) | N = n)   #        ...         "insert `n` into grant_msg relation"
+  server_holds_lock &
+  lock_msg(n) &
+  !new(server_holds_lock) &
+  (new(lock_msg(N)) <-> lock_msg(N) & N != n) &  # verbose syntax for "remove `n` from lock_msg relation"
+  (new(grant_msg(N)) <-> grant_msg(N) | N = n)   #        ...         "insert `n` into grant_msg relation"
 
 
 # The rest of the actions are similar. Remember to be careful to 
@@ -71,21 +71,21 @@ transition recv_lock(n: node)
 
 transition recv_grant(n: node)
   modifies grant_msg, holds_lock
-  old(grant_msg(n)) &
-  (grant_msg(N) <-> old(grant_msg(N)) & N != n) &
-  (holds_lock(N) <-> old(holds_lock(N)) | N = n)
+  grant_msg(n) &
+  (new(grant_msg(N)) <-> grant_msg(N) & N != n) &
+  (new(holds_lock(N)) <-> holds_lock(N) | N = n)
 
 transition unlock(n: node)
   modifies holds_lock, unlock_msg
-  old(holds_lock(n)) &
-  (holds_lock(N) <-> old(holds_lock(N)) & N != n) &
-  (unlock_msg(N) <-> old(unlock_msg(N)) | N = n)
+  holds_lock(n) &
+  (new(holds_lock(N)) <-> holds_lock(N) & N != n) &
+  (new(unlock_msg(N)) <-> unlock_msg(N) | N = n)
 
 transition recv_unlock(n: node)
   modifies unlock_msg, server_holds_lock
-  old(unlock_msg(n)) &
-  (unlock_msg(N) <-> old(unlock_msg(N)) & N != n) &
-  server_holds_lock
+  unlock_msg(n) &
+  (new(unlock_msg(N)) <-> unlock_msg(N) & N != n) &
+  new(server_holds_lock)
 
 # Here is the main safety property. `[mutex]` gives the property a name.
 # It says that at most one client thinks they hold the lock. 
@@ -117,55 +117,12 @@ invariant !(grant_msg(N) & server_holds_lock)
 invariant !(holds_lock(N) & server_holds_lock)
 invariant !(unlock_msg(N) & server_holds_lock)
 
-# Declare a phase automaton structure to prove safety.
-automaton {
-  init phase server  # The initial phase.
-
-  # Adds the given transition to every phase.
-  global
-    safety holds_lock(N1) & holds_lock(N2) -> N1 = N2
-    transition send_lock -> self
-
-  # Now come the phases. Each has a name, and then a sequence of declarations,
-  # consisting of allowed transitions and (partial) characterizations.
-
-  phase server
-    transition recv_lock -> phase grant
-    sketch invariant server_holds_lock
-
-    invariant !grant_msg(X)
-    invariant !holds_lock(X)
-    invariant !unlock_msg(X)
-
-  phase grant
-    transition recv_grant -> phase client
-    sketch invariant grant_msg(X) & grant_msg(Y) -> X = Y
-
-    invariant !server_holds_lock
-    invariant !holds_lock(X)
-    invariant !unlock_msg(X)
-
-  phase client
-    transition unlock -> phase unlock
-    sketch invariant holds_lock(X) & holds_lock(Y) -> X = Y
-
-    invariant !server_holds_lock
-    invariant !grant_msg(X)
-    invariant !unlock_msg(X)
-
-  phase unlock
-    transition recv_unlock -> phase server
-    sketch invariant unlock_msg(X) & unlock_msg(Y) -> X = Y
-
-    invariant !server_holds_lock
-    invariant !grant_msg(X)
-    invariant !holds_lock(X)
-}
-
-
 sat trace {
   any transition
   any transition
   any transition
   assert exists N. holds_lock(N)
+  any transition
+  any transition
+  assert server_holds_lock
 }

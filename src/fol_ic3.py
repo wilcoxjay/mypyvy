@@ -18,12 +18,14 @@ import networkx # type: ignore
 
 import z3
 from async_tools import AsyncConnection, ScopedProcess, ScopedTask, async_race
+from semantics import State
+from translator import Z3Translator
 import utils
 import logic
-from logic import Expr, Solver, Trace, check_implication
+from logic import Diagram, Expr, Solver, Trace, check_implication
 import syntax
-from syntax import BinaryExpr, DefinitionDecl, IfThenElse, Let, NaryExpr, QuantifierExpr, UnaryExpr
-from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, PDState, state_to_model
+from syntax import BinaryExpr, DefinitionDecl, IfThenElse, Let, NaryExpr, New, Not, QuantifierExpr, UnaryExpr
+from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparator, Logic, PrefixConstraints, PrefixSolver
 
@@ -32,31 +34,30 @@ def check_transition(
         old_hyps: Iterable[Expr],
         new_conc: Expr,
         minimize: Optional[bool] = None,
-        timeout: int = 0,
         transition: Optional[DefinitionDecl] = None
 )-> Optional[Trace]:
-    t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
+    t = s.get_translator(2)
     prog = syntax.the_program
     # start = time.time()
-    with s:
+    with s.new_frame():
         for h in old_hyps:
-            s.add(t.translate_expr(h, old=True))
+            s.add(t.translate_expr(h))
 
-        s.add(z3.Not(t.translate_expr(new_conc)))
+        s.add(t.translate_expr(New(Not(new_conc))))
 
         for trans in prog.transitions():
             if transition is not None and trans is not transition:
                 continue
-            with s:
-                s.add(t.translate_transition(trans))
+            with s.new_frame():
+                s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
 
                 # if utils.logger.isEnabledFor(logging.DEBUG):
                 #     utils.logger.debug('assertions')
                 #     utils.logger.debug(str(s.assertions()))
-                res = s.check(timeout=timeout)
+                res = s.check()
                 if res == z3.sat:
                     #print(f"Found model in {time.time() - start:0.3f} sec")
-                    return Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], s.model(minimize=minimize))
+                    return Z3Translator.model_to_trace(s.model(minimize=minimize), 2) # Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], s.model(minimize=minimize))
                 assert res == z3.unsat
     #print(f"Found model in {time.time() - start:0.3f} sec")                    
     return None
@@ -99,24 +100,26 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
     n_transitions = len(list(syntax.the_program.transitions()))
     time_limit = 0.2
     s = Solver(use_cvc4=False)
-    t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
+    t = s.get_translator(2)
+    prog = syntax.the_program
     cvc4 = False
 
     while True:
         for trans in syntax.the_program.transitions():
             if trans.name in unsat_trans: continue
-            with s:
+            with s.new_frame():
                 for h in old_hyps:
-                    s.add(t.translate_expr(h, old=True))
-                s.add(z3.Not(t.translate_expr(new_conc)))
-                s.add(t.translate_transition(trans))
+                    s.add(t.translate_expr(h))
+                s.add(t.translate_expr(New(Not(new_conc))))
+                s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
                 print(f"checking {trans.name} with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec... ", end='')
                 # This will run in a subprocess
                 async def worker(conn: AsyncConnection) -> None:
                     s.use_cvc4 = cvc4 # Works as long as we don't set .use_cvc4 between .check and .model
                     r = s.check()
-                    tr = Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], s.model(minimize=True)) if r == z3.sat else None
-                    if cvc4: s.reset_cvc4_proc()
+                    tr = Z3Translator.model_to_trace(s.model(minimize=True), 2) if r == z3.sat else None
+                    if s.cvc4_proc is not None:
+                        s.cvc4_proc.terminate()
                     await conn.send((r, tr))
                 
                 with ScopedProcess(worker) as conn:
@@ -151,7 +154,7 @@ async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Op
         async def worker(conn: AsyncConnection) -> None:
             s = Solver(use_cvc4=use_cvc4)
             m = check_implication(s, hyps, [conc], minimize=min)
-            await conn.send(Trace.from_z3([logic.KEY_ONE], m) if m is not None else None)
+            await conn.send(Z3Translator.model_to_trace(m, 1) if m is not None else None)
         with ScopedProcess(worker) as conn:
             return await conn.recv()
     return await async_race([check(use_cvc4=False, min=True if minimize else False),
@@ -159,29 +162,28 @@ async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Op
 
 async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int, rationale: str) -> Optional[Expr]:
     print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}", file=x)
-    tr = s._states[state]
-    st = tr[0].as_state(tr[1])
+    st = s._states[state]
     size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
     print(f"Size of state to block {size_summary}", file=x)
     # golden: List[Formula] = []
     f: Optional[Expr] = None
     for inv in syntax.the_program.invs():
-        if s._states[state][0].as_state(s._states[state][1]).eval(inv.expr) == False:
+        if s._states[state].eval(inv.expr) == False:
             cex = await multi_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False)
             print("Possible formula is:", inv.expr, '(relatively inductive)' if cex is None else '(not relatively inductive)', file=x)
             if cex is None:
                 f = inv.expr
     return f
 
-def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, PDState], List[PDState]]) -> bool:
+def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State], List[State]]) -> bool:
     if isinstance(c, Pos):
-        if not eval_predicate(states[c.i], p):
+        if not states[c.i].eval(p):
             return False            
     elif isinstance(c, Neg):
-        if eval_predicate(states[c.i], p):
+        if states[c.i].eval(p):
             return False
     elif isinstance(c, Imp):
-        if eval_predicate(states[c.i], p) and not eval_predicate(states[c.j], p):
+        if states[c.i].eval(p) and not states[c.j].eval(p):
             return False
     return True
 
@@ -191,7 +193,7 @@ class ParallelFolIc3(object):
     def __init__(self) -> None:
         # self._solver = Solver(use_cvc4=utils.args.cvc4)
 
-        self._states: List[PDState] = [] # List of discovered states (excluding some internal cex edges)
+        self._states: List[State] = [] # List of discovered states (excluding some internal cex edges)
         self._initial_states: Set[int] = set() # States satisfying the initial conditions
         self._transitions: Set[Tuple[int, int]] = set() # Set of transitions between states (s,t)
         self._successors: DefaultDict[int, Set[int]] = defaultdict(set) # Successors t of s in s -> t
@@ -271,7 +273,7 @@ class ParallelFolIc3(object):
         self._event_frames.set()
         self._event_frames.clear()
         return i
-    def add_state(self, s: PDState) -> int:
+    def add_state(self, s: State) -> int:
         i = len(self._states)
         self._states.append(s)
         # print(f"State {i} is {s[0].as_state(s[1])}")
@@ -378,8 +380,8 @@ class ParallelFolIc3(object):
                 # Add the blocker and the sucessor state. We need the successor state because
                 # if we show the blocker is reachable, it is actually the successor that invalidates
                 # the predicate and is required to mark it as bad
-                blocker = self.add_state((cex, 0))
-                blocker_successor = self.add_state((cex, 1))
+                blocker = self.add_state(cex.as_state(0))
+                blocker_successor = self.add_state(cex.as_state(1))
                 self.add_transition(blocker, blocker_successor)
                 
                 self._pushing_blocker[index] = blocker
@@ -429,7 +431,7 @@ class ParallelFolIc3(object):
                 self._event_frames.clear()
                 made_changes = True
             else:
-                blocker = self.add_state((cex, 0))
+                blocker = self.add_state(cex.as_state(0))
                 # Unlike pushing, we don't need to add the sucessor state because we don't expect either to
                 # be reachable.
                 # blocker_successor = self.add_state((cex, 1))
@@ -485,12 +487,13 @@ class ParallelFolIc3(object):
             await self._event_frames.wait()  
 
     async def IG2_worker(self, conn: AsyncConnection) -> None:
-        sig = prog_to_sig(syntax.the_program, two_state=False)
+        prog = syntax.the_program
+        sig = prog_to_sig(prog, two_state=False)
         sep = FixedImplicationSeparator(sig, (), PrefixConstraints(), 0, set(), [])
         constraints: Set[Constraint] = set()
         sep_constraints: Set[Constraint] = set()
         mapping: Dict[int, int] = {}
-        states: Dict[int, PDState] = {}
+        states: Dict[int, State] = {}
         while True:
             v = await conn.recv()
             if 'prefix' in v:
@@ -511,7 +514,8 @@ class ParallelFolIc3(object):
                         await conn.send({'unsep': sep_constraints})
                         break
                     
-                    p = formula_to_predicate(sep_r)
+                    with prog.scope.n_states(1):
+                        p = formula_to_predicate(sep_r, prog.scope)
                     # print(f"Internal candidate: {p}")
                     for c in constraints:
                         if c in sep_constraints: continue
@@ -566,7 +570,7 @@ class ParallelFolIc3(object):
             if initial_state is not None:
                 ig_print("Adding initial state")
                 i = len(states)
-                states.append((initial_state, 0))
+                states.append(initial_state.as_state(0))
                 # x = self.add_state((initial_state, 0))
                 # self._initial_states.add(x)
                 return Pos(i)
@@ -580,9 +584,9 @@ class ParallelFolIc3(object):
             if edge is not None:
                 ig_print("Adding edge")
                 a = len(states)
-                states.append((edge, 0))
+                states.append(edge.as_state(0))
                 b = len(states)
-                states.append((edge, 1))
+                states.append(edge.as_state(1))
                 return Imp(a,b)
 
             # print("Found candidate")
@@ -752,9 +756,9 @@ class ParallelFolIc3(object):
 
         # We need to check for a predecessor
         s = self._states[state]
-        formula_to_block = syntax.Not(s[0].as_onestate_formula(s[1])) \
+        formula_to_block = syntax.Not(s.as_onestate_formula()) \
                         if utils.args.logic != "universal" else \
-                        syntax.Not(s[0].as_diagram(s[1]).to_ast())
+                        syntax.Not(Diagram(s).to_ast())
         # We do this in a loop to ensure that if someone concurrently modifies the frames, we still compute a correct
         # predecessor.
         while True:
@@ -768,7 +772,7 @@ class ParallelFolIc3(object):
             self._no_predecessors[state] = fp
             return None
         
-        pred = self.add_state((edge, 0))
+        pred = self.add_state(edge.as_state(0))
         self.add_transition(pred, state)
         self._predecessor_cache[key] = pred
         return pred
@@ -783,7 +787,7 @@ class ParallelFolIc3(object):
         # Mark any predicates as bad that don't satisfy all the reachable states
         for new_r in new:
             print(f"New reachable state: {new_r}")
-            st = self._states[new_r][0].as_state(self._states[new_r][1])
+            st = self._states[new_r]
             for index, p in enumerate(self._predicates):
                 if index not in self._bad_predicates and index not in self._initial_conditions and not st.eval(p):
                     print(f"Marked {p} as bad")
@@ -968,11 +972,11 @@ def fol_extract(solver: Solver) -> None:
                 f.write(f"\n; Conjecture {name}\n")
                 f.write(f"(conjecture {repr(predicate_to_formula(x.expr))})\n")
             names.add(name)
-    if utils.args.logic == 'epr':
-        graph = prog.decls_quantifier_alternation_graph([x.expr for x in prog.invs()] + [syntax.Not(x.expr) for x in prog.invs()])
-        print(f"Is acyclic: {networkx.is_directed_acyclic_graph(graph)}")
-        arg = ','.join(f'{a}->{b}' for (a,b) in graph.edges)
-        print(f"--epr-edges='{arg}'")
+    # if utils.args.logic == 'epr':
+        # graph = prog.decls_quantifier_alternation_graph([x.expr for x in prog.invs()] + [syntax.Not(x.expr) for x in prog.invs()])
+        # print(f"Is acyclic: {networkx.is_directed_acyclic_graph(graph)}")
+        # arg = ','.join(f'{a}->{b}' for (a,b) in graph.edges)
+        # print(f"--epr-edges='{arg}'")
     
     def count_quantifiers(e: Expr) -> int:
         if isinstance(e, QuantifierExpr):

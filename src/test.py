@@ -2,6 +2,7 @@ import unittest
 
 import utils
 import parser
+import typechecker
 import syntax
 import mypyvy
 
@@ -11,6 +12,8 @@ import shlex
 import subprocess
 
 from typing import List
+
+lockserv_path = utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv'
 
 class SyntaxTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -51,22 +54,22 @@ class SyntaxTests(unittest.TestCase):
                     print(syntax.as_clauses(parser.parse_expr(expr)))
 
     def test_as_clauses_lockserv(self) -> None:
-        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(lockserv_path) as f:
             prog = mypyvy.parse_program(f.read())
-        prog.resolve()
+        typechecker.typecheck_program(prog)
         for inv in prog.invs():
             expr = inv.expr
             with self.subTest(expr=expr):
                 syntax.as_clauses(expr)
 
     def test_consistent_hashing(self) -> None:
-        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(lockserv_path) as f:
             prog1 = mypyvy.parse_program(f.read())
-        with open(utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv') as f:
+        with open(lockserv_path) as f:
             prog2 = mypyvy.parse_program(f.read())
 
-        prog1.resolve()
-        prog2.resolve()
+        typechecker.typecheck_program(prog1)
+        typechecker.typecheck_program(prog2)
         for d1, d2 in zip(prog1.decls_containing_exprs(), prog2.decls_containing_exprs()):
             e1 = d1.expr
             e2 = d2.expr
@@ -83,7 +86,7 @@ class SyntaxTests(unittest.TestCase):
             mutable relation active_quorum(quorum)
         '''
         prog = mypyvy.parse_program(minipaxos)
-        prog.resolve()
+        typechecker.typecheck_program(prog)
         node = prog.scope.get_sort('node')
         assert node is not None
         quorum = prog.scope.get_sort('quorum')
@@ -95,32 +98,36 @@ class SyntaxTests(unittest.TestCase):
         guards = {node: active_node, quorum: active_quorum}
 
         e = parser.parse_expr('forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)')
-        e.resolve(prog.scope, None)
+        typechecker.typecheck_expr(prog.scope, e, None)
 
-        expected = parser.parse_expr('forall Q1, Q2. active_quorum(Q1) & active_quorum(Q2) -> exists N. active_node(N) & (member(N, Q1) & member(N, Q2))')
-        expected.resolve(prog.scope, None)
+        expected = parser.parse_expr('forall Q1, Q2. active_quorum(Q1) & active_quorum(Q2) -> '
+                                     'exists N. active_node(N) & (member(N, Q1) & member(N, Q2))')
+        with prog.scope.n_states(1):
+            typechecker.typecheck_expr(prog.scope, expected, None)
 
         self.assertEqual(syntax.relativize_quantifiers(guards, e), expected)
 
     def test_decls_eq(self) -> None:
-        s1 = syntax.SortDecl(None, 'foo', [])
-        s2 = syntax.SortDecl(None, 'foo', [])
+        s1 = syntax.SortDecl('foo')
+        s2 = syntax.SortDecl('foo')
         self.assertEqual(s1, s2)
 
 def build_python_cmd() -> List[str]:
-    python = os.getenv('PYTHON') or 'python3.7'
+    python = os.getenv('PYTHON') or 'python3.8'
     return [python, str((utils.PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
 
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
-        for p in sorted(Path(utils.PROJECT_ROOT / 'examples' / 'regression').glob('*.pyv')):
+        any_tests = False
+        for p in sorted(Path(utils.PROJECT_ROOT / 'regression').glob('*.pyv')):
+            any_tests = True
             with self.subTest(testFile=str(p)):
+                print(f'running regression test {p}')
                 with open(p) as f:
                     line = f.readline()
                 magic_prefix = '# MYPYVY: '
                 assert line.startswith(magic_prefix)
                 line = line[len(magic_prefix):]
-                python = os.getenv('PYTHON') or 'python3.7'
                 out_path = p.with_suffix('.output')
                 expect_path = p.with_suffix('.expect')
                 python_cmd = build_python_cmd() + shlex.split(line) + [str(p)]
@@ -128,8 +135,10 @@ class RegressionTests(unittest.TestCase):
                     proc = subprocess.run(python_cmd, stdout=f_out, stderr=subprocess.STDOUT)
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self.assertEqual(proc.returncode, 0, msg=f'{p} generated output {out_path} which differs from expected output {expect_path}.\n{" ".join(python_cmd)}\n{" ".join(diff_cmd)}')
-
+                msg = f'{p} generated output {out_path} which differs from expected output {expect_path}.\n' \
+                      f'{" ".join(python_cmd)}\n{" ".join(diff_cmd)}'
+                self.assertEqual(proc.returncode, 0, msg=msg)
+        self.assertTrue(any_tests, 'internal error with regression tests: it seems no regression tests exist!')
 
 class MonotoneFunctionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -138,7 +147,7 @@ class MonotoneFunctionTests(unittest.TestCase):
     def test_mononte_function(self) -> None:
         from pd import MonotoneFunction
         elems: List[str] = []
-        mf = MonotoneFunction([(elems,'+')])
+        mf = MonotoneFunction([(elems, '+')])
         with self.assertRaises(Exception): mf[0]  # type: ignore
         with self.assertRaises(Exception): mf[0,]
         with self.assertRaises(Exception): mf[()]

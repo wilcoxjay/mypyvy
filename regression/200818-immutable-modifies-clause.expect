@@ -1,0 +1,3 @@
+error 200818-immutable-modifies-clause.pyv:9:12: Immutable symbols may not appear in a modifies clause (c is immutable)
+program has resolution errors.
+mypyvy exiting with status 1

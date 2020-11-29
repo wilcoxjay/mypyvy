@@ -1,7 +1,9 @@
 
+from typing import Dict, List, Tuple, Iterable
+
 from syntax import *
 from logic import *
-from typing import Dict, List, Tuple, Iterable
+from typechecker import typecheck_expr
 
 try:
     import separators  # type: ignore # TODO: remove this after we find a way for travis to have folseparators
@@ -10,10 +12,8 @@ try:
 except ModuleNotFoundError:
     raise NotImplementedError()
 
-PDState = Tuple[Trace, int]
-
-def eval_predicate(s: PDState, p: Expr) -> bool:
-    r = s[0].as_state(s[1]).eval(p)
+def eval_predicate(s: State, p: Expr) -> bool:
+    r = s.eval(p)
     assert isinstance(r, bool)
     return r
 
@@ -40,8 +40,10 @@ def prog_to_sig(prog: Program, two_state: bool = False) -> separators.logic.Sign
     sig.finalize_sorts()
     return sig
 
-def state_to_model(state: PDState) -> separators.logic.Model:
-    return two_state_trace_to_model(state[0], two_state=False, old_index=state[1])
+def state_to_model(state: State) -> separators.logic.Model:
+    assert state.index is not None
+    return two_state_trace_to_model(state.trace, two_state=False, old_index=state.index)
+
 def two_state_trace_to_model(tr: Trace, two_state:bool = True, old_index:int = 0, new_index:int = 1) -> separators.logic.Model:
     sig = prog_to_sig(syntax.the_program, two_state=two_state)
     M = separators.logic.Model(sig)
@@ -49,14 +51,14 @@ def two_state_trace_to_model(tr: Trace, two_state:bool = True, old_index:int = 0
         for cd, e in x.items():
             res = M.add_constant(cd.name + ('\'' if post_state else ''), e)
             assert res
-    def relations(x: Dict[RelationDecl, List[Tuple[List[str], bool]]], post_state:bool = False) -> None:
+    def relations(x: Dict[RelationDecl, Dict[Tuple[str, ...], bool]], post_state:bool = False) -> None:
         for rd in x:
-            for es, v in x[rd]:
-                M.add_relation(rd.name + ('\'' if post_state else ''), es, True if v else False)
-    def functions(x: Dict[FunctionDecl, List[Tuple[List[str], str]]], post_state:bool = False) -> None:
+            for es, v in x[rd].items():
+                M.add_relation(rd.name + ('\'' if post_state else ''), list(es), True if v else False)
+    def functions(x: Dict[FunctionDecl, Dict[Tuple[str, ...], str]], post_state:bool = False) -> None:
         for fd in x:
-            for es, e in x[fd]:
-                M.add_function(fd.name + ('\'' if post_state else ''), es, e)
+            for es, e in x[fd].items():
+                M.add_function(fd.name + ('\'' if post_state else ''), list(es), e)
 
     for sort in sorted(tr.univs.keys(), key=str):
         for e in tr.univs[sort]:
@@ -214,12 +216,12 @@ def transition_to_formula(trans: DefinitionDecl) -> separators.logic.Formula:
     frame = frame_to_formula(trans.mods)
     return L.And([q2f(trans.binder, False, body), frame])
 
-def formula_to_predicate(f: separators.logic.Formula) -> Expr:
+def formula_to_predicate(f: separators.logic.Formula, scope: Scope) -> Expr:
     def term_to_expr(t: separators.logic.Term) -> Expr:
         if isinstance(t, separators.logic.Var):
-            return Id(None, t.var)
+            return Id(t.var)
         elif isinstance(t, separators.logic.Func):
-            return AppExpr(None, t.f, [term_to_expr(a) for a in t.args])
+            return AppExpr(t.f, tuple(term_to_expr(a) for a in t.args))
         else:
             assert False
     def formula_to_expr(f: separators.logic.Formula) -> Expr:
@@ -237,35 +239,35 @@ def formula_to_predicate(f: separators.logic.Formula) -> Expr:
             return Eq(term_to_expr(f.args[0]), term_to_expr(f.args[1]))
         elif isinstance(f, separators.logic.Relation):
             if len(f.args) == 0:
-                return Id(None, f.rel)
+                return Id(f.rel)
             else:
-                return AppExpr(None, f.rel, [term_to_expr(a) for a in f.args])
+                return AppExpr(f.rel, tuple(term_to_expr(a) for a in f.args))
         elif isinstance(f, separators.logic.Exists):
             body = formula_to_expr(f.f)
-            v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
+            v = SortedVar(f.var, UninterpretedSort(f.sort))
             if isinstance(body, QuantifierExpr) and body.quant == 'EXISTS':
-                return Exists([v] + body.binder.vs, body.body)
+                return Exists((v, *body.binder.vs), body.body)
             else:
-                return Exists([v], body)
+                return Exists((v,), body)
         elif isinstance(f, separators.logic.Forall):
             body = formula_to_expr(f.f)
-            v = SortedVar(None, f.var, UninterpretedSort(None, f.sort))
+            v = SortedVar(f.var, UninterpretedSort(f.sort))
             if isinstance(body, QuantifierExpr) and body.quant == 'FORALL':
-                return Forall([v] + body.binder.vs, body.body)
+                return Forall((v, *body.binder.vs), body.body)
             else:
-                return Forall([v], body)
+                return Forall((v,), body)
         else:
             assert False
 
-    e = formula_to_expr(f)
-    e.resolve(syntax.the_program.scope, BoolSort)
+    e: Expr = formula_to_expr(f)
+    typecheck_expr(scope, e, BoolSort)
     return e
 
-def model_to_state(m: separators.logic.Model) -> PDState:
-    tr = Trace([KEY_ONE])
+def model_to_state(m: separators.logic.Model) -> State:
+    tr = Trace(1)
     prog = syntax.the_program
     for sort in prog.sorts():
-        tr.univs[sort] = list(m.universe(sort.name))
+        tr.univs[sort] = tuple(m.universe(sort.name))
     
     for cdecl in prog.constants():
         c = m.constants[cdecl.name]
@@ -278,15 +280,15 @@ def model_to_state(m: separators.logic.Model) -> PDState:
     for rdecl in prog.relations():
         for args, truth in m.relations[rdecl.name].items():
             if rdecl.mutable:
-                tr.rel_interps[0].setdefault(rdecl,[]).append(([m.names[i] for i in args], truth))
+                tr.rel_interps[0].setdefault(rdecl,{})[tuple(m.names[i] for i in args)] = truth
             else:
-                tr.immut_rel_interps.setdefault(rdecl,[]).append(([m.names[i] for i in args], truth))
+                tr.immut_rel_interps.setdefault(rdecl,{})[tuple(m.names[i] for i in args)] = truth
     
     for fdecl in prog.functions():
         for args, val in m.functions[fdecl.name].items():
             if fdecl.mutable:
-                tr.func_interps[0].setdefault(fdecl,[]).append(([m.names[i] for i in args], m.names[val]))
+                tr.func_interps[0].setdefault(fdecl,{})[tuple(m.names[i] for i in args)] = m.names[val]
             else:
-                tr.immut_func_interps.setdefault(fdecl,[]).append(([m.names[i] for i in args], m.names[val]))
-    return (tr, 0)
+                tr.immut_func_interps.setdefault(fdecl,{})[tuple(m.names[i] for i in args)] = m.names[val]
+    return tr.as_state(0)
 

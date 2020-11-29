@@ -1,0 +1,10 @@
+# MYPYVY: theorem --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+sort t
+
+immutable constant a: t
+
+definition is_a(x: t) = x = a
+
+theorem (forall X:t. is_a(X))  # should not hold
+theorem (forall a:t. is_a(a))  # should not hold, but will hold if macro expansion does not implement lexical scoping
+# we work around this issue by forbidding shadowing of global declarations

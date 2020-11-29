@@ -1,0 +1,67 @@
+sort node
+
+
+mutable relation nrtc(node, node)
+mutable constant h: node
+mutable constant i: node
+mutable constant j: node
+mutable constant null: node
+
+immutable constant x: node
+
+# instantiate dtca(node, nrtc) for init
+init nrtc(X,X)
+init nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+init nrtc(X, Y) & nrtc(Y, X) -> X = Y
+init nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+init X != null -> !nrtc(X, null) & !nrtc(null, X)
+
+# instantiate dtca(node, nrtc) for invariant
+safety nrtc(X,X)
+safety nrtc(X, Y) & nrtc(Y, Z) -> nrtc(X, Z)
+safety nrtc(X, Y) & nrtc(Y, X) -> X = Y
+safety nrtc(X, Y) & nrtc(X, Z) -> nrtc(Y, Z) | nrtc(Z, Y)
+
+# extra things about null that make sense to me
+init nrtc(null, X) -> X=null
+safety nrtc(null, X) -> X=null
+
+# next
+derived relation n(node, node): 
+	n(X,Y) <-> nrtc(X, Y) & (forall Z. nrtc(X, Z) & nrtc(Z, Y) -> (Z = X | Z = Y))
+
+init i = h
+init j = null
+
+transition step()
+  modifies i, j
+  i != x & i != null &
+  new(j) = i &
+  n(i, new(i))
+
+
+derived relation ix:
+	ix <-> i = x
+derived relation xh:
+	xh <-> x = h
+derived relation inull:
+	inull <-> i = null
+derived relation hreachx:
+	hreachx <-> nrtc(h, x)
+derived relation ireachx:
+	ireachx <-> nrtc(i, x)
+derived relation jnx:
+	jnx <-> n(j, x)
+
+# safety !(i != x & i != null) -> (nrtc(h, x) -> i = x)
+# invariant nrtc(h, x) -> nrtc(i, x)
+safety (!ix & !inull) | (!hreachx | ix)
+invariant !hreachx | ireachx
+# both cannot hold together: 
+# invariant !(!hreachx & ireachx)
+
+# safety !(i != x & i != null) -> (!nrtc(h, x) -> i = null)
+# invariant nrtc(h, i)
+
+# safety i = x & x != h -> n(j, x)
+safety !ix | xh | jnx

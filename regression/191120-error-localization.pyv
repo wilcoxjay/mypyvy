@@ -1,0 +1,17 @@
+# MYPYVY: typecheck --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+sort A
+
+mutable relation R(A)
+mutable relation S(A)
+
+onestate definition D1(n: A) =
+  R(n)
+
+onestate definition D2(n: A) =
+  D1(n)
+
+transition baz(n: A)
+  modifies S
+  new(D2(n)) &
+  new(S(n))

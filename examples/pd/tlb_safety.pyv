@@ -91,12 +91,12 @@ init !error
 # i1: active := false   we also havoc writepmap here
 transition initiator1(p:processor, m:pmap)
   modifies active, writepmap, pc
-    & old(pc(p)) = i1
-    & (forall P. active(P) <-> old(active(P)) & P != p)
-    & (forall P. P != p -> writepmap(P) = old(writepmap(P)))
-    & writepmap(p) = m
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i2
+    & pc(p) = i1
+    & (forall P. new(active(P)) <-> active(P) & P != p)
+    & (forall P. P != p -> new(writepmap(P)) = writepmap(P))
+    & new(writepmap(p)) = m
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i2
 
 
 # i2: lock plock(writepmap)
@@ -105,17 +105,17 @@ transition initiator1(p:processor, m:pmap)
 # detect deadlock as non-terminating runs.
 transition initiator2(p:processor)
   modifies pc, plock, todo
-    & old(pc(p)) = i2
-    & if !old(plock(writepmap(p))) then
-        & (forall P. plock(P) <-> old(plock(P)) | P = old(writepmap(p)))
-        & (forall P,X. P != p -> (todo(P,X) <-> old(todo(P,X))))
-        & (forall X. todo(p,X) <-> old(pc(X)) != b1 & p != X)
-        & (forall P. P != p -> pc(P) = old(pc(P)))
-        & pc(p) = i3
+    & pc(p) = i2
+    & if !plock(writepmap(p)) then
+        & (forall P. new(plock(P)) <-> plock(P) | P = writepmap(p))
+        & (forall P,X. P != p -> (new(todo(P,X)) <-> todo(P,X)))
+        & (forall X. new(todo(p,X)) <-> pc(X) != b1 & p != X)
+        & (forall P. P != p -> new(pc(P)) = pc(P))
+        & new(pc(p)) = i3
       else  # nop
-        & (forall P. plock(P) <-> old(plock(P)))
-        & (forall P,X. todo(P,X) <-> old(todo(P,X)))
-        & (forall P. pc(P) = old(pc(P)))
+        & (forall P. new(plock(P)) <-> plock(P))
+        & (forall P,X. new(todo(P,X)) <-> todo(P,X))
+        & (forall P. new(pc(P)) = pc(P))
 
 
 # i3: for cpu != pid
@@ -123,255 +123,255 @@ transition initiator2(p:processor)
 # if todo contains a cpu, it is set in the currentcpu relation and we enter the loop
 transition initiator3(p:processor, cpu:processor)
   modifies currentcpu, todo, pc
-    & old(pc(p)) = i3
-    & old(todo(p, cpu))
-    & (forall P,X. P != p -> (currentcpu(P,X) <-> old(currentcpu(P,X))))
-    & (forall X. currentcpu(p,X) <-> X = cpu)
-    & (forall P,X. todo(P,X) <-> old(todo(P,X)) & !(P = p & X = cpu))
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i4
+    & pc(p) = i3
+    & todo(p, cpu)
+    & (forall P,X. P != p -> (new(currentcpu(P,X)) <-> currentcpu(P,X)))
+    & (forall X. new(currentcpu(p,X)) <-> X = cpu)
+    & (forall P,X. new(todo(P,X)) <-> todo(P,X) & !(P = p & X = cpu))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i4
 
 
 # Otherwise if todo list is empty, we leave the loop
 # and prepare the next for pid != cpu loop.
 transition initiator3exit(p:processor)
   modifies todo, pc
-    & old(pc(p)) = i3
-    & (forall X. !old(todo(p, X)))
-    & (forall P,X. P != p -> (todo(P,X) <-> old(todo(P,X))))
-    & (forall X. todo(p, X) <-> pc(X) != b1 & X != p)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i9
+    & pc(p) = i3
+    & (forall X. !todo(p, X))
+    & (forall P,X. P != p -> (new(todo(P,X)) <-> todo(P,X)))
+    & (forall X. new(todo(p, X)) <-> new(pc(X)) != b1 & X != p)
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i9
 
 # i4:    if userpmap[cpu] = pmap
 transition initiator4(p:processor, cpu:processor)
   modifies pc
-  & old(pc(p)) = i4
-  & old(currentcpu(p, cpu))
-  & (forall P. P != p -> pc(P) = old(pc(P)))
-  & if old(userpmap(cpu)) = old(writepmap(p))
-    then pc(p) = i5
-    else pc(p) = i3
+  & pc(p) = i4
+  & currentcpu(p, cpu)
+  & (forall P. P != p -> new(pc(P)) = pc(P))
+  & if userpmap(cpu) = writepmap(p)
+    then new(pc(p)) = i5
+    else new(pc(p)) = i3
 
 # i5:        lock actionlock[cpu]
 transition initiator5(p:processor, cpu:processor)
   modifies actionlock, pc
-    & old(pc(p)) = i5
-    & old(currentcpu(p, cpu))
-    & if !old(actionlock(cpu))
+    & pc(p) = i5
+    & currentcpu(p, cpu)
+    & if !actionlock(cpu)
       then
-        & (forall C. actionlock(C) <-> old(actionlock(C)) | C = cpu)
-        & (forall P. P != p -> pc(P) = old(pc(P)))
-        & pc(p) = i6
+        & (forall C. new(actionlock(C)) <-> actionlock(C) | C = cpu)
+        & (forall P. P != p -> new(pc(P)) = pc(P))
+        & new(pc(p)) = i6
       else
-        & (forall C. actionlock(C) <-> old(actionlock(C)))
-        & (forall P. pc(P) = old(pc(P)))
+        & (forall C. new(actionlock(C)) <-> actionlock(C))
+        & (forall P. new(pc(P)) = pc(P))
 
 # i6:        actionneeded[cpu] := true
 transition initiator6(p:processor, cpu:processor)
   modifies actionneeded, pc
-    & old(pc(p)) = i6
-    & old(currentcpu(p, cpu))
-    & (forall C. actionneeded(C) <-> old(actionneeded(C)) | C = cpu)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i7
+    & pc(p) = i6
+    & currentcpu(p, cpu)
+    & (forall C. new(actionneeded(C)) <-> actionneeded(C) | C = cpu)
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i7
 
 # i7:        unlock actionlock[cpu]
 transition initiator7(p:processor, cpu:processor)
   modifies error, actionlock, pc
-    & old(pc(p)) = i7
-    & old(currentcpu(p, cpu))
-    & if !old(actionlock(cpu))
-      then error
-      else error = old(error)
-    & (forall C. actionlock(C) <-> old(actionlock(C)) & C != cpu)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i8
+    & pc(p) = i7
+    & currentcpu(p, cpu)
+    & if !actionlock(cpu)
+      then new(error)
+      else new(error) = error
+    & (forall C. new(actionlock(C)) <-> actionlock(C) & C != cpu)
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i8
 
 # i8:        interrupt[cpu] := true
 transition initiator8(p:processor, cpu:processor)
   modifies interrupt, pc
-    & old(pc(p)) = i8
-    & old(currentcpu(p, cpu))
-    & (forall C. interrupt(C) <-> old(interrupt(C)) | C = cpu)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i3
+    & pc(p) = i8
+    & currentcpu(p, cpu)
+    & (forall C. new(interrupt(C)) <-> interrupt(C) | C = cpu)
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i3
 
 # i9: for cpu != pid
 # i10:    wait until !active[cpu] | userpmap[cpu] != writepmap
 transition initiator9(p:processor, cpu:processor)
   modifies todo
-    & old(pc(p)) = i9
-    & old(todo(p, cpu))
-    & if !old(active(cpu)) | old(userpmap(cpu)) != old(writepmap(p))
+    & pc(p) = i9
+    & todo(p, cpu)
+    & if !active(cpu) | userpmap(cpu) != writepmap(p)
       then
-        (forall P,C. todo(P,C) <-> old(todo(P,C)) & !(P = p & C = cpu))
+        (forall P,C. new(todo(P,C)) <-> todo(P,C) & !(P = p & C = cpu))
       else
-        (forall P,C. todo(P,C) <-> old(todo(P,C)))
+        (forall P,C. new(todo(P,C)) <-> todo(P,C))
 
 transition initiator9exit(p:processor)
   modifies pc
-    & old(pc(p)) = i9
-    & (forall X. !old(todo(p, X)))
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i11
+    & pc(p) = i9
+    & (forall X. !todo(p, X))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i11
 
 # i11: entry[pmap] := *
 transition initiator11(p:processor, e:pageentry)
   modifies pentry, pc
-    & old(pc(p)) = i11
-    & (forall P. P != old(writepmap(p)) -> pentry(P) = old(pentry(P)))
-    & pentry(old(writepmap(p))) = e
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i12
+    & pc(p) = i11
+    & (forall P. P != writepmap(p) -> new(pentry(P)) = pentry(P))
+    & (let old_pmap = writepmap(p) in new(pentry(old_pmap)) = e)
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i12
 
 # i12: if (userpmap = pmap)
 # i13:    tlb := entry[pmap]
 transition initiator12(p:processor)
   modifies tlb, pc
-    & old(pc(p)) = i12
-    & (if old(userpmap(p)) = old(writepmap(p))
+    & pc(p) = i12
+    & (if userpmap(p) = writepmap(p)
        then
-         & (forall P. P != p -> tlb(P) = old(tlb(P)))
-         & tlb(p) = old(pentry(writepmap(p)))
+         & (forall P. P != p -> new(tlb(P)) = tlb(P))
+         & new(tlb(p)) = pentry(writepmap(p))
        else
-         (forall P. tlb(P) = old(tlb(P))))
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i14
+         (forall P. new(tlb(P)) = tlb(P)))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i14
 
 # i14: unlock plock[pmap]
 transition initiator14(p:processor)
   modifies error, plock, pc
-    & old(pc(p)) = i14
-    & (if !old(plock(writepmap(p)))
-       then 
-         error
+    & pc(p) = i14
+    & (if !plock(writepmap(p))
+       then
+         new(error)
        else
-         (error <-> old(error)))
-    & (forall P. P != old(writepmap(p)) -> (plock(P) <-> old(plock(P))))
-    & !plock(old(writepmap(p)))
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = i15
+         (new(error) <-> error))
+    & (forall P. P != writepmap(p) -> (new(plock(P)) <-> plock(P)))
+    & (let old_pmap = writepmap(p) in !new(plock(old_pmap)))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i15
 
 # i15: active := true
 transition initiator15(p:processor)
   modifies active, pc
-    & old(pc(p)) = i15
-    & (forall P. P != p -> active(P) = old(active(P)))
-    & active(p)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = m5
+    & pc(p) = i15
+    & (forall P. P != p -> new(active(P)) = active(P))
+    & new(active(p))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = m5
 
 # r1: while actionneeded
 transition responder1(p:processor)
   modifies pc
-    & old(pc(p)) = r1
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = (if old(actionneeded(p)) then r2 else m2)
+    & pc(p) = r1
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = (if actionneeded(p) then r2 else m2)
 
 # r2:   active := false
 transition responder2(p:processor)
   modifies active, pc
-    & old(pc(p)) = r2
-    & (forall P. P != p -> active(P) = old(active(P)))
-    & active(p) = false
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = r3
+    & pc(p) = r2
+    & (forall P. P != p -> new(active(P)) = active(P))
+    & new(active(p)) = false
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = r3
 
 # this must be atomic (bug in original TLB algorithm, see paper)
 # r3:   wait until plock[userpmap] = unlocked
 # r4:   lock actionlock(p)
 transition responder3(p:processor)
   modifies error, actionlock, pc
-    & old(pc(p))=r3
-    & if !old(plock(userpmap(p)))
+    & pc(p)=r3
+    & if !plock(userpmap(p))
       then
-        & (error <-> old(error) | old(actionlock(p)))
-        & (forall P. P != p -> (actionlock(P) <-> old(actionlock(P))))
-        & actionlock(p)
-        & (forall P. P != p -> pc(P) = old(pc(P)))
-        & pc(p) = r5
+        & (new(error) <-> error | actionlock(p))
+        & (forall P. P != p -> (new(actionlock(P)) <-> actionlock(P)))
+        & new(actionlock(p))
+        & (forall P. P != p -> new(pc(P)) = pc(P))
+        & new(pc(p)) = r5
       else
-        & (error <-> old(error))
-        & (forall P. actionlock(P) <-> old(actionlock(P)))
-        & (forall P. pc(P) = old(pc(P)))
+        & (new(error) <-> error)
+        & (forall P. new(actionlock(P)) <-> actionlock(P))
+        & (forall P. new(pc(P)) = pc(P))
 
 # r5:   tlb := entry[userpmap]
 transition responder5(p:processor)
   modifies tlb, pc
-    & old(pc(p)) = r5
-    & (forall P. P != p -> tlb(P) = old(tlb(P)))
-    & tlb(p) = old(pentry(userpmap(p)))
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = r6
+    & pc(p) = r5
+    & (forall P. P != p -> new(tlb(P)) = tlb(P))
+    & new(tlb(p)) = pentry(userpmap(p))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = r6
 
 
 # r6:   actionneeded := false
 transition responder6(p:processor)
   modifies actionneeded, pc
-    & old(pc(p)) = r6
-    & (forall P. P != p -> (actionneeded(P) <-> old(actionneeded(P))))
-    & !actionneeded(p) 
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = r7
+    & pc(p) = r6
+    & (forall P. P != p -> (new(actionneeded(P)) <-> actionneeded(P)))
+    & !new(actionneeded(p))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = r7
 
 # r7:   unlock actionlock
 transition responder7(p:processor)
   modifies error, actionlock, pc
-    & old(pc(p)) = r7
-    & (error <-> old(error) | !old(actionlock(p)))
-    & (forall P. P != p -> (actionlock(P) <-> old(actionlock(P))))
-    & !actionlock(p)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = r8
+    & pc(p) = r7
+    & (new(error) <-> error | !actionlock(p))
+    & (forall P. P != p -> (new(actionlock(P)) <-> actionlock(P)))
+    & !new(actionlock(p))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = r8
 
 # r8:   active := false
 transition responder8(p:processor)
   modifies active, pc
-    & old(pc(p)) = r8
-    & (forall P. P != p -> (active(P) <-> old(active(P))))
-    & active(p)
-    & (forall P. P != p -> pc(P) = old(pc(P)))
-    & pc(p) = r1
+    & pc(p) = r8
+    & (forall P. P != p -> (new(active(P)) <-> active(P)))
+    & new(active(p))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = r1
 
 
 # # m1: while true
 # # m2:    assert tlb = entry[userpmap]
 transition main2(p:processor)
   modifies error, pc
-    & old(pc(p)) = m2
-    & (error <-> old(error) | old(tlb(p) != pentry(userpmap(p))))
-    & (forall P. P != p -> pc(P) = old(pc(P))) 
-    & pc(p) = m3
+    & pc(p) = m2
+    & (new(error) <-> error | tlb(p) != pentry(userpmap(p)))
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = m3
 
 # # m3:    if (*)
 # # m4:        Initiator()
 transition main3a(p:processor)
   modifies pc
-    & old(pc(p)) = m3
-    & (forall P. P != p -> pc(P) = old(pc(P))) 
-    & pc(p) = i1
+    & pc(p) = m3
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = i1
 
 transition main3b(p:processor)
   modifies pc
-    & old(pc(p)) = m3
-    & (forall P. P != p -> pc(P) = old(pc(P))) 
-    & pc(p) = m5
+    & pc(p) = m3
+    & (forall P. P != p -> new(pc(P)) = pc(P))
+    & new(pc(p)) = m5
 
 # # m5:    if (interrupt)
 # # m6:        interrupt := false Responder()
 transition main5(p:processor)
   modifies interrupt, pc
-    & old(pc(p))=m5
-    & if old(interrupt(p))
-      then 
-        & (forall P. interrupt(P) <-> old(interrupt(P)) & P != p)
-        & (forall P. P != p -> pc(P) = old(pc(P))) 
-        & pc(p) = r1
+    & pc(p)=m5
+    & if interrupt(p)
+      then
+        & (forall P. new(interrupt(P)) <-> interrupt(P) & P != p)
+        & (forall P. P != p -> new(pc(P)) = pc(P))
+        & new(pc(p)) = r1
      else
-        & (forall P. interrupt(P) <-> old(interrupt(P)))
-        & (forall P. P != p -> pc(P) = old(pc(P))) 
-        & pc(p) = m2
+        & (forall P. new(interrupt(P)) <-> interrupt(P))
+        & (forall P. P != p -> new(pc(P)) = pc(P))
+        & new(pc(p)) = m2
 
 # # b1: pid := ++n  // create process
 # # b2: atomic userpmap := *
@@ -385,11 +385,11 @@ transition main5(p:processor)
 #   modifies userpmap, tlb, pc
 #     & old(pc(p)) = b1
 #     & !old(plock(m))
-#     & (forall P. P != p -> userpmap(P) = old(userpmap(P))) 
+#     & (forall P. P != p -> userpmap(P) = old(userpmap(P)))
 #     & userpmap(p) = m
-#     & (forall P. P != p -> tlb(P) = old(tlb(P))) 
+#     & (forall P. P != p -> tlb(P) = old(tlb(P)))
 #     & tlb(p) = old(pentry(m))
-#     & (forall P. P != p -> pc(P) = old(pc(P))) 
+#     & (forall P. P != p -> pc(P) = old(pc(P)))
 #     & pc(p) = m2
 
 # show safety
@@ -438,7 +438,9 @@ invariant (pc(P)=i9 | pc(P)=i11) & pc(C) != b1 & userpmap(C) = writepmap(P) -> (
 
 # When the tlb(P) is incorrect actionneded(P) is still set (unless we changed our own tlb, but then
 # we are in i12 where we fix it in the next step)
-invariant pc(P) != b1 & tlb(P) != pentry(userpmap(P)) -> (actionneeded(P) & pc(P)!=r6) | (pc(P)=i12 & userpmap(P) = writepmap(P))
+# invariant pc(P) != b1 & tlb(P) != pentry(userpmap(P)) -> (actionneeded(P) & pc(P)!=r6) | (pc(P)=i12 & userpmap(P) = writepmap(P))
+# rewritten to use function depth 1:
+invariant pc(P) != b1 & M = userpmap(P) & tlb(P) != pentry(M) -> (actionneeded(P) & pc(P)!=r6) | (pc(P)=i12 & M = writepmap(P))
 
 # If we already iterated over a process C in the i3-i8 loop of P and userpmap(C) = writepmap(P) then
 # we set the interrupt flag, so it is still set or C is in the interrupt routine
@@ -446,12 +448,17 @@ invariant (pc(P)=i3) & !todo(P,C) & pc(C) != b1 & userpmap(C) = writepmap(P) -> 
 invariant (pc(P)=i4 | pc(P)=i5 | pc(P)=i6 | pc(P)=i7 | pc(P)=i8) & !todo(P,C) & pc(C) != b1 & !currentcpu(P,C) & userpmap(C) = writepmap(P) -> interrupt(C) | P = C | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3)
 invariant (pc(P)=i9 | pc(P)=i11) & pc(C) != b1 & userpmap(C) = writepmap(P) -> interrupt(C) | P = C | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3)
 # When the tlb(C) is incorrect the process must be interrupted
-invariant tlb(C) != pentry(userpmap(C)) & pc(C) != b1 -> interrupt(C) | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3 | pc(C) = r5) | (pc(C)=i12 & writepmap(C) = userpmap(C))
+# invariant tlb(C) != pentry(userpmap(C)) & pc(C) != b1 -> interrupt(C) | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3 | pc(C) = r5) | (pc(C)=i12 & writepmap(C) = userpmap(C))
+# rewritten to use function depth 1:
+invariant M = userpmap(C) & tlb(C) != pentry(M) & pc(C) != b1 -> interrupt(C) | (pc(C)=r1 | pc(C)=r2 | pc(C)=r3 | pc(C) = r5) | (pc(C)=i12 & writepmap(C) = userpmap(C))
 
 # We wait for a process in the i9 loop at least until it leaves m2 and it cannot enter m2 again before i11
 invariant ((pc(P)=i9 & !todo(P,C)) | pc(P)=i11) & userpmap(C) = writepmap(P) -> pc(C)!=m2
 # When the tlb(C) is incorrect the process is not in m2
-invariant tlb(P) != pentry(userpmap(P)) -> pc(P)!=m2
+# invariant tlb(P) != pentry(userpmap(P)) -> pc(P)!=m2
+# rewritten to use function depth 1:
+invariant M = userpmap(P) & tlb(P) != pentry(M) -> pc(P)!=m2
+
 
 safety !error
 
@@ -461,4 +468,3 @@ safety !error
 # invariant forall P:pmap. !plock(P)
 # invariant forall P:processor. !actionlock(P) & !actionneeded(P) & !interrupt(P) & active(P)
 # invariant !error
-
