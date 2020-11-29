@@ -176,9 +176,21 @@ async def async_race(aws: Iterable[Awaitable[T]]) -> T:
         tasks = list(pending)
 
 class ScopedTasks:
-    def __init__(self, *aws: Awaitable) -> None:
-        self.futs = [asyncio.ensure_future(a) for a in aws]
-    async def __aenter__(self) -> None:
-        return None
+    '''Runs some coroutines in the background and cancels them on exit or cancellation.
+    
+       async with ScopedTasks() as tasks:
+           tasks.add(coro1())
+           tasks.add(coro2())
+           asyncio.sleep(1)
+       # coro1 and coro2 are cancelled if they are still running.
+    
+       Waits for the background tasks to finish their cancellation cleanup before continuing normal
+       control flow.'''
+    def __init__(self) -> None:
+        self.futs: List[asyncio.Future] = []
+    async def __aenter__(self) -> 'ScopedTasks':
+        return self
+    def add(self, *aws: Awaitable) -> None:
+        self.futs.extend(asyncio.ensure_future(a) for a in aws)
     async def __aexit__(self, a: Any, b: Any, c: Any) -> None:
         await _cancel_and_wait_for_cleanup(self.futs)

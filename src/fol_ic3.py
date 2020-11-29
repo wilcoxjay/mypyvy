@@ -715,11 +715,11 @@ class ParallelFolIc3(object):
                 qe = [(sig.sort_indices[x], sig.sort_indices[y]) for (x,y) in itertools.product(sig.sort_names, sig.sort_names) if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
         multiplier = 1
-        handlers = [worker_handler(pc) for pc in pcs * multiplier]
-        handlers.append(frame_updater())
-        handlers.append(logger())
-
-        async with ScopedTasks(*handlers):
+        
+        async with ScopedTasks() as tasks:
+            tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
+            tasks.add(frame_updater())
+            tasks.add(logger())
             return await solution
 
     async def parallel_inductive_generalize2(self, frame: int, state: int, rationale: str = '') -> None:
@@ -893,10 +893,10 @@ class ParallelFolIc3(object):
         self.init()
         await self.push_pull()
         self.print_predicates()
-        hueristics = [self.heuristic_pushing_to_the_top_worker(False), 
-                      self.heuristic_pushing_to_the_top_worker(True),
-                      self.inexpensive_reachability()]
-        async with ScopedTasks(*hueristics):
+        async with ScopedTasks() as hueristics_tasks:
+            hueristics_tasks.add(self.heuristic_pushing_to_the_top_worker(False))
+            hueristics_tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+            hueristics_tasks.add(self.inexpensive_reachability())
             while True:
                 if self.is_complete():
                     break
@@ -931,7 +931,7 @@ def p_fol_ic3(_: Solver) -> None:
         print(f"Hash: unknown")
     
     async def main() -> None:
-        # We need to do this inside a function so that the asnycio objects in the constructor of
+        # We need to do this inside a function so that the asyncio objects in the constructor of
         # p use the same event loop as p.run()
         p = ParallelFolIc3()
         await p.run()
