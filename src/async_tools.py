@@ -67,6 +67,7 @@ async def _write_exactly(write_fd: int, buf: bytes) -> None:
         loop.remove_writer(write_fd)
 
 class AsyncConnection:
+    '''A bidirectional pipe like `multiprocessing.Connection`, but `send` and `recv` are coroutines.'''
     HEADER_FMT = '<Q'
     HEADER_SIZE = struct.calcsize(HEADER_FMT)
     def __init__(self, read: int, write: int) -> None:
@@ -98,9 +99,9 @@ class AsyncConnection:
 class ScopedProcess:
     '''Allows a target function to be run in a `with` statement:
        
-       async def child(): await c.send(os.getpid())
-       with ScopedProcess() as conn:
-           print("Child pid:", await conn.recv())
+           async def child(): await c.send(os.getpid())
+           with ScopedProcess() as conn:
+               print("Child pid:", await conn.recv())
 
        Interacts properly with asyncio and cancellation.'''
     def __init__(self, target: Callable[[AsyncConnection], Union[None, Awaitable[None]]], well_behaved: bool = False):
@@ -178,11 +179,10 @@ async def async_race(aws: Iterable[Awaitable[T]]) -> T:
 class ScopedTasks:
     '''Runs some coroutines in the background and cancels them on exit or cancellation.
     
-       async with ScopedTasks() as tasks:
-           tasks.add(coro1())
-           tasks.add(coro2())
-           asyncio.sleep(1)
-       # coro1 and coro2 are cancelled if they are still running.
+           async with ScopedTasks() as tasks:
+               tasks.add(coro())
+               asyncio.sleep(1)
+           # here coro is cancelled and has finished try/finally blocks
     
        Waits for the background tasks to finish their cancellation cleanup before continuing normal
        control flow.'''

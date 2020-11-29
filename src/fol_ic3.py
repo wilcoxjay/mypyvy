@@ -1,6 +1,6 @@
 
 
-from typing import Any, AnyStr, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import subprocess
