@@ -17,7 +17,7 @@ import typing
 import networkx # type: ignore
 
 import z3
-from async_tools import AsyncConnection, ScopedProcess, ScopedTask, async_race
+from async_tools import AsyncConnection, ScopedProcess, ScopedTasks, async_race
 from semantics import State
 from translator import Z3Translator
 import utils
@@ -719,7 +719,7 @@ class ParallelFolIc3(object):
         handlers.append(frame_updater())
         handlers.append(logger())
 
-        async with ScopedTask(asyncio.gather(*handlers)):
+        async with ScopedTasks(*handlers):
             return await solution
 
     async def parallel_inductive_generalize2(self, frame: int, state: int, rationale: str = '') -> None:
@@ -893,23 +893,15 @@ class ParallelFolIc3(object):
         self.init()
         await self.push_pull()
         self.print_predicates()
-        hueristics = [asyncio.create_task(self.heuristic_pushing_to_the_top_worker(False)), 
-                      asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
-                      # asyncio.create_task(self.heuristic_pushing_to_the_top_worker(True)),
-                      # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
-                      # asyncio.create_task(self.heuristic_pulling_to_the_bottom_worker(False)),
-                      asyncio.create_task(self.inexpensive_reachability())]
-        while True:
-            if self.is_complete():
-                break
-            # We need to block with a new predicate.
-            await self.learn()
-
-        for h in hueristics:
-            h.cancel()
-        for h in hueristics:
-            try: await h
-            except asyncio.CancelledError: pass
+        hueristics = [self.heuristic_pushing_to_the_top_worker(False), 
+                      self.heuristic_pushing_to_the_top_worker(True),
+                      self.inexpensive_reachability()]
+        async with ScopedTasks(*hueristics):
+            while True:
+                if self.is_complete():
+                    break
+                # We need to block with a new predicate.
+                await self.learn()
 
         print(f"Elapsed: {time.time() - self._start_time:0.2f} sec")
         if self.is_program_safe():
@@ -923,9 +915,12 @@ class ParallelFolIc3(object):
             print("Program is UNKNOWN.")
 
 def p_fol_ic3(_: Solver) -> None:
+    # Redirect stdout if we have a log directory
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
+    
+    # Print initial header with command line and git hash
     print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
     print(f"Command line: {' '.join(sys.argv)}")
     try:
@@ -934,8 +929,9 @@ def p_fol_ic3(_: Solver) -> None:
         print(f"Hash: {subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=wd, encoding='utf8').strip()}")
     except (subprocess.CalledProcessError, FileNotFoundError):
         print(f"Hash: unknown")
+    
     async def main() -> None:
-        # We need to do this inside a function so that the events in the constructor of
+        # We need to do this inside a function so that the asnycio objects in the constructor of
         # p use the same event loop as p.run()
         p = ParallelFolIc3()
         await p.run()
