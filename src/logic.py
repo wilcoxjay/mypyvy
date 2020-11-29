@@ -728,48 +728,49 @@ class Solver(object):
                 k += 1
 
         if 'restarts' not in utils.args or not utils.args.restarts:
+            self.z3solver.set(':timeout', timeout)
             res = self.z3solver.check(*assumptions)
-            if res == z3.unknown:
-                print(f'[{datetime.now()}] Solver.check: encountered unknown, printing debug information')
-                print(f'[{datetime.now()}] Solver.check: self.assertions:')
-                for e in self.assertions():
-                    print(e)
-                print(f'[{datetime.now()}] Solver.check: assumptions:')
-                for e in assumptions:
-                    print(e)
-                print(f'[{datetime.now()}] Solver.check: self.z3solver stats:')
-                print(self.z3solver.statistics())
-                print(f'[{datetime.now()}] Solver.check: self.z3solver to_smt2:')
-                print(self.z3solver.to_smt2())
+            # if res == z3.unknown:
+            #     print(f'[{datetime.now()}] Solver.check: encountered unknown, printing debug information')
+            #     print(f'[{datetime.now()}] Solver.check: self.assertions:')
+            #     for e in self.assertions():
+            #         print(e)
+            #     print(f'[{datetime.now()}] Solver.check: assumptions:')
+            #     for e in assumptions:
+            #         print(e)
+            #     print(f'[{datetime.now()}] Solver.check: self.z3solver stats:')
+            #     print(self.z3solver.statistics())
+            #     print(f'[{datetime.now()}] Solver.check: self.z3solver to_smt2:')
+            #     print(self.z3solver.to_smt2())
 
-                print(f'[{datetime.now()}] Solver.check: trying fresh solver')
-                s2 = z3.Solver()
-                lator = self.get_translator()
-                for a in syntax.the_program.axioms():
-                    s2.add(lator.translate_expr(a.expr))
-                for e in self.assertions():
-                    s2.add(e)
+            #     print(f'[{datetime.now()}] Solver.check: trying fresh solver')
+            #     s2 = z3.Solver()
+            #     lator = self.get_translator()
+            #     for a in syntax.the_program.axioms():
+            #         s2.add(lator.translate_expr(a.expr))
+            #     for e in self.assertions():
+            #         s2.add(e)
 
-                print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
-                print(f'[{datetime.now()}] Solver.check: s2 stats:')
-                print(s2.statistics())
-                print(s2.to_smt2())
+            #     print(f'[{datetime.now()}] Solver.check: s2.check()', s2.check(*assumptions))
+            #     print(f'[{datetime.now()}] Solver.check: s2 stats:')
+            #     print(s2.statistics())
+            #     print(s2.to_smt2())
 
-                print(f'[{datetime.now()}] Solver.check: trying fresh context')
-                ctx = z3.Context()
-                s3 = z3.Solver(ctx=ctx)
-                for a in syntax.the_program.axioms():
-                    s3.add(lator.translate_expr(a.expr).translate(ctx))
-                for e in self.assertions():
-                    s3.add(e.translate(ctx))
+            #     print(f'[{datetime.now()}] Solver.check: trying fresh context')
+            #     ctx = z3.Context()
+            #     s3 = z3.Solver(ctx=ctx)
+            #     for a in syntax.the_program.axioms():
+            #         s3.add(lator.translate_expr(a.expr).translate(ctx))
+            #     for e in self.assertions():
+            #         s3.add(e.translate(ctx))
 
-                print(f'[{datetime.now()}] Solver.check: s3.check()', s3.check(*(e.translate(ctx) for e in assumptions)))
-                print(f'[{datetime.now()}] Solver.check: s3 stats:')
-                print(s3.statistics())
-                print(s3.to_smt2())
+            #     print(f'[{datetime.now()}] Solver.check: s3.check()', s3.check(*(e.translate(ctx) for e in assumptions)))
+            #     print(f'[{datetime.now()}] Solver.check: s3 stats:')
+            #     print(s3.statistics())
+            #     print(s3.to_smt2())
 
-            assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
-                                               if res == z3.unknown else None)
+            # assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
+                                            #    if res == z3.unknown else None)
             return res
 
         unit = 600000

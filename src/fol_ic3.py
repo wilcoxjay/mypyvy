@@ -1,7 +1,6 @@
 
-from asyncio.exceptions import CancelledError
-from io import TextIOBase
-from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
+
+from typing import Any, AnyStr, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import subprocess
@@ -93,10 +92,51 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
             os.remove(file)
         else:
             os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle"))
-    
 
 async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
-    pass
+
+    unsat_trans: Set[str] = set()
+    n_transitions = len(list(syntax.the_program.transitions()))
+    time_limit = 0.2
+    s = Solver(use_cvc4=False)
+    t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
+    cvc4 = False
+
+    while True:
+        for trans in syntax.the_program.transitions():
+            if trans.name in unsat_trans: continue
+            with s:
+                for h in old_hyps:
+                    s.add(t.translate_expr(h, old=True))
+                s.add(z3.Not(t.translate_expr(new_conc)))
+                s.add(t.translate_transition(trans))
+                print(f"checking {trans.name} with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec... ", end='')
+                # This will run in a subprocess
+                async def worker(conn: AsyncConnection) -> None:
+                    s.use_cvc4 = cvc4 # Works as long as we don't set .use_cvc4 between .check and .model
+                    r = s.check()
+                    tr = Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], s.model(minimize=True)) if r == z3.sat else None
+                    if cvc4: s.reset_cvc4_proc()
+                    await conn.send((r, tr))
+                
+                with ScopedProcess(worker) as conn:
+                    try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
+                    except asyncio.TimeoutError: (r, tr) = (z3.unknown, None)
+                print(r)
+
+                if r == z3.unsat:
+                    unsat_trans.add(trans.name)
+                elif r == z3.sat:
+                    assert tr is not None
+                    return tr
+        
+        if len(unsat_trans) == n_transitions:
+            return None # We have shown every transition is UNSAT
+        # Every two times through the outer loop, increase timeout
+        if cvc4: time_limit *= 3
+        # Every time through the outer loop, flip from z3 to cvc4
+        cvc4 = not cvc4
+
 
 async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     # graph = syntax.the_program.decls_quantifier_alternation_graph(list(hyps) + [syntax.Not(conc)])
@@ -961,51 +1001,74 @@ def fol_extract(solver: Solver) -> None:
 def fol_learn(solver: Solver) -> None:
     pass
 
-def fol_benchmark_solver(solver: Solver) -> None:
-    pass
-
+def fol_benchmark_solver(_: Solver) -> None:
+    if utils.args.output:
+        sys.stdout = open(utils.args.output, "w")
+    print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
+    (old_hyps, new_conc, minimize, transition_name) = cast(Tuple[List[Expr], Expr, Optional[bool], Optional[str]], pickle.load(open(utils.args.query, 'rb')))
+    if False:
+        print("Trying basic tests...")
+        longest = max(*(len(t.name) for t in syntax.the_program.transitions()))
+        for s in [Solver(use_cvc4=False), Solver(use_cvc4=True)]:
+            print("Solver: cvc4" if s.use_cvc4 else "Solver: z3")
+            if not s.use_cvc4:
+                s.z3solver.set(':mbqi', True)
+            t = s.get_translator(logic.KEY_NEW, logic.KEY_OLD)
+            for transition in syntax.the_program.transitions():
+                with s:
+                    print(f"checking {transition.name: <{longest}}... ", end='', flush=True)
+                    start = time.time()
+                    for h in old_hyps:
+                        s.add(t.translate_expr(h, old=True))
+                    s.add(z3.Not(t.translate_expr(new_conc)))
+                    s.add(t.translate_transition(transition))
+                    res = s.check(timeout=10000)
+                    end = time.time()
+                    print(f"{str(res): <7} {end-start:0.3f}")  
+        
+    if True:
+        start = time.time()
+        r = asyncio.run(robust_check_transition(old_hyps, new_conc))
+        end = time.time()
+        print(f"robust_check_transition: {'UNSAT' if r is None else 'SAT'} in {end-start:0.3f}")
+        
+def epr_edges(s: str) -> List[Tuple[str, str]]:
+    r = []
+    for pair in s.split(','):
+        if pair.split() == '': continue
+        parts = pair.split("->")
+        if len(parts) != 2:
+            raise ValueError("Epr edges must be of the form sort->sort, sort2 -> sort3, ...")
+        r.append((parts[0].strip(), parts[1].strip()))
+    return r
+    
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
-
     result : List[argparse.ArgumentParser] = []
 
     s = subparsers.add_parser('p-fol-ic3', help='Run parallel IC3 inference with folseparators')
     s.set_defaults(main=p_fol_ic3)
+    s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+    s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     result.append(s)
 
     s = subparsers.add_parser('fol-extract', help='Extract conjuncts to a file')
     s.set_defaults(main=fol_extract)
+    s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     result.append(s)
-
 
     s = subparsers.add_parser('fol-learn', help='Learn a given formula')
     s.set_defaults(main=fol_learn)
+    s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+    s.add_argument("--index", dest="index", type=int, default=-1, help="Invariant index")
+    s.add_argument("--inv", dest="inv", type=str, default="", help="Invariant name")
     result.append(s)
 
     s = subparsers.add_parser('fol-benchmark-solver', help='Test SMT solver backend')
     s.set_defaults(main=fol_benchmark_solver)
+    s.add_argument("--query", type=str, help="Query to benchmark")
+    s.add_argument("--output", type=str, help="Output to file")
     result.append(s)
-
-
-    def epr_edges(s: str) -> List[Tuple[str, str]]:
-        r = []
-        for pair in s.split(','):
-            if pair.split() == '': continue
-            parts = pair.split("->")
-            if len(parts) != 2:
-                raise ValueError("Epr edges must be of the form sort->sort, sort2 -> sort3, ...")
-            r.append((parts[0].strip(), parts[1].strip()))
-        return r
-
-    for s in result:
-        # FOL specific options
-        s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
-        s.add_argument("--max-complexity", type=int, default=100, help="Maximum formula complexity")
-        s.add_argument("--max-clauses", type=int, default=100, help="Maximum formula matrix clauses")
-        s.add_argument("--max-depth", type=int, default=100, help="Maximum formula quantifier depth")
-        s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
-        s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Experimental flags")
-        s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
-        s.add_argument("--index", dest="log_dir", type=int, default=-1, help="Invariant index")
-        s.add_argument("--inv", dest="log_dir", type=str, default="", help="Invariant name")
 
     return result

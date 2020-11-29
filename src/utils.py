@@ -126,6 +126,8 @@ class MypyvyArgs(object):
     checkpoint_out: Optional[str]
     domain_independence: bool
     cvc4: bool
+    query: str
+    output: str
     def main(self, solver: Any) -> None: ...
     def __contains__(self, key: str) -> bool: ...
 
