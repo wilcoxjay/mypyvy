@@ -81,82 +81,82 @@ init !done(N)
 
 transition receive_msg_0(n: node, s: node, v: value)
     modifies rcv_msg, rcv_msg_proj
-    & ( !old(done(n)) )
-    & ( old(sent_msg(s,n,v)) )
-    & ( rcv_msg(S, D, V) <-> (old(rcv_msg(S, D, V)) | (S = s & D = n & V = v)) )
-    & ( rcv_msg_proj(S, D) <-> (old(rcv_msg_proj(S, D)) | (S = s & D = n)) )
-    & ( !(exists A. forall N. member_a(N,A) -> rcv_msg_proj(N,n)) )
+    & ( !done(n) )
+    & ( sent_msg(s,n,v) )
+    & ( new(rcv_msg(S, D, V)) <-> (rcv_msg(S, D, V) | (S = s & D = n & V = v)) )
+    & ( new(rcv_msg_proj(S, D)) <-> (rcv_msg_proj(S, D) | (S = s & D = n)) )
+    & ( !(exists A. forall N. member_a(N,A) -> new(rcv_msg_proj(N,n))) )
 
 transition receive_msg_1(n: node, s: node, v: value, u: value, w: value)
     modifies rcv_msg, rcv_msg_proj, dec, und_cons, done
-    & ( !old(done(n)) )
-    & ( old(sent_msg(s,n,v)) )
-    & ( rcv_msg(S, D, V) <-> (old(rcv_msg(S, D, V)) | (S = s & D = n & V = v)) )
-    & ( rcv_msg_proj(S, D) <-> (old(rcv_msg_proj(S, D)) | (S = s & D = n)) )
-    & ( exists A. forall N. member_a(N,A) -> rcv_msg_proj(N,n) )
-    & ( if exists U. exists B. forall N. member_b(N, B) -> rcv_msg(N, n, U) then
-            & ( exists B. forall N. member_b(N, B) -> rcv_msg(N, n, u) )
-	    & ( dec(N, V) <-> (old(dec(N, V)) | (N = n & V = u)) )
+    & ( !done(n) )
+    & ( sent_msg(s,n,v) )
+    & ( new(rcv_msg(S, D, V)) <-> (rcv_msg(S, D, V) | (S = s & D = n & V = v)) )
+    & ( new(rcv_msg_proj(S, D)) <-> (rcv_msg_proj(S, D) | (S = s & D = n)) )
+    & ( exists A. forall N. member_a(N,A) -> new(rcv_msg_proj(N,n)) )
+    & ( if exists U. exists B. forall N. member_b(N, B) -> new(rcv_msg(N, n, U)) then
+            & ( exists B. forall N. member_b(N, B) -> new(rcv_msg(N, n, u)) )
+	    & ( new(dec(N, V)) <-> (dec(N, V) | (N = n & V = u)) )
         else
-	    dec(N, V) <-> old(dec(N, V))
+	    new(dec(N, V)) <-> dec(N, V)
       )
-    & ( exists C. forall N. member_c(N, C) -> rcv_msg(N, n, w) )
-    & ( und_cons(N, V) <-> (old(und_cons(N, V)) | (N = n & V = w) ) )
-    & ( done(N) <-> (old(done(N)) | N = n) )
+    & ( exists C. forall N. member_c(N, C) -> new(rcv_msg(N, n, w)) )
+    & ( new(und_cons(N, V)) <-> (und_cons(N, V) | (N = n & V = w) ) )
+    & ( new(done(N)) <-> (done(N) | N = n) )
 
 transition receive_msg_2(n: node, s: node, v: value, u: value, w: value)
     modifies rcv_msg, rcv_msg_proj, dec, und_cons, done
-    & ( !old(done(n)) )
-    & ( old(sent_msg(s,n,v)) )
-    & ( rcv_msg(S, D, V) <-> (old(rcv_msg(S, D, V)) | (S = s & D = n & V = v)) )
-    & ( rcv_msg_proj(S, D) <-> (old(rcv_msg_proj(S, D)) | (S = s & D = n)) )
-    & ( exists A. forall N. member_a(N,A) -> rcv_msg_proj(N,n) )
-    & ( if exists U. exists B. forall N. member_b(N, B) -> rcv_msg(N, n, U) then
-            & ( exists B. forall N. member_b(N, B) -> rcv_msg(N, n, u) )
-	    & ( dec(N, V) <-> (old(dec(N, V)) | (N = n & V = u)) )
+    & ( !done(n) )
+    & ( sent_msg(s,n,v) )
+    & ( new(rcv_msg(S, D, V)) <-> (rcv_msg(S, D, V) | (S = s & D = n & V = v)) )
+    & ( new(rcv_msg_proj(S, D)) <-> (rcv_msg_proj(S, D) | (S = s & D = n)) )
+    & ( exists A. forall N. member_a(N,A) -> new(rcv_msg_proj(N,n)) )
+    & ( if exists U. exists B. forall N. member_b(N, B) -> new(rcv_msg(N, n, U)) then
+            & ( exists B. forall N. member_b(N, B) -> new(rcv_msg(N, n, u)) )
+	    & ( new(dec(N, V)) <-> (dec(N, V) | (N = n & V = u)) )
         else
-	    dec(N, V) <-> old(dec(N, V))
+	    new(dec(N, V)) <-> dec(N, V)
       )
-    & ( !exists W,C. forall N. member_c(N, C) -> rcv_msg(N, n, W) )
+    & ( !exists W,C. forall N. member_c(N, C) -> new(rcv_msg(N, n, W)) )
     & input(n, w)
-    & ( und_cons(N, V) <-> (old(und_cons(N, V)) | (N = n & V = w) ) )
-    & ( done(N) <-> (old(done(N)) | N = n) )
+    & ( new(und_cons(N, V)) <-> (und_cons(N, V) | (N = n & V = w) ) )
+    & ( new(done(N)) <-> (done(N) | N = n) )
 
 transition receive_msg_3(n: node, s: node, v: value, u: value, w: value)
     modifies rcv_msg, rcv_msg_proj, dec, und_cons, done
-    & ( !old(done(n)) )
-    & ( old(sent_msg(s,n,v)) )
-    & ( rcv_msg(S, D, V) <-> (old(rcv_msg(S, D, V)) | (S = s & D = n & V = v)) )
-    & ( rcv_msg_proj(S, D) <-> (old(rcv_msg_proj(S, D)) | (S = s & D = n)) )
-    & ( exists A. forall N. member_a(N,A) -> rcv_msg_proj(N,n) )
-    & ( if exists U. exists B. forall N. member_b(N, B) -> rcv_msg(N, n, U) then
-            & ( exists B. forall N. member_b(N, B) -> rcv_msg(N, n, u) )
-	    & ( dec(N, V) <-> (old(dec(N, V)) | (N = n & V = u)) )
+    & ( !done(n) )
+    & ( sent_msg(s,n,v) )
+    & ( new(rcv_msg(S, D, V)) <-> (rcv_msg(S, D, V) | (S = s & D = n & V = v)) )
+    & ( new(rcv_msg_proj(S, D)) <-> (rcv_msg_proj(S, D) | (S = s & D = n)) )
+    & ( exists A. forall N. member_a(N,A) -> new(rcv_msg_proj(N,n)) )
+    & ( if exists U. exists B. forall N. member_b(N, B) -> new(rcv_msg(N, n, U)) then
+            & ( exists B. forall N. member_b(N, B) -> new(rcv_msg(N, n, u)) )
+	    & ( new(dec(N, V)) <-> (dec(N, V) | (N = n & V = u)) )
         else
-	    dec(N, V) <-> old(dec(N, V))
+	    new(dec(N, V)) <-> dec(N, V)
       )
     & ( exists U1,U2,C1,C2.
             & U1 != U2
-	    & (forall N. member_c(N, C1) -> rcv_msg(N, n, U1))
-	    & (forall N. member_c(N, C2) -> rcv_msg(N, n, U2))
+	    & (forall N. member_c(N, C1) -> new(rcv_msg(N, n, U1)))
+	    & (forall N. member_c(N, C2) -> new(rcv_msg(N, n, U2)))
       )
     & input(n, w)
-    & ( und_cons(N, V) <-> (old(und_cons(N, V)) | (N = n & V = w) ) )
-    & ( done(N) <-> (old(done(N)) | N = n) )
+    & ( new(und_cons(N, V)) <-> (und_cons(N, V) | (N = n & V = w) ) )
+    & ( new(done(N)) <-> (done(N) | N = n) )
 
 transition underlying_consensus(v:value)
     modifies und_cons_dec
-    & ( forall V. !old(und_cons_dec(V)) ) # from agreement
-    & ( | ( exists N. !member_f(N) & old(und_cons(N, v)) )
+    & ( forall V. !und_cons_dec(V) ) # from agreement
+    & ( | ( exists N. !member_f(N) & und_cons(N, v) )
         | ( exists N1,N2,V1,V2.
 	        & !member_f(N1)
 		& !member_f(N2)
-		& old(und_cons(N1, V1))
-		& old(und_cons(N2, V2))
+		& und_cons(N1, V1)
+		& und_cons(N2, V2)
 		& V1 != V2
 	  )
       )
-    & ( und_cons_dec(V) <-> (old(und_cons_dec(V)) | V = v) )
+    & ( new(und_cons_dec(V)) <-> (und_cons_dec(V) | V = v) )
 
 ################################################################################
 #

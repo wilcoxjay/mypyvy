@@ -57,26 +57,26 @@ transition send_1a(r:round)
   modifies one_a
     # a proposer selects a round and sends a message asking nodes to join the round
     & r != none
-    & (forall R. one_a(R) <-> old(one_a(R)) | R = r)
+    & (forall R. new(one_a(R)) <-> one_a(R) | R = r)
 
 transition join_round(n:node, r:round, m:votemap)
   modifies one_b_msg, left_round, joined_round
     # receive 1a and answer with 1b
     & r != none
-    & old(one_a(r))
-    & !old(left_round(n,r))
+    & one_a(r)
+    & !left_round(n,r)
 
     # find the maximal vote in a round less than r, for all instances
     & (forall I:inst.
-        ( maxr(m,I) = none & forall R,V. !(old(vote(n,I,R,V)) & !le(r,R)) ) |
-        ( old(vote(n,I,maxr(m,I),maxv(m,I))) & !le(r,maxr(m,I)) &
-          forall R,V. old(vote(n,I,R,V)) & !le(r,R) -> le(R,maxr(m,I)) ))
+        ( maxr(m,I) = none & forall R,V. !(vote(n,I,R,V) & !le(r,R)) ) |
+        ( vote(n,I,maxr(m,I),maxv(m,I)) & !le(r,maxr(m,I)) &
+          forall R,V. vote(n,I,R,V) & !le(r,R) -> le(R,maxr(m,I)) ))
 
     # send the 1b message
-    & (forall N, R, M. one_b_msg(N,R,M) <-> old(one_b_msg(N,R,M)) | N = n & R = r & M = m)
+    & (forall N, R, M. new(one_b_msg(N,R,M)) <-> one_b_msg(N,R,M) | N = n & R = r & M = m)
     # update code:
-    & (forall N, R. left_round(N, R) <-> old(left_round(N, R)) | N = n & !le(r, R))
-    & (forall N, R. joined_round(N, R) <-> old(joined_round(N, R)) | N = n & R = r)
+    & (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(r, R))
+    & (forall N, R. new(joined_round(N, R)) <-> joined_round(N, R) | N = n & R = r)
 
 
 
@@ -84,23 +84,23 @@ transition receive_join_acks(r:round, q:quorum, m:votemap, im:inst)
   modifies active, proposal
     # receive a quorum of 1b's, activate round and propose for instances that have choosable values at lower rounds
     & r != none
-    & !old(active(r)) # this happens only once
-    & (forall N:node. member(N, q) -> old(joined_round(N,r)))
+    & !active(r) # this happens only once
+    & (forall N:node. member(N, q) -> joined_round(N,r))
 
     # find the maximal vote in the quorum for each instance, according to votes themselves
     & (forall I:inst. (
         ( maxr(m,I) = none &
-          forall N,R,V. !(member(N, q) & !le(r,R) & old(vote(N,I,R,V))) ) |
-        ( (exists N,R,V.  member(N, q) & !le(r,R) & old(vote(N,I,R,V)) & R = maxr(m,I) & V = maxv(m,I)) &
-          (forall N,R,V.  member(N, q) & !le(r,R) & old(vote(N,I,R,V)) -> le(R,maxr(m,I))) )
+          forall N,R,V. !(member(N, q) & !le(r,R) & vote(N,I,R,V)) ) |
+        ( (exists N,R,V.  member(N, q) & !le(r,R) & vote(N,I,R,V) & R = maxr(m,I) & V = maxv(m,I)) &
+          (forall N,R,V.  member(N, q) & !le(r,R) & vote(N,I,R,V) -> le(R,maxr(m,I))) )
     ))
     # activate round
-    & (forall R. active(R) <-> old(active(R)) | R = r)
+    & (forall R. new(active(R)) <-> active(R) | R = r)
     # propose according to the overapproximating rule
     # check if there are stops
     & if (forall I . !(maxr(m,I) != none & maxv(m,I) = stop)) then
         # if there are no stops, propose according to m
-        forall I, R, V. proposal(I, R, V) <-> old(proposal(I, R, V)) | R = r & maxr(m, I) != none & V = maxv(m, I)
+        forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | R = r & maxr(m, I) != none & V = maxv(m, I)
     else
         # if there are stops, find the stop with the maximal round
         & (
@@ -113,13 +113,13 @@ transition receive_join_acks(r:round, q:quorum, m:votemap, im:inst)
             # proposals at instances greater than im and lower
             # rounds. this is needed to be an overapproximation of
             # Lamport's version.
-            forall I, R, V. proposal(I, R, V) <-> old(proposal(I, R, V)) | (R = r & maxr(m,I) != none & V = maxv(m,I) &
+            forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | (R = r & maxr(m,I) != none & V = maxv(m,I) &
                 !(maxv(m,I) = stop | (!inst_le(I,im) & !le(maxr(m,im),maxr(m,I))))
             )
         else
             # the stop at im is not voided. void all other stops and
             # all proposals at instances larger than im
-            forall I, R, V. proposal(I, R, V) <-> old(proposal(I, R, V)) | (R = r & maxr(m,I) != none & V = maxv(m,I) &
+            forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | (R = r & maxr(m,I) != none & V = maxv(m,I) &
                 !((I != im & maxv(m,I) = stop) | !inst_le(I,im))
             )
 
@@ -128,29 +128,29 @@ transition propose(r:round, i:inst, v:value)
   modifies proposal
     # propose a new arbitrary value an available instance in an active round
     & r != none
-    & old(active(r))
-    & !old(proposal(i, r, V))
-    & !old(!inst_le(i,I) & proposal(I, r, stop))
-    & !old((!inst_le(I,i) & proposal(I,r,V) & v = stop))
-    & (forall I, R, V. proposal(I, R, V) <-> old(proposal(I, R, V)) | I = i & R = r & V = v)
+    & active(r)
+    & !proposal(i, r, V)
+    & !(!inst_le(i,I) & proposal(I, r, stop))
+    & !((!inst_le(I,i) & proposal(I,r,V) & v = stop))
+    & (forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | I = i & R = r & V = v)
 
 transition cast_vote(n:node, v:value, r:round, i:inst)
   modifies vote
     # receive a 2a and send 2b
     & r != none
-    & !old(left_round(n,r))
-    & old(proposal(i, r, v))
-    & (forall N, I, R, V. vote(N, I, R, V) <-> old(vote(N, I, R, V)) | N = n & I = i & R = r & V = v)
+    & !left_round(n,r)
+    & proposal(i, r, v)
+    & (forall N, I, R, V. new(vote(N, I, R, V)) <-> vote(N, I, R, V) | N = n & I = i & R = r & V = v)
 
 
 transition decide(n:node, r:round, v:value, q:quorum, i:inst)
   modifies decision, decision_quorum
     # get 2b from a quorum
     & r != none
-    & (member(N, q) -> old(vote(N, i, r, v)))
-    & (forall N, I, R, V. decision(N, I, R, V) <-> old(decision(N, I, R, V)) | N = n & I = i & R = r & V = v)
-    & (forall I, R, V. !(I = i & R = r & V = v) -> decision_quorum(I, R, V) = old(decision_quorum(I, R, V)))
-    & decision_quorum(i, r, v) = q
+    & (member(N, q) -> vote(N, i, r, v))
+    & (forall N, I, R, V. new(decision(N, I, R, V)) <-> decision(N, I, R, V) | N = n & I = i & R = r & V = v)
+    & (forall I, R, V. !(I = i & R = r & V = v) -> new(decision_quorum(I, R, V)) = decision_quorum(I, R, V))
+    & new(decision_quorum(i, r, v)) = q
 
 
 # safety property 1

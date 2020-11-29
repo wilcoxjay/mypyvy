@@ -10,20 +10,20 @@ init !pending(PS, PD, S, D)
 
 transition new_packet(ps: node, pd: node)
   modifies pending
-  pending(PS, PD, S, D) <-> old(pending(PS, PD, S, D)) | PS = ps & PD = pd & S = ps & D = ps
+  new(pending(PS, PD, S, D)) <-> pending(PS, PD, S, D) | PS = ps & PD = pd & S = ps & D = ps
 
 transition forward(ps: node, pd: node, sw0: node, sw1: node, nondet: node)
   modifies pending, table
-  old(pending(ps, pd, sw0, sw1)) &
+  pending(ps, pd, sw0, sw1) &
   (forall PS,PD,S,D.
-    pending(PS,PD,S,D) <-> old(pending(PS,PD,S,D)) & PS = nondet | (PS = ps & PD = pd & S = sw1)) &
+    new(pending(PS,PD,S,D)) <-> pending(PS,PD,S,D) & PS = nondet | (PS = ps & PD = pd & S = sw1)) &
   (forall T,N1,N2.
-    table(T,N1,N2) <->
-      old(table(T,N1,N2)) |
+    new(table(T,N1,N2)) <->
+      table(T,N1,N2) |
       T = ps & ps != sw1 &
-      (forall W. W != sw1 -> !old(table(T, sw1, W))) &
-      old(table(T, N1, sw1)) &
-      old(table(T, sw0, N2)))
+      (forall W. W != sw1 -> !table(T, sw1, W)) &
+      table(T, N1, sw1) &
+      table(T, sw0, N2))
 
 safety table(T,X,X)
 safety table(T,X,Y) & table(T,Y,Z) -> table(T,X,Z)

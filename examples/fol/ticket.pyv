@@ -28,28 +28,28 @@ definition succ(x: ticket, y:ticket) = (!le(y,x) & forall Z:ticket. !le(Z,x) -> 
 
 transition step12(t:thread)
     modifies pc1, pc2, m, next_ticket
-    & old(pc1(t))
-    & (forall T, K. m(T, K) <-> if T = t then K = old(next_ticket) else old(m(T, K)))
+    & pc1(t)
+    & (forall T, K. new(m(T, K)) <-> if T = t then K = next_ticket else m(T, K))
     #& succ(old(next_ticket), next_ticket)
-    & (!le(next_ticket, old(next_ticket)) & forall Z:ticket. !le(Z, old(next_ticket)) -> le(next_ticket, Z))
-    & (forall T. pc1(T) <-> (old(pc1(T)) & T != t))
-    & (forall T. pc2(T) <-> (old(pc2(T)) | T = t))
+    & (!le(new(next_ticket), next_ticket) & forall Z:ticket. !le(Z, next_ticket) -> le(new(next_ticket), Z))
+    & (forall T. new(pc1(T)) <-> (pc1(T) & T != t))
+    & (forall T. new(pc2(T)) <-> (pc2(T) | T = t))
 
 transition step23(t:thread, k:ticket)
     modifies pc2, pc3
-    & old(pc2(t))
-    & old(m(t,k))
-    & le(k, old(service))
-    & (forall T. pc2(T) <-> (old(pc2(T)) & T != t))
-    & (forall T. pc3(T) <-> (old(pc3(T)) | T = t))
+    & pc2(t)
+    & m(t,k)
+    & le(k, service)
+    & (forall T. new(pc2(T)) <-> (pc2(T) & T != t))
+    & (forall T. new(pc3(T)) <-> (pc3(T) | T = t))
 
 transition step31(t:thread)
     modifies pc3, pc1, service
-    & old(pc3(t))
+    & pc3(t)
     #& succ(old(service), service)
-    & (!le(service, old(service)) & forall Z:ticket. !le(Z, old(service)) -> le(service, Z))
-    & (forall T. pc3(T) <-> (old(pc3(T)) & T != t))
-    & (forall T. pc1(T) <-> (old(pc1(T)) | T = t))
+    & (!le(new(service), service) & forall Z:ticket. !le(Z, service) -> le(new(service), Z))
+    & (forall T. new(pc3(T)) <-> (pc3(T) & T != t))
+    & (forall T. new(pc1(T)) <-> (pc1(T) | T = t))
 
 # safety property
 safety [mutex] pc3(T1) & pc3(T2) -> T1 = T2

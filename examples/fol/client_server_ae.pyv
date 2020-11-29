@@ -22,18 +22,18 @@ init !response_received(N,P)
 
 transition new_request(n:node, r:request)
   modifies request_sent
-  & forall N,R. request_sent(N,R) <-> (old(request_sent(N,R)) | (N = n & R = r))
+  & forall N,R. new(request_sent(N,R)) <-> (request_sent(N,R) | (N = n & R = r))
 
 transition respond(n:node, r:request, p:response)
   modifies response_sent
-  & old(request_sent(n,r))
-  & old(match(r,p))
-  & (forall N,P. response_sent(N,P) <-> (old(response_sent(N,P)) | (N = n & P = p)))
+  & request_sent(n,r)
+  & match(r,p)
+  & (forall N,P. new(response_sent(N,P)) <-> (response_sent(N,P) | (N = n & P = p)))
 
 transition receive_response(n:node, p:response)
   modifies response_received
-  & old(response_sent(n,p))
-  & (forall N,P. response_received(N,P) <-> (old(response_received(N,P)) | (N = n & P = p)))
+  & response_sent(n,p)
+  & (forall N,P. new(response_received(N,P)) <-> (response_received(N,P) | (N = n & P = p)))
 
 
 safety forall N,P. response_received(N,P) -> exists R. request_sent(N,R) & match(R,P)

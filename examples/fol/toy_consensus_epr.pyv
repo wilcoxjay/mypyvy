@@ -15,14 +15,14 @@ init !decided(V)
 
 transition cast_vote(n: node, v: value)
    modifies voted, vote
-   & !old(voted(n))
-   & (vote(N, V) <-> old(vote(N, V)) | N = n & V = v)
-   & (voted(N) <-> old(voted(N)) | N=n)
+   & !voted(n)
+   & (new(vote(N, V)) <-> vote(N, V) | N = n & V = v)
+   & (new(voted(N)) <-> voted(N) | N=n)
 
 transition decide(v: value, q: quorum)
   modifies decided
-  & old(member(N,q) -> vote(N,v))
-  & (decided(V) <-> (old(decided(V)) | V=v))
+  & (member(N,q) -> vote(N,v))
+  & (new(decided(V)) <-> (decided(V) | V=v))
 
 safety decided(V1) & decided(V2) -> V1 = V2
 invariant vote(N,V) -> voted(N)
