@@ -17,18 +17,18 @@ from dataclasses import dataclass
 import dataclasses
 import sexp
 import subprocess
+import random
 from typing import List, Optional, Union, Dict, Sequence, cast
 
 import z3
 
 import utils
 
-CVC4EXEC = str(utils.PROJECT_ROOT / 'script' / 'run_cvc4.sh')
-
+CVC4EXEC = ['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--fs-interleave', '--nl-ext-tplanes', '--produce-models']
 
 def new_cvc4_process() -> subprocess.Popen:
     return subprocess.Popen(
-        [CVC4EXEC],
+        CVC4EXEC + [f'--seed={random.randint(0,1000000000)}'],
         bufsize=1,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -94,6 +94,7 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
 
 
 def cvc4_preprocess(z3str: str) -> str:
+    return '(set-logic UFNIA)\n' + z3str
     lines = ['(set-logic UFNIA)']
     for st in z3str.splitlines():
         st = st.strip()
