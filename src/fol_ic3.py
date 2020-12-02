@@ -1,5 +1,7 @@
 
 
+from asyncio.exceptions import CancelledError
+from asyncio.tasks import wait_for
 from typing import Any, Awaitable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast, Counter as CounterType
 
 import argparse
@@ -12,7 +14,7 @@ import io
 import pickle
 import asyncio
 import itertools
-import inspect
+import signal
 from collections import Counter, defaultdict
 
 import z3
@@ -93,68 +95,89 @@ async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minim
         else:
             os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle"))
 
-async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
+async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, log: TextIO = sys.stdout) -> Optional[Trace]:
+    prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
+    id = f'{random.randint(0,1000000000-1):09}'
+    file = os.path.join(prefix, f"query-{id}.pickle")
+    with open(file, 'wb') as f:
+        pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
+    def rb_log(*args: Any) -> None:
+        print(f'[Rb-{id}]', *args, file=log, flush=True)
     # curframe = inspect.currentframe()
     # calframe = inspect.getouterframes(curframe, 2)
     # caller = calframe[1][3]
-    
+
     # i = random.randint(0,10000)
     # print(f"Starting robust check transition {i} ({caller})")
-    unsat_trans: Set[str] = set()
-    n_transitions = len(list(syntax.the_program.transitions()))
-    # print(f"n_transitions: {n_transitions}")
-    time_limit = 0.2
-    prog = syntax.the_program
-    cvc4 = False
+    async def check() -> Optional[Trace]:
+        unsat_trans: Set[str] = set()
+        n_transitions = len(list(syntax.the_program.transitions()))
+        # print(f"n_transitions: {n_transitions}")
+        time_limit = 0.2
+        prog = syntax.the_program
+        cvc4 = False
 
-    while True:
-        for trans in syntax.the_program.transitions():
-            if trans.name in unsat_trans: continue
-            #with s.new_frame():
-            if True:
-                # print(f"checking {trans.name} with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec... ", end='')
-                # This will run in a subprocess
-                async def worker(conn: AsyncConnection) -> None:
-                    s = Solver(use_cvc4=cvc4)
-                    t = s.get_translator(2)
-                    for h in old_hyps:
-                        s.add(t.translate_expr(h))
-                    s.add(t.translate_expr(New(Not(new_conc))))
-                    s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
-                    
-                    # s.use_cvc4 = cvc4 # Works as long as we don't set .use_cvc4 between .check and .model
-                    r = s.check()
-                    # print(f"check done {i} result {r}", flush=True)
-                    tr = Z3Translator.model_to_trace(s.model(minimize=True), 2) if r == z3.sat else None
-                    if s.cvc4_proc is not None:
-                        s.cvc4_proc.terminate()
-                    # print(f"sending {i}", flush=True)
-                    await conn.send((r, tr))
+        while True:
+            for trans in syntax.the_program.transitions():
+                if trans.name in unsat_trans: continue
+                #with s.new_frame():
+                if True:
+                    rb_log(f"checking {trans.name} with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec")
+                    # This will run in a subprocess
+                    async def worker(conn: AsyncConnection) -> None:
+                        s = Solver(use_cvc4=cvc4)
+                        t = s.get_translator(2)
+                        for h in old_hyps:
+                            s.add(t.translate_expr(h))
+                        s.add(t.translate_expr(New(Not(new_conc))))
+                        s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
 
-                with ScopedProcess(worker) as conn:
-                    # print(f"connection({i}): {conn._read_fd}, {conn._write_fd}")
-                    try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
-                    except asyncio.TimeoutError:
-                        # print(f"Timed out {i}", flush=True)
-                        (r, tr) = (z3.unknown, None)
-                
-                # print(f"result from worker {r} {i}", flush=True)
+                        # s.use_cvc4 = cvc4 # Works as long as we don't set .use_cvc4 between .check and .model
+                        r = s.check()
+                        # print(f"check done {i} result {r}", flush=True)
+                        tr = Z3Translator.model_to_trace(s.model(minimize=True), 2) if r == z3.sat else None
+                        if s.cvc4_proc is not None:
+                            s.cvc4_proc.terminate()
+                        # print(f"sending {i}", flush=True)
+                        await conn.send((r, tr))
 
-                if r == z3.unsat:
-                    unsat_trans.add(trans.name)
-                elif r == z3.sat:
-                    # print(f"SAT! {i}")
-                    assert tr is not None
-                    return tr
-            # print(f"after context manager {len(unsat_trans)}", flush=True)
-        if len(unsat_trans) == n_transitions:
-            # print(f"UNSAT! {i}", flush=True)
-            return None # We have shown every transition is UNSAT
-        # Every two times through the outer loop, increase timeout
-        if cvc4: time_limit = time_limit * 2 + 0.2
-        # Every time through the outer loop, flip from z3 to cvc4
-        cvc4 = not cvc4
+                    with ScopedProcess(worker) as conn:
+                        # print(f"connection({i}): {conn._read_fd}, {conn._write_fd}")
+                        try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
+                        except asyncio.TimeoutError:
+                            # print(f"Timed out {i}", flush=True)
+                            (r, tr) = (z3.unknown, None)
 
+                    rb_log(f"result {r}")
+                    # print(f"result from worker {r} {i}", flush=True)
+
+                    if r == z3.unsat:
+                        unsat_trans.add(trans.name)
+                    elif r == z3.sat:
+                        # print(f"SAT! {i}")
+                        assert tr is not None
+                        return tr
+                # print(f"after context manager {len(unsat_trans)}", flush=True)
+            if len(unsat_trans) == n_transitions:
+                rb_log(f"concluded unsat")
+                # print(f"UNSAT! {i}", flush=True)
+                return None # We have shown every transition is UNSAT
+            # Every two times through the outer loop, increase timeout
+            if cvc4: time_limit = time_limit * 2 + 0.2
+            # Every time through the outer loop, flip from z3 to cvc4
+            cvc4 = not cvc4
+
+    try:
+        start = time.time()
+        result = await check()
+        return result
+    finally:
+        elapsed = time.time() - start
+        rb_log(f"query took {elapsed:0.3f}")
+        if elapsed < 5:
+            os.remove(file)
+        else:
+            os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{id}.pickle"))
 
 async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
     # graph = syntax.the_program.decls_quantifier_alternation_graph(list(hyps) + [syntax.Not(conc)])
@@ -175,7 +198,7 @@ async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Op
     return await async_race([check(use_cvc4=False, min=True if minimize else False),
                              check(use_cvc4=True, min=False)])
 
-async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int, rationale: str) -> Optional[Expr]:
+async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int, rationale: str, smt_log: TextIO) -> Optional[Expr]:
     print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}", file=x)
     st = s._states[state]
     size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
@@ -184,7 +207,7 @@ async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: in
     f: Optional[Expr] = None
     for inv in syntax.the_program.invs():
         if s._states[state].eval(inv.expr) == False:
-            cex = await robust_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False)
+            cex = await robust_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, log=smt_log)
             print("Possible formula is:", inv.expr, '(relatively inductive)' if cex is None else '(not relatively inductive)', file=x)
             if cex is None:
                 f = inv.expr
@@ -246,6 +269,7 @@ class ParallelFolIc3(object):
         # Logging, etc
         self._start_time: float = 0
         self._sep_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w')
+        self._smt_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w')
         self._ig_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w')
         self._next_ig_query_index = 0
 
@@ -377,7 +401,7 @@ class ParallelFolIc3(object):
             # Check if any new blocker exists
             # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
             fp = set(self.frame_predicates(i))
-            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags)
+            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, log=self._smt_log)
             if fp != set(self.frame_predicates(i)):
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
                 made_changes = True
@@ -434,7 +458,7 @@ class ParallelFolIc3(object):
             cex: Optional[Trace] = None
             dependent_pred = -1
             for q in fp_next:
-                cex = await robust_check_transition(list(self._predicates[j] for j in fp), self._predicates[q], minimize='no-minimize-block' not in utils.args.expt_flags)
+                cex = await robust_check_transition(list(self._predicates[j] for j in fp), self._predicates[q], minimize='no-minimize-block' not in utils.args.expt_flags, log=self._smt_log)
                 if cex is not None:
                     dependent_pred = q
                     break
@@ -498,12 +522,6 @@ class ParallelFolIc3(object):
                     i = self.add_predicate(inv_decl.expr)
                     self._frame_numbers[i] = 1
 
-    async def wait_blocked(self, frame: int, state: int, ignored_pred: int = -1) -> None:
-        while True:
-            if not all(self.eval(pred, state) for pred in self.frame_predicates(frame) if pred != ignored_pred):
-                return
-            await self._event_frames.wait()
-
     async def IG2_worker(self, conn: AsyncConnection) -> None:
         prog = syntax.the_program
         sep = FixedImplicationSeparator(self._sig, (), PrefixConstraints(), 0, set(), [])
@@ -529,7 +547,7 @@ class ParallelFolIc3(object):
             #             if s not in mapping:
             #                 mapping[s] = sep.add_model(state_to_model(states[s]))
             #             sep.add_constraint(c.map(mapping))
-            #             sep_constraints.add(c)        
+            #             sep_constraints.add(c)
             if 'sep' in v:
                 minimized = False
                 while True:
@@ -561,7 +579,7 @@ class ParallelFolIc3(object):
                             await conn.send({'candidate': p, 'constraints': [c for c in constraints if c in sep_constraints]})
                             break
 
-    async def IG2_manager(self, frame: int, state: int, rationale: str) -> Expr:
+    async def IG2_manager(self, frame: int, state: int, rationale: str) -> Optional[Expr]:
 
         # Logging
         identity = self._next_ig_query_index
@@ -595,9 +613,9 @@ class ParallelFolIc3(object):
             popularity[c] = 1
         for n in necessary_constraints:
             popularity[n] = 2
-        
 
-        solution: asyncio.Future[Expr] = asyncio.Future()
+
+        solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
         def check_popular_constraints(satsifies: Set[Constraint], p: Expr) -> Optional[Constraint]:
             for c, cnt in popularity.most_common(50):
@@ -615,7 +633,7 @@ class ParallelFolIc3(object):
 
             # F_i-1 ^ p => wp(p)?
             start = time.time()
-            edge = await robust_check_transition([p, *(self._predicates[fp] for fp in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags)
+            edge = await robust_check_transition([p, *(self._predicates[fp] for fp in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags, log=self._smt_log)
             ig_print(f"Check took {time.time()-start:0.3f}s {'unsat' if edge is None else 'sat'}")
             # if golden is not None and edge is not None:
             #     print(f"Golden {eval_predicate((edge, 0), golden)} -> {eval_predicate((edge, 1), golden)}")
@@ -666,7 +684,7 @@ class ParallelFolIc3(object):
                                 #     if not satisifies_constraints([new_constraint], golden, states):
                                 #         print(f"! -- oops {new_constraint} isn't satisfied by {golden}")
                                 continue
-                            
+
                             if not solution.done():
                                 ig_print(f"SEP with |constr|={len(sep_constraints)}")
                                 ig_print(f"Learned {p}")
@@ -707,11 +725,20 @@ class ParallelFolIc3(object):
                 else:
                     await self._event_frames.wait()
 
+        async def wait_blocked() -> None:
+            while True:
+                if not all(self.eval(pred, state) for pred in self.frame_predicates(frame)):
+                    ig_print(f"State {state} in frame {frame} is blocked by concurrent update")
+                    if not solution.done():
+                        solution.set_result(None)
+                    return
+                await self._event_frames.wait()
+
         async def logger() -> None:
             query_start = time.time()
             ig_print(f"started at: {query_start - self._start_time:0.2f}s")
             t = io.StringIO()
-            golden = await IG_query_summary(t, self, frame, state, rationale)
+            golden = await IG_query_summary(t, self, frame, state, rationale, self._smt_log)
             ig_print(t.getvalue(), end='')
             while True:
                 try: await asyncio.sleep(30)
@@ -719,9 +746,8 @@ class ParallelFolIc3(object):
                     if solution.done():
                         ig_print(f"popularity: {popularity}")
                     ig_print(f"finished in: {time.time() - query_start:0.2f}s")
-                    return
+                    raise
                 ig_print(f"time: {time.time() - query_start:0.2f}s")
-
 
         if utils.args.logic == 'universal':
             pcs = [PrefixConstraints(Logic.Universal),
@@ -757,11 +783,11 @@ class ParallelFolIc3(object):
             tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
             tasks.add(frame_updater())
             tasks.add(logger())
+            tasks.add(wait_blocked())
             return await solution
 
-    async def parallel_inductive_generalize2(self, frame: int, state: int, rationale: str = '') -> None:
-        p = await async_race([cast(Awaitable[Optional[Expr]], self.wait_blocked(frame, state)),
-                              self.IG2_manager(frame, state, rationale)])
+    async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '') -> None:
+        p = await self.IG2_manager(frame, state, rationale)
         if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
             print(f"State {state} was blocked in frame {frame} by concurrent task")
             return
@@ -770,6 +796,7 @@ class ParallelFolIc3(object):
         self.add_predicate(p, frame)
         await self.push_pull()
         self.print_predicates()
+        # print(f"Done with parallel_inductive_generalize2 for blocking {state} in frame {frame} for {rationale}")
 
     async def get_predecessor(self, frame: int, state: int) -> Optional[int]:
         assert frame != 0
@@ -801,7 +828,7 @@ class ParallelFolIc3(object):
         while True:
             fp = set(self.frame_predicates(frame-1))
             # edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
-            edge = await robust_check_transition([self._predicates[i] for i in fp], formula_to_block, minimize='no-minimize-block' not in utils.args.expt_flags)
+            edge = await robust_check_transition([self._predicates[i] for i in fp], formula_to_block, minimize='no-minimize-block' not in utils.args.expt_flags, log=self._smt_log)
             if fp != set(self.frame_predicates(frame-1)):
                 continue
             break
@@ -840,7 +867,7 @@ class ParallelFolIc3(object):
             return
         pred = await self.get_predecessor(frame, state)
         if pred is None:
-            await self.parallel_inductive_generalize2(frame, state, rationale=rationale)
+            await self.parallel_inductive_generalize(frame, state, rationale=rationale)
         else:
             await self.block(frame - 1, pred, rationale)
 
@@ -911,34 +938,40 @@ class ParallelFolIc3(object):
 
     # This is the main loop responsible for learning classic IC3 lemmas by blocking bad states or backwardly reachable from bad
     async def learn(self) -> None:
-        for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
-            fn = self._frame_numbers[safety]
-            # This is called after push, so if either of these is not satisfied we should have exited
-            assert fn is not None
-            if safety not in self._pushing_blocker:
-                print(f"Cannot learn because pushing not yet complete")
-                await self.push_pull()
+        while True:
+            for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
+                fn = self._frame_numbers[safety]
+                # This is called after push, so if either of these is not satisfied we should have exited
+                if fn is None:
+                    continue
+                if safety not in self._pushing_blocker:
+                    print(f"Cannot learn because pushing not yet complete")
+                    await self.push_pull()
+                    break
+                blocker = self._pushing_blocker[safety]
+                # print(f"Blocking {blocker} in frame {fn} for learning")
+                await self.block(fn, blocker, "learning")
+                break
+            else:
                 return
-            blocker = self._pushing_blocker[safety]
-            # print(f"Blocking {blocker} in frame {fn} for learning")
-            await self.block(fn, blocker, "learning")
-            return
-        assert False
 
     async def run(self) -> None:
         self._start_time = time.time()
         self.init()
         await self.push_pull()
         self.print_predicates()
-        async with ScopedTasks() as hueristics_tasks:
-            hueristics_tasks.add(self.heuristic_pushing_to_the_top_worker(False))
-            hueristics_tasks.add(self.heuristic_pushing_to_the_top_worker(True))
-            hueristics_tasks.add(self.inexpensive_reachability())
+        async with ScopedTasks() as tasks:
+            tasks.add(self.heuristic_pushing_to_the_top_worker(False))
+            tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+            tasks.add(self.inexpensive_reachability())
+            tasks.add(self.learn())
             while True:
                 if self.is_complete():
                     break
                 # We need to block with a new predicate.
-                await self.learn()
+                await self._event_frames.wait()
+            print("Ending in run()", flush=True)
+        print("Post-cleanup in run()", flush=True)
 
         print(f"Elapsed: {time.time() - self._start_time:0.2f} sec")
         if self.is_program_safe():
@@ -970,6 +1003,17 @@ def p_fol_ic3(_: Solver) -> None:
     async def main() -> None:
         # We need to do this inside a function so that the asyncio objects in the constructor of
         # p use the same event loop as p.run()
+        def print_tasks(a: Any, b: Any) -> None:
+            tasks = asyncio.all_tasks(asyncio.get_running_loop())
+            print("Tasks: ")
+            for task in tasks:
+                print("Task:", task)
+                print("  Coro:", task.get_coro())
+                print("  Stack:", task.get_stack())
+                print("")
+            print("End of tasks.", flush=True)
+        signal.signal(signal.SIGUSR1, print_tasks)
+        # asyncio.get_event_loop().set_debug(True)
         p = ParallelFolIc3()
         await p.run()
     asyncio.run(main())

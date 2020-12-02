@@ -20,7 +20,7 @@ async def _read_exactly(read_fd: int, size: int) -> bytes:
     buf = bytearray(initial_read)
     loop = asyncio.get_event_loop()
     event = asyncio.Event(loop=loop)
-    try: 
+    try:
         loop.add_reader(read_fd, event.set)
         while len(buf) < size:
             await event.wait()
@@ -49,7 +49,7 @@ async def _write_exactly(write_fd: int, buf: bytes) -> None:
         return
     loop = asyncio.get_event_loop()
     event = asyncio.Event(loop=loop)
-    try: 
+    try:
         loop.add_writer(write_fd, event.set)
         while written < len(buf):
             # print("Awaiting to write")
@@ -98,7 +98,7 @@ class AsyncConnection:
 
 class ScopedProcess:
     '''Allows a target function to be run in a `with` statement:
-       
+
            async def child(): await c.send(os.getpid())
            with ScopedProcess() as conn:
                print("Child pid:", await conn.recv())
@@ -138,18 +138,20 @@ class ScopedProcess:
         self._proc.close()
 
 async def _cancel_and_wait_for_cleanup(tasks: Collection[asyncio.Future]) -> None:
+    cancelled: Optional[asyncio.CancelledError] = None
     for task in tasks:
-        task.cancel()
-    # We need to await each task so that the CancelledError is raised in each, and the
-    # cleanup handlers of things like try/finally blocks are run.
-    for task in tasks:
-        try: await task
-        except asyncio.CancelledError: pass
+        try:
+            if not task.done():
+                await asyncio.wait_for(task, 0)
+        except asyncio.TimeoutError: pass
+        except asyncio.CancelledError as e: cancelled = e
+    if cancelled is not None:
+        raise cancelled
 
 T = TypeVar('T')
 async def async_race(aws: Iterable[Awaitable[T]]) -> T:
     '''Returns the first value from `aws` and cancels the other tasks.
-    
+
     Ignores exceptions from the awaitables, unless all awaitables produce an exception,
     which causes `async_race` to raise the exception from an arbitrary awaitable.
     `aws` must be non-empty. '''
@@ -178,12 +180,12 @@ async def async_race(aws: Iterable[Awaitable[T]]) -> T:
 
 class ScopedTasks:
     '''Runs some coroutines in the background and cancels them on exit or cancellation.
-    
+
            async with ScopedTasks() as tasks:
                tasks.add(coro())
                asyncio.sleep(1)
            # here coro is cancelled and has finished try/finally blocks
-    
+
        Waits for the background tasks to finish their cancellation cleanup before continuing normal
        control flow.'''
     def __init__(self) -> None:
