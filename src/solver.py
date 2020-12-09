@@ -177,7 +177,7 @@ class Solver:
         self.stack[-1].append(e)
         self.z3solver.add(e)
 
-    def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> CheckSatResult:
+    def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None, timeout: int = 0) -> CheckSatResult:
         # logger.debug('solver.check')
         self.cvc4_model = None
         if assumptions is None:
@@ -187,8 +187,13 @@ class Solver:
 
         if self.use_cvc4:
             assert assumptions is None or len(assumptions) == 0, 'assumptions not supported in cvc4'
-            self.cvc4_model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
-            return unsat if self.cvc4_model is None else sat
+            r = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2(), timeout)
+            if isinstance(r, CVC4Model):
+                self.cvc4_model = r
+                return sat
+            else:
+                self.cvc4_model = None
+                return r
 
         def luby() -> Iterable[int]:
             l: List[int] = [1]
@@ -203,62 +208,9 @@ class Solver:
                 k += 1
 
         if 'restarts' not in utils.args or not utils.args.restarts:
+            if timeout > 0:
+                self.z3solver.set('timeout', timeout)
             res = self.z3solver.check(*assumptions)
-            if res == z3.unknown:
-                print(f'[{datetime.now()}] Solver.check: encountered unknown, printing debug information')
-                print(f'[{datetime.now()}] Solver.check: z3.solver.reason_unknown: {self.z3solver.reason_unknown()}')
-                print(f'[{datetime.now()}] Solver.check: self.assertions:')
-                for e in self.assertions():
-                    print(e)
-                print(f'[{datetime.now()}] Solver.check: assumptions:')
-                for e in assumptions:
-                    print(e)
-                print()
-                print(f'[{datetime.now()}] Solver.check: self.z3solver stats and smt2:')
-                print(self.z3solver.statistics())
-                print()
-                print(self.z3solver.to_smt2())
-                print()
-
-                print(f'[{datetime.now()}] Solver.check: trying fresh solver')
-                s2 = z3.Solver()
-                for e in self.assertions():
-                    s2.add(e)
-                res = s2.check(*assumptions)
-                print(f'[{datetime.now()}] Solver.check: s2.check(): {res}')
-                print(f'[{datetime.now()}] Solver.check: s2 stats and smt2:')
-                print(s2.statistics())
-                print()
-                print(s2.to_smt2())
-                print()
-                if res == z3.sat:
-                    # we can't get model, so we still consider this to be unknown
-                    res = z3.unknown
-
-                print(f'[{datetime.now()}] Solver.check: trying fresh context')
-                ctx = z3.Context()
-                s3 = z3.Solver(ctx=ctx)
-                for e in self.assertions():
-                    s3.add(e.translate(ctx))
-                res = s3.check(*(e.translate(ctx) for e in assumptions))
-                print(f'[{datetime.now()}] Solver.check: s3.check(): {res}')
-                print(f'[{datetime.now()}] Solver.check: s3 stats and smt2:')
-                print(s3.statistics())
-                print()
-                print(s3.to_smt2())
-                print()
-                if res == z3.sat:
-                    # we can't get model, so we still consider this to be unknown
-                    res = z3.unknown
-
-                if assumptions is None or len(assumptions) == 0:
-                    print(f'[{datetime.now()}] Solver.check: trying cvc4')
-                    self.cvc4_model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
-                    res = z3.unsat if self.cvc4_model is None else z3.sat
-                    print(f'[{datetime.now()}] Solver.check: cvc4 result: {res}')
-
-            assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
-                                               if res == z3.unknown else None)
             return result_from_z3(res)
 
         unit = 600000

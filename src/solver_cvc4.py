@@ -22,13 +22,11 @@ from typing import List, Optional, Union, Dict, Sequence, cast
 
 import z3
 
-import utils
-
 CVC4EXEC = ['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--fs-interleave', '--nl-ext-tplanes', '--produce-models']
 
 def new_cvc4_process() -> subprocess.Popen:
     return subprocess.Popen(
-        CVC4EXEC + [f'--seed={random.randint(0,1000000000)}'],
+        CVC4EXEC,
         bufsize=1,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -41,12 +39,15 @@ _cvc4_last_query: str = ''
 _cvc4_last_model_response: str = ''
 
 
-def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Model]:
+def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str, timeout: int = 0) -> Union[CVC4Model, z3.CheckSatResult]:
     global _cvc4_last_query
     global _cvc4_last_model_response
     cvc4script = cvc4_preprocess(smt2)
     _cvc4_last_query = cvc4script
     print('(reset)', file=cvc4_proc.stdin)
+    print(f'(set-option :seed {random.randint(0, 2**64 - 1)})', file=cvc4_proc.stdin)
+    if timeout > 0:
+        print(f'(set-option :tlimit {timeout})', file=cvc4_proc.stdin)
     print(cvc4script, file=cvc4_proc.stdin)
     # print(cvc4script)
     assert cvc4_proc.stdout is not None
@@ -59,8 +60,10 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
         assert False, 'cvc4 closed its stdout before we could get an answer'
     assert ans[-1] == '\n', repr(ans)
     ans = ans.strip()
+    if ans == 'unknown':
+        return z3.unknown
     if ans == 'unsat':
-        return None
+        return z3.unsat
     elif ans == 'sat':
         # get model
         print('(get-model)', file=cvc4_proc.stdin)

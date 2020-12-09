@@ -138,15 +138,18 @@ class ScopedProcess:
         self._proc.close()
 
 async def _cancel_and_wait_for_cleanup(tasks: Collection[asyncio.Future]) -> None:
-    cancelled: Optional[asyncio.CancelledError] = None
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    # do one turn of the event loop to allow CancelledError to be raised
+    await asyncio.sleep(0)
+    # Clean up any remaining tasks and ensure they have finished their cleanup handlers
     for task in tasks:
         try:
             if not task.done():
                 await asyncio.wait_for(task, 0)
         except asyncio.TimeoutError: pass
-        except asyncio.CancelledError as e: cancelled = e
-    if cancelled is not None:
-        raise cancelled
+        except asyncio.CancelledError: pass
 
 T = TypeVar('T')
 async def async_race(aws: Iterable[Awaitable[T]]) -> T:
