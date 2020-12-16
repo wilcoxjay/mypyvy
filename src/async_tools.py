@@ -83,7 +83,8 @@ class AsyncConnection:
 
     async def send(self, v: Any) -> None:
         pickled = pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
-        await _write_exactly(self._write_fd, struct.pack(AsyncConnection.HEADER_FMT, len(pickled)))
+        pickled = struct.pack(AsyncConnection.HEADER_FMT, len(pickled)) + pickled
+        # await _write_exactly(self._write_fd, struct.pack(AsyncConnection.HEADER_FMT, len(pickled)))
         await _write_exactly(self._write_fd, pickled)
 
     def close(self) -> None:

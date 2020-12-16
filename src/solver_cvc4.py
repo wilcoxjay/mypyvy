@@ -47,7 +47,7 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str, timeout: int = 0) ->
     print('(reset)', file=cvc4_proc.stdin)
     print(f'(set-option :seed {random.randint(0, 2**64 - 1)})', file=cvc4_proc.stdin)
     if timeout > 0:
-        print(f'(set-option :tlimit {timeout})', file=cvc4_proc.stdin)
+        print(f'(set-option :tlimit-per {timeout})', file=cvc4_proc.stdin)
     print(cvc4script, file=cvc4_proc.stdin)
     # print(cvc4script)
     assert cvc4_proc.stdout is not None

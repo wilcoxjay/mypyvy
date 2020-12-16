@@ -1,6 +1,6 @@
 
 
-from typing import Any, DefaultDict, Dict, Iterable, TextIO, List, Optional, Set, Tuple, Union, cast, Counter as CounterType
+from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast, Counter as CounterType
 
 import argparse
 import subprocess
@@ -16,84 +16,142 @@ import signal
 from collections import Counter, defaultdict
 
 import z3
-from async_tools import AsyncConnection, ScopedProcess, ScopedTasks, async_race
+from async_tools import AsyncConnection, ScopedProcess, ScopedTasks
 from semantics import State
 from translator import Z3Translator
 import utils
-import logic
-from logic import Diagram, Expr, Solver, Trace, check_implication
+from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import BinaryExpr, DefinitionDecl, IfThenElse, Let, NaryExpr, New, Not, QuantifierExpr, UnaryExpr
+from syntax import BinaryExpr, DefinitionDecl, IfThenElse, Let, NaryExpr, New, Not, QuantifierExpr, Scope, UnaryExpr
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparator, Logic, PrefixConstraints, PrefixSolver
 
-def check_transition(
-        s: Solver,
-        old_hyps: Iterable[Expr],
-        new_conc: Expr,
-        minimize: Optional[bool] = None,
-        transition: Optional[DefinitionDecl] = None
-)-> Optional[Trace]:
-    t = s.get_translator(2)
-    prog = syntax.the_program
-    # start = time.time()
-    with s.new_frame():
-        for h in old_hyps:
-            s.add(t.translate_expr(h))
+# def check_transition(
+#         s: Solver,
+#         old_hyps: Iterable[Expr],
+#         new_conc: Expr,
+#         minimize: Optional[bool] = None,
+#         transition: Optional[DefinitionDecl] = None
+# )-> Optional[Trace]:
+#     t = s.get_translator(2)
+#     prog = syntax.the_program
+#     # start = time.time()
+#     with s.new_frame():
+#         for h in old_hyps:
+#             s.add(t.translate_expr(h))
 
-        s.add(t.translate_expr(New(Not(new_conc))))
+#         s.add(t.translate_expr(New(Not(new_conc))))
 
-        for trans in prog.transitions():
-            if transition is not None and trans is not transition:
-                continue
+#         for trans in prog.transitions():
+#             if transition is not None and trans is not transition:
+#                 continue
+#             with s.new_frame():
+#                 s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
+
+#                 # if utils.logger.isEnabledFor(logging.DEBUG):
+#                 #     utils.logger.debug('assertions')
+#                 #     utils.logger.debug(str(s.assertions()))
+#                 res = s.check()
+#                 if res == z3.sat:
+#                     #print(f"Found model in {time.time() - start:0.3f} sec")
+#                     return Z3Translator.model_to_trace(s.model(minimize=minimize), 2) # Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], s.model(minimize=minimize))
+#                 assert res == z3.unsat
+#     #print(f"Found model in {time.time() - start:0.3f} sec")
+#     return None
+
+# async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
+#     # graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
+#     # if not networkx.is_directed_acyclic_graph(graph):
+#     #     print('ERROR -- Not in EPR! (trans)')
+#     #     for hyp in old_hyps:
+#     #         print(hyp)
+#     #     print(new_conc)
+#     #     print(' --- ')
+#     prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
+#     file = os.path.join(prefix, f"query-{random.randint(0,1000000000-1):09}.pickle")
+#     with open(file, 'wb') as f:
+#         pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
+
+#     async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
+#         async def worker(conn: AsyncConnection) -> None:
+#             s = Solver(use_cvc4=use_cvc4)
+#             await conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
+#         with ScopedProcess(worker) as conn:
+#             r = await conn.recv()
+#             return r
+#     try:
+#         start = time.time()
+#         result =  await async_race([check(use_cvc4=False, min=True if minimize else False),
+#                                 check(use_cvc4=True, min=False)])
+#         return result
+#     finally:
+#         elapsed = time.time() - start
+#         if elapsed < 5:
+#             os.remove(file)
+#         else:
+#             os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle"))
+
+async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], formulas: Sequence[Callable[[Solver, Z3Translator], None]], n_states: int = 1, parallelism: int = 1, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
+
+    _params = [(f_i, use_cvc4) for use_cvc4 in [True, False] for f_i in range(len(formulas))]
+    _next_index: List[int] = [0, 0] * len(formulas)
+    formulas_unsat: Set[int] = set()
+    def get_next() -> Optional[Tuple[int, int, bool]]:
+        choices = [(count, i) for i, count in enumerate(_next_index) if _params[i][0] not in formulas_unsat]
+        if len(choices) == 0: return None
+        count, i = min(choices)
+        _next_index[i] += 1
+        return (_params[i][0], count, _params[i][1])
+
+    result: asyncio.Future[Union[Trace, z3.CheckSatResult]] = asyncio.Future()
+
+    async def _robust_check_worker(conn: AsyncConnection) -> None:
+        s_z3 = Solver(use_cvc4=False)
+        s_cvc4 = Solver(use_cvc4=True)
+        t = s_z3.get_translator(n_states)
+        base_formula(s_z3, t)
+        base_formula(s_cvc4, t)
+        while True:
+            try:
+                (f_i, count, use_cvc4) = cast(Tuple[int,int,bool], await conn.recv())
+            except EOFError:
+                return
+            time_limit = 0.2 * 2**count + count* 0.5
+            s = s_cvc4 if use_cvc4 else s_z3
             with s.new_frame():
-                s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
+                formulas[f_i](s, t)
+                # print(f"checking ({f_i}, {count}, {use_cvc4}) in {time_limit}")
+                # print(s.assertions())
+                r = s.check(timeout = min(1000000, int(time_limit * 1000)))
+                # print(f"r = {r}")
+                tr = Z3Translator.model_to_trace(s.model(minimize=True), n_states) if r == z3.sat else r
+            await conn.send(tr)
+    async def _manager() -> None:
+        with ScopedProcess(_robust_check_worker) as conn:
+            while True:
+                v = get_next()
+                if v is None: 
+                    if not result.done():
+                        result.set_result(z3.unsat)
+                    return
+                await conn.send(v)
+                r = await conn.recv()
+                print(f"Query {v} returned {z3.sat if isinstance(r, Trace) else r}", file = log)
+                if r == z3.unsat:
+                    formulas_unsat.add(v[0])
+                elif isinstance(r, Trace):
+                    if not result.done():
+                        result.set_result(r)
+                    return
 
-                # if utils.logger.isEnabledFor(logging.DEBUG):
-                #     utils.logger.debug('assertions')
-                #     utils.logger.debug(str(s.assertions()))
-                res = s.check()
-                if res == z3.sat:
-                    #print(f"Found model in {time.time() - start:0.3f} sec")
-                    return Z3Translator.model_to_trace(s.model(minimize=minimize), 2) # Trace.from_z3([logic.KEY_OLD, logic.KEY_NEW], s.model(minimize=minimize))
-                assert res == z3.unsat
-    #print(f"Found model in {time.time() - start:0.3f} sec")
-    return None
+    async with ScopedTasks() as tasks:
+        for _ in range(parallelism):
+            tasks.add(_manager())
+        return await result
 
-async def multi_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None) -> Optional[Trace]:
-    # graph = syntax.the_program.decls_quantifier_alternation_graph(list(old_hyps) + [syntax.Not(new_conc)])
-    # if not networkx.is_directed_acyclic_graph(graph):
-    #     print('ERROR -- Not in EPR! (trans)')
-    #     for hyp in old_hyps:
-    #         print(hyp)
-    #     print(new_conc)
-    #     print(' --- ')
-    prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
-    file = os.path.join(prefix, f"query-{random.randint(0,1000000000-1):09}.pickle")
-    with open(file, 'wb') as f:
-        pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
-        async def worker(conn: AsyncConnection) -> None:
-            s = Solver(use_cvc4=use_cvc4)
-            await conn.send(check_transition(s, old_hyps, new_conc, minimize=min, transition=transition))
-        with ScopedProcess(worker) as conn:
-            r = await conn.recv()
-            return r
-    try:
-        start = time.time()
-        result =  await async_race([check(use_cvc4=False, min=True if minimize else False),
-                                check(use_cvc4=True, min=False)])
-        return result
-    finally:
-        elapsed = time.time() - start
-        if elapsed < 5:
-            os.remove(file)
-        else:
-            os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle"))
-
-async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, log: TextIO = sys.stdout) -> Optional[Trace]:
+async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, parallelism:int = 1, log: TextIO = sys.stdout) -> Optional[Trace]:
     prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
     id = f'{random.randint(0,1000000000-1):09}'
     file = os.path.join(prefix, f"query-{id}.pickle")
@@ -108,62 +166,73 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
     # i = random.randint(0,10000)
     # print(f"Starting robust check transition {i} ({caller})")
     async def check() -> Optional[Trace]:
-        unsat_trans: Set[str] = set()
-        n_transitions = len(list(syntax.the_program.transitions()))
-        # print(f"n_transitions: {n_transitions}")
-        time_limit = 0.2
-        prog = syntax.the_program
-        cvc4 = False
+        def base_formula(s: Solver, t: Z3Translator) -> None:
+            for h in old_hyps:
+                s.add(t.translate_expr(h))
+            s.add(t.translate_expr(New(Not(new_conc))))
+        def make_formula(s: Solver, t: Z3Translator, prog_scope: Scope, transition: DefinitionDecl) -> None:
+            s.add(t.translate_expr(transition.as_twostate_formula(prog_scope)))
+        formulas = [(lambda s, t, trans=transition: make_formula(s, t, syntax.the_program.scope, trans)) for transition in syntax.the_program.transitions()]
+        
+        r = await _robust_check(base_formula, formulas, 2, parallelism=parallelism, log=log)
+        return r if isinstance(r, Trace) else None
 
-        while True:
-            for trans in syntax.the_program.transitions():
-                if trans.name in unsat_trans: continue
-                #with s.new_frame():
-                if True:
-                    rb_log(f"checking {trans.name} with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec")
-                    # This will run in a subprocess
-                    async def worker(conn: AsyncConnection) -> None:
-                        s = Solver(use_cvc4=cvc4)
-                        t = s.get_translator(2)
-                        for h in old_hyps:
-                            s.add(t.translate_expr(h))
-                        s.add(t.translate_expr(New(Not(new_conc))))
-                        s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
+        # unsat_trans: Set[str] = set()
+        # n_transitions = len(list(syntax.the_program.transitions()))
+        # # print(f"n_transitions: {n_transitions}")
+        # time_limit = 0.2
+        # prog = syntax.the_program
+        # cvc4 = False
 
-                        # s.use_cvc4 = cvc4 # Works as long as we don't set .use_cvc4 between .check and .model
-                        r = s.check()
-                        # print(f"check done {i} result {r}", flush=True)
-                        tr = Z3Translator.model_to_trace(s.model(minimize=True), 2) if r == z3.sat else None
-                        if s.cvc4_proc is not None:
-                            s.cvc4_proc.terminate()
-                        # print(f"sending {i}", flush=True)
-                        await conn.send((r, tr))
+        # while True:
+        #     for trans in syntax.the_program.transitions():
+        #         if trans.name in unsat_trans: continue
+        #         #with s.new_frame():
+        #         if True:
+        #             rb_log(f"checking {trans.name} with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec")
+        #             # This will run in a subprocess
+        #             async def worker(conn: AsyncConnection) -> None:
+        #                 s = Solver(use_cvc4=cvc4)
+        #                 t = s.get_translator(2)
+        #                 for h in old_hyps:
+        #                     s.add(t.translate_expr(h))
+        #                 s.add(t.translate_expr(New(Not(new_conc))))
+        #                 s.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
 
-                    with ScopedProcess(worker) as conn:
-                        # print(f"connection({i}): {conn._read_fd}, {conn._write_fd}")
-                        try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
-                        except asyncio.TimeoutError:
-                            # print(f"Timed out {i}", flush=True)
-                            (r, tr) = (z3.unknown, None)
+        #                 # s.use_cvc4 = cvc4 # Works as long as we don't set .use_cvc4 between .check and .model
+        #                 r = s.check()
+        #                 # print(f"check done {i} result {r}", flush=True)
+        #                 tr = Z3Translator.model_to_trace(s.model(minimize=True), 2) if r == z3.sat else None
+        #                 if s.cvc4_proc is not None:
+        #                     s.cvc4_proc.terminate()
+        #                 # print(f"sending {i}", flush=True)
+        #                 await conn.send((r, tr))
 
-                    rb_log(f"result {r}")
-                    # print(f"result from worker {r} {i}", flush=True)
+        #             with ScopedProcess(worker) as conn:
+        #                 # print(f"connection({i}): {conn._read_fd}, {conn._write_fd}")
+        #                 try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
+        #                 except asyncio.TimeoutError:
+        #                     # print(f"Timed out {i}", flush=True)
+        #                     (r, tr) = (z3.unknown, None)
 
-                    if r == z3.unsat:
-                        unsat_trans.add(trans.name)
-                    elif r == z3.sat:
-                        # print(f"SAT! {i}")
-                        assert tr is not None
-                        return tr
-                # print(f"after context manager {len(unsat_trans)}", flush=True)
-            if len(unsat_trans) == n_transitions:
-                rb_log(f"concluded unsat")
-                # print(f"UNSAT! {i}", flush=True)
-                return None # We have shown every transition is UNSAT
-            # Every two times through the outer loop, increase timeout
-            if cvc4: time_limit = time_limit * 2 + 0.2
-            # Every time through the outer loop, flip from z3 to cvc4
-            cvc4 = not cvc4
+        #             rb_log(f"result {r}")
+        #             # print(f"result from worker {r} {i}", flush=True)
+
+        #             if r == z3.unsat:
+        #                 unsat_trans.add(trans.name)
+        #             elif r == z3.sat:
+        #                 # print(f"SAT! {i}")
+        #                 assert tr is not None
+        #                 return tr
+        #         # print(f"after context manager {len(unsat_trans)}", flush=True)
+        #     if len(unsat_trans) == n_transitions:
+        #         rb_log(f"concluded unsat")
+        #         # print(f"UNSAT! {i}", flush=True)
+        #         return None # We have shown every transition is UNSAT
+        #     # Every two times through the outer loop, increase timeout
+        #     if cvc4: time_limit = time_limit * 2 + 0.2
+        #     # Every time through the outer loop, flip from z3 to cvc4
+        #     cvc4 = not cvc4
 
     try:
         start = time.time()
@@ -177,7 +246,7 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
         else:
             os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{id}.pickle"))
 
-async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, log: TextIO = sys.stdout) -> Optional[Trace]:
+async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism:int = 1, log: TextIO = sys.stdout) -> Optional[Trace]:
     # prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
     id = f'{random.randint(0,1000000000-1):09}'
     # file = os.path.join(prefix, f"query-{id}.pickle")
@@ -190,43 +259,54 @@ async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: O
     # caller = calframe[1][3]
 
     async def check() -> Optional[Trace]:
-        time_limit = 0.2
-        cvc4 = False
-        while True:
-            rb_log(f"checking implication with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec")
-            # This will run in a subprocess
-            async def worker(conn: AsyncConnection) -> None:
-                s = Solver(use_cvc4=cvc4)
-                t = s.get_translator(2)
-                for h in hyps:
-                    s.add(t.translate_expr(h))
-                s.add(t.translate_expr(Not(conc)))
 
-                r = s.check()
-                tr = Z3Translator.model_to_trace(s.model(minimize=True), 1) if r == z3.sat else None
-                if s.cvc4_proc is not None:
-                    s.cvc4_proc.terminate()
-                await conn.send((r, tr))
+        def base_formula(s: Solver, t: Z3Translator) -> None:
+            pass
+        def make_formula(s: Solver, t: Z3Translator) -> None:
+            for h in hyps:
+                s.add(t.translate_expr(h))
+            s.add(t.translate_expr(Not(conc)))
+        r = await _robust_check(base_formula, [make_formula], 1, parallelism=parallelism, log=log)
+        return r if isinstance(r, Trace) else None
 
-            with ScopedProcess(worker) as conn:
-                try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
-                except asyncio.TimeoutError:
-                    (r, tr) = (z3.unknown, None)
 
-            rb_log(f"result {r}")
-            # print(f"result from worker {r} {i}", flush=True)
+        # time_limit = 0.2
+        # cvc4 = False
+        # while True:
+        #     rb_log(f"checking implication with {'cvc4' if cvc4 else 'z3'} in at most {time_limit:.1f}sec")
+        #     # This will run in a subprocess
+        #     async def worker(conn: AsyncConnection) -> None:
+        #         s = Solver(use_cvc4=cvc4)
+        #         t = s.get_translator(2)
+        #         for h in hyps:
+        #             s.add(t.translate_expr(h))
+        #         s.add(t.translate_expr(Not(conc)))
 
-            if r == z3.unsat:
-                return None
-            elif r == z3.sat:
-                # print(f"SAT! {i}")
-                assert tr is not None
-                return tr
+        #         r = s.check()
+        #         tr = Z3Translator.model_to_trace(s.model(minimize=True), 1) if r == z3.sat else None
+        #         if s.cvc4_proc is not None:
+        #             s.cvc4_proc.terminate()
+        #         await conn.send((r, tr))
+
+        #     with ScopedProcess(worker) as conn:
+        #         try: (r, tr) = await asyncio.wait_for(conn.recv(), time_limit + (0.15 if cvc4 else 0.0))
+        #         except asyncio.TimeoutError:
+        #             (r, tr) = (z3.unknown, None)
+
+        #     rb_log(f"result {r}")
+        #     # print(f"result from worker {r} {i}", flush=True)
+
+        #     if r == z3.unsat:
+        #         return None
+        #     elif r == z3.sat:
+        #         # print(f"SAT! {i}")
+        #         assert tr is not None
+        #         return tr
             
-            # Every two times through the outer loop, increase timeout
-            if cvc4: time_limit = time_limit * 2 + 0.2
-            # Every time through the outer loop, flip from z3 to cvc4
-            cvc4 = not cvc4
+        #     # Every two times through the outer loop, increase timeout
+        #     if cvc4: time_limit = time_limit * 2 + 0.2
+        #     # Every time through the outer loop, flip from z3 to cvc4
+        #     cvc4 = not cvc4
 
     try:
         start = time.time()
@@ -241,24 +321,24 @@ async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: O
         #     os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{id}.pickle"))
 
 
-async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
-    # graph = syntax.the_program.decls_quantifier_alternation_graph(list(hyps) + [syntax.Not(conc)])
-    # if not networkx.is_directed_acyclic_graph(graph):
-    #     print('ERROR -- Not in EPR! (impl)')
-    #     for hyp in hyps:
-    #         print(hyp)
-    #     print(conc)
-    #     print(' --- ')
+# async def multi_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None) -> Optional[Trace]:
+#     # graph = syntax.the_program.decls_quantifier_alternation_graph(list(hyps) + [syntax.Not(conc)])
+#     # if not networkx.is_directed_acyclic_graph(graph):
+#     #     print('ERROR -- Not in EPR! (impl)')
+#     #     for hyp in hyps:
+#     #         print(hyp)
+#     #     print(conc)
+#     #     print(' --- ')
 
-    async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
-        async def worker(conn: AsyncConnection) -> None:
-            s = Solver(use_cvc4=use_cvc4)
-            m = check_implication(s, hyps, [conc], minimize=min)
-            await conn.send(Z3Translator.model_to_trace(m, 1) if m is not None else None)
-        with ScopedProcess(worker) as conn:
-            return await conn.recv()
-    return await async_race([check(use_cvc4=False, min=True if minimize else False),
-                             check(use_cvc4=True, min=False)])
+#     async def check(use_cvc4: bool, min: bool) -> Optional[Trace]:
+#         async def worker(conn: AsyncConnection) -> None:
+#             s = Solver(use_cvc4=use_cvc4)
+#             m = check_implication(s, hyps, [conc], minimize=min)
+#             await conn.send(Z3Translator.model_to_trace(m, 1) if m is not None else None)
+#         with ScopedProcess(worker) as conn:
+#             return await conn.recv()
+#     return await async_race([check(use_cvc4=False, min=True if minimize else False),
+#                              check(use_cvc4=True, min=False)])
 
 async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int, rationale: str, smt_log: TextIO) -> Optional[Expr]:
     print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}", file=x)
@@ -463,7 +543,7 @@ class ParallelFolIc3(object):
             # Check if any new blocker exists
             # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
             fp = set(self.frame_predicates(i))
-            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, log=self._smt_log)
+            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=5, log=self._smt_log)
             if fp != set(self.frame_predicates(i)):
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
                 made_changes = True
@@ -601,7 +681,7 @@ class ParallelFolIc3(object):
                 mapping = {}
             if 'constraints' in v:
                 (cons, extra_states) = v['constraints']
-                states.update(extra_states)
+                states.update((i, pickle.loads(p)) for i,p in extra_states.items())
                 constraints = list(cons)
             # if 'force-constraints' in v:
             #     for c in v['force-constraints']:
@@ -651,8 +731,10 @@ class ParallelFolIc3(object):
 
         # A list of states local to this IG query. All constraints are w.r.t. this list
         states: List[State] = []
+        _states_pickled: List[bytes] = []
         def add_local_state(s: State) -> int:
             states.append(s)
+            _states_pickled.append(pickle.dumps(s, pickle.HIGHEST_PROTOCOL))
             return len(states) - 1
         _local_eval_cache: Dict[Tuple[int, int], bool] = {}
         def local_eval(pred: int, local_state: int) -> bool:
@@ -680,12 +762,12 @@ class ParallelFolIc3(object):
 
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
-        def check_popular_constraints(satsifies: Set[Constraint], p: Expr) -> Optional[Constraint]:
-            for c, cnt in popularity.most_common(MAX_POPULAR):
-                if c in satsifies: continue # skip constraints we know p to satisfy
-                if not satisifies_constraint(c, p, states):
-                    return c
-            return None
+        # def check_popular_constraints(satsifies: Set[Constraint], p: Expr) -> Optional[Constraint]:
+        #     for c, cnt in popularity.most_common(MAX_POPULAR):
+        #         if c in satsifies: continue # skip constraints we know p to satisfy
+        #         if not satisifies_constraint(c, p, states):
+        #             return c
+        #     return None
 
         async def check_candidate(p: Expr) -> Optional[Constraint]:
             # F_0 => p?
@@ -701,7 +783,7 @@ class ParallelFolIc3(object):
             # if golden is not None and edge is not None:
             #     print(f"Golden {eval_predicate((edge, 0), golden)} -> {eval_predicate((edge, 1), golden)}")
             if edge is not None:
-                ig_print("Adding edge")
+                ig_print(f"Adding edge")
                 return Imp(add_local_state(edge.as_state(0)), add_local_state(edge.as_state(1)))
             return None
 
@@ -711,12 +793,12 @@ class ParallelFolIc3(object):
             with ScopedProcess(self.IG2_worker) as conn:
                 # Keep track of which states the worker knows about, so we only send necessary ones
                 worker_known_states: Set[int] = set()
-                async def send_constraints(cs: List[Constraint]) -> None:
+                def send_constraints(cs: List[Constraint]) -> Tuple[List[Constraint], Dict[int, bytes]]:
                     new_states = states_of_constraints(cs).difference(worker_known_states)
-                    extra_states = {i: states[i] for i in new_states}
+                    extra_states = {i: _states_pickled[i] for i in new_states}
                     worker_known_states.update(new_states)
                     # print(f"Constraints are: {cs}")
-                    await conn.send({'constraints': (cs, extra_states)})
+                    return (cs, extra_states)
 
                 while True:
                     # Get a prefix from the solver
@@ -727,37 +809,53 @@ class ParallelFolIc3(object):
                     ig_print(f"Trying: {pre_pp}")
                     reservation = prefix_solver.reserve(pre, pc)
                     await conn.send({'prefix': (pre, pc)})
-                    current_constraints = list(necessary_constraints) + [c for c, cnt in popularity.most_common(3)]
+                    pop = [c for c, cnt in popularity.most_common(MAX_POPULAR)]
+                    last_sep_constraints : Set[Constraint] = set()
+                    next_constraints = list(necessary_constraints) + pop
                     while True:
-                        await send_constraints(current_constraints)
-                        await conn.send({'sep': None})
+                        if solution.done(): return
+                        await conn.send({'constraints': send_constraints(next_constraints), 'sep': None})
                         v = await conn.recv()
                         if 'candidate' in v:
                             p, sep_constraints = v['candidate'], v['constraints']
-                            new_constraint = check_popular_constraints(set(current_constraints), p)
-                            if new_constraint is not None:
+                            # new_constraint = check_popular_constraints(set(current_constraints), p)
+                            # if new_constraint is not None:
+                            #     ig_print("Using popular constraint")
+                            #     current_constraints.append(new_constraint)
+                            #     popularity[new_constraint] += 1
+                            #     popularity_total += 1
+                            #     if popularity_total == 2*MAX_POPULAR:
+                            #         popularity_total = 0
+                            #         for k in popularity.keys():
+                            #             popularity[k] = (popularity[k] * 3) // 4
+                            #     continue
+                            set_sep_constraints = set(sep_constraints)
+                            for cons in set_sep_constraints - last_sep_constraints:
+                                if cons in necessary_constraints: continue
                                 ig_print("Using popular constraint")
-                                current_constraints.append(new_constraint)
-                                popularity[new_constraint] += 1
+                                popularity[cons] += 1
                                 popularity_total += 1
                                 if popularity_total == 2*MAX_POPULAR:
                                     popularity_total = 0
                                     for k in popularity.keys():
-                                        popularity[k] = (popularity[k] * 3) // 4
-                                continue
+                                        popularity[k] = (popularity[k] * 5) // 6
+                            last_sep_constraints = set_sep_constraints
+
                             new_constraint = await check_candidate(p)
                             if new_constraint is not None:
                                 # print(f"Adding {new_constraint}")
-                                current_constraints.append(new_constraint)
+                                #current_constraints.append(new_constraint)
                                 popularity[new_constraint] = popularity.most_common(MAX_POPULAR//2)[-1][1] + 1
                                 popularity_total += 1
                                 if popularity_total == 2*MAX_POPULAR:
                                     popularity_total = 0
                                     for k in popularity.keys():
-                                        popularity[k] = (popularity[k] * 3) // 4
+                                        popularity[k] = (popularity[k] * 5) // 6
                                 # if golden is not None:
                                 #     if not satisifies_constraints([new_constraint], golden, states):
                                 #         print(f"! -- oops {new_constraint} isn't satisfied by {golden}")
+
+                                next_constraints = [new_constraint] + list(necessary_constraints) + [c for c, cnt in popularity.most_common(MAX_POPULAR)]
                                 continue
 
                             if not solution.done():
@@ -838,9 +936,7 @@ class ParallelFolIc3(object):
             pcs = [PrefixConstraints(Logic.Universal),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=5),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=6),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=7),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 3, min_depth=7)]
         elif utils.args.logic == 'epr':
             pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
@@ -851,6 +947,7 @@ class ParallelFolIc3(object):
                    PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2),
                    PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2),
                    PrefixConstraints(Logic.EPR, min_depth=7, max_alt=2, max_repeated_sorts=2)]
+            # pcs = [PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2)]
         elif utils.args.logic == 'fol':
             pcs = [PrefixConstraints(Logic.FOL),
                    PrefixConstraints(Logic.FOL, max_repeated_sorts = 2),
@@ -864,7 +961,7 @@ class ParallelFolIc3(object):
                       for (x,y) in itertools.product(self._sig.sort_names, self._sig.sort_names)
                       if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 2
+        multiplier = 1
 
         async with ScopedTasks() as tasks:
             tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
@@ -878,7 +975,7 @@ class ParallelFolIc3(object):
             return s
 
     async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '') -> None:
-        p = await self.IG2_manager(frame, state, rationale)
+        p = await self.IG2_manager(frame, state, rationale, timeout_sec=20*60 if rationale == 'heuristic-push' else 0)
         if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
             print(f"State {state} was blocked in frame {frame} by concurrent task")
             return
@@ -1053,17 +1150,12 @@ class ParallelFolIc3(object):
         self.print_predicates()
         async with ScopedTasks() as tasks:
             if 'no-heuristic-pushing' not in utils.args.expt_flags:
-                tasks.add(self.heuristic_pushing_to_the_top_worker(False))
+                tasks.add(self.heuristic_pushing_to_the_top_worker(True))
                 tasks.add(self.heuristic_pushing_to_the_top_worker(True))
             tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
-            while True:
-                if self.is_complete():
-                    break
-                # We need to block with a new predicate.
+            while not self.is_complete():
                 await self._event_frames.wait()
-            print("Ending in run()", flush=True)
-        print("Post-cleanup in run()", flush=True)
 
         print(f"Elapsed: {time.time() - self._start_time:0.2f} sec")
         if self.is_program_safe():
@@ -1266,6 +1358,19 @@ def fol_benchmark_solver(_: Solver) -> None:
     print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
     (old_hyps, new_conc, minimize, transition_name) = cast(Tuple[List[Expr], Expr, Optional[bool], Optional[str]], pickle.load(open(utils.args.query, 'rb')))
     if True:
+        def base_formula(s: Solver, t: Z3Translator) -> None:
+            for h in old_hyps:
+                s.add(t.translate_expr(h))
+            s.add(t.translate_expr(New(Not(new_conc))))
+        def make_formula(s: Solver, t: Z3Translator, prog_scope: Scope, transition: DefinitionDecl) -> None:
+            s.add(t.translate_expr(transition.as_twostate_formula(prog_scope)))
+            
+        formulas = [(lambda s, t, trans=transition: make_formula(s, t, syntax.the_program.scope, trans)) for transition in syntax.the_program.transitions()]
+        start = time.time()
+        r = asyncio.run(_robust_check(base_formula, formulas, 2, 1))
+        print(f"overall: {z3.sat if isinstance(r, Trace) else r} in {time.time() - start:0.3f}")
+        
+    if False:
         print("Trying basic tests...")
         longest = max(*(len(t.name) for t in syntax.the_program.transitions()))
         for s in [Solver(use_cvc4=False), Solver(use_cvc4=True)]:
@@ -1284,14 +1389,14 @@ def fol_benchmark_solver(_: Solver) -> None:
                     res = s.check(timeout=10000)
                     end = time.time()
                     print(f"{str(res): <7} {end-start:0.3f}")
-    tr = next(t for t in syntax.the_program.transitions() if t.name == 'receive_join_acks')
+    # tr = next(t for t in syntax.the_program.transitions() if t.name == 'receive_join_acks')
 
-    _find_unsat_core(tr, old_hyps, new_conc)
-    print("Original timings")
-    print("With z3:")
-    _check_core_unsat_times(tr, old_hyps, new_conc, False)
-    print("With cvc4:")
-    _check_core_unsat_times(tr, old_hyps, new_conc, True)
+    # _find_unsat_core(tr, old_hyps, new_conc)
+    # print("Original timings")
+    # print("With z3:")
+    # _check_core_unsat_times(tr, old_hyps, new_conc, False)
+    # print("With cvc4:")
+    # _check_core_unsat_times(tr, old_hyps, new_conc, True)
     if False:
         print("Trying multi tests...")
         longest = max(*(len(t.name) for t in syntax.the_program.transitions()))
