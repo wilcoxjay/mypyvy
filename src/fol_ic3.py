@@ -92,7 +92,7 @@ from separators.separate import FixedImplicationSeparator, Logic, PrefixConstrai
 #         else:
 #             os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{random.randint(0,1000000000-1):09}.pickle"))
 
-async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], formulas: Sequence[Callable[[Solver, Z3Translator], None]], n_states: int = 1, parallelism: int = 1, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
+async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], formulas: Sequence[Callable[[Solver, Z3Translator], None]], n_states: int = 1, parallelism: int = 1, log: TextIO = sys.stdout, prefix: str = '') -> Union[Trace, z3.CheckSatResult]:
 
     _params = [(f_i, use_cvc4) for use_cvc4 in [True, False] for f_i in range(len(formulas))]
     _next_index: List[int] = [0, 0] * len(formulas)
@@ -121,11 +121,15 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
             s = s_cvc4 if use_cvc4 else s_z3
             with s.new_frame():
                 formulas[f_i](s, t)
-                # print(f"checking ({f_i}, {count}, {use_cvc4}) in {time_limit}")
+                print(f"{prefix} _robust_check(): checking ({f_i}, {count}, {use_cvc4}) in {time_limit}", file=log, flush=True)
                 # print(s.assertions())
                 r = s.check(timeout = min(1000000, int(time_limit * 1000)))
-                # print(f"r = {r}")
+                print(f"{prefix} _robust_check(): r = {r}", file=log, flush=True)
+                if not use_cvc4 and r == z3.sat:
+                    print(f"{prefix} _robust_check(): transmuting z3 sat->unknown", file=log, flush=True)
+                    r = z3.unknown
                 tr = Z3Translator.model_to_trace(s.model(minimize=True), n_states) if r == z3.sat else r
+                print(f"{prefix} _robust_check(): finished trace extraction", file=log, flush=True)
             await conn.send(tr)
     async def _manager() -> None:
         with ScopedProcess(_robust_check_worker) as conn:
@@ -137,7 +141,7 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
                     return
                 await conn.send(v)
                 r = await conn.recv()
-                print(f"Query {v} returned {z3.sat if isinstance(r, Trace) else r}", file = log)
+                print(f"{prefix} _robust_check(): query {v} returned {z3.sat if isinstance(r, Trace) else r}", file=log, flush=True)
                 if r == z3.unsat:
                     formulas_unsat.add(v[0])
                 elif isinstance(r, Trace):
@@ -174,7 +178,7 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
             s.add(t.translate_expr(transition.as_twostate_formula(prog_scope)))
         formulas = [(lambda s, t, trans=transition: make_formula(s, t, syntax.the_program.scope, trans)) for transition in syntax.the_program.transitions()]
         
-        r = await _robust_check(base_formula, formulas, 2, parallelism=parallelism, log=log)
+        r = await _robust_check(base_formula, formulas, 2, parallelism=parallelism, log=log, prefix=f'[Rb-{id}]')
         return r if isinstance(r, Trace) else None
 
         # unsat_trans: Set[str] = set()
@@ -758,7 +762,7 @@ class ParallelFolIc3(object):
             popularity[c] = 1
         for n in necessary_constraints:
             popularity[n] = 2
-        MAX_POPULAR = 100
+        MAX_POPULAR = 150
 
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
@@ -961,7 +965,7 @@ class ParallelFolIc3(object):
                       for (x,y) in itertools.product(self._sig.sort_names, self._sig.sort_names)
                       if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 1
+        multiplier = 2
 
         async with ScopedTasks() as tasks:
             tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
@@ -975,7 +979,7 @@ class ParallelFolIc3(object):
             return s
 
     async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '') -> None:
-        p = await self.IG2_manager(frame, state, rationale, timeout_sec=20*60 if rationale == 'heuristic-push' else 0)
+        p = await self.IG2_manager(frame, state, rationale, timeout_sec=20*60 if rationale == 'heuristic-push' else -1)
         if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
             print(f"State {state} was blocked in frame {frame} by concurrent task")
             return
@@ -1149,9 +1153,9 @@ class ParallelFolIc3(object):
         await self.push_pull()
         self.print_predicates()
         async with ScopedTasks() as tasks:
-            if 'no-heuristic-pushing' not in utils.args.expt_flags:
-                tasks.add(self.heuristic_pushing_to_the_top_worker(True))
-                tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+            # if 'no-heuristic-pushing' not in utils.args.expt_flags:
+            #     tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+            #     tasks.add(self.heuristic_pushing_to_the_top_worker(True))
             tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
             while not self.is_complete():
