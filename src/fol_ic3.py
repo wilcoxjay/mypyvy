@@ -806,8 +806,8 @@ class ParallelFolIc3(object):
 
                 while True:
                     # Get a prefix from the solver
-                    feasible = prefix_solver.is_feasible(unsep_constraints, ((True, 'inst'), (True, 'quorum'), (True, 'round'), (True, 'round'), (True, 'value'), (False, 'node')))
-                    ig_print(f"Is Feasible: {feasible}")
+                    # feasible = prefix_solver.is_feasible(unsep_constraints, ((True, 'inst'), (True, 'quorum'), (True, 'round'), (True, 'round'), (True, 'value'), (False, 'node')))
+                    # ig_print(f"Is Feasible: {feasible}")
                     pre = prefix_solver.get_prefix(unsep_constraints, pc)
                     if pre is None:
                         return
