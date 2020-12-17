@@ -547,7 +547,7 @@ class ParallelFolIc3(object):
             # Check if any new blocker exists
             # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
             fp = set(self.frame_predicates(i))
-            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=5, log=self._smt_log)
+            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=10, log=self._smt_log)
             if fp != set(self.frame_predicates(i)):
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
                 made_changes = True
@@ -806,6 +806,8 @@ class ParallelFolIc3(object):
 
                 while True:
                     # Get a prefix from the solver
+                    feasible = prefix_solver.is_feasible(unsep_constraints, ((True, 'inst'), (True, 'quorum'), (True, 'round'), (True, 'round'), (True, 'value'), (False, 'node')))
+                    ig_print(f"Is Feasible: {feasible}")
                     pre = prefix_solver.get_prefix(unsep_constraints, pc)
                     if pre is None:
                         return
@@ -965,7 +967,7 @@ class ParallelFolIc3(object):
                       for (x,y) in itertools.product(self._sig.sort_names, self._sig.sort_names)
                       if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 2
+        multiplier = 6
 
         async with ScopedTasks() as tasks:
             tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
