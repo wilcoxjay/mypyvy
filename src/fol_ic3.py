@@ -13,6 +13,7 @@ import pickle
 import asyncio
 import itertools
 import signal
+import gc
 from collections import Counter, defaultdict
 
 import z3
@@ -125,6 +126,10 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
                 # print(s.assertions())
                 r = s.check(timeout = min(1000000, int(time_limit * 1000)))
                 print(f"{prefix} _robust_check(): r = {r}", file=log, flush=True)
+                if not use_cvc4 and time_limit > 5 and r == z3.unknown:
+                    # Rebuild the z3 solver, trying to minimize memory usage
+                    s_z3 = Solver(use_cvc4=False)
+                    base_formula(s_z3, t)
                 if not use_cvc4 and r == z3.sat:
                     print(f"{prefix} _robust_check(): transmuting z3 sat->unknown", file=log, flush=True)
                     r = z3.unknown
@@ -945,14 +950,12 @@ class ParallelFolIc3(object):
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=6),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 3, min_depth=7)]
         elif utils.args.logic == 'epr':
-            pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts=3),
-                   PrefixConstraints(Logic.EPR, min_depth=0, max_alt=1, max_repeated_sorts=3),
-                   PrefixConstraints(Logic.EPR, min_depth=0, max_alt=2, max_repeated_sorts=3),
-                   PrefixConstraints(Logic.EPR, min_depth=6, max_alt=1, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, min_depth=7, max_alt=1, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, min_depth=7, max_alt=2, max_repeated_sorts=2)]
+            pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=2, max_depth=6),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts=3, max_depth=6),
+                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2, max_depth=6),
+                   PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=3, max_depth=6),
+                   PrefixConstraints(Logic.EPR, min_depth=5, max_alt=1, max_repeated_sorts=2, max_depth=6),
+                   PrefixConstraints(Logic.EPR, min_depth=5, max_alt=2, max_repeated_sorts=3, max_depth=6)]
             # pcs = [PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2)]
         elif utils.args.logic == 'fol':
             pcs = [PrefixConstraints(Logic.FOL),
@@ -981,6 +984,8 @@ class ParallelFolIc3(object):
             return s
 
     async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '') -> None:
+        # Force a GC cycle so forked processes are as light as possible
+        gc.collect()
         p = await self.IG2_manager(frame, state, rationale, timeout_sec=20*60 if rationale == 'heuristic-push' else -1)
         if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
             print(f"State {state} was blocked in frame {frame} by concurrent task")
