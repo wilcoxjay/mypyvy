@@ -22,7 +22,7 @@ from typing import List, Optional, Union, Dict, Sequence, cast
 
 import z3
 
-CVC4EXEC = ['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--fs-interleave', '--nl-ext-tplanes', '--produce-models']
+CVC4EXEC = ['cvc4', '--lang=smtlib2.6', '--finite-model-find', '--fs-interleave', '--produce-models']
 
 def new_cvc4_process() -> subprocess.Popen:
     return subprocess.Popen(
