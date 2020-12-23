@@ -186,8 +186,9 @@ async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: in
     for inv in syntax.the_program.invs():
         if s._states[state].eval(inv.expr) == False:
             cex = await robust_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, log=smt_log)
-            print("Possible formula is:", inv.expr, '(relatively inductive)' if cex is None else '(not relatively inductive)', file=x)
-            if cex is None:
+            ind_str = '(relatively inductive)' if cex == z3.unsat else '(not relatively inductive)' if isinstance(cex, Trace) else '(relatively inductive unknown)'
+            print("Possible formula is:", inv.expr, ind_str, file=x)
+            if cex == z3.unsat:
                 f = inv.expr
     return f
 
@@ -243,9 +244,9 @@ class ParallelFolIc3(object):
 
         # Logging, etc
         self._start_time: float = 0
-        self._sep_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w')
-        self._smt_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w')
-        self._ig_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w')
+        self._sep_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w', buffering=1)
+        self._smt_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w', buffering=1)
+        self._ig_log: TextIO = sys.stdout if utils.args.log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
         self._next_ig_query_index = 0
 
     # Frame number manipulations (make None === infinity)
@@ -453,12 +454,16 @@ class ParallelFolIc3(object):
                     self._frame_numbers[i] = 1
 
     async def IG2_worker(self, conn: AsyncConnection) -> None:
+        sys.stdout = self._sep_log
+        print("Started Worker")
         prog = syntax.the_program
         sep = FixedImplicationSeparator(self._sig, (), PrefixConstraints(), 0, set(), [])
         constraints: List[Constraint] = []
         sep_constraints: Set[Constraint] = set()
         mapping: Dict[int, int] = {}
         states: Dict[int, State] = {}
+        prefix: Tuple[Tuple[Optional[bool], int], ...] = ()
+        sep_time, eval_time = 0.0, 0.0
         while True:
             v = await conn.recv()
             if 'prefix' in v:
@@ -467,6 +472,7 @@ class ParallelFolIc3(object):
                 sep = FixedImplicationSeparator(self._sig, prefix, pc, 1, set(), [])
                 sep_constraints = set()
                 mapping = {}
+                sep_time, eval_time = 0.0, 0.0
             if 'constraints' in v:
                 (cons, extra_states) = v['constraints']
                 states.update((i, pickle.loads(p)) for i,p in extra_states.items())
@@ -481,31 +487,39 @@ class ParallelFolIc3(object):
             if 'sep' in v:
                 minimized = False
                 while True:
+                    print(f"Separating with prefix {prefix}")
+                    start = time.time()
                     sep_r = sep.separate(minimize=minimized)
+                    sep_time += time.time() - start
                     if sep_r is None:
+                        print(f"UNSEP |core|={len(sep_constraints)} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
                         await conn.send({'unsep': sep_constraints})
                         break
 
                     with prog.scope.n_states(1):
                         p = formula_to_predicate(sep_r, prog.scope)
-                    # print(f"Internal candidate: {p}")
+                    print(f"Internal candidate: {p}")
+                    start = time.time()
                     for c in constraints:
                         if c in sep_constraints: continue
                         if not satisifies_constraint(c, p, states):
-                            # print(f"Adding internal constraint {c}")
+                            print(f"Adding internal constraint {c}")
                             for s in c.states():
                                 if s not in mapping:
                                     mapping[s] = sep.add_model(state_to_model(states[s]))
                             sep.add_constraint(c.map(mapping))
                             sep_constraints.add(c)
                             minimized = False
+                            eval_time += time.time() - start
                             break
                     else:
+                        eval_time += time.time() - start
                         # All known constraints are satisfied
                         if not minimized:
                             minimized = True
                             continue # continue the loop, now asking for a minimized separator
                         else:
+                            print(f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
                             await conn.send({'candidate': p, 'constraints': [c for c in constraints if c in sep_constraints]})
                             break
 
@@ -566,7 +580,7 @@ class ParallelFolIc3(object):
 
             # F_i-1 ^ p => wp(p)?
             # start = time.time()
-            edge = await robust_check_transition([p, *(self._predicates[fp] for fp in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags, parallelism = 2, timeout=120, log=self._smt_log)
+            edge = await robust_check_transition([p, *(self._predicates[fp] for fp in frame_preds)], p, minimize='no-minimize-cex' not in utils.args.expt_flags, parallelism = 2, timeout=500, log=self._smt_log)
             # ig_print(f"Check took {time.time()-start:0.3f}s {'unsat' if edge is None else 'sat'}")
             # if golden is not None and edge is not None:
             #     print(f"Golden {eval_predicate((edge, 0), golden)} -> {eval_predicate((edge, 1), golden)}")
@@ -640,7 +654,7 @@ class ParallelFolIc3(object):
                             else:
                                 new_constraint_result = await check_candidate(p)
                                 if new_constraint_result == z3.unknown:
-                                    ig_print(f"Solver returned unknown")
+                                    ig_print(f"Solver returned unknown ({p})")
 
                             if isinstance(new_constraint_result, Constraint):
                                 # print(f"Adding {new_constraint}")
@@ -737,7 +751,7 @@ class ParallelFolIc3(object):
                         ig_print(f"popularity: {popularity.most_common(MAX_POPULAR)}")
                     ig_print(f"finished in: {time.time() - query_start:0.2f}s")
                     raise
-                ig_print(f"time: {time.time() - query_start:0.2f}s")
+                ig_print(f"time: {time.time() - query_start:0.2f}s constraints:{len(constraints_in_frame)}")
 
         if utils.args.logic == 'universal':
             pcs = [PrefixConstraints(Logic.Universal),
