@@ -19,14 +19,15 @@ from collections import Counter, defaultdict
 import z3
 from async_tools import AsyncConnection, ScopedProcess, ScopedTasks
 from semantics import State
+from typechecker import typecheck_expr
 from translator import Z3Translator
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import BinaryExpr, DefinitionDecl, IfThenElse, Let, NaryExpr, New, Not, QuantifierExpr, Scope, UnaryExpr
+from syntax import BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenElse, Let, NaryExpr, New, Not, QuantifierExpr, Scope, SortedVar, UnaryExpr, UninterpretedSort
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
-from separators.separate import FixedImplicationSeparator, Logic, PrefixConstraints, PrefixSolver
+from separators.separate import FixedImplicationSeparator, FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints, PrefixSolver
 
 async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], formulas: Sequence[Callable[[Solver, Z3Translator], None]], n_states: int = 1, parallelism: int = 1, timeout: float = 0.0, log: TextIO = sys.stdout, prefix: str = '') -> Union[Trace, z3.CheckSatResult]:
     def _luby(i: int) -> int:
@@ -436,7 +437,7 @@ class ParallelFolIc3(object):
                 if pushed or made_infinite:
                     continue
                 break
-            print(f"Pushing completed in {time.time() - start:0.3f}sec")
+            print(f"Pushing completed in {time.time() - start:0.3f} sec")
 
     def init(self) -> None:
         prog = syntax.the_program
@@ -457,7 +458,7 @@ class ParallelFolIc3(object):
         sys.stdout = self._sep_log
         print("Started Worker")
         prog = syntax.the_program
-        sep = FixedImplicationSeparator(self._sig, (), PrefixConstraints(), 0, set(), [])
+        sep = FixedImplicationSeparatorPyCryptoSat(self._sig, (), PrefixConstraints(), 0, set(), [])
         constraints: List[Constraint] = []
         sep_constraints: Set[Constraint] = set()
         mapping: Dict[int, int] = {}
@@ -469,7 +470,7 @@ class ParallelFolIc3(object):
             if 'prefix' in v:
                 (prefix, pc) = v['prefix']
                 del sep
-                sep = FixedImplicationSeparator(self._sig, prefix, pc, 1, set(), [])
+                sep = FixedImplicationSeparatorPyCryptoSat(self._sig, prefix, pc, 1, set(), [])
                 sep_constraints = set()
                 mapping = {}
                 sep_time, eval_time = 0.0, 0.0
@@ -591,6 +592,33 @@ class ParallelFolIc3(object):
                 return z3.unsat
             else:
                 return z3.unknown
+        async def generalize_quantifiers(p: Expr, constraints: Set[Constraint]) -> Expr:
+            prefix, matrix = decompose_prenex(p)
+            ig_print(f"Original prefix {prefix}, matrix {matrix}")
+            assert prefix_in_epr(prefix)
+            while True:
+                for new_prefix in generalizations_of_prefix(prefix):
+                    assert new_prefix != prefix
+                    if not prefix_in_epr(new_prefix) and 'generalize-non-epr' not in utils.args.expt_flags:
+                        ig_print(f"Not in EPR")
+                        continue
+                    q = compose_prenex(new_prefix, matrix)
+                    ig_print(f"Trying... {q}")
+                    if all(satisifies_constraint(c, q, states) for c in constraints):
+                        ig_print("Passed constraints")
+                        new_constr = await check_candidate(q)
+                        if new_constr == z3.unsat:
+                            ig_print("Accepted new formula")
+                            prefix = new_prefix
+                            break
+                        elif isinstance(new_constr, Constraint):
+                            constraints.add(new_constr)
+                        ig_print("Not relatively inductive")
+                    else:
+                        ig_print("Rejected by constraints")
+                else:
+                    break
+            return compose_prenex(prefix, matrix)
 
         async def worker_handler(pc: PrefixConstraints) -> None:
             nonlocal solution, popularity, popularity_total
@@ -612,7 +640,7 @@ class ParallelFolIc3(object):
                     pre = prefix_solver.get_prefix(unsep_constraints, pc)
                     if pre is None:
                         return
-                    pre_pp = ".".join(self._sig.sort_names[sort_i] for (_, sort_i) in pre)
+                    pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in pre)
                     ig_print(f"Trying: {pre_pp}")
                     reservation = prefix_solver.reserve(pre, pc)
                     await conn.send({'prefix': (pre, pc)})
@@ -624,7 +652,7 @@ class ParallelFolIc3(object):
                         await conn.send({'constraints': send_constraints(next_constraints), 'sep': None})
                         v = await conn.recv()
                         if 'candidate' in v:
-                            p, sep_constraints = v['candidate'], v['constraints']
+                            p, sep_constraints = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints'])
                             # new_constraint = check_popular_constraints(set(current_constraints), p)
                             # if new_constraint is not None:
                             #     ig_print("Using popular constraint")
@@ -659,6 +687,7 @@ class ParallelFolIc3(object):
                             if isinstance(new_constraint_result, Constraint):
                                 # print(f"Adding {new_constraint}")
                                 #current_constraints.append(new_constraint)
+                                constraints_in_frame.add(new_constraint_result)
                                 popularity[new_constraint_result] = popularity.most_common(MAX_POPULAR//2)[-1][1] + 1
                                 popularity_total += 1
                                 if popularity_total == 2*MAX_POPULAR:
@@ -673,7 +702,14 @@ class ParallelFolIc3(object):
                                 continue
                             elif new_constraint_result == z3.unsat:
                                 if not solution.done():
+                                    states_needed = set(s for c in sep_constraints for s in c.states())
+                                    structs = dict((i, s) for i, s in enumerate(states) if i in states_needed)
+                                    with open(os.path.join(utils.args.log_dir, f'ig-solution-{identity}.pickle'), 'wb') as output:
+                                        pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': [self._predicates[fp] for fp in frame_preds]}, output)
+                                    
                                     ig_print(f"SEP with |constr|={len(sep_constraints)}")
+                                    if 'no-generalize-quantifiers' not in utils.args.expt_flags:
+                                        p = await generalize_quantifiers(p, set_sep_constraints)
                                     ig_print(f"Learned {p}")
                                     solution.set_result(p)
                                 return
@@ -751,7 +787,7 @@ class ParallelFolIc3(object):
                         ig_print(f"popularity: {popularity.most_common(MAX_POPULAR)}")
                     ig_print(f"finished in: {time.time() - query_start:0.2f}s")
                     raise
-                ig_print(f"time: {time.time() - query_start:0.2f}s constraints:{len(constraints_in_frame)}")
+                ig_print(f"time: {time.time() - query_start:0.2f} sec constraints:{len(constraints_in_frame)}")
 
         if utils.args.logic == 'universal':
             pcs = [PrefixConstraints(Logic.Universal),
@@ -783,12 +819,12 @@ class ParallelFolIc3(object):
         multiplier = 4
 
         async with ScopedTasks() as tasks:
-            tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
-            tasks.add(frame_updater())
             tasks.add(logger())
+            tasks.add(frame_updater())
             tasks.add(summary_logger())
             tasks.add(wait_blocked())
             tasks.add(timeout())
+            tasks.add(*(worker_handler(pc) for pc in pcs * multiplier))
             s = await solution
             ig_print("Exiting IG_manager")
             return s
@@ -1180,14 +1216,8 @@ def fol_benchmark_solver(_: Solver) -> None:
         sys.stdout = open(utils.args.output, "w")
     print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
     (old_hyps, new_conc, minimize, transition_name) = cast(Tuple[List[Expr], Expr, Optional[bool], Optional[str]], pickle.load(open(utils.args.query, 'rb')))
-    if True:
-        start = time.time()
-        r = asyncio.run(robust_check_transition(old_hyps, new_conc, parallelism=2, timeout=100))
-        print(f"overall: {z3.sat if isinstance(r, Trace) else r} in {time.time() - start:0.3f}")
         
-    if True:
-        def base_formula(s: Solver, t: Z3Translator) -> None:
-            pass
+    if False:
         def make_formula(s: Solver, t: Z3Translator, prog_scope: Scope, transition: DefinitionDecl) -> None:
             for e in [New(Not(new_conc)), transition.as_twostate_formula(prog_scope)]:
                 s.add(t.translate_expr(e))
@@ -1197,8 +1227,17 @@ def fol_benchmark_solver(_: Solver) -> None:
                 s.add(t.translate_expr(e))
             
         formulas = [(lambda s, t, trans=transition: make_formula(s, t, syntax.the_program.scope, trans)) for transition in syntax.the_program.transitions()]
+        s = Solver()
+        t = s.get_translator(2)
+        for f_i, (f, transition) in enumerate(zip(formulas, syntax.the_program.transitions())):
+            with open(f"{f_i}-{transition.name}.smt2", "w") as out:
+                with s.new_frame():
+                    f(s, t)
+                    out.write(s.z3solver.to_smt2())
+    
+    if False:
         start = time.time()
-        r = asyncio.run(_robust_check(base_formula, formulas, 2, parallelism=2, timeout=100, prefix='[CTX]'))
+        r = asyncio.run(robust_check_transition(old_hyps, new_conc, parallelism=10, timeout=0))
         print(f"overall: {z3.sat if isinstance(r, Trace) else r} in {time.time() - start:0.3f}")
         
     if False:
@@ -1220,14 +1259,15 @@ def fol_benchmark_solver(_: Solver) -> None:
                     res = s.check(timeout=10000)
                     end = time.time()
                     print(f"{str(res): <7} {end-start:0.3f}")
-    # tr = next(t for t in syntax.the_program.transitions() if t.name == 'receive_join_acks')
+    if True:
+        tr = next(t for t in syntax.the_program.transitions() if t.name == 'receive_join_acks')
 
-    # _find_unsat_core(tr, old_hyps, new_conc)
-    # print("Original timings")
-    # print("With z3:")
-    # _check_core_unsat_times(tr, old_hyps, new_conc, False)
-    # print("With cvc4:")
-    # _check_core_unsat_times(tr, old_hyps, new_conc, True)
+        _find_unsat_core(tr, old_hyps, new_conc)
+        print("Original timings")
+        print("With z3:")
+        _check_core_unsat_times(tr, old_hyps, new_conc, False)
+        print("With cvc4:")
+        _check_core_unsat_times(tr, old_hyps, new_conc, True)
     if False:
         print("Trying multi tests...")
         longest = max(*(len(t.name) for t in syntax.the_program.transitions()))
@@ -1252,6 +1292,125 @@ def fol_benchmark_solver(_: Solver) -> None:
         end = time.time()
         print(f"robust_check_transition: {'UNSAT' if r is None else 'SAT'} in {end-start:0.3f}")
 
+
+def decompose_prenex(p: Expr) -> Tuple[List[Tuple[bool, str, str]], Expr]:
+    def binder_to_list(b: syntax.Binder, is_forall: bool) -> List[Tuple[bool, str, str]]:
+        return [(is_forall, v.name, cast(UninterpretedSort, v.sort).name) for v in b.vs]
+    if isinstance(p, QuantifierExpr):
+        sub_prefix, matrix = decompose_prenex(p.body)
+        return (binder_to_list(p.binder, p.quant == 'FORALL') + sub_prefix, matrix)
+    else:
+        return ([], p)
+
+def compose_prenex(prefix: Sequence[Tuple[bool, str, str]], matrix: Expr) -> Expr:
+    def _int(prefix: Sequence[Tuple[bool, str, str]], matrix: Expr) -> Expr:
+        if len(prefix) == 0: return matrix
+        sub_formula = _int(prefix[1:], matrix)
+        (is_forall, var, sort) = prefix[0]
+        if is_forall:
+            v = SortedVar(var, UninterpretedSort(sort))
+            if isinstance(sub_formula, QuantifierExpr) and sub_formula.quant == 'FORALL':
+                return Forall((v, *sub_formula.binder.vs), sub_formula.body)
+            return Forall((v,), sub_formula)
+        else:
+            v = SortedVar(var, UninterpretedSort(sort))
+            if isinstance(sub_formula, QuantifierExpr) and sub_formula.quant == 'EXISTS':
+                return Exists((v, *sub_formula.binder.vs), sub_formula.body)
+            return Exists((v,), sub_formula)
+    e = _int(prefix, matrix)
+    with syntax.the_program.scope.n_states(2):
+        typecheck_expr(syntax.the_program.scope, e, BoolSort)
+    return e
+
+def generalizations_of_prefix(prefix: List[Tuple[bool, str, str]]) -> Iterable[List[Tuple[bool, str, str]]]:
+    alternations = [list(g) for (_, g) in itertools.groupby(prefix, key = lambda x: x[0])]
+
+    # Turn an entire block of Exists into forall at once.
+    # for i, quantifier_block in enumerate(alternations):
+    #     if quantifier_block[0][0]: continue
+    #     yield list(itertools.chain.from_iterable(alternations[:i] + [[(True, v, s) for (_, v, s) in alternations[i]]] + alternations[i+1:]))
+
+    # Turn each E into a A individually, and lift it to the top of its block of E.
+    # So if we pick x in AAAEExEA, the resulting quantifier is AAAAxEEA
+    for i, (is_forall, var, sort) in enumerate(prefix):
+        if is_forall: continue
+        j = i
+        while j > 0 and not prefix[j-1][0]:
+            j -= 1
+        without_i = prefix[:i] + prefix[i+1:]
+        yield without_i[:j] + [(True, var, sort)] + without_i[j:]
+
+    # Swap EA into AE, a whole quantifier block at a time. AAA(EEEAA) becomes AAA(AAEEE).
+    # Guaranteed to not introduce more alternations
+    for i, quantifier_block in enumerate(alternations):
+        if quantifier_block[0][0]: continue
+        if i + 1 == len(alternations): continue
+        yield list(itertools.chain.from_iterable(alternations[:i] + [alternations[i+1], alternations[i]] + alternations[i+2:]))
+
+def prefix_in_epr(prefix: List[Tuple[bool, str, str]]) -> bool:
+    for q_a, q_b in itertools.combinations(prefix, 2):
+        if q_a[0] != q_b[0] and (q_a[2], q_b[2]) not in utils.args.epr_edges:
+            # print(f"Failed {q_a} {q_b}")
+            return False
+    return True
+
+
+async def check_candidate(p: Expr, prior_frame: List[Expr]) -> bool:
+    # F_0 => p?
+    initial_state = await robust_check_implication([init.expr for init in syntax.the_program.inits()], p, log=open("/dev/null", 'w'))
+    if initial_state is not None:
+        return False
+
+    # F_i-1 ^ p => wp(p)?
+    edge = await robust_check_transition([p, *prior_frame], p, parallelism = 2, timeout=500, log=open("/dev/null", 'w'))
+    if edge == z3.unsat:
+        return True
+    return False
+
+def generalize_quantifiers(p: Expr, constraints: Set[Constraint], states: Dict[int, State], prior_frame: List[Expr]) -> Expr:
+    prefix, matrix = decompose_prenex(p)
+    print(f"Original prefix {prefix}, matrix {matrix}")
+    assert prefix_in_epr(prefix)
+    while True:
+        for new_prefix in generalizations_of_prefix(prefix):
+            assert new_prefix != prefix
+            if not prefix_in_epr(new_prefix) and 'generalize-non-epr' not in utils.args.expt_flags:
+                print(f"Not in EPR")
+                continue
+            q = compose_prenex(new_prefix, matrix)
+            print(f"Trying... {q}")
+            if all(satisifies_constraint(c, q, states) for c in constraints):
+                print("Passed constraints")
+                if asyncio.run(check_candidate(q, prior_frame)):
+                    print("Accepted new formula")
+                    prefix = new_prefix
+                    break
+                print("Not relatively inductive")
+            else:
+                print("Rejected by constraints")
+        else:
+            break
+    return compose_prenex(prefix, matrix)
+
+def fol_debug_ig(_: Solver) -> None:
+    # if utils.args.output:
+    #     sys.stdout = open(utils.args.output, "w")
+    print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
+    data = pickle.load(open(utils.args.query, 'rb'))
+    p: Expr = data['solution']
+    constraints: List[Constraint] = data['constraints']
+    states: Dict[int, State] = data['states']
+    prior_frame: List[Expr] = data['prior_frame']
+    print(f"Initial solution: {p}")
+    # for q in prior_frame:
+    #     print(q)
+    pp = generalize_quantifiers(p, set(constraints), states, prior_frame)
+    if pp != p:
+        print(f"(GEN) Generalized to: {pp}")
+        print(f"(GEN) From:           {p}")
+    else:
+        print("Could not generalize")
+    
 def epr_edges(s: str) -> List[Tuple[str, str]]:
     r = []
     for pair in s.split(','):
@@ -1268,7 +1427,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s = subparsers.add_parser('p-fol-ic3', help='Run parallel IC3 inference with folseparators')
     s.set_defaults(main=p_fol_ic3)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
-    s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Experimental flags")
+    s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     result.append(s)
@@ -1289,6 +1448,14 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_benchmark_solver)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
+    result.append(s)
+
+    s = subparsers.add_parser('fol-debug-ig', help='Debug a IG solution')
+    s.set_defaults(main=fol_debug_ig)
+    s.add_argument("--query", type=str, help="Solution to query")
+    s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    # s.add_argument("--output", type=str, help="Output to file")
     result.append(s)
 
     return result
