@@ -127,9 +127,8 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
 
 
 async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
-    prefix = "/tmp"#  if utils.args.log_dir == "" else utils.args.log_dir
     id = f'{random.randint(0,1000000000-1):09}'
-    file = os.path.join(prefix, f"query-{id}.pickle")
+    file = f'/tmp/query-{id}.pickle'
     with open(file, 'wb') as f:
         pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
     def rb_log(*args: Any) -> None:
@@ -137,6 +136,7 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
 
     try:
         start = time.time()
+        r: Union[Trace, z3.CheckSatResult] = z3.unknown
         def base_formula(s: Solver, t: Z3Translator) -> None:
             pass
         def make_formula(s: Solver, t: Z3Translator, prog_scope: Scope, transition: DefinitionDecl) -> None:
@@ -148,14 +148,16 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
                 s.add(t.translate_expr(e))
         formulas = [(lambda s, t, trans=transition: make_formula(s, t, syntax.the_program.scope, trans)) for transition in syntax.the_program.transitions()]
         
-        return await _robust_check(base_formula, formulas, 2, parallelism=parallelism, timeout=timeout, log=log, prefix=f'[Rb-{id}]')
+        r = await _robust_check(base_formula, formulas, 2, parallelism=parallelism, timeout=timeout, log=log, prefix=f'[Rb-{id}]')
+        return r
     finally:
         elapsed = time.time() - start
-        rb_log(f"query took {elapsed:0.3f}")
-        if elapsed < 5:
+        rb_log(f'query took {elapsed:0.3f}')
+        if elapsed < 5 or utils.args.log_dir == '':
             os.remove(file)
         else:
-            os.rename(file, os.path.join(prefix, f"hard-query-{int(elapsed):04d}-{id}.pickle"))
+            res = 'unsat' if r == z3.unsat else 'sat' if isinstance(r, Trace) else 'unk'
+            os.rename(file, os.path.join(utils.args.log_dir, 'hard-queries', f'hard-query-{int(elapsed):04d}-{res}-{id}.pickle'))
 
 async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Optional[Trace]:
     id = f'{random.randint(0,1000000000-1):09}'
@@ -186,7 +188,7 @@ async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: in
     f: Optional[Expr] = None
     for inv in syntax.the_program.invs():
         if s._states[state].eval(inv.expr) == False:
-            cex = await robust_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, log=smt_log)
+            cex = await robust_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, timeout=500, log=smt_log)
             ind_str = '(relatively inductive)' if cex == z3.unsat else '(not relatively inductive)' if isinstance(cex, Trace) else '(relatively inductive unknown)'
             print("Possible formula is:", inv.expr, ind_str, file=x)
             if cex == z3.unsat:
@@ -478,6 +480,8 @@ class ParallelFolIc3(object):
                 (cons, extra_states) = v['constraints']
                 states.update((i, pickle.loads(p)) for i,p in extra_states.items())
                 constraints = list(cons)
+            if 'block_last_separator' in v:
+                sep.block_last_separator()
             # if 'force-constraints' in v:
             #     for c in v['force-constraints']:
             #         for s in c.states():
@@ -683,6 +687,8 @@ class ParallelFolIc3(object):
                                 new_constraint_result = await check_candidate(p)
                                 if new_constraint_result == z3.unknown:
                                     ig_print(f"Solver returned unknown ({p})")
+                                    await conn.send({'block_last_separator': None})
+                                    continue
 
                             if isinstance(new_constraint_result, Constraint):
                                 # print(f"Adding {new_constraint}")
@@ -704,7 +710,7 @@ class ParallelFolIc3(object):
                                 if not solution.done():
                                     states_needed = set(s for c in sep_constraints for s in c.states())
                                     structs = dict((i, s) for i, s in enumerate(states) if i in states_needed)
-                                    with open(os.path.join(utils.args.log_dir, f'ig-solution-{identity}.pickle'), 'wb') as output:
+                                    with open(os.path.join(utils.args.log_dir, f'ig-solutions/ig-solution-{identity}.pickle'), 'wb') as output:
                                         pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': [self._predicates[fp] for fp in frame_preds]}, output)
                                     
                                     ig_print(f"SEP with |constr|={len(sep_constraints)}")
@@ -799,9 +805,11 @@ class ParallelFolIc3(object):
             pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=2, max_depth=6),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts=3, max_depth=6),
                    PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2, max_depth=6),
-                   PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=3, max_depth=6),
-                   PrefixConstraints(Logic.EPR, min_depth=5, max_alt=1, max_repeated_sorts=2, max_depth=6),
-                   PrefixConstraints(Logic.EPR, min_depth=5, max_alt=2, max_repeated_sorts=3, max_depth=6)]
+                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2, max_depth=6),
+                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=3, max_depth=6),
+                   PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=3, max_depth=6)]
+                #    PrefixConstraints(Logic.EPR, min_depth=5, max_alt=1, max_repeated_sorts=2, max_depth=6),
+                #    PrefixConstraints(Logic.EPR, min_depth=5, max_alt=2, max_repeated_sorts=3, max_depth=6)]
             # pcs = [PrefixConstraints(Logic.EPR, min_depth=6, max_alt=2, max_repeated_sorts=2)]
         elif utils.args.logic == 'fol':
             pcs = [PrefixConstraints(Logic.FOL),
@@ -1008,9 +1016,9 @@ class ParallelFolIc3(object):
         await self.push_all()
         self.print_predicates()
         async with ScopedTasks() as tasks:
-            # if 'no-heuristic-pushing' not in utils.args.expt_flags:
-            #     tasks.add(self.heuristic_pushing_to_the_top_worker(True))
-            #     tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+            if 'no-heuristic-pushing' not in utils.args.expt_flags:
+                tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+                # tasks.add(self.heuristic_pushing_to_the_top_worker(True))
             tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
             while not self.is_complete():
@@ -1031,6 +1039,8 @@ def p_fol_ic3(_: Solver) -> None:
     # Redirect stdout if we have a log directory
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
+        os.makedirs(os.path.join(utils.args.log_dir, 'ig-solutions'), exist_ok=True)
+        os.makedirs(os.path.join(utils.args.log_dir, 'hard-queries'), exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
 
     # Print initial header with command line and git hash
