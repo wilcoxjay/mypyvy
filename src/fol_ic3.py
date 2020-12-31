@@ -14,6 +14,7 @@ import asyncio
 import itertools
 import signal
 import gc
+import shutil
 from collections import Counter, defaultdict
 
 import z3
@@ -157,7 +158,7 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
             os.remove(file)
         else:
             res = 'unsat' if r == z3.unsat else 'sat' if isinstance(r, Trace) else 'unk'
-            os.rename(file, os.path.join(utils.args.log_dir, 'hard-queries', f'hard-query-{int(elapsed):04d}-{res}-{id}.pickle'))
+            shutil.move(file, os.path.join(utils.args.log_dir, 'hard-queries', f'hard-query-{int(elapsed):04d}-{res}-{id}.pickle'))
 
 async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Optional[Trace]:
     id = f'{random.randint(0,1000000000-1):09}'
