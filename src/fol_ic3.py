@@ -76,8 +76,9 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
         s_z3 = Solver(use_cvc4=False)
         s_cvc4 = Solver(use_cvc4=True)
         t = s_z3.get_translator(n_states)
+        t2 = s_cvc4.get_translator(n_states)
         base_formula(s_z3, t)
-        base_formula(s_cvc4, t)
+        base_formula(s_cvc4, t2)
         while True:
             try:
                 (f_i, count, use_cvc4, time_limit) = cast(Tuple[int, int, bool, float], await conn.recv())
@@ -85,7 +86,7 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
                 return
             s = s_cvc4 if use_cvc4 else s_z3
             with s.new_frame():
-                formulas[f_i](s, t)
+                formulas[f_i](s, t2 if use_cvc4 else t)
                 print(f"{prefix} _robust_check(): checking ({f_i}, {count}, {use_cvc4}) in {time_limit}", file=log, flush=True)
                 # print(s.assertions())
                 r = s.check(timeout = min(1000000000, int(time_limit * 1000)))
@@ -668,7 +669,7 @@ class ParallelFolIc3(object):
                                         popularity[k] = (popularity[k] * 5) // 6
                             last_sep_constraints = set_sep_constraints
 
-                            if len(last_sep_constraints) > 100:
+                            if len(last_sep_constraints) > 100 and 'constraint-limiting' in utils.args.expt_flags:
                                 new_constraint_result: Union[Constraint, z3.CheckSatResult] = z3.unknown
                                 ig_print(f"Used more than 100 constraints")
                             else:
@@ -774,7 +775,7 @@ class ParallelFolIc3(object):
             ig_print(f"Size of state to block {size_summary}")
             n_formulas = 0
             for inv in syntax.the_program.invs():
-                if self._states[state].eval(inv.expr) == False:
+                if st.eval(inv.expr) == False:
                     cex = await robust_check_transition([*(self._predicates[j] for j in self.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, timeout=500, log=self._smt_log)
                     ind_str = '(relatively inductive)' if cex == z3.unsat else '(not relatively inductive)' if isinstance(cex, Trace) else '(relatively inductive unknown)'
                     ig_print("golden formula is:", inv.expr, ind_str)
