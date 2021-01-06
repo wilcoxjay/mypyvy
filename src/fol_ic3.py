@@ -29,6 +29,7 @@ from syntax import BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenE
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparator, FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints, PrefixSolver
+import networkx
 
 async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], formulas: Sequence[Callable[[Solver, Z3Translator], None]], n_states: int = 1, parallelism: int = 1, timeout: float = 0.0, log: TextIO = sys.stdout, prefix: str = '') -> Union[Trace, z3.CheckSatResult]:
     def _luby(i: int) -> int:
@@ -126,9 +127,12 @@ async def _robust_check(base_formula: Callable[[Solver, Z3Translator], None], fo
             tasks.add(_manager())
         return await result
 
+_robust_id = 0
 
 async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
-    id = f'{random.randint(0,1000000000-1):09}'
+    global _robust_id
+    id = f'{_robust_id:06d}'
+    _robust_id += 1
     file = f'/tmp/query-{id}.pickle'
     with open(file, 'wb') as f:
         pickle.dump((old_hyps, new_conc, minimize, transition.name if transition is not None else None), f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -137,7 +141,7 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
 
     try:
         start = time.time()
-        r: Union[Trace, z3.CheckSatResult] = z3.unknown
+        r: Union[Trace, z3.CheckSatResult, None] = None
         def base_formula(s: Solver, t: Z3Translator) -> None:
             pass
         def make_formula(s: Solver, t: Z3Translator, prog_scope: Scope, transition: DefinitionDecl) -> None:
@@ -157,8 +161,8 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
         if elapsed < 5 or utils.args.log_dir == '':
             os.remove(file)
         else:
-            res = 'unsat' if r == z3.unsat else 'sat' if isinstance(r, Trace) else 'unk'
-            shutil.move(file, os.path.join(utils.args.log_dir, 'hard-queries', f'hard-query-{int(elapsed):04d}-{res}-{id}.pickle'))
+            res = 'unsat' if r == z3.unsat else 'sat' if isinstance(r, Trace) else 'unk' if r == z3.unknown else 'int'
+            shutil.move(file, os.path.join(utils.args.log_dir, 'hard-queries', f'hard-query-{id}-{res}-{int(elapsed):04d}.pickle'))
 
 async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Optional[Trace]:
     id = f'{random.randint(0,1000000000-1):09}'
@@ -178,23 +182,6 @@ async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: O
     finally:
         elapsed = time.time() - start
         rb_log(f"query took {elapsed:0.3f}")
-
-
-async def IG_query_summary(x: TextIO, s: 'ParallelFolIc3', frame: int, state: int, rationale: str, smt_log: TextIO) -> Optional[Expr]:
-    print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}", file=x)
-    st = s._states[state]
-    size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
-    print(f"Size of state to block {size_summary}", file=x)
-    # golden: List[Formula] = []
-    f: Optional[Expr] = None
-    for inv in syntax.the_program.invs():
-        if s._states[state].eval(inv.expr) == False:
-            cex = await robust_check_transition([*(s._predicates[j] for j in s.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, timeout=500, log=smt_log)
-            ind_str = '(relatively inductive)' if cex == z3.unsat else '(not relatively inductive)' if isinstance(cex, Trace) else '(relatively inductive unknown)'
-            print("Possible formula is:", inv.expr, ind_str, file=x)
-            if cex == z3.unsat:
-                f = inv.expr
-    return f
 
 def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State], List[State]]) -> bool:
     if isinstance(c, Pos):
@@ -778,11 +765,21 @@ class ParallelFolIc3(object):
                 ig_print(f"State {state} in frame {frame} has timed out")
                 solution.set_result(None)
             return
-            
+
         async def summary_logger() -> None:
-            t = io.StringIO()
-            await IG_query_summary(t, self, frame, state, rationale, self._smt_log)
-            ig_print(t.getvalue(), end='')
+            pass
+            ig_print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}")
+            st = self._states[state]
+            size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
+            ig_print(f"Size of state to block {size_summary}")
+            n_formulas = 0
+            for inv in syntax.the_program.invs():
+                if self._states[state].eval(inv.expr) == False:
+                    cex = await robust_check_transition([*(self._predicates[j] for j in self.frame_predicates(frame-1)), inv.expr], inv.expr, minimize=False, timeout=500, log=self._smt_log)
+                    ind_str = '(relatively inductive)' if cex == z3.unsat else '(not relatively inductive)' if isinstance(cex, Trace) else '(relatively inductive unknown)'
+                    ig_print("golden formula is:", inv.expr, ind_str)
+                    n_formulas += 1
+            ig_print(f"Number of golden formula {n_formulas}")
 
         async def logger() -> None:
             query_start = time.time()
@@ -799,9 +796,10 @@ class ParallelFolIc3(object):
         if utils.args.logic == 'universal':
             pcs = [PrefixConstraints(Logic.Universal),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=4),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2, min_depth=6),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 3, min_depth=7)]
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 3),
+                   PrefixConstraints(Logic.Universal),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 2),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts = 3),]
         elif utils.args.logic == 'epr':
             pcs = [PrefixConstraints(Logic.Universal, max_repeated_sorts=2, max_depth=6),
                    PrefixConstraints(Logic.Universal, max_repeated_sorts=3, max_depth=6),
@@ -1222,13 +1220,76 @@ def _find_unsat_core(transition: DefinitionDecl, old_hyps: List[Expr], new_conc:
 
     print("UNKNOWN??")
 
+def _incremental_unsat(s: z3.Solver, assertions: List[z3.ExprRef]) -> z3.CheckSatResult:
+    s.push()
+    try:
+        s.set('timeout', 3000)
+        s.set('seed', random.randint(0, 1000000000))
+        while True:
+            r = s.check()
+            if r == z3.unsat:
+                print("unsat")
+                return z3.unsat
+            if r == z3.unknown:
+                print("unknown")
+                return z3.unknown
+            if r == z3.sat:
+                m = s.model()
+                random.shuffle(assertions)
+                for i, a in enumerate(assertions):
+                    if not z3.is_true(m.eval(a, model_completion=True)):
+                        print(f"adding {a}")
+                        s.add(a)
+                        assertions = assertions[:i]+assertions[i+1:]
+                        break
+                else:
+                    print("sat")
+                    return z3.sat
+    finally:
+        s.pop()
+
+def add_epr_edges(edges: Set[Tuple[str, str]], expr: z3.ExprRef, polarity: bool = True, univ_sorts: Set[str] = set()) -> None:
+    if z3.is_quantifier(expr):
+        assert isinstance(expr, z3.QuantifierRef)
+        is_universal = polarity == expr.is_forall()
+        sorts = [expr.var_sort(i).name() for i in range(expr.num_vars())]
+        if is_universal:
+            univ_sorts = univ_sorts | set(sorts)
+        else:
+            for s in univ_sorts:
+                for t in sorts:
+                    edges.add((s, t))
+        add_epr_edges(edges, expr.body(), polarity, univ_sorts)
+    elif z3.is_app(expr):
+        children = expr.children()
+        if z3.is_and(expr) or z3.is_or(expr):
+            for c in children:
+                add_epr_edges(edges, c, polarity, univ_sorts)
+        elif z3.is_not(expr):
+            for c in children:
+                add_epr_edges(edges, c, not polarity, univ_sorts)
+        elif z3.is_implies(expr):
+            assert len(children) == 2
+            add_epr_edges(edges, children[0], not polarity, univ_sorts)
+            add_epr_edges(edges, children[1], polarity, univ_sorts)
+        elif z3.is_app_of(expr, z3.Z3_OP_ITE):
+            add_epr_edges(edges, children[0], not polarity, univ_sorts)
+            add_epr_edges(edges, children[0], polarity, univ_sorts)
+            add_epr_edges(edges, children[1], polarity, univ_sorts)
+            add_epr_edges(edges, children[2], polarity, univ_sorts)
+        else:
+            print(f"{expr}")
+    
+    else:
+        assert False
+
 def fol_benchmark_solver(_: Solver) -> None:
     if utils.args.output:
         sys.stdout = open(utils.args.output, "w")
     print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
     (old_hyps, new_conc, minimize, transition_name) = cast(Tuple[List[Expr], Expr, Optional[bool], Optional[str]], pickle.load(open(utils.args.query, 'rb')))
         
-    if False:
+    if True:
         def make_formula(s: Solver, t: Z3Translator, prog_scope: Scope, transition: DefinitionDecl) -> None:
             for e in [New(Not(new_conc)), transition.as_twostate_formula(prog_scope)]:
                 s.add(t.translate_expr(e))
@@ -1241,10 +1302,32 @@ def fol_benchmark_solver(_: Solver) -> None:
         s = Solver()
         t = s.get_translator(2)
         for f_i, (f, transition) in enumerate(zip(formulas, syntax.the_program.transitions())):
-            with open(f"{f_i}-{transition.name}.smt2", "w") as out:
+            #with open(f"{f_i}-{transition.name}.smt2", "w") as out:
                 with s.new_frame():
                     f(s, t)
-                    out.write(s.z3solver.to_smt2())
+                    # Write out to .smt2 files
+                    #out.write('(set-logic UF)\n')
+                    #out.write(s.z3solver.to_smt2())
+
+                    # Check EPR-ness
+                    # edges: Set[Tuple[str, str]] = set()
+                    # for func in syntax.the_program.functions():
+                    #     for s1 in func.arity:
+                    #         edges.add((str(s1), str(func.sort)))
+                    # for a in s.z3solver.assertions():
+                    #     add_epr_edges(edges, a)
+                    # print(edges)
+                    # g = networkx.DiGraph()
+                    # g.add_edges_from(edges)
+                    # print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
+                    assertions = list(s.z3solver.assertions())
+                if f_i == 2:
+                    while True:
+                        ss = Solver()
+                        r = _incremental_unsat(ss.z3solver, assertions)
+                        print(f"Result: {r}")
+                        if r != z3.unknown:
+                            break
     
     if False:
         start = time.time()
@@ -1270,7 +1353,7 @@ def fol_benchmark_solver(_: Solver) -> None:
                     res = s.check(timeout=10000)
                     end = time.time()
                     print(f"{str(res): <7} {end-start:0.3f}")
-    if True:
+    if False:
         tr = next(t for t in syntax.the_program.transitions() if t.name == 'receive_join_acks')
 
         _find_unsat_core(tr, old_hyps, new_conc)
