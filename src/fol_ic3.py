@@ -18,14 +18,16 @@ import shutil
 from collections import Counter, defaultdict
 
 import z3
+from z3.z3printer import FormatObject
 from async_tools import AsyncConnection, ScopedProcess, ScopedTasks
 from semantics import State
+import separators
 from typechecker import typecheck_expr
 from translator import Z3Translator
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenElse, Let, NaryExpr, New, Not, QuantifierExpr, Scope, SortedVar, UnaryExpr, UninterpretedSort
+from syntax import BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, QuantifierExpr, Scope, SortedVar, UnaryExpr, UninterpretedSort
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparator, FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints, PrefixSolver
@@ -195,6 +197,28 @@ def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State]
         if states[c.i].eval(p) and not states[c.j].eval(p):
             return False
     return True
+
+def _log_ig_problem(id: int, rationale: str, block: Neg, pos: List[Constraint], states: Union[List[State], Dict[int, State]], prior_frame: List[Expr], golden: List[InvariantDecl]) -> None:
+    if utils.args.log_dir == '': return
+    with open(os.path.join(utils.args.log_dir, 'ig-problems', f'ig-{id}.pickle'), 'wb') as f:
+        pickle.dump((rationale, block, pos, {i: states[i] for c in [block, *pos] for i in c.states()}, prior_frame, golden), f)
+
+
+_log_sep_problem_index = 0
+def _log_sep_problem(prefix: Tuple[Tuple[Optional[bool], int], ...], constraints: List[Constraint], states: Union[List[State], Dict[int, State]], prior_frame: List[Expr]) -> None:
+    global _log_sep_problem_index
+    if utils.args.log_dir == '': return
+    with open(os.path.join(utils.args.log_dir, 'sep-problems', f'p{_log_sep_problem_index}.pickle'), 'wb') as f:
+        pickle.dump((prefix, constraints, {i: states[i] for c in constraints for i in c.states()}, prior_frame), f)
+    _log_sep_problem_index += 1
+
+_log_sep_unsep_index = 0
+def _log_sep_unsep(prefix: Tuple[Tuple[Optional[bool], int], ...], constraints: List[Constraint], states: Union[List[State], Dict[int, State]]) -> None:
+    global _log_sep_unsep_index
+    if utils.args.log_dir == '': return
+    with open(os.path.join(utils.args.log_dir, 'sep-unsep', f'p{_log_sep_unsep_index}.pickle'), 'wb') as f:
+        pickle.dump((prefix, constraints, {i: states[i] for c in constraints for i in c.states()}), f)
+    _log_sep_unsep_index += 1
 
 
 class ParallelFolIc3(object):
@@ -452,6 +476,7 @@ class ParallelFolIc3(object):
         sep = FixedImplicationSeparatorPyCryptoSat(self._sig, (), PrefixConstraints(), 0, set(), [])
         constraints: List[Constraint] = []
         sep_constraints: Set[Constraint] = set()
+        sep_constraints_order: List[Constraint] = []
         mapping: Dict[int, int] = {}
         states: Dict[int, State] = {}
         prefix: Tuple[Tuple[Optional[bool], int], ...] = ()
@@ -463,6 +488,7 @@ class ParallelFolIc3(object):
                 del sep
                 sep = FixedImplicationSeparatorPyCryptoSat(self._sig, prefix, pc, 1, set(), [])
                 sep_constraints = set()
+                sep_constraints_order = []
                 mapping = {}
                 sep_time, eval_time = 0.0, 0.0
             if 'constraints' in v:
@@ -487,7 +513,7 @@ class ParallelFolIc3(object):
                     sep_time += time.time() - start
                     if sep_r is None:
                         print(f"UNSEP |core|={len(sep_constraints)} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
-                        await conn.send({'unsep': sep_constraints})
+                        await conn.send({'unsep': sep_constraints_order})
                         break
 
                     with prog.scope.n_states(1):
@@ -503,6 +529,7 @@ class ParallelFolIc3(object):
                                     mapping[s] = sep.add_model(state_to_model(states[s]))
                             sep.add_constraint(c.map(mapping))
                             sep_constraints.add(c)
+                            sep_constraints_order.append(c)
                             minimized = False
                             eval_time += time.time() - start
                             break
@@ -514,7 +541,7 @@ class ParallelFolIc3(object):
                             continue # continue the loop, now asking for a minimized separator
                         else:
                             print(f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
-                            await conn.send({'candidate': p, 'constraints': [c for c in constraints if c in sep_constraints]})
+                            await conn.send({'candidate': p, 'constraints': sep_constraints_order})
                             break
 
     async def IG2_manager(self, frame: int, state: int, rationale: str, timeout_sec: float = -1) -> Optional[Expr]:
@@ -556,6 +583,9 @@ class ParallelFolIc3(object):
             popularity[n] = 2
         MAX_POPULAR = 150
 
+
+        _log_ig_problem(identity, rationale, Neg(0), list(constraints_in_frame), states, [self._predicates[i] for i in frame_preds], [inv for inv in syntax.the_program.invs()])
+
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
         # def check_popular_constraints(satsifies: Set[Constraint], p: Expr) -> Optional[Constraint]:
@@ -588,7 +618,7 @@ class ParallelFolIc3(object):
         async def generalize_quantifiers(p: Expr, constraints: Set[Constraint]) -> Expr:
             prefix, matrix = decompose_prenex(p)
             ig_print(f"Original prefix {prefix}, matrix {matrix}")
-            assert prefix_in_epr(prefix)
+            #assert prefix_in_epr(prefix)
             while True:
                 for new_prefix in generalizations_of_prefix(prefix):
                     assert new_prefix != prefix
@@ -640,6 +670,7 @@ class ParallelFolIc3(object):
                     pop = [c for c, cnt in popularity.most_common(MAX_POPULAR)]
                     last_sep_constraints : Set[Constraint] = set()
                     next_constraints = list(necessary_constraints) + pop
+                    _log_sep_problem(pre, next_constraints, states, [self._predicates[x] for x in frame_preds])
                     while True:
                         if solution.done(): return
                         await conn.send({'constraints': send_constraints(next_constraints), 'sep': None})
@@ -699,8 +730,9 @@ class ParallelFolIc3(object):
                                 if not solution.done():
                                     states_needed = set(s for c in sep_constraints for s in c.states())
                                     structs = dict((i, s) for i, s in enumerate(states) if i in states_needed)
-                                    with open(os.path.join(utils.args.log_dir, f'ig-solutions/ig-solution-{identity}.pickle'), 'wb') as output:
-                                        pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': [self._predicates[fp] for fp in frame_preds]}, output)
+                                    if utils.args.log_dir != '':
+                                        with open(os.path.join(utils.args.log_dir, f'ig-solutions/ig-solution-{identity}.pickle'), 'wb') as output:
+                                            pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': [self._predicates[fp] for fp in frame_preds]}, output)
                                     
                                     ig_print(f"SEP with |constr|={len(sep_constraints)}")
                                     if 'no-generalize-quantifiers' not in utils.args.expt_flags:
@@ -718,6 +750,7 @@ class ParallelFolIc3(object):
                         elif 'unsep' in v:
                             core = v['unsep']
                             ig_print(f"UNSEP: {pre_pp} ({pc.logic}) with |core|={len(core)}")
+                            _log_sep_unsep(pre, core, states)
                             # if False:
                             #     test_sep = FixedImplicationSeparator(sig, pre, pc)
                             #     m = {i: test_sep.add_model(state_to_model(states[i])) for i in range(len(states))}
@@ -768,7 +801,6 @@ class ParallelFolIc3(object):
             return
 
         async def summary_logger() -> None:
-            pass
             ig_print(f"Inductive generalize blocking {state} in frame {frame} for {rationale}")
             st = self._states[state]
             size_summary = ', '.join(f"|{sort.name}|={len(elems)}" for sort, elems in st.univs.items())
@@ -824,7 +856,7 @@ class ParallelFolIc3(object):
                       for (x,y) in itertools.product(self._sig.sort_names, self._sig.sort_names)
                       if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 4
+        multiplier = 2
 
         async with ScopedTasks() as tasks:
             tasks.add(logger())
@@ -1037,10 +1069,11 @@ class ParallelFolIc3(object):
 
 def p_fol_ic3(_: Solver) -> None:
     # Redirect stdout if we have a log directory
+    old_stdout = sys.stdout
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
-        os.makedirs(os.path.join(utils.args.log_dir, 'ig-solutions'), exist_ok=True)
-        os.makedirs(os.path.join(utils.args.log_dir, 'hard-queries'), exist_ok=True)
+        for dir in ['ig-solutions', 'hard-queries', 'ig-problems', 'sep-unsep', 'sep-problems']:
+            os.makedirs(os.path.join(utils.args.log_dir, dir), exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
 
     # Print initial header with command line and git hash
@@ -1131,6 +1164,25 @@ def fol_extract(solver: Solver) -> None:
         quants = max(quants, count_quantifiers(x.expr))
     sig = prog_to_sig(syntax.the_program)
     print(f"{base_name}, {conjuncts}, {quants}, {len(sig.sorts)}, {len(sig.relations) + len(sig.constants) + len(sig.functions)}")
+    # Check EPR-ness
+    edges: Set[Tuple[str, str]] = set()
+    for func in syntax.the_program.functions():
+        for s1 in func.arity:
+            edges.add((str(s1), str(func.sort)))
+    sol = Solver()
+    t = sol.get_translator(2)
+    with sol.new_frame():
+        for inv in prog.invs():
+            sol.add(t.translate_expr(inv.expr))
+            sol.add(t.translate_expr(Not(New(inv.expr))))
+        for trans in prog.transitions():
+            sol.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
+        for a in sol.z3solver.assertions():
+            add_epr_edges(edges, a)
+    print('epr_edges =',repr(','.join(f'{a}->{b}' for a,b in edges)))
+    g = networkx.DiGraph()
+    g.add_edges_from(edges)
+    print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
 
 def fol_learn(solver: Solver) -> None:
     pass
@@ -1388,6 +1440,45 @@ def fol_benchmark_solver(_: Solver) -> None:
         print(f"robust_check_transition: {'UNSAT' if r is None else 'SAT'} in {end-start:0.3f}")
 
 
+def fol_benchmark_ig(_: Solver) -> None:
+    tp = Tuple[str, Neg, List[Constraint], Dict[int, State], List[Expr], List[InvariantDecl]]
+    (rationale, block, pos, states, prior_frame, golden) = cast(tp, pickle.load(open(utils.args.query, 'rb')))
+    print(f"IG query for {rationale}")
+    async def run_query() -> None:
+        pfol = ParallelFolIc3()
+        for p in prior_frame:
+            pfol.add_predicate(p, 1)
+        state_mapping = {}
+        for i, s in states.items():
+            state_mapping[i] = pfol.add_state(s)
+        for c in pos:
+            if isinstance(c, Pos):
+                pfol._useful_reachable.add(c.i)
+        pfol._smt_log = open('/dev/null', 'w')
+        pfol._sep_log = open('/dev/null', 'w')
+        await pfol.IG2_manager(2, state_mapping[block.i], rationale)
+    asyncio.run(run_query())
+    
+def fol_benchmark_sep_unsep(_: Solver) -> None:
+    (prefix, constraints, states) = cast(Tuple[Tuple[Tuple[Optional[bool], int], ...], List[Constraint], Dict[int, State]], pickle.load(open(utils.args.query, 'rb')))
+    print(f"Prefix is: {prefix}, len(constraints) = {len(constraints)}")
+    sig = prog_to_sig(syntax.the_program, two_state=False)
+    sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, PrefixConstraints())
+    mapping = {}
+    start = time.time()
+    cand: Optional[separators.logic.Formula] = None
+    for c in constraints:
+        for s in c.states():
+            if s not in mapping:
+                mapping[s] = sep.add_model(state_to_model(states[s]))
+        sep.add_constraint(c.map(mapping))
+        cand = sep.separate()
+        print(f"Candidate: {cand}")
+    if cand is not None:
+        print("Warning, expected UNSEP not {cand}")
+    end = time.time()
+    print(f"Elapsed: {end-start:0.3f}")
+
 def decompose_prenex(p: Expr) -> Tuple[List[Tuple[bool, str, str]], Expr]:
     def binder_to_list(b: syntax.Binder, is_forall: bool) -> List[Tuple[bool, str, str]]:
         return [(is_forall, v.name, cast(UninterpretedSort, v.sort).name) for v in b.vs]
@@ -1530,6 +1621,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s = subparsers.add_parser('fol-extract', help='Extract conjuncts to a file')
     s.set_defaults(main=fol_extract)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
     result.append(s)
 
     s = subparsers.add_parser('fol-learn', help='Learn a given formula')
@@ -1543,7 +1635,32 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_benchmark_solver)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
     result.append(s)
+
+    s = subparsers.add_parser('fol-benchmark-ig', help='Test IG query solver')
+    s.set_defaults(main=fol_benchmark_ig)
+    s.add_argument("--query", type=str, help="Query to benchmark")
+    s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
+    s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
+    s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
+    result.append(s)
+
+    s = subparsers.add_parser('fol-benchmark-sep-unsep', help='Test IG query solver')
+    s.set_defaults(main=fol_benchmark_sep_unsep)
+    s.add_argument("--query", type=str, help="Query to benchmark")
+    s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    result.append(s)
+
+    # s = subparsers.add_parser('fol-benchmark-ig', help='Test IG query solver')
+    # s.set_defaults(main=fol_benchmark_ig)
+    # s.add_argument("--query", type=str, help="Query to benchmark")
+    # s.add_argument("--output", type=str, help="Output to file")
+    # s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    # result.append(s)
 
     s = subparsers.add_parser('fol-debug-ig', help='Debug a IG solution')
     s.set_defaults(main=fol_debug_ig)
