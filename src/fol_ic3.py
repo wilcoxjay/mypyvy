@@ -18,7 +18,6 @@ import shutil
 from collections import Counter, defaultdict
 
 import z3
-from z3.z3printer import FormatObject
 from async_tools import AsyncConnection, ScopedProcess, ScopedTasks
 from semantics import State
 import separators
@@ -856,7 +855,7 @@ class ParallelFolIc3(object):
                       for (x,y) in itertools.product(self._sig.sort_names, self._sig.sort_names)
                       if (x,y) not in utils.args.epr_edges]
                 pc.disallowed_quantifier_edges = qe
-        multiplier = 2
+        multiplier = 4
 
         async with ScopedTasks() as tasks:
             tasks.add(logger())
