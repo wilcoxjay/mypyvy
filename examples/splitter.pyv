@@ -1,0 +1,39 @@
+# Thanks to Daniel Riley for pointing out this example.
+#
+# Based on Figure 1a of:
+#   Sharma et al. Simplifying Loop Invariant Generation Using Splitter Predicates. CAV '11.
+#
+# int main()
+# {
+#   int n; int m;
+#   if (n < 0 || m < 0 || m >= n) return 0;
+#   int x=0;
+#   int y=m;
+#   while(x<n) {
+#     x++;
+#     if(x>m) y++;
+#   }
+#   sassert(y==n);
+# }
+
+immutable constant n: int
+immutable constant m: int
+
+axiom n >= 0
+axiom m >= 0
+axiom m < n
+
+mutable constant x: int
+mutable constant y: int
+
+init x = 0
+init y = m
+
+transition loop_body()
+  modifies x, y
+  & x < n
+  & new(x) = x + 1
+  & new(y) = if new(x) > m then y + 1 else y
+
+safety x >= n -> y = n
+invariant if x <= m then y = m else y = x
