@@ -23,6 +23,7 @@ from semantics import Trace, State, FirstOrderStructure
 from translator import Z3Translator, TRANSITION_INDICATOR
 import solver
 from solver import Solver
+import parser
 
 
 def check_solver(s: Solver, num_states: int, minimize: Optional[bool] = None) -> Optional[Trace]:
@@ -637,3 +638,13 @@ def reorder(lst: List[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]]
 
     assert 0 <= order < math.factorial(len(lst))
     return list(utils.generator_element(itertools.permutations(lst), order))
+
+def parse_and_typecheck_expr(input: str, n_states: int = 0, close_free_vars: bool = False) -> syntax.Expr:
+    e = parser.parse_expr(input)
+    if close_free_vars:
+        e = syntax.close_free_vars(e, span=e.span)
+
+    scope = syntax.the_program.scope
+    with scope.n_states(n_states):
+        typechecker.typecheck_expr(scope, e, None)
+    return e
