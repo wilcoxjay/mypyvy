@@ -1,0 +1,34 @@
+# This is a pure first-order encoding of splitter.pyv. See that file for details.
+
+sort node @printed_by(ordered_by_printer, le)
+
+immutable relation le(node, node) @no_print
+axiom le(X, X)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(X, Y) -> le(Y, Z) | le(Z, Y)
+
+immutable constant n: node
+immutable constant m: node
+axiom le(m, n) & m != n  # encodes strict inequality "lt(m, n)"
+
+mutable constant x: node
+mutable constant y: node
+
+init forall Z. le(x, Z)  # encodes "x is the minimum element"
+init y = m
+
+# "b is the successor of a"
+zerostate definition successor(a: node, b: node) =
+  & le(a, b)
+  & a != b
+  & forall Z. le(a, Z) & le(Z, b) -> Z = a | Z = b
+
+transition loop_body()
+  modifies x, y
+  & le(x, n) & x != n  # strict inequality
+  & successor(x, new(x))
+  & if le(m, new(x)) & m != new(x) then successor(y, new(y)) else new(y) = y
+
+safety le(n, x) -> y = n
+invariant if le(x, m) then y = m else y = x
