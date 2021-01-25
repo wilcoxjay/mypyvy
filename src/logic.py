@@ -263,6 +263,24 @@ def assert_any_transition(s: Solver, t: Z3Translator,
     s.add(z3.Or(*tids))
 
 
+def check_theorem(th: syntax.TheoremDecl, s: Solver,
+                  errmsgs: List[Tuple[Optional[syntax.Span], str]] = [],
+                  verbose: bool = True) -> Optional[Trace]:
+    if th.num_states == 2:
+        num_states = 2
+    elif th.num_states == 1:
+        num_states = 1
+    else:
+        num_states = 0
+
+    t = s.get_translator(num_states)
+
+    with s.new_frame():
+        s.add(t.translate_expr(Not(th.expr)))
+
+        return check_unsat(errmsgs, s, num_states, verbose=verbose)
+
+
 def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None,
               minimize: Optional[bool] = None) -> Optional[Trace]:
     prog = syntax.the_program

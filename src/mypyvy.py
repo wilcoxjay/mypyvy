@@ -222,15 +222,6 @@ def theorem(s: Solver) -> None:
 
     prog = syntax.the_program
     for th in prog.theorems():
-        if th.num_states == 2:
-            num_states = 2
-        elif th.num_states == 1:
-            num_states = 1
-        else:
-            num_states = 0
-
-        t = s.get_translator(num_states)
-
         if th.name is not None:
             msg = ' ' + th.name
         elif th.span is not None:
@@ -241,10 +232,7 @@ def theorem(s: Solver) -> None:
         utils.logger.always_print(' theorem%s... ' % msg, end='')
         sys.stdout.flush()
 
-        with s.new_frame():
-            s.add(t.translate_expr(Not(th.expr)))
-
-            logic.check_unsat([(th.span, 'theorem%s does not hold' % msg)], s, num_states)
+        logic.check_theorem(th, s, err_msgs=[(th.span, 'theorem%s does not hold' % msg)])
 
 def nop(s: Solver) -> None:
     pass
