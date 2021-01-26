@@ -253,7 +253,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
     seen_first = False
 
     for elm in xml_decls:
-        if isinstance(elm, xml.dom.minidom.Text):
+        if isinstance(elm, xml.dom.minidom.Text):  # type: ignore
             continue
         if elm.tagName == 'state':
             diagram = parser.parse_expr(elm.childNodes[0].data)
