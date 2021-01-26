@@ -232,7 +232,7 @@ def theorem(s: Solver) -> None:
         utils.logger.always_print(' theorem%s... ' % msg, end='')
         sys.stdout.flush()
 
-        logic.check_theorem(th, s, err_msgs=[(th.span, 'theorem%s does not hold' % msg)])
+        logic.check_theorem(th, s, errmsgs=[(th.span, 'theorem%s does not hold' % msg)])
 
 def nop(s: Solver) -> None:
     pass
