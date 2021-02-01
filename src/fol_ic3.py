@@ -1075,7 +1075,7 @@ class ParallelFolIc3:
                 continue
             code = '$' if index in self._safeties else 'i' if index in self._initial_conditions else 'b' if index in self._bad_predicates else ' '
             fn_str = f"{i:2}" if i is not None else ' +'
-            print(f"[IC3] predicate {fn_str} {code} {p}")
+            print(f"[IC3] lemma {fn_str} {code} {p}")
         print(f"[IC3] Reachable states: {len(self._reachable)}, initial states: {len(self._initial_states)}, useful reachable: {len(self._useful_reachable)}")
         print("[IC3] ----")
         print(f"time: {time.time() - self._start_time:0.3f} sec")
