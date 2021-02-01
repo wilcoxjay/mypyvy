@@ -27,7 +27,7 @@ from translator import Z3Translator, quantifier_alternation_graph
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, SortedVar, UnaryExpr, UninterpretedSort
+from syntax import AppExpr, BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, SortedVar, UnaryExpr, UninterpretedSort
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparator, FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints, PrefixSolver
@@ -1454,7 +1454,7 @@ def p_fol_ic3(_: Solver) -> None:
         os.makedirs(utils.args.log_dir, exist_ok=True)
         for dir in ['smt-queries', 'ig-problems', 'sep-unsep', 'sep-problems']:
             os.makedirs(os.path.join(utils.args.log_dir, dir), exist_ok=True)
-        sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=False, encoding='utf8')
+        sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=True, encoding='utf8')
 
     # Print initial header with command line and git hash
     print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
@@ -1483,6 +1483,37 @@ def p_fol_ic3(_: Solver) -> None:
         p = ParallelFolIc3()
         await p.run()
     asyncio.run(main())
+
+def neg_normalize(e: Expr) -> Expr:
+    return e
+def structure_of(e: Expr) -> str:
+    if isinstance(e, QuantifierExpr):
+        return ("A" if e.quant == 'FORALL' else "E") * len(e.binder.vs) + " " + structure_of(e.body)
+    if isinstance(e, UnaryExpr):
+        if e.op == 'NOT':
+            x = structure_of(e.arg)
+            if x == 'l':
+                return 'l'
+            else:
+                return '!' + x
+    if isinstance(e, BinaryExpr):
+        if e.op == 'EQUAL' or e.op == 'NOTEQ':
+            return 'l'
+        if e.op == 'IMPLIES':
+            return "(" + structure_of(e.arg1) + " -> " + structure_of(e.arg2) + ")"
+        if e.op == 'IFF':
+            return "(" + structure_of(e.arg1) + " <-> " + structure_of(e.arg2) + ")"
+    if isinstance(e, AppExpr):
+        return 'l'
+    if isinstance(e, NaryExpr):
+        if e.op == 'AND':
+            return '(' + '&'.join(structure_of(x) for x in e.args) + ')'
+        if e.op == 'OR':
+            return '(' + '|'.join(structure_of(x) for x in e.args) + ')'
+    
+    print(e, type(e))
+    assert False
+    return str(e)
 
 def fol_extract(solver: Solver) -> None:
     import os.path
@@ -1521,48 +1552,56 @@ def fol_extract(solver: Solver) -> None:
         # arg = ','.join(f'{a}->{b}' for (a,b) in graph.edges)
         # print(f"--epr-edges='{arg}'")
 
-    def count_quantifiers(e: Expr) -> int:
-        if isinstance(e, QuantifierExpr):
-            return len(e.binder.vs) + count_quantifiers(e.body)
-        elif isinstance(e, UnaryExpr):
-            return count_quantifiers(e.arg)
-        elif isinstance(e, BinaryExpr):
-            return count_quantifiers(e.arg1) + count_quantifiers(e.arg2)
-        elif isinstance(e, NaryExpr):
-            return sum(count_quantifiers(a) for a in e.args)
-        elif isinstance(e, IfThenElse):
-            return count_quantifiers(e.branch) + count_quantifiers(e.then) + count_quantifiers(e.els)
-        elif isinstance(e, Let):
-            return count_quantifiers(e.body)
-        else:
-            return 0
+    if 'summarize' in utils.args.expt_flags:
+        def count_quantifiers(e: Expr) -> int:
+            if isinstance(e, QuantifierExpr):
+                return len(e.binder.vs) + count_quantifiers(e.body)
+            elif isinstance(e, UnaryExpr):
+                return count_quantifiers(e.arg)
+            elif isinstance(e, BinaryExpr):
+                return count_quantifiers(e.arg1) + count_quantifiers(e.arg2)
+            elif isinstance(e, NaryExpr):
+                return sum(count_quantifiers(a) for a in e.args)
+            elif isinstance(e, IfThenElse):
+                return count_quantifiers(e.branch) + count_quantifiers(e.then) + count_quantifiers(e.els)
+            elif isinstance(e, Let):
+                return count_quantifiers(e.body)
+            else:
+                return 0
 
-    conjuncts, quants = 0, 0
-    for x in prog.invs():
-        if x.is_safety: continue
-        conjuncts += 1
-        quants = max(quants, count_quantifiers(x.expr))
-    sig = prog_to_sig(syntax.the_program)
-    print(f"{base_name}, {conjuncts}, {quants}, {len(sig.sorts)}, {len(sig.relations) + len(sig.constants) + len(sig.functions)}")
-    # Check EPR-ness
-    edges: Set[Tuple[str, str]] = set()
-    for func in syntax.the_program.functions():
-        for s1 in func.arity:
-            edges.add((str(s1), str(func.sort)))
-    sol = Solver()
-    t = sol.get_translator(2)
-    with sol.new_frame():
-        for inv in prog.invs():
-            sol.add(t.translate_expr(inv.expr))
-            sol.add(t.translate_expr(Not(New(inv.expr))))
-        for trans in prog.transitions():
-            sol.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
-        for a in sol.z3solver.assertions():
-            add_epr_edges(edges, a)
-    print('epr_edges =',repr(','.join(f'{a}->{b}' for a,b in edges)))
-    g = networkx.DiGraph()
-    g.add_edges_from(edges)
-    print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
+        conjuncts, quants = 0, 0
+        for x in prog.invs():
+            if x.is_safety: continue
+            conjuncts += 1
+            quants = max(quants, count_quantifiers(x.expr))
+        sig = prog_to_sig(syntax.the_program)
+        print(f"{base_name}, {conjuncts}, {quants}, {len(sig.sorts)}, {len(sig.relations) + len(sig.constants) + len(sig.functions)}")
+    
+    if 'epr' in utils.args.expt_flags:
+        # Check EPR-ness
+        edges: Set[Tuple[str, str]] = set()
+        for func in syntax.the_program.functions():
+            for s1 in func.arity:
+                edges.add((str(s1), str(func.sort)))
+        sol = Solver()
+        t = sol.get_translator(2)
+        with sol.new_frame():
+            for inv in prog.invs():
+                sol.add(t.translate_expr(inv.expr))
+                sol.add(t.translate_expr(Not(New(inv.expr))))
+            for trans in prog.transitions():
+                sol.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
+            for a in sol.z3solver.assertions():
+                add_epr_edges(edges, a)
+        print('epr_edges =',repr(','.join(f'{a}->{b}' for a,b in edges)))
+        g = networkx.DiGraph()
+        g.add_edges_from(edges)
+        print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
+    if 'formulas' in utils.args.expt_flags:
+        for i, inv in enumerate(syntax.the_program.invs()):
+            if inv.is_safety: continue
+            print(f"0;0;0;{structure_of(neg_normalize(inv.expr))};{inv.expr};{base_name};{i}")
+
 
 def fol_learn(solver: Solver) -> None:
     pass
