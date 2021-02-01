@@ -1362,7 +1362,7 @@ class ParallelFolIc3:
         # print("Starting heuristics")
         while True:
             priorities = random.sample(range(len(self._predicates)), len(self._predicates)) if kind \
-                         else sorted(range(len(self._predicates)), key=lambda pred: ParallelFolIc3.frame_key(self._frame_numbers[pred]))
+                         else sorted(range(len(self._predicates)), key=lambda pred: ParallelFolIc3.frame_key(self._frame_numbers[pred]), reverse=True)
             # print("Checking for something to do")
             frame_N = min((self._frame_numbers[s] for s in self._safeties), key = ParallelFolIc3.frame_key)
             # print(f"Frame_N: {frame_N}")
@@ -1429,7 +1429,7 @@ class ParallelFolIc3:
         self._threads_per_ig = max(1, thread_budget//2) if 'no-heuristic-pushing' not in utils.args.expt_flags else thread_budget
         async with ScopedTasks() as tasks:
             if 'no-heuristic-pushing' not in utils.args.expt_flags:
-                tasks.add(self.heuristic_pushing_to_the_top_worker(True))
+                tasks.add(self.heuristic_pushing_to_the_top_worker(False))
                 # tasks.add(self.heuristic_pushing_to_the_top_worker(True))
             tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
