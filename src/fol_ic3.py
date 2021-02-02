@@ -691,7 +691,7 @@ class IGSolver2:
         sys.stdout = self._logs._sep_log
         print("Started Worker")
         prog = syntax.the_program
-        sep = FixedImplicationSeparatorPyCryptoSat(self._sig, (), PrefixConstraints(), 0, set(), [])
+        sep = FixedImplicationSeparatorPyCryptoSat(self._sig, ())
         constraints: List[Constraint] = []
         sep_constraints: Set[Constraint] = set()
         sep_constraints_order: List[Constraint] = []
@@ -702,9 +702,9 @@ class IGSolver2:
         while True:
             v = await conn.recv()
             if 'prefix' in v:
-                prefix = v['prefix']
+                prefix, k_cubes = v['prefix'], v['k_cubes']
                 del sep
-                sep = FixedImplicationSeparatorPyCryptoSat(self._sig, prefix, k_cubes = 2, expt_flags = utils.args.expt_flags)
+                sep = FixedImplicationSeparatorPyCryptoSat(self._sig, prefix, k_cubes=k_cubes, expt_flags=utils.args.expt_flags)
                 sep_constraints = set()
                 sep_constraints_order = []
                 mapping = {}
@@ -885,7 +885,7 @@ class IGSolver2:
                         continue
                     prefix, release = prefix_release
                     pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
-                                        
+                    k_cubes = 2 if any(not fa for (fa, _) in prefix.linearize()) else 0                   
                     # start a separator instance
                     worker_prefix_sent = False
                     next_constraints = list(self._necessary_constraints) + predict_useful_constraints(prefix)
@@ -898,7 +898,7 @@ class IGSolver2:
                     # Loop for adding constraints for a particular prefix
                     while True:
                         await conn.send({'constraints': send_constraints(next_constraints), 'sep': None,
-                                         **({'prefix': prefix.linearize()} if not worker_prefix_sent else {})})
+                                         **({'prefix': prefix.linearize(), 'k_cubes': k_cubes} if not worker_prefix_sent else {})})
                         worker_prefix_sent = True
                         if not logged_problem and time.time() - start_time > 5:
                             _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
@@ -1900,7 +1900,7 @@ def fol_benchmark_sep_unsep(_: Solver) -> None:
     (prefix, constraints, states) = cast(Tuple[Tuple[Tuple[Optional[bool], int], ...], List[Constraint], Dict[int, State]], pickle.load(open(utils.args.query, 'rb')))
     print(f"Prefix is: {prefix}, len(constraints) = {len(constraints)}")
     sig = prog_to_sig(syntax.the_program, two_state=False)
-    sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, PrefixConstraints())
+    sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, PrefixConstraints(), k_cubes=2)
     mapping = {}
     start = time.time()
     cand: Optional[separators.logic.Formula] = None
@@ -1909,7 +1909,7 @@ def fol_benchmark_sep_unsep(_: Solver) -> None:
             if s not in mapping:
                 mapping[s] = sep.add_model(state_to_model(states[s]))
         sep.add_constraint(c.map(mapping))
-        cand = sep.separate()
+        cand = sep.separate(minimize=True)
         print(f"Candidate: {cand}")
     if cand is not None:
         print("Warning, expected UNSEP not {cand}")
