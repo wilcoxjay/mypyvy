@@ -1,0 +1,226 @@
+######################
+## Two-Phase Commit ##
+######################
+
+sort worker
+sort coordinator
+sort txn
+
+# Associate workers and coordinators with transactions
+immutable relation txn_worker(txn, worker)
+immutable relation txn_coord(txn, coordinator)
+
+# Each transaction is coordinated by a unique coordinator
+axiom txn_coord(T,C1) -> txn_coord(T, C2) -> C1 = C2
+
+# At least one worker/coordinator for each txn
+axiom forall T. exists C. txn_coord(T,C)
+axiom forall T. exists W. txn_worker(T,W)
+
+# Coord -> Worker
+mutable relation sent_txn(txn, coordinator, worker)
+mutable relation sent_commit(txn, coordinator, worker)
+mutable relation sent_abort(txn, coordinator, worker)
+
+# Worker -> Coord
+mutable relation sent_success(txn, worker, coordinator)
+mutable relation sent_failed(txn, worker, coordinator)
+
+# Coord State
+mutable relation txn_failed_at(txn, coordinator, worker)
+mutable relation txn_succeed_at(txn, coordinator, worker)
+mutable relation ccommitted(txn, coordinator)
+mutable relation caborted(txn, coordinator)
+
+# Worker States
+mutable relation wcommitted(txn, worker)
+mutable relation waborted(txn, worker)
+
+#######################
+#### Initial State ####
+#######################
+
+init !sent_commit(T,C,W)
+init !sent_abort(T,C,W)
+init !sent_txn(T,C,W)
+
+init !sent_success(T,W,C)
+init !sent_failed(T,W,C)
+
+init !txn_failed_at(T,C,W)
+init !txn_succeed_at(T,C,W)
+init !ccommitted(T,C)
+init !caborted(T,C)
+
+init !wcommitted(T,W)
+init !waborted(T,W)
+
+################################
+### Coordinator Transitions ####
+################################
+
+# Broadcast transition to new worker
+transition coord_broadcast(t: txn, c:coordinator, w:worker)
+  modifies sent_txn
+  txn_coord(t,c)   &
+  txn_worker(t,w)  &
+  !sent_txn(t,c,w) &
+  (new(sent_txn(T,C,W)) <-> sent_txn(T,C,W) | (T = t & C = c & W = w))
+
+# Get response from a worker:
+# failed case
+transition coord_record_fail(t: txn, c:coordinator, w:worker)
+  modifies txn_failed_at
+  !(ccommitted(t, c) | caborted(t, c)) & # don't take this transition if we moved to the commit or abort phases
+  sent_failed(t,w,c) &
+  (new(txn_failed_at(T,C,W)) <-> txn_failed_at(T,C,W) | (T=t & C=c & W=w))
+
+# Get response from a worker:
+# success case
+transition coord_record_succeed(t: txn, c:coordinator, w:worker)
+  modifies txn_succeed_at
+  !(ccommitted(t, c) | caborted(t, c)) & # don't take this transition if we moved to the commit or abort phases
+  sent_success(t,w,c) &
+  (new(txn_succeed_at(T,C,W)) <-> txn_succeed_at(T,C,W) | (T=t & C=c & W=w))
+
+# Decide to commit
+transition coord_decide_commit(t: txn, c:coordinator)
+  modifies ccommitted, sent_commit
+  !(ccommitted(t, c) | caborted(t, c)) & # don't take this transition if we moved to the commit or abort phases
+  (forall W . txn_worker(t,W) -> txn_succeed_at(t,c,W)) &
+  (new(ccommitted(T,C)) <-> ccommitted(T,C) | (T=t & C=c)) &
+  (new(sent_commit(T,C,W)) <-> sent_commit(T,C,W) | (T=t & C=c & txn_worker(t,W)))
+
+# Decide to abort
+transition coord_decide_abort(t: txn, c:coordinator)
+  modifies caborted, sent_abort
+  !(ccommitted(t, c) | caborted(t, c)) & # don't take this transition if we moved to the commit or abort phases
+  (exists W . txn_worker(t,W) & txn_failed_at(t,c,W)) &
+  (new(caborted(T,C)) <-> caborted(T,C) | (T=t & C=c)) &
+  (new(sent_abort(T,C,W)) <-> sent_abort(T,C,W) | (T=t & C=c & txn_worker(t,W)))
+
+############################
+#### Worker Transitions ####
+############################
+
+# Worker receives the transaction, does local work,
+# and sends the response (success case)
+transition worker_do_txn(t: txn, w: worker, c: coordinator)
+  modifies sent_success
+  sent_txn(t,c,w) &
+  !sent_failed(t,w,c) &
+  (new(sent_success(T,W,C)) <-> (sent_success(T,W,C) | (T=t & W=w & C=c)))
+
+# Worker receives the transaction, does local work,
+# and sends the response (failure case)
+transition worker_fail_txn(t: txn, w: worker, c: coordinator)
+  modifies sent_failed
+  sent_txn(t,c,w) &
+  !sent_success(t,w,c) &
+  (new(sent_failed(T,W,C)) <-> (sent_failed(T,W,C) | (T=t & W=w & C=c)))
+
+# Worker receives 'abort' from coordinator
+transition worker_receive_abort(t: txn, w: worker, c:coordinator)
+  modifies waborted
+  sent_abort(t,c,w) &
+  (new(waborted(T,W)) <-> waborted(T,W) | (T=t & W=w))
+
+# Worker receives 'commit' from coordinator
+transition worker_receive_commit(t: txn, w: worker, c:coordinator)
+  modifies wcommitted
+  sent_commit(t,c,w) &
+  (new(wcommitted(T,W)) <-> wcommitted(T,W) | (T=t & W=w))
+
+################################
+## Property: Worker consensus ##
+################################
+# The property:
+# for all transactions T
+# for all pairs of workers W1 and W2, either
+# 1. W1 is not finished
+# 2. W2 is not finished
+# 3. W1 and W2 both aborted
+# 3. W1 and W2 both committed
+safety !(wcommitted(T,W1) & waborted(T,W2))
+#safety !(ccommitted(T,C) & caborted(T,C)) # safe and inductive!
+
+#####################
+## Phase Structure ##
+#####################
+
+# The protocol is proved correct by proving non-interference w.r.t.
+# the state associated with a particular coordinator & transaction.
+
+# First, we split txn->{qt, qt#} and coordinator{qc, qc#}
+immutable constant qt: txn
+immutable constant qc: coordinator
+axiom txn_coord(qt, qc)
+
+# Then, break the protocol into phases:
+automaton {
+  init phase bcast_txn
+
+  global
+    safety !(wcommitted(qt,W1) & waborted(qt,W2))
+    transition coord_broadcast        -> self
+    transition coord_record_fail      -> self
+    transition coord_record_succeed   -> self
+    transition coord_decide_commit    -> self assume !(t=qt & c=qc)
+    transition coord_decide_abort     -> self assume !(t=qt & c=qc)
+    transition worker_do_txn          -> self
+    transition worker_fail_txn        -> self
+    transition worker_receive_abort   -> self
+    transition worker_receive_commit  -> self
+
+    invariant !(sent_abort(qt,C,W) & C != qc)
+    invariant !(sent_commit(qt,C,W) & C != qc)
+    invariant !(sent_txn(qt,C,W) & C != qc)
+    invariant !(txn_succeed_at(qt,C,W) & C != qc)
+    invariant !(txn_failed_at(qt,C,W) & C != qc)
+    invariant !(sent_failed(qt,W,C) & C != qc)
+    invariant !(sent_success(qt,W,C) & C != qc)
+    invariant !((txn_succeed_at(qt,C,W) | txn_failed_at(qt,C,W)) & C != qc)
+
+  phase bcast_txn
+    transition coord_decide_commit    -> phase bcast_commit assume (t=qt & c=qc)
+    transition coord_decide_abort    -> phase bcast_abort assume (t=qt & c=qc)
+
+    invariant !(sent_failed(qt,W,qc) & sent_success(qt,W,qc))
+    invariant txn_succeed_at(qt,qc,W) -> sent_success(qt,W,qc)
+    invariant txn_failed_at(qt,qc,W) -> sent_failed(qt,W,qc)
+    invariant !sent_abort(qt,qc,W)
+    invariant !sent_commit(qt,qc,W)
+    invariant !waborted(qt, W)
+    invariant !wcommitted(qt, W)
+    invariant !(txn_succeed_at(qt,qc,W) & txn_failed_at(qt,qc,W))
+
+  phase bcast_commit
+    invariant !sent_abort(qt,C,W)
+    invariant ccommitted(qt, qc)
+    invariant !waborted(qt, W)
+
+  phase bcast_abort
+    invariant !sent_commit(qt,C,W)
+    invariant caborted(qt, qc)
+    invariant !wcommitted(qt, W)
+}
+
+sat trace {
+  coord_broadcast
+  coord_broadcast
+  worker_do_txn
+  worker_do_txn
+  coord_record_succeed
+  coord_record_succeed
+  coord_decide_abort
+}
+
+unsat trace {
+  coord_broadcast
+  coord_broadcast
+  worker_do_txn
+  worker_do_txn
+  coord_record_succeed
+  coord_record_succeed
+  coord_decide_commit
+}
