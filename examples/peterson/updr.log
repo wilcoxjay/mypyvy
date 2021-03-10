@@ -1,0 +1,360 @@
+/usr/local/opt/python@3.9/bin/python3.9 src/mypyvy.py updr --log-time --use-z3-unsat-core --log info examples/peterson/peterson.pyv
+INFO 0.000179 utils.py:235: Running mypyvy with the following options:
+INFO 0.000375 utils.py:235:     assert_inductive_trace = False
+INFO 0.000462 utils.py:235:     cache_only = False
+INFO 0.000531 utils.py:235:     cache_only_discovered = False
+INFO 0.00064 utils.py:235:     checkpoint_in = None
+INFO 0.00074 utils.py:235:     checkpoint_out = None
+INFO 0.000832 utils.py:235:     clear_cache = False
+INFO 0.000905 utils.py:235:     clear_cache_memo = False
+INFO 0.000971 utils.py:235:     cvc4 = False
+INFO 0.001035 utils.py:235:     error_filename_basename = False
+INFO 0.001099 utils.py:235:     exit_0 = False
+INFO 0.001161 utils.py:235:     exit_on_error = False
+INFO 0.001225 utils.py:235:     filename = 'examples/peterson/peterson.pyv'
+INFO 0.001314 utils.py:235:     forbid_parser_rebuild = False
+INFO 0.001394 utils.py:235:     ipython = False
+INFO 0.001465 utils.py:235:     key_prefix = None
+INFO 0.001536 utils.py:235:     log = 'info'
+INFO 0.001624 utils.py:235:     log_time = True
+INFO 0.001694 utils.py:235:     log_xml = False
+INFO 0.001763 utils.py:235:     main = <function do_updr at 0x1123f4310>
+INFO 0.001873 utils.py:235:     minimize_models = True
+INFO 0.001943 utils.py:235:     print_cmdline = True
+INFO 0.002016 utils.py:235:     print_counterexample = True
+INFO 0.002089 utils.py:235:     print_exit_code = False
+INFO 0.00216 utils.py:235:     print_negative_tuples = False
+INFO 0.002248 utils.py:235:     print_program = None
+INFO 0.002319 utils.py:235:     query_time = True
+INFO 0.002414 utils.py:235:     seed = 0
+INFO 0.00251 utils.py:235:     simplify_diagram = True
+INFO 0.002697 utils.py:235:     smoke_test_solver = False
+INFO 0.00275 utils.py:235:     subcommand = 'updr'
+INFO 0.002883 utils.py:235:     timeout = None
+INFO 0.002977 utils.py:235:     use_z3_unsat_cores = True
+INFO 0.003046 utils.py:235: setting seed to 0
+checking init:
+  implies invariant mutex... ok. (0:00:00.000277)
+INFO 0.044244 utils.py:235: converted safety forall P:proc, Q:proc. pc(P) = cs & pc(Q) = cs -> P = Q in to clauses:
+INFO 0.044442 utils.py:235: exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q
+INFO 0.044503 utils.py:235: discovered state #0
+INFO 0.044714 utils.py:235: BackwardReachableState(id=0, state_or_expr=QuantifierExpr(quant='EXISTS', binder=Binder(vs=(SortedVar(name='P', sort=UninterpretedSort(name='proc'), span=(LexToken(SAFETY,'safety',examples/peterson/peterson.pyv,141,1,4438), LexToken(ID,'Q',examples/peterson/peterson.pyv,141,54,4491))), SortedVar(name='Q', sort=UninterpretedSort(name='proc'), span=(LexToken(SAFETY,'safety',examples/peterson/peterson.pyv,141,1,4438), LexToken(ID,'Q',examples/peterson/peterson.pyv,141,54,4491))))), body=NaryExpr(op='AND', args=(BinaryExpr(op='EQUAL', arg1=AppExpr(callee='pc', args=(Id(name='P', span=(LexToken(ID,'P',examples/peterson/peterson.pyv,141,21,4458), LexToken(ID,'P',examples/peterson/peterson.pyv,141,21,4458))),), span=(LexToken(ID,'pc',examples/peterson/peterson.pyv,141,18,4455), LexToken(RPAREN,')',examples/peterson/peterson.pyv,141,22,4459))), arg2=Id(name='cs', span=(LexToken(ID,'cs',examples/peterson/peterson.pyv,141,26,4463), LexToken(ID,'cs',examples/peterson/peterson.pyv,141,26,4463))), span=None), BinaryExpr(op='EQUAL', arg1=AppExpr(callee='pc', args=(Id(name='Q', span=(LexToken(ID,'Q',examples/peterson/peterson.pyv,141,36,4473), LexToken(ID,'Q',examples/peterson/peterson.pyv,141,36,4473))),), span=(LexToken(ID,'pc',examples/peterson/peterson.pyv,141,33,4470), LexToken(RPAREN,')',examples/peterson/peterson.pyv,141,37,4474))), arg2=Id(name='cs', span=(LexToken(ID,'cs',examples/peterson/peterson.pyv,141,41,4478), LexToken(ID,'cs',examples/peterson/peterson.pyv,141,41,4478))), span=None), BinaryExpr(op='NOTEQ', arg1=Id(name='P', span=(LexToken(ID,'P',examples/peterson/peterson.pyv,141,50,4487), LexToken(ID,'P',examples/peterson/peterson.pyv,141,50,4487))), arg2=Id(name='Q', span=(LexToken(ID,'Q',examples/peterson/peterson.pyv,141,54,4491), LexToken(ID,'Q',examples/peterson/peterson.pyv,141,54,4491))), span=None)), span=None), span=None), num_steps_to_bad=0, known_absent_until_frame=0)
+INFO 0.044788 utils.py:235: starting frame 0
+INFO 0.044876 utils.py:235: looking for something to block
+INFO 0.044945 utils.py:235: no existing states to block. looking for a new state.
+INFO 0.044998 utils.py:235: frontier is safe. nothing new to block either.
+INFO 0.056883 utils.py:235: starting frame 1
+INFO 0.083053 utils.py:235: looking for something to block
+INFO 0.094205 utils.py:235: will block state #0 in frame 1
+INFO 0.094413 utils.py:235: block(1)
+INFO 0.139944 utils.py:235: block(1) using !(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+INFO 0.140065 utils.py:235: looking for something to block
+INFO 0.140162 utils.py:235: no existing states to block. looking for a new state.
+INFO 0.140259 utils.py:235: frontier is safe. nothing new to block either.
+INFO 0.202569 utils.py:235: starting frame 2
+INFO 0.28009 utils.py:235: looking for something to block
+INFO 0.285547 utils.py:235: will block state #0 in frame 2
+INFO 0.285647 utils.py:235: block(2)
+INFO 0.354681 utils.py:235: discovered state #1
+INFO 0.356358 utils.py:235: BackwardReachableState(id=1, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = cs
+pc(proc1) = a4, num_steps_to_bad=1, known_absent_until_frame=0)
+INFO 0.358272 utils.py:235: block(1)
+INFO 0.462844 utils.py:235: block(1) using !(exists proc1:proc. pc(proc1) = a4)
+INFO 0.54785 utils.py:235: block(2) using !(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+INFO 0.548077 utils.py:235: looking for something to block
+INFO 0.550451 utils.py:235: will block state #1 in frame 2
+INFO 0.550555 utils.py:235: block(2)
+INFO 0.682518 utils.py:235: discovered state #2
+INFO 0.682976 utils.py:235: BackwardReachableState(id=2, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = a3
+pc(proc1) = cs, num_steps_to_bad=2, known_absent_until_frame=0)
+INFO 0.684713 utils.py:235: block(1)
+INFO 0.801526 utils.py:235: block(1) using !(exists proc1:proc. pc(proc1) = cs)
+INFO 0.845454 utils.py:235: and pushed to 2
+INFO 1.038234 utils.py:235: block(2) using !(pc(turn) = cs)
+INFO 1.038461 utils.py:235: looking for something to block
+INFO 1.039526 utils.py:235: no existing states to block. looking for a new state.
+INFO 1.039629 utils.py:235: frontier is safe. nothing new to block either.
+INFO 1.11642 utils.py:235: starting frame 3
+INFO 1.199734 utils.py:235: looking for something to block
+INFO 1.206221 utils.py:235: will block state #0 in frame 3
+INFO 1.206328 utils.py:235: block(3)
+INFO 1.267845 utils.py:235: block(3) using !(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+INFO 1.267989 utils.py:235: looking for something to block
+INFO 1.270047 utils.py:235: will block state #1 in frame 3
+INFO 1.270108 utils.py:235: block(3)
+INFO 1.399785 utils.py:235: discovered state #3
+INFO 1.400525 utils.py:235: BackwardReachableState(id=3, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc1
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = a4
+pc(proc1) = a4, num_steps_to_bad=2, known_absent_until_frame=0)
+INFO 1.402293 utils.py:235: block(2)
+INFO 1.570122 utils.py:235: block(2) using !(pc(turn) = a4)
+INFO 1.752556 utils.py:235: block(3) using !(pc(turn) = cs)
+INFO 1.752732 utils.py:235: looking for something to block
+INFO 1.755178 utils.py:235: will block state #2 in frame 3
+INFO 1.755234 utils.py:235: block(3)
+INFO 1.924628 utils.py:235: discovered state #4
+INFO 1.92516 utils.py:235: BackwardReachableState(id=4, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = a3
+pc(proc1) = a4, num_steps_to_bad=3, known_absent_until_frame=0)
+INFO 1.926956 utils.py:235: block(2)
+INFO 2.102967 utils.py:235: discovered state #5
+INFO 2.103454 utils.py:235: BackwardReachableState(id=5, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc1
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = a3
+pc(proc1) = a3, num_steps_to_bad=4, known_absent_until_frame=0)
+INFO 2.10517 utils.py:235: block(1)
+INFO 2.208751 utils.py:235: block(1) using !(pc(turn) = a3)
+INFO 2.451329 utils.py:235: block(2) using !(!flag(turn) & pc(turn) = a3)
+INFO 2.829488 utils.py:235: block(3) using !(exists proc1:proc. turn != proc1 & !flag(turn) & !flag(proc1) & pc(turn) = a3)
+INFO 2.829694 utils.py:235: looking for something to block
+INFO 2.83305 utils.py:235: will block state #3 in frame 3
+INFO 2.833159 utils.py:235: block(3)
+INFO 3.159018 utils.py:235: block(3) using !(exists proc0:proc. proc0 != turn & !flag(proc0) & pc(turn) = a4)
+INFO 3.15916 utils.py:235: looking for something to block
+INFO 3.159939 utils.py:235: no existing states to block. looking for a new state.
+INFO 3.16004 utils.py:235: frontier is safe. nothing new to block either.
+INFO 3.342225 utils.py:235: starting frame 4
+INFO 3.574498 utils.py:235: looking for something to block
+INFO 3.58021 utils.py:235: will block state #0 in frame 4
+INFO 3.580284 utils.py:235: block(4)
+INFO 3.664824 utils.py:235: discovered state #6
+INFO 3.665355 utils.py:235: BackwardReachableState(id=6, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+flag(proc1)
+pc(proc0) = a4
+pc(proc1) = cs, num_steps_to_bad=1, known_absent_until_frame=0)
+INFO 3.667089 utils.py:235: block(3)
+INFO 3.879573 utils.py:235: block(3) using !(exists proc1:proc. pc(turn) = a4 & pc(proc1) = cs)
+INFO 3.967808 utils.py:235: block(4) using !(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+INFO 3.968037 utils.py:235: looking for something to block
+INFO 3.970373 utils.py:235: will block state #1 in frame 4
+INFO 3.970455 utils.py:235: block(4)
+INFO 4.376199 utils.py:235: block(4) using !(exists proc1:proc. turn != proc1 & !flag(turn) & !flag(proc1) & pc(turn) = cs)
+INFO 4.376363 utils.py:235: looking for something to block
+INFO 4.378979 utils.py:235: will block state #6 in frame 4
+INFO 4.379048 utils.py:235: block(4)
+INFO 4.573627 utils.py:235: discovered state #7
+INFO 4.574215 utils.py:235: BackwardReachableState(id=7, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+flag(proc1)
+pc(proc0) = a4
+pc(proc1) = a4, num_steps_to_bad=2, known_absent_until_frame=0)
+INFO 4.575876 utils.py:235: block(3)
+INFO 4.725511 utils.py:235: discovered state #8
+INFO 4.726135 utils.py:235: BackwardReachableState(id=8, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+flag(proc0)
+!flag(proc1)
+pc(proc0) = a3
+pc(proc1) = a4, num_steps_to_bad=3, known_absent_until_frame=0)
+INFO 4.728324 utils.py:235: block(2)
+INFO 5.036968 utils.py:235: block(2) using !(exists proc1:proc. flag(turn) & pc(proc1) = a4)
+INFO 5.266041 utils.py:235: block(3) using !(pc(turn) = a4)
+INFO 5.587398 utils.py:235: block(4) using !(exists proc1:proc. pc(turn) = a4 & pc(proc1) = cs)
+INFO 5.587757 utils.py:235: looking for something to block
+INFO 5.591663 utils.py:235: will block state #8 in frame 3
+INFO 5.591728 utils.py:235: block(3)
+INFO 5.741195 utils.py:235: discovered state #9
+INFO 5.741668 utils.py:235: BackwardReachableState(id=9, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = a2
+pc(proc1) = a4, num_steps_to_bad=4, known_absent_until_frame=0)
+INFO 5.743315 utils.py:235: block(2)
+INFO 5.90832 utils.py:235: discovered state #10
+INFO 5.908785 utils.py:235: BackwardReachableState(id=10, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+!flag(proc0)
+!flag(proc1)
+pc(proc0) = a2
+pc(proc1) = a3, num_steps_to_bad=5, known_absent_until_frame=0)
+INFO 5.910539 utils.py:235: block(1)
+INFO 6.048303 utils.py:235: block(1) using !(exists proc1:proc. pc(proc1) = a3)
+INFO 6.28863 utils.py:235: block(2) using !(exists proc1:proc. pc(proc1) = a4)
+INFO 6.479759 utils.py:235: discovered state #11
+INFO 6.480714 utils.py:235: BackwardReachableState(id=11, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+flag(proc0)
+!flag(proc1)
+pc(proc0) = a3
+pc(proc1) = a3, num_steps_to_bad=4, known_absent_until_frame=0)
+INFO 6.482642 utils.py:235: block(2)
+INFO 6.789238 utils.py:235: block(2) using !(exists proc1:proc. turn != proc1 & pc(turn) = a3 & pc(proc1) = a3)
+INFO 7.107683 utils.py:235: block(3) using !(exists proc1:proc. pc(turn) = a3 & pc(proc1) = a4)
+INFO 7.133206 utils.py:235: looking for something to block
+INFO 7.141993 utils.py:235: will block state #10 in frame 2
+INFO 7.142443 utils.py:235: block(2)
+INFO 7.4499 utils.py:235: block(2) using !(exists proc1:proc. !flag(proc1) & pc(proc1) = a3)
+INFO 7.503213 utils.py:235: and pushed to 3
+INFO 7.566091 utils.py:235: and pushed to 4
+INFO 7.566178 utils.py:235: looking for something to block
+INFO 7.568981 utils.py:235: will block state #9 in frame 3
+INFO 7.569137 utils.py:235: block(3)
+INFO 8.048458 utils.py:235: block(3) using !(exists proc1:proc. !flag(proc1) & pc(proc1) = a4)
+INFO 8.116299 utils.py:235: and pushed to 4
+INFO 8.116414 utils.py:235: looking for something to block
+INFO 8.124997 utils.py:235: no existing states to block. looking for a new state.
+INFO 8.125101 utils.py:235: frontier is safe. nothing new to block either.
+INFO 8.581387 utils.py:235: starting frame 5
+INFO 9.167645 utils.py:235: looking for something to block
+INFO 9.17839 utils.py:235: no existing states to block. looking for a new state.
+INFO 9.178459 utils.py:235: frontier is safe. nothing new to block either.
+INFO 9.462396 utils.py:235: starting frame 6
+INFO 9.954507 utils.py:235: looking for something to block
+INFO 9.964596 utils.py:235: will block state #0 in frame 6
+INFO 9.964712 utils.py:235: block(6)
+INFO 10.066722 utils.py:235: discovered state #12
+INFO 10.067185 utils.py:235: BackwardReachableState(id=12, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc1
+flag(proc0)
+!flag(proc1)
+pc(proc0) = a4
+pc(proc1) = cs, num_steps_to_bad=1, known_absent_until_frame=0)
+INFO 10.069033 utils.py:235: block(5)
+INFO 10.196872 utils.py:235: discovered state #13
+INFO 10.19733 utils.py:235: BackwardReachableState(id=13, state_or_expr=sort proc
+  proc0
+  proc1
+a1 = a1
+a2 = a2
+a3 = a3
+a4 = a4
+a5 = a5
+cs = cs
+turn = proc0
+flag(proc0)
+!flag(proc1)
+pc(proc0) = a3
+pc(proc1) = cs, num_steps_to_bad=2, known_absent_until_frame=0)
+INFO 10.199028 utils.py:235: block(4)
+INFO 10.707513 utils.py:235: block(4) using !(exists proc1:proc. !flag(proc1) & pc(proc1) = cs)
+INFO 10.945459 utils.py:235: and pushed to 5
+INFO 11.158936 utils.py:235: and pushed to 6
+INFO 11.556908 utils.py:235: block(5) using !(!flag(turn) & pc(turn) = cs)
+INFO 11.610085 utils.py:235: and pushed to 6
+INFO 11.692151 utils.py:235: block(6) using !(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+INFO 11.692424 utils.py:235: looking for something to block
+INFO 11.698782 utils.py:235: no existing states to block. looking for a new state.
+INFO 11.698848 utils.py:235: frontier is safe. nothing new to block either.
+frame is safe and inductive. done!
+!(exists proc1:proc. pc(turn) = a4 & pc(proc1) = cs)
+!(exists proc1:proc. !flag(proc1) & pc(proc1) = a3)
+!(exists proc1:proc. !flag(proc1) & pc(proc1) = a4)
+!(exists proc1:proc. !flag(proc1) & pc(proc1) = cs)
+!(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+updr found inductive invariant!
