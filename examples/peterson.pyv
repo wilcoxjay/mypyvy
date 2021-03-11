@@ -1,0 +1,183 @@
+#####################################################################################
+#
+# A model of Peterson's mutual exclusion algorithm [1] in mypyvy, along with  
+# a manually derived inductive invariant for establishing the mutual exclusion 
+# safety property, and results of successful UPDR invariant inference.
+#
+# The model essentially transcribes Lamport's PlusCal (i.e. pseudocode) 
+# version of the algorithm given at [2]. We are only concerned with checking 
+# safety of the protocol, so we are not worried about fairness considerations.
+# 
+#    variables flag = [i \in {0, 1} |-> FALSE],  turn = 0;
+#    a1: while (TRUE) {
+#            skip ;
+#    a2:  flag[self] := TRUE ;
+#    a3:  turn := 1 - self ;   
+#    a4:  await (flag[1-self] = FALSE) \/ (turn = self);
+#    cs:  skip ;  \* the critical section
+#    a5:  flag[self] := FALSE               }
+# 
+#
+# [1] https://en.wikipedia.org/wiki/Peterson%27s_algorithm
+# [2] https://lamport.azurewebsites.net/tla/peterson.html?back-link=high-level-view.html
+#
+######################################################################################
+
+
+# The set of processes. There are exactly 2 processes in Peterson's algorithm, which
+# we state as an explicit assumption below.
+sort proc
+
+# The possible locations of the program counter. This is essentially an enumerated 
+# type, which we try to emulate using the modeling constructs available.
+# sort loc = {a1,a2,a3,a4,cs,a5}
+sort loc @no_minimize @printed_by(const_printer) @no_print
+
+immutable constant a1: loc
+immutable constant a2: loc
+immutable constant a3: loc
+immutable constant a4: loc
+immutable constant cs: loc
+immutable constant a5: loc   
+
+# There are exactly two processes in Peterson's algorithm, so we state this assumption explicitly.
+axiom forall x:proc. exists y:proc. (x != y) & (forall z. (z != y) -> (z = x))
+
+# Axioms to ensure that the program counter type behaves as we expect.
+axiom distinct(a1,a2,a3,a4,cs,a5)
+axiom forall L:loc. L = a1 | L = a2 | L = a3 | L = a4 | L = cs | L = a5
+
+#
+# State variables of the protocol. 
+#
+# We model the program counter of each process as a function (proc -> loc),
+# and the flag of each process as a unary relation on processes.
+#
+
+mutable function pc(proc) : loc
+mutable relation flag(proc)
+mutable constant turn : proc
+
+#
+# Initial states. 
+#
+# All processes start at the initial program location with a false flag value.
+# We leave the initial value of turn unspecified i.e. it should be valid for 
+# the initial turn to go to either process.
+#
+
+init flag(P) = false
+init pc(P) = a1
+
+#
+# Transition relation.
+#
+# Each transition below represents one step of the program i.e. advancement to the
+# next program label. An action '<L>_trans(p, other)' represents a transition
+# taken by a process 'p' when currently at program location L. Transitions are
+# parameterized by an additional process 'other' which is ensured to be distinct
+# from 'p'. This is mainly for convenience, so that transition definitions can
+# easily refer to the process that is not taking the current transition, of which
+# there is a unique one in Peterson's (2-process) algorithm.
+#
+
+transition a1_trans(p: proc, other: proc)
+    modifies pc
+    p != other &
+    pc(p) = a1 &
+    new(pc(p)) = a2 & 
+    new(pc(other)) = pc(other)
+
+transition a2_trans(p: proc, other: proc)
+    modifies pc,flag
+    p != other &
+    pc(p) = a2 &
+    new(pc(p)) = a3 & 
+    new(pc(other)) = pc(other) &
+    new(flag(p)) &
+    new(flag(other)) = flag(other) 
+
+transition a3_trans(p: proc, other: proc)
+    modifies pc,turn
+    p != other &
+    pc(p) = a3 &
+    new(pc(p)) = a4 & 
+    new(pc(other)) = pc(other) &
+    new(turn) = other 
+
+transition a4_trans(p: proc, other: proc)
+    modifies pc
+    p != other &
+    pc(p) = a4 &
+    (!flag(other) | turn = p) &
+    # Enter the critical section.
+    new(pc(p)) = cs & 
+    new(pc(other)) = pc(other)
+
+transition cs_trans(p: proc, other: proc)
+    modifies pc
+    p != other &
+    pc(p) = cs &
+    new(pc(p)) = a5 & 
+    new(pc(other)) = pc(other)
+
+transition a5_trans(p: proc, other: proc)
+    modifies pc, flag
+    p != other &
+    pc(p) = a5 &
+    new(pc(p)) = a1 & 
+    new(pc(other)) = pc(other) &
+    new(flag(p)) = false &
+    new(flag(other)) = flag(other)
+
+#
+# Safety property (mutual exclusion). 
+# 
+# Both processes cannot be in the critical section simultaneously.
+#
+
+safety [mutex] ((pc(P) = cs) & (pc(Q) = cs)) -> (P = Q)
+
+#
+# Inductive invariant (manually derived).
+#
+# The inductive invariant for proving mutual exclusion requires the
+# strengthening assertions A1 and A2 defined below. These assertions 
+# were developed manually i.e. by a human brain.
+#
+
+# If a process P is at locations {a3,a4,cs,a5}, then its flag must be true.
+invariant [A1] 
+    (pc(P) = a3 | pc(P) = a4 | pc(P) = cs | pc(P) = a5) -> flag(P)
+
+# If a process P is at locations {a3,cs,a5} and it is its turn, then the 
+# other process must be waiting at location a4.
+invariant [A2] 
+    ((pc(P) = a4 | pc(P) = cs | pc(P) = a5) & (turn = P) & (P != Q)) -> (pc(Q) = a4)
+
+#
+# Inductive invariant (UPDR generated).
+#
+# Below is the definition of the raw inductive invariant generated by a successful 
+# run of UPDR. It is commented out so that it doesn't interfere with the invariants defined above. 
+# You can, however, comment out invariants A1 and A2 above and uncomment the statement 
+# of the 'UPDR' invariant to verify that it's actually a correct inductive invariant.
+#
+
+definition updr_inv() = 
+    !(exists proc1:proc. pc(turn) = a4 & pc(proc1) = cs) &
+    !(exists proc1:proc. !flag(proc1) & pc(proc1) = a3) &
+    !(exists proc1:proc. !flag(proc1) & pc(proc1) = a4) &
+    !(exists proc1:proc. !flag(proc1) & pc(proc1) = cs) &
+    !(exists P:proc, Q:proc. pc(P) = cs & pc(Q) = cs & P != Q)
+    
+#invariant [UPDR] updr_inv
+
+# Sanity check trace to ensure that a process can reach the critical section.
+sat trace {
+  a1_trans
+  a2_trans
+  a3_trans
+  a4_trans
+  assert exists P. pc(P) = cs
+}
