@@ -1,11 +1,16 @@
 
 from typing import Callable, Collection, Iterable, List, Optional, Tuple, Union, Any, Awaitable, TypeVar
-import multiprocessing
 import signal
 import struct
 import asyncio
 import os
 import pickle
+import socket
+import sys
+import io
+import gc
+import array
+
 
 async def _read_exactly(read_fd: int, size: int) -> bytes:
     if size == 0: return bytes()
@@ -66,6 +71,11 @@ async def _write_exactly(write_fd: int, buf: bytes) -> None:
     finally:
         loop.remove_writer(write_fd)
 
+# Class to wrap file descriptors for pickling between processes
+class FileDescriptor:
+    def __init__(self, id):
+        self.id = id
+
 class AsyncConnection:
     '''A bidirectional pipe like `multiprocessing.Connection`, but `send` and `recv` are coroutines.'''
     HEADER_FMT = '<Q'
@@ -87,6 +97,15 @@ class AsyncConnection:
         # await _write_exactly(self._write_fd, struct.pack(AsyncConnection.HEADER_FMT, len(pickled)))
         await _write_exactly(self._write_fd, pickled)
 
+    # Support pickling
+    def __getstate__(self):
+        return (FileDescriptor(self._read_fd), FileDescriptor(self._write_fd))
+    def __setstate__(self, t: Tuple[FileDescriptor, FileDescriptor]):
+        self._read_fd = t[0].id
+        self._write_fd = t[1].id
+        os.set_blocking(self._read_fd, False)
+        os.set_blocking(self._write_fd, False)
+
     def close(self) -> None:
         os.close(self._read_fd)
         os.close(self._write_fd)
@@ -97,46 +116,143 @@ class AsyncConnection:
         (up_r, up_w) = os.pipe() # Up pipe (written on bottom, read on top)
         return (AsyncConnection(up_r, dn_w), AsyncConnection(dn_r, up_w))
 
+
+class _ForkPickler(pickle.Pickler):
+    def __init__(self, file):
+        super().__init__(file)
+        self.fds = []
+    def persistent_id(self, obj):
+        if isinstance(obj, FileDescriptor):
+            self.fds.append(obj.id)
+            return len(self.fds) - 1
+        return None
+
+class _ForkUnpickler(pickle.Unpickler):
+    def __init__(self, file, fds):
+        super().__init__(file)
+        self.fds = fds
+    def persistent_load(self, pid: int) -> FileDescriptor:
+        return FileDescriptor(self.fds[pid])
+
+
+def _reap(_a, _b):
+    while True:
+        try:
+            (id, status) = os.waitpid(-1, os.WNOHANG)
+            if id == 0: break            
+        except ChildProcessError:
+            break
+
+class ForkServer:
+    def __init__(self):
+        s1, s2 = socket.socketpair(socket.AF_UNIX)
+        self.pid = os.fork()
+        if self.pid == 0:
+            self.sock = s2
+            s1.close()
+            try:
+                self._main_forkserver()
+            except KeyboardInterrupt:
+                pass
+            # print("Fork done")
+            sys.exit(0)
+        else:
+            self.sock = s1
+            s2.close()
+    
+    
+    def _main_forkserver(self):
+        # setup
+        gc.collect()
+        gc.freeze()
+        signal.signal(signal.SIGCHLD, _reap)
+        
+        while True:
+            data = self.sock.recv(struct.calcsize('nn'))
+            if len(data) < struct.calcsize('nn'): return
+            (length, n_fds) = struct.unpack('nn', data)
+            # print(f"Length, n_fds {length}, {n_fds}")
+            if length == 0: return
+            msg = self.sock.recv(length)
+            if len(msg) < length: return
+            fds = []
+            if n_fds > 0:
+                a = array.array('i')
+                bytes_size = a.itemsize * n_fds
+                msg_rights, ancdata, flags, addr = self.sock.recvmsg(1, socket.CMSG_SPACE(bytes_size))
+                if not msg_rights and not ancdata:
+                    raise EOFError
+                if len(ancdata) != 1 or ancdata[0][0] != socket.SOL_SOCKET or ancdata[0][1] != socket.SCM_RIGHTS:
+                    raise RuntimeError("Expected SCM_RIGHTS ancdata")
+                cmsg_data = ancdata[0][2]
+                if len(cmsg_data) != bytes_size:
+                    raise ValueError
+                a.frombytes(cmsg_data)
+                fds = list(a)
+
+            pid = os.fork()
+            if pid == 0:
+                self.sock.close()
+                buf = io.BytesIO(msg)
+                unpickler = _ForkUnpickler(buf, fds)
+                (func, args) = unpickler.load()
+                func(*args)
+                sys.exit(0)
+            else:
+                self.sock.send(struct.pack('n', pid))
+                for fd in fds:
+                    os.close(fd)
+
+    def fork(self, func, *args):
+        buf = io.BytesIO()
+        pickler = _ForkPickler(buf)
+        pickler.dump((func, args))
+        msg = buf.getvalue()
+        self.sock.send(struct.pack('nn', len(msg), len(pickler.fds)) + msg)
+        if len(pickler.fds) > 0:
+            fds_array = array.array('i', pickler.fds)
+            self.sock.sendmsg([b'A'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds_array)])
+        (pid,) = struct.unpack('n', self.sock.recv(struct.calcsize('n')))
+        return pid
+
+def _main_scoped_proc(_target, conn_worker: AsyncConnection, *_args) -> None:
+    os.setpgid(0, 0) # Start a new process group
+    async def run() -> None:
+        r = _target(conn_worker, *_args)
+        if r is not None:
+            await r
+    asyncio.run(run())
+
 class ScopedProcess:
     '''Allows a target function to be run in a `with` statement:
 
-           async def child(): await c.send(os.getpid())
-           with ScopedProcess() as conn:
+           async def child(c: AsyncConnection, *args): await c.send(os.getpid())
+           with ScopedProcess(child, *args) as conn:
                print("Child pid:", await conn.recv())
 
        Interacts properly with asyncio and cancellation.'''
-    def __init__(self, target: Callable[[AsyncConnection], Union[None, Awaitable[None]]], well_behaved: bool = False):
+    def __init__(self, forkserver: ForkServer, target: Callable[..., Union[None, Awaitable[None]]], *args: Any, well_behaved: bool = False):
         self._target = target
+        self._args = args
         self._conn_main: AsyncConnection
-        self._proc: multiprocessing.Process
+        self._pid = 0
+        self._forkserver = forkserver
         self._well_behaved = well_behaved
     def __enter__(self) -> AsyncConnection:
-
-        def proc(conn_main: AsyncConnection, conn_worker: AsyncConnection) -> None:
-            os.setpgid(0, 0) # Start a new process group
-            conn_main.close() # We don't need the parent end open in the child
-            async def run() -> None:
-                r = self._target(conn_worker)
-                if r is not None:
-                    await r
-            asyncio.run(run())
-
         (self._conn_main, conn_worker) = AsyncConnection.pipe_pair()
-        self._proc = multiprocessing.Process(target=proc, args = (self._conn_main, conn_worker))
-        self._proc.start() # This is where the fork actually happens
+        self._pid = self._forkserver.fork(_main_scoped_proc, self._target, conn_worker, *self._args)
         conn_worker.close() # We don't need the child end open in the parent
+        del self._forkserver
         return self._conn_main
 
     def __exit__(self, a: Any, b: Any, c: Any) -> None:
         self._conn_main.close()
-        p = self._proc.pid
-        if p is not None and not self._well_behaved:
-            try: os.killpg(p, signal.SIGKILL)
+        if self._pid != 0 and not self._well_behaved:
+            try: os.killpg(self._pid, signal.SIGKILL)
             except ProcessLookupError: pass
-            try: os.kill(p, signal.SIGKILL)
+            try: os.kill(self._pid, signal.SIGKILL)
             except ProcessLookupError: pass
-        self._proc.join()
-        self._proc.close()
+        
 
 async def _cancel_and_wait_for_cleanup(tasks: Collection[asyncio.Future]) -> None:
     for task in tasks:
