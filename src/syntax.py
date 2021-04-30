@@ -8,7 +8,7 @@ import itertools
 import ply.lex
 from typing import List, Union, Tuple, Optional, Dict, Iterator, \
     Callable, Any, Set, TypeVar, Generic, Iterable, Mapping, cast
-from typing_extensions import Protocol
+from typing import Protocol
 import utils
 from utils import OrderedSet
 import z3
