@@ -1,5 +1,5 @@
 
-from typing import Callable, Collection, Iterable, List, Optional, Tuple, Union, Any, Awaitable, TypeVar
+from typing import BinaryIO, Callable, Collection, Iterable, List, Optional, Tuple, Union, Any, Awaitable, TypeVar
 import signal
 import struct
 import asyncio
@@ -73,7 +73,7 @@ async def _write_exactly(write_fd: int, buf: bytes) -> None:
 
 # Class to wrap file descriptors for pickling between processes
 class FileDescriptor:
-    def __init__(self, id):
+    def __init__(self, id: int):
         self.id = id
 
 class AsyncConnection:
@@ -98,9 +98,9 @@ class AsyncConnection:
         await _write_exactly(self._write_fd, pickled)
 
     # Support pickling
-    def __getstate__(self):
+    def __getstate__(self) -> Tuple[FileDescriptor, FileDescriptor]:
         return (FileDescriptor(self._read_fd), FileDescriptor(self._write_fd))
-    def __setstate__(self, t: Tuple[FileDescriptor, FileDescriptor]):
+    def __setstate__(self, t: Tuple[FileDescriptor, FileDescriptor]) -> None:
         self._read_fd = t[0].id
         self._write_fd = t[1].id
         os.set_blocking(self._read_fd, False)
@@ -118,24 +118,24 @@ class AsyncConnection:
 
 
 class _ForkPickler(pickle.Pickler):
-    def __init__(self, file):
+    def __init__(self, file: BinaryIO):
         super().__init__(file)
-        self.fds = []
-    def persistent_id(self, obj):
+        self.fds: List[int] = []
+    def persistent_id(self, obj: Any) -> Optional[int]:
         if isinstance(obj, FileDescriptor):
             self.fds.append(obj.id)
             return len(self.fds) - 1
         return None
 
 class _ForkUnpickler(pickle.Unpickler):
-    def __init__(self, file, fds):
+    def __init__(self, file: BinaryIO, fds: List[int]):
         super().__init__(file)
         self.fds = fds
     def persistent_load(self, pid: int) -> FileDescriptor:
         return FileDescriptor(self.fds[pid])
 
 
-def _reap(_a, _b):
+def _reap(_a: Any, _b: Any) -> None:
     while True:
         try:
             (id, status) = os.waitpid(-1, os.WNOHANG)
@@ -144,7 +144,7 @@ def _reap(_a, _b):
             break
 
 class ForkServer:
-    def __init__(self):
+    def __init__(self) -> None:
         s1, s2 = socket.socketpair(socket.AF_UNIX)
         self.pid = os.fork()
         if self.pid == 0:
@@ -161,7 +161,7 @@ class ForkServer:
             s2.close()
     
     
-    def _main_forkserver(self):
+    def _main_forkserver(self) -> None:
         # setup
         gc.collect()
         gc.freeze()
@@ -203,19 +203,19 @@ class ForkServer:
                 for fd in fds:
                     os.close(fd)
 
-    def fork(self, func, *args):
+    def fork(self, func: Callable, *args: Any) -> int:
         buf = io.BytesIO()
         pickler = _ForkPickler(buf)
         pickler.dump((func, args))
         msg = buf.getvalue()
         self.sock.send(struct.pack('nn', len(msg), len(pickler.fds)) + msg)
         if len(pickler.fds) > 0:
-            fds_array = array.array('i', pickler.fds)
-            self.sock.sendmsg([b'A'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds_array)])
+            fds_bytes = array.array('i', pickler.fds).tobytes()
+            self.sock.sendmsg([b'A'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds_bytes)])
         (pid,) = struct.unpack('n', self.sock.recv(struct.calcsize('n')))
         return pid
 
-def _main_scoped_proc(_target, conn_worker: AsyncConnection, *_args) -> None:
+def _main_scoped_proc(_target: Callable, conn_worker: AsyncConnection, *_args: Any) -> None:
     os.setpgid(0, 0) # Start a new process group
     async def run() -> None:
         r = _target(conn_worker, *_args)
@@ -246,12 +246,12 @@ class ScopedProcess:
         return self._conn_main
 
     def __exit__(self, a: Any, b: Any, c: Any) -> None:
-        self._conn_main.close()
         if self._pid != 0 and not self._well_behaved:
             try: os.killpg(self._pid, signal.SIGKILL)
             except ProcessLookupError: pass
             try: os.kill(self._pid, signal.SIGKILL)
             except ProcessLookupError: pass
+        self._conn_main.close()
         
 
 async def _cancel_and_wait_for_cleanup(tasks: Collection[asyncio.Future]) -> None:
