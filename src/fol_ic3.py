@@ -1,9 +1,6 @@
 
 
-from dataclasses import dataclass
-import functools
-import multiprocessing
-from typing import Any, Callable, DefaultDict, Dict, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Callable, DefaultDict, Dict, Generator, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import subprocess
@@ -13,13 +10,14 @@ import random
 import time
 import io
 import pickle
+import copyreg
 import asyncio
 import itertools
 import signal
-from collections import Counter, defaultdict
+import functools
 
-import z3
-import async_tools
+from dataclasses import dataclass
+from collections import defaultdict
 from async_tools import AsyncConnection, ScopedProcess, ScopedTasks, ForkServer
 from semantics import State
 import separators
@@ -33,13 +31,27 @@ from syntax import AppExpr, BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparator, FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints
-import networkx
 
-_forkserver = cast(ForkServer, None)
+import networkx
+import z3
+
+_forkserver = cast(ForkServer, None) # This needs to be initialized in 'main', before launching threads/asyncio but after globals (syntax.the_program, etc.) are filled in.
+
+# This is a class designed to cache the result of pickling.
+# This helps the main process which needs to serialize lemmas many times in robust_check_implication
+# It deserializes directly into the underlying Expr. This relies on Exprs being immutable.
+class TopLevelExpr:
+    def __init__(self, v: Expr):
+        self.v = v
+        self.cache: Optional[bytes] = None
+    def reduce(self) -> Tuple[Any, Tuple]:
+        if self.cache is None:
+            self.cache = pickle.dumps(self.v)
+        return pickle.loads, (self.cache,)
+copyreg.pickle(TopLevelExpr, cast(Any, TopLevelExpr.reduce))
+
 
 async def _main_robust_check_worker(conn: AsyncConnection, n_states: int) -> None:
-    # syntax.the_program = prog
-    # utils.args = utils.MypyvyArgs()
     s_z3 = Solver(use_cvc4=False)
     s_cvc4 = Solver(use_cvc4=True)
     t = s_z3.get_translator(n_states)
@@ -60,13 +72,14 @@ async def _main_robust_check_worker(conn: AsyncConnection, n_states: int) -> Non
             # print(s.assertions())
             r = s.check(timeout = min(1000000000, int(time_limit * 1000)))
             # print(f"{prefix} _robust_check(): r = {r}", file=log)
-            if not use_cvc4 and r == z3.sat:
-                r = z3.unknown
+            # to ignore z3 models
+            # if not use_cvc4 and r == z3.sat:
+            #     r = z3.unknown
             tr = Z3Translator.model_to_trace(s.model(minimize=True), n_states) if r == z3.sat else r
         await conn.send(tr)
 
 
-async def _robust_check(formulas: Sequence[Callable[[], Iterable[Expr]]], n_states: int = 1, parallelism: int = 1, timeout: float = 0.0, log: TextIO = sys.stdout, prefix: str = '') -> Union[Trace, z3.CheckSatResult]:
+async def _robust_check(formulas: Sequence[Callable[[], Iterable[Union[Expr, TopLevelExpr]]]], n_states: int = 1, parallelism: int = 1, timeout: float = 0.0, log: TextIO = sys.stdout, prefix: str = '') -> Union[Trace, z3.CheckSatResult]:
     def _luby(i: int) -> int:
         x = i + 1
         if (x+1) & x == 0:
@@ -109,30 +122,40 @@ async def _robust_check(formulas: Sequence[Callable[[], Iterable[Expr]]], n_stat
     _running: int = parallelism
     async def _manager() -> None:
         nonlocal _running
-        with ScopedProcess(_forkserver, _main_robust_check_worker, n_states) as conn:
-            while True:
-                v = get_next()
-                if v is None:
-                    _running -= 1
-                    if not result.done():
-                        if len(formulas_unsat) == len(formulas):
-                            result.set_result(z3.unsat)
-                        elif _running == 0:
-                            result.set_result(z3.unknown)
-                    return
-                (f_i, index, use_cvc4, timeout) = v
-                v_prime: Tuple[List[Expr], bool, float] = (list(formulas[f_i]()), use_cvc4, timeout)
-                await conn.send(v_prime)
-                start = time.time()
-                r = await conn.recv()
-                end = time.time()
-                print(f"{prefix} attempt (F_{f_i} i={index} {'cvc4' if use_cvc4 else 'z3'} to={timeout}) returned {z3.sat if isinstance(r, Trace) else r} in {end-start:0.3f}", file=log)
-                if r == z3.unsat:
-                    formulas_unsat.add(f_i)
-                elif isinstance(r, Trace):
-                    if not result.done():
-                        result.set_result(r)
-                    return
+        while True:
+            with ScopedProcess(_forkserver, _main_robust_check_worker, n_states) as conn:
+                try:
+                    while True:
+                        v = get_next()
+                        if v is None:
+                            _running -= 1
+                            if not result.done():
+                                if len(formulas_unsat) == len(formulas):
+                                    result.set_result(z3.unsat)
+                                elif _running == 0:
+                                    result.set_result(z3.unknown)
+                            return
+                        (f_i, index, use_cvc4, timeout) = v
+                        v_prime: Tuple[List[Union[Expr, TopLevelExpr]], bool, float] = (list(formulas[f_i]()), use_cvc4, timeout)
+                        await conn.send(v_prime)
+                        start = time.time()
+                        try:
+                            r = await asyncio.wait_for(conn.recv(), timeout + 1)
+                        except asyncio.TimeoutError:
+                            end = time.time()
+                            print(f"{prefix} attempt (F_{f_i} i={index} {'cvc4' if use_cvc4 else 'z3'} to={timeout}) aborted due to solver over time in {end-start:0.3f}", file=log)
+                            break
+                        end = time.time()
+                        print(f"{prefix} attempt (F_{f_i} i={index} {'cvc4' if use_cvc4 else 'z3'} to={timeout}) returned {z3.sat if isinstance(r, Trace) else r} in {end-start:0.3f}", file=log)
+                        if r == z3.unsat:
+                            formulas_unsat.add(f_i)
+                        elif isinstance(r, Trace):
+                            if not result.done():
+                                result.set_result(r)
+                            return
+                except EOFError:
+                    print(f"{prefix} solver process ended", file=log)
+            print(f"{prefix} restarting solver proc", file=log)
 
     async with ScopedTasks() as tasks:
         for _ in range(parallelism):
@@ -152,12 +175,16 @@ async def robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, mini
     start = time.time()
     r: Union[Trace, z3.CheckSatResult, None] = None
     try:
-        def make_formula(transition: DefinitionDecl) -> Iterable[Expr]:
-            yield from [New(Not(new_conc)), transition.as_twostate_formula(syntax.the_program.scope)]
-            exprs = list(old_hyps)
+        transitions = list(syntax.the_program.transitions())
+        tr_formulas = [TopLevelExpr(transition.as_twostate_formula(syntax.the_program.scope)) for transition in transitions]
+        new_formula = TopLevelExpr(New(Not(new_conc)))
+        old_hyp_formulas = [TopLevelExpr(h) for h in old_hyps]
+        def make_formula(i: int) -> Iterable[Union[Expr, TopLevelExpr]]:
+            yield from [new_formula, tr_formulas[i]]
+            exprs = list(old_hyp_formulas)
             random.shuffle(exprs)
             yield from exprs
-        formulas = [(functools.partial(make_formula, tr)) for tr in syntax.the_program.transitions()]
+        formulas = [functools.partial(make_formula, i) for i in range(len(transitions))]
         r = await _robust_check(formulas, 2, parallelism=parallelism, timeout=timeout, log=log, prefix=log_prefix)
         return r
     finally:
@@ -234,10 +261,22 @@ class Logging:
 
 
 async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str) -> None:
-    sys.stdout = open(log_fname, "w+")
+    sys.stdout = open(log_fname, "a")
+    sys.stdout.reconfigure(line_buffering=True) # type: ignore
     print("Started Worker")
     prog = syntax.the_program
-    sep = FixedImplicationSeparatorPyCryptoSat(sig, ())
+    sep = cast(FixedImplicationSeparatorPyCryptoSat, None)
+    label = '[?]'
+    sep_pc = PrefixConstraints()
+    if utils.args.logic == 'epr':
+        sep_pc.logic = Logic.EPR
+        qe = [(sig.sort_indices[x], sig.sort_indices[y])
+            for (x,y) in itertools.product(sig.sort_names, sig.sort_names)
+            if (x,y) not in utils.args.epr_edges]
+        sep_pc.disallowed_quantifier_edges = qe
+    else:
+        sep_pc.logic = Logic.FOL
+        
     constraints: List[Constraint] = []
     sep_constraints: Set[Constraint] = set()
     sep_constraints_order: List[Constraint] = []
@@ -248,9 +287,9 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
     while True:
         v = await conn.recv()
         if 'prefix' in v:
-            prefix, k_cubes, expt_flags = v['prefix'], v['k_cubes'], v['expt_flags']
+            prefix, k_cubes, expt_flags, label = v['prefix'], v['k_cubes'], v['expt_flags'], v['label']
             del sep
-            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, k_cubes=k_cubes, expt_flags=expt_flags)
+            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=False)
             sep_constraints = set()
             sep_constraints_order = []
             mapping = {}
@@ -264,23 +303,23 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
         if 'sep' in v:
             minimized = False
             while True:
-                print(f"Separating with prefix {prefix}")
+                print(label, f"Separating with prefix {prefix}")
                 start = time.time()
                 sep_r = sep.separate(minimize=minimized)
                 sep_time += time.time() - start
                 if sep_r is None:
-                    print(f"UNSEP |core|={len(sep_constraints)} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
-                    await conn.send({'unsep': True, 'constraints': sep_constraints_order})
+                    print(label, f"UNSEP |core|={len(sep_constraints)} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
+                    await conn.send({'unsep': True, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
                     break
 
                 with prog.scope.n_states(1):
                     p = formula_to_predicate(sep_r, prog.scope)
-                print(f"Internal candidate: {p}")
+                print(label, f"Internal candidate: {p}")
                 start = time.time()
                 for c in constraints:
                     if c in sep_constraints: continue
                     if not satisifies_constraint(c, p, states):
-                        print(f"Adding internal constraint {c}")
+                        print(label, f"Adding internal constraint {c}")
                         for s in c.states():
                             if s not in mapping:
                                 mapping[s] = sep.add_model(state_to_model(states[s]))
@@ -297,8 +336,8 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                         minimized = True
                         continue # continue the loop, now asking for a minimized separator
                     else:
-                        print(f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
-                        await conn.send({'candidate': p, 'constraints': sep_constraints_order})
+                        print(label, f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
+                        await conn.send({'candidate': p, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
                         break
 
 
@@ -321,6 +360,12 @@ class Prefix:
         return tuple(quants)
 
 def generate_exclusive(sorts: int, depth: int, alts: int, repeat: int, existentials: bool) -> Iterator[Prefix]:
+    def _repeat_of(b: Tuple[Tuple[int, ...], ...], sorts:int =sorts) -> int:
+        counts = [0 for s in range(sorts)]
+        for block in b:
+            for i in range(sorts):
+                counts[i] += block[i]
+        return max(counts)
     def _blocks(sorts_allowance: Tuple[int, ...], size: int) -> Iterator[Tuple[int, ...]]:
         assert size >= 0
         if len(sorts_allowance) == 0:
@@ -350,11 +395,13 @@ def generate_exclusive(sorts: int, depth: int, alts: int, repeat: int, existenti
     
     for depth_e in range(0, depth+1):
         for b in _gen(tuple(min(repeat, depth) for _ in range(sorts)), depth, alts, True, depth_e):
-            yield Prefix(b, True)
+            if _repeat_of(b) == repeat:
+                yield Prefix(b, True)
     if not existentials: return
     for depth_e in range(0, depth+1):
         for b in _gen(tuple(min(repeat, depth) for _ in range(sorts)), depth, alts, False, depth_e):
-            yield Prefix(b, False)
+            if _repeat_of(b) == repeat:
+                yield Prefix(b, False)
 
 def subprefixes(p: Prefix) -> Sequence[Prefix]:
     sub_p = []
@@ -367,9 +414,10 @@ def subprefixes(p: Prefix) -> Sequence[Prefix]:
     return sub_p
 
 class IGSolver2:
-    def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int):
+    def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int, prior_solver: Optional['IGSolver2'] = None):
         self._sig = prog_to_sig(prog)
         self._logs = logs
+        self._skip_prefixes = 'skip-epr-prefixes' in utils.args.expt_flags
         
         # Logging
         self._rationale = rationale
@@ -389,10 +437,16 @@ class IGSolver2:
         self._reachable_constraints: Set[Constraint] = set([Pos(self.add_local_state(st)) for st in positive])
         
         # Prefix handling
-        self._max_repeats = 4
+        # self._max_repeats = 3
 
-        self._prefix_generators: Dict[Tuple[int, int], Iterator[Prefix]] = {} # maps (depth, alts) to a prefix generator
+        self._prefix_generators: Dict[Tuple[int, int, int], Iterator[Prefix]] = {} # maps (depth, alts) to a prefix generator
         self._unsep_cores: Dict[Prefix, List[Constraint]] = {}
+        
+        self._previous_unsep_cores: Dict[Prefix, List[Constraint]] = {} if prior_solver is None else prior_solver._unsep_cores
+        self._previous_states = [] if prior_solver is None else prior_solver._states
+        self._previous_to_current_states: Dict[int, int] = {}
+        self._constraints_mapping: Dict[Constraint, Optional[Constraint]] = {}
+        self._previous_constraints: Set[Constraint] = set()
 
         # logging etc:
         self._total_constraints_found: int = 0
@@ -434,10 +488,11 @@ class IGSolver2:
         alts = 0 if pc.logic == Logic.Universal else pc.max_alt + 1
         for d in range(10):
             for alt in [0] if alts == 0 else range(1, min(d, alts)):
-                if (d, alt) not in self._prefix_generators:
-                    # print(f"Starting {d} {alt}")
-                    self._prefix_generators[(d, alt)] = generate_exclusive(len(self._sig.sorts), d, alt, self._max_repeats, alt > 0)
-                yield self._prefix_generators[(d, alt)]
+                for max_r in range(1, min(d, pc.max_repeated_sorts)+1):
+                    if (d, alt, max_r) not in self._prefix_generators:
+                        # print(f"Starting {d} {alt}")
+                        self._prefix_generators[(d, alt, max_r)] = generate_exclusive(len(self._sig.sorts), d, alt, max_r, alt > 0)
+                    yield self._prefix_generators[(d, alt, max_r)]
   
     def satisfies_epr(self, pc: PrefixConstraints, p: Prefix) -> bool:
         if pc.logic != Logic.EPR: return True
@@ -447,27 +502,57 @@ class IGSolver2:
                 return False
         return True
 
+    def make_constraint_current(self, c: Constraint) -> Optional[Constraint]:
+        if isinstance(c, Neg): return None
+        if isinstance(c, Pos):
+            if c not in self._constraints_mapping:
+
+                if c.i not in self._previous_to_current_states:
+                    self._previous_to_current_states[c.i] = self.add_local_state(self._previous_states[c.i])
+                nc = Pos(self._previous_to_current_states[c.i])
+                self._constraints_mapping[c] = nc
+                self._previous_constraints.add(nc)
+            return self._constraints_mapping[c]
+        if isinstance(c, Imp):
+            if c not in self._constraints_mapping:
+                pre_state = self._previous_states[c.i]
+                if all(pre_state.eval(f) for f in self._frame):
+                    if c.i not in self._previous_to_current_states:
+                        self._previous_to_current_states[c.i] = self.add_local_state(self._previous_states[c.i])
+                    if c.j not in self._previous_to_current_states:
+                        self._previous_to_current_states[c.j] = self.add_local_state(self._previous_states[c.j])
+                    nci = Imp(self._previous_to_current_states[c.i], self._previous_to_current_states[c.j])
+                    self._constraints_mapping[c] = nci
+                    self._previous_constraints.add(nci)
+                else:
+                    self._constraints_mapping[c] = None
+            return self._constraints_mapping[c]
+        assert False
+
     def add_to_frame(self, f: Expr) -> None:
         self._frame.append(f)
         # TODO: invalidate all -> constraints that don't have pre-states satisfying f, and rework those predicates that are no longer unsep
-    async def solve(self, n_threads: int = 1) -> Optional[Expr]:
+    async def solve(self, n_threads: int = 1, timeout: Optional[float] = None) -> Optional[Expr]:
         _log_ig_problem(self._log_prefix, self._rationale, Neg(0), list(self._reachable_constraints), self._states, self._frame, [inv for inv in syntax.the_program.invs()])
 
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
         if utils.args.logic == 'universal':
-            pcs = [PrefixConstraints(Logic.Universal)]
+            pcs = [PrefixConstraints(Logic.Universal),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts=2)]
         elif utils.args.logic == 'epr':
             pcs = [PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.EPR, max_alt=1),
-                   PrefixConstraints(Logic.EPR, max_alt=1),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=2),
                    PrefixConstraints(Logic.EPR, max_alt=2)]
         elif utils.args.logic == 'fol':
             pcs = [PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.FOL, max_alt=1),
-                   PrefixConstraints(Logic.FOL, max_alt=1),
+                   PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
+                   PrefixConstraints(Logic.FOL, max_alt=2, max_repeated_sorts=2),
                    PrefixConstraints(Logic.FOL, max_alt=2)]
         else:
             assert False
@@ -494,7 +579,7 @@ class IGSolver2:
             try:
                 while True:
                     candidate = next(itertools.chain.from_iterable(self.prefix_generators(pc)))
-                    if not self.satisfies_epr(pc, candidate):
+                    if self._skip_prefixes and not self.satisfies_epr(pc, candidate):
                         self._print("Skipping", " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in candidate.linearize()))
                         continue
                     return (candidate, release)
@@ -514,12 +599,16 @@ class IGSolver2:
                 worker_known_states.update(new_states)
                 return (cs, extra_states)
 
+
             def predict_useful_constraints(prefix: Prefix) -> List[Constraint]:
-                cores:List[List[Optional[Constraint]]] = []
+                cores: List[List[Optional[Constraint]]] = []
+                if prefix in self._previous_unsep_cores:
+                    core = [self.make_constraint_current(c) for c in self._previous_unsep_cores[prefix]]
+                    cores.append([c for c in core if c is not None])
                 for sub_p in subprefixes(prefix):
                     if sub_p in self._unsep_cores:
                         sub_core: List[Optional[Constraint]] = list(reversed(self._unsep_cores[sub_p]))
-                        sub_core.sort(key = lambda x: not isinstance(x, Pos))
+                        #sub_core.sort(key = lambda x: not isinstance(x, Pos))
                         cores.append(sub_core)
                 #print(f"cores: {cores}")
                 cores.append([None, None, None, *(x for x in self._reachable_constraints)])
@@ -540,7 +629,10 @@ class IGSolver2:
                         continue
                     prefix, release = prefix_release
                     pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
-                    k_cubes = 2 if any(not fa for (fa, _) in prefix.linearize()) else 0                   
+                    k_cubes = 3 if any(not fa for (fa, _) in prefix.linearize()) else 1
+                    debug_this_process = pre_pp == 'Aquorum. Around. Around. Avalue. Avalue. Enode.'
+                    
+                    n_discovered_constraints = 0
                     # start a separator instance
                     worker_prefix_sent = False
                     next_constraints = list(self._necessary_constraints) + predict_useful_constraints(prefix)
@@ -553,17 +645,25 @@ class IGSolver2:
                     # Loop for adding constraints for a particular prefix
                     while True:
                         await conn.send({'constraints': send_constraints(next_constraints), 'sep': None,
-                                         **({'prefix': prefix.linearize(), 'k_cubes': k_cubes, 'expt_flags': utils.args.expt_flags} if not worker_prefix_sent else {})})
+                                         **({'prefix': prefix.linearize(), 'k_cubes': k_cubes, 'expt_flags': utils.args.expt_flags, 'label': self._log_prefix} if not worker_prefix_sent else {})})
                         worker_prefix_sent = True
                         if not logged_problem and time.time() - start_time > 5:
                             _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
                             logged_problem = True
-
+                        if debug_this_process:
+                                self._print(f"Separating")
+                            
                         v = await conn.recv()
                         if 'candidate' in v:
-                            p, sep_constraints = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints'])
+                            p, sep_constraints, (time_sep, time_eval) = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints']), cast(Tuple[float, float], v['times'])
                             self._unsep_cores[prefix] = sep_constraints # share our constraints with others that may be running
+                            if debug_this_process:
+                                self._print(f"Checking {p}")
+                            start = time.time()
                             new_constraint_result = await self.check_candidate(p)
+
+                            if debug_this_process:
+                                self._print(f"Received unsat? {new_constraint_result == z3.unsat} sat? {isinstance(new_constraint_result, Constraint)}")
                             if new_constraint_result == z3.unknown:
                                 self._print(f"Solver returned unknown ({p})")
                                 await conn.send({'block_last_separator': None})
@@ -571,6 +671,9 @@ class IGSolver2:
                             if isinstance(new_constraint_result, Constraint):
                                 next_constraints = [new_constraint_result, *self._necessary_constraints, *predict_useful_constraints(prefix)]
                                 self._total_constraints_found += 1
+                                n_discovered_constraints += 1
+                                if debug_this_process:
+                                    self._print(f"Discovered: {len(sep_constraints)}/{n_discovered_constraints} in {time.time() - start}")
                                 continue
                             elif new_constraint_result == z3.unsat:
                                 if not solution.done():
@@ -579,7 +682,10 @@ class IGSolver2:
                                     #     structs = dict((i, s) for i, s in enumerate(self._states) if i in states_needed)
                                     #     with open(os.path.join(utils.args.log_dir, f'ig-solutions/ig-solution-{self._log_prefix}.pickle'), 'wb') as output:
                                     #         pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': self._frame}, output)
-                                    self._print(f"SEP with |constr|={len(sep_constraints)}")
+
+                                    t = time.time() - start_time
+                                    previous_constraints_used = len([c for c in sep_constraints if c in self._previous_constraints])
+                                    self._print(f"SEP: {pre_pp} with core={len(sep_constraints)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
                                     self._print(f"Learned {p}")
                                     solution.set_result(p)
                                 return
@@ -587,12 +693,14 @@ class IGSolver2:
 
                         elif 'unsep' in v:
                             core: List[Constraint] = v['constraints']
+                            (time_sep, time_eval) = cast(Tuple[float, float], v['times'])
                             t = time.time() - start_time
+                            previous_constraints_used = len([c for c in core if c in self._previous_constraints])
                             if t > 5:
                                 _log_sep_unsep('core-'+log_name, prefix.linearize(), core, self._states)
-                                self._print(f"UNSEP: {pre_pp} with core={len(core)} time {t:0.3f} log core-{log_name}")
+                                self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}) log core-{log_name}")
                             else:
-                                self._print(f"UNSEP: {pre_pp} with core={len(core)} time {t:0.3f}")
+                                self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
 
                             self._unsep_cores[prefix] = core
                             release()
@@ -602,6 +710,7 @@ class IGSolver2:
 
         async def logger() -> None:
             query_start = time.time()
+            self._print(f"Starting IG query with timeout {timeout}")
             while True:
                 try: await asyncio.sleep(30)
                 except asyncio.CancelledError:
@@ -614,7 +723,11 @@ class IGSolver2:
         async with ScopedTasks() as tasks:
             tasks.add(logger())
             tasks.add(*(worker_controller() for _ in range(n_threads)))
-            s = await solution
+            try:
+                s = await asyncio.wait_for(solution, timeout)
+            except asyncio.TimeoutError:
+                self._print("IG query timed out")
+                s = None
             self._print("Exiting IG_manager")
             return s
 
@@ -866,12 +979,12 @@ class ParallelFolIc3:
                     i = self.add_predicate(inv_decl.expr)
                     self._frame_numbers[i] = 1
 
-    async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '') -> None:
+    async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '', timeout: Optional[float] = None, prior_solver: Optional[IGSolver2] = None) -> IGSolver2:
         ig_frame = set(self.frame_predicates(frame-1))
-        ig_generalizer = IGSolver2(self._states[state],
+        ig_solver = IGSolver2(self._states[state],
                                   [self._states[x] for x in self._useful_reachable | self._initial_states],
                                   [self._predicates[x] for x in ig_frame],
-                                  self._logs, syntax.the_program, rationale, self._next_ig_query_index)
+                                  self._logs, syntax.the_program, rationale, self._next_ig_query_index, prior_solver)
         self._next_ig_query_index += 1
         # TODO: 
         # cancel due to timeout
@@ -883,7 +996,7 @@ class ParallelFolIc3:
                     current_frame = set(self.frame_predicates(frame-1))
                     if ig_frame != current_frame:
                         for f in current_frame - ig_frame:
-                            ig_generalizer.add_to_frame(self._predicates[f])
+                            ig_solver.add_to_frame(self._predicates[f])
                     await self._event_frames.wait()
 
             async def concurrent_block()-> None:
@@ -897,7 +1010,7 @@ class ParallelFolIc3:
                     await self._event_frames.wait()
 
             async def solver() -> None:
-                x = await ig_generalizer.solve(self._threads_per_ig)
+                x = await ig_solver.solve(self._threads_per_ig, timeout = timeout)
                 if not sol.done():
                     sol.set_result(x)
             
@@ -908,13 +1021,14 @@ class ParallelFolIc3:
 
         if p is None or any(not self.eval(pred, state) for pred in self.frame_predicates(frame)):
             print(f"IG query cancelled ({state} in frame {frame} for {rationale})")
-            return
+            return ig_solver
 
         print(f"Learned new predicate {p} blocking {state} in frame {frame} for {rationale}")
         self.add_predicate(p, frame)
         await self.push_all()
         self.print_predicates()
         # print(f"Done with parallel_inductive_generalize2 for blocking {state} in frame {frame} for {rationale}")
+        return ig_solver
 
     async def get_predecessor(self, frame: int, state: int) -> Optional[int]:
         assert frame != 0
@@ -979,7 +1093,7 @@ class ParallelFolIc3:
                     self._useful_reachable.add(new_r)
         self.print_predicates()
 
-    async def block(self, frame: int, state: int, rationale: str) -> None:
+    async def block(self, frame: int, state: int, rationale: str, timeout: Optional[float] = None) -> None:
         # print(f"Block: {state} in frame {frame} for {rationale}")
         if frame == 0:
             assert all(self.eval(i, state) for i in self._initial_conditions)
@@ -987,9 +1101,9 @@ class ParallelFolIc3:
             return
         pred = await self.get_predecessor(frame, state)
         if pred is None:
-            await self.parallel_inductive_generalize(frame, state, rationale=rationale)
+            await self.parallel_inductive_generalize(frame, state, rationale=rationale, timeout = timeout)
         else:
-            await self.block(frame - 1, pred, rationale)
+            await self.block(frame - 1, pred, rationale, timeout=timeout)
 
     async def blockable_state(self, frame: int, state: int, rationale: str) -> Optional[Tuple[int, int]]:
         if frame == 0:
@@ -1013,37 +1127,59 @@ class ParallelFolIc3:
             return False
         return True
 
-    async def heuristic_pushing_to_the_top_worker(self, kind: bool) -> None:
+    def heuristic_priority(self, pred: int) -> float:
+        def mat_size(e: Expr) -> int:
+            if isinstance(e, QuantifierExpr): return mat_size(e.body)
+            elif isinstance(e, UnaryExpr): return mat_size(e.arg)
+            elif isinstance(e, NaryExpr): return sum(map(mat_size, e.args))
+            else: return 1
+        return mat_size(self._predicates[pred]) + random.random() * 0.5
+
+    async def heuristic_pushing_to_the_top_worker(self) -> None:
         # print("Starting heuristics")
+        timeouts = [10.0, 25.0, 100.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0]
+        timeout_index = 0
+        current_timeout: Dict[Tuple[int, int], int] = {}
         while True:
-            priorities = random.sample(range(len(self._predicates)), len(self._predicates)) if kind \
-                         else sorted(range(len(self._predicates)), key=lambda pred: ParallelFolIc3.frame_key(self._frame_numbers[pred]), reverse=True)
+            priorities = sorted(range(len(self._predicates)), key=self.heuristic_priority)
             # print("Checking for something to do")
             frame_N = min((self._frame_numbers[s] for s in self._safeties), key = ParallelFolIc3.frame_key)
             # print(f"Frame_N: {frame_N}")
+            # print(f"Finding task with index {timeout_index}")
             for pred in priorities:
                 # Don't push anything past the earliest safety
-                if self.frame_leq(frame_N, self._frame_numbers[pred]):
-                    continue
+                # if self.frame_leq(frame_N, self._frame_numbers[pred]):
+                #     continue
                 if not self.heuristically_blockable(pred):
                     continue
                 fn, st = self._frame_numbers[pred], self._pushing_blocker[pred]
                 assert fn is not None
                 if (fn, st) in self._current_push_heuristic_tasks:
                     continue
+                index = current_timeout.get((fn, st), 0)
+                if index > timeout_index:
+                    continue
                 try:
                     self._current_push_heuristic_tasks.add((fn, st))
-                    # print(f"Heuristically blocking state {st} in frame {fn}")
-                    await self.block(fn, st, "heuristic-push")
+                    timeout = timeouts[timeout_index] if timeout_index < len(timeouts) else None
+                    print(f"Heuristically blocking state {st} in frame {fn} timeout {timeout}")
+                    await self.block(fn, st, "heuristic-push", timeout=timeout)
                     # print("Finished heuristically pushing (block)")
                     await self.push_all()
                     # print("Finished heuristically pushing (push_pull)")
+                    current_timeout[(fn, st)] = timeout_index + 1
+                    timeout_index = 0
                 finally:
                     self._current_push_heuristic_tasks.remove((fn, st))
                 break
             else:
                 # print("Couldn't find job to do in heuristic-push")
+                if timeout_index < len(timeouts):
+                    # print("Increasing timeout limit in heuristic task")
+                    timeout_index += 1
+                    continue
                 await self._event_frames.wait()
+                timeout_index = 0
 
     async def inexpensive_reachability(self) -> None:
         while True:
@@ -1058,6 +1194,7 @@ class ParallelFolIc3:
 
     # This is the main loop responsible for learning classic IC3 lemmas by blocking bad states or backwardly reachable from bad
     async def learn(self) -> None:
+        prior_solver: Optional[IGSolver2] = None
         while True:
             for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
                 fn = self._frame_numbers[safety]
@@ -1068,9 +1205,14 @@ class ParallelFolIc3:
                     print(f"Cannot learn because pushing not yet complete")
                     await self.push_all()
                     break
-                blocker = self._pushing_blocker[safety]
-                # print(f"Blocking {blocker} in frame {fn} for learning")
-                await self.block(fn, blocker, "learning")
+                blockable = await self.blockable_state(fn,  self._pushing_blocker[safety], "learning")
+                if blockable is None:
+                    print("Safety Violation!")
+                    self._unsafe = True
+                    return
+                (fn, st) = blockable
+                new_solver = await self.parallel_inductive_generalize(fn, st, rationale="learning", timeout = None, prior_solver = prior_solver)
+                prior_solver = new_solver
                 break
             else:
                 return
@@ -1084,7 +1226,7 @@ class ParallelFolIc3:
         self._threads_per_ig = max(1, thread_budget//2) if 'no-heuristic-pushing' not in utils.args.expt_flags else thread_budget
         async with ScopedTasks() as tasks:
             if 'no-heuristic-pushing' not in utils.args.expt_flags:
-                tasks.add(self.heuristic_pushing_to_the_top_worker(False))
+                tasks.add(self.heuristic_pushing_to_the_top_worker())
                 # tasks.add(self.heuristic_pushing_to_the_top_worker(True))
             tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
@@ -1111,15 +1253,9 @@ def p_fol_ic3(_: Solver) -> None:
             os.makedirs(os.path.join(utils.args.log_dir, dir), exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=True, encoding='utf8')
 
-    # Print initial header with command line and git hash
-    print(f"ParallelFolIc3 log for {os.path.basename(utils.args.filename)}")
+    # Print initial header with command line
+    print(f"ParallelFolIC3 log for {os.path.basename(utils.args.filename)}")
     print(f"Command line: {' '.join(sys.argv)}")
-    try:
-        path = os.path.dirname(os.path.realpath(__file__))
-        wd = os.getcwd() if path == '' else path
-        print(f"git commit: {subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=wd, encoding='utf8').strip()}")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(f"git commit: unknown")
 
     global _forkserver
     _forkserver = ForkServer()
@@ -1262,22 +1398,71 @@ def fol_extract(solver: Solver) -> None:
                 edges2.add((str(s1), str(func.sort)))
         sol = Solver()
         t = sol.get_translator(2)
-        with sol.new_frame():
-            for inv in prog.invs():
+            
+        for trans in prog.transitions():
+            with sol.new_frame():
+                sol.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
+                for a in sol.z3solver.assertions():
+                    old_edges = set(edges2)
+                    add_epr_edges(edges2, a)
+                    if len(edges2-old_edges) > 0:
+                        if 'debug' in utils.args.expt_flags:
+                            print(f"Assertion {a} added {edges2-old_edges}")
+                            print("trans", trans.name)
+
+        for inv in prog.invs():
+            with sol.new_frame():
                 sol.add(t.translate_expr(inv.expr))
                 sol.add(t.translate_expr(Not(New(inv.expr))))
-            for trans in prog.transitions():
-                sol.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
-            for a in sol.z3solver.assertions():
-                add_epr_edges(edges2, a)
+                for a in sol.z3solver.assertions():
+                    old_edges = set(edges2)
+                    add_epr_edges(edges2, a)
+                    if len(edges2-old_edges) > 0:
+                        if 'debug' in utils.args.expt_flags:
+                            print(f"Assertion added {edges2-old_edges}")
+                            print("inv", inv)
+        def exists_in(e: Expr, polarity: bool = True) -> bool:
+            if isinstance(e, QuantifierExpr):
+                is_exists = (e.quant == 'EXISTS') == polarity
+                return is_exists or exists_in(e.body, polarity)
+            elif isinstance(e, UnaryExpr):
+                if e.op == 'NOT':
+                    return exists_in(e.arg, not polarity)
+                else:
+                    return exists_in(e.arg)
+            elif isinstance(e, BinaryExpr):
+                if e.op == 'IMPLIES':
+                    return exists_in(e.arg1, not polarity) or exists_in(e.arg2, polarity)
+                elif e.op == 'IFF':
+                    return exists_in(e.arg1, polarity) or exists_in(e.arg2, polarity) or exists_in(e.arg1, not polarity) or exists_in(e.arg2, not polarity)
+                return exists_in(e.arg1, polarity) or exists_in(e.arg2, polarity)
+            elif isinstance(e, NaryExpr):
+                return any(exists_in(c, polarity) for c in e.args)
+            elif isinstance(e, IfThenElse):
+                return exists_in(e.branch, polarity) or exists_in(e.branch, not polarity) or exists_in(e.then, polarity) or exists_in(e.els, polarity)
+            elif isinstance(e, Let):
+                return exists_in(e.body, polarity) or exists_in(e.val, polarity)
+            else:
+                return False
+
+        has_exists = False
+        for inv in prog.invs():
+            has_exists = exists_in(inv.expr) or has_exists
+
+        if 'debug' in utils.args.expt_flags:
+            print(f"Final edges: {edges2}")
         g = networkx.DiGraph()
         g.add_edges_from(edges2)
         #print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
-        if networkx.is_directed_acyclic_graph(g):
-            print(base_name, 'epr_edges=',repr(','.join(f'{a}->{b}' for a,b in edges2)))
+        if has_exists:
+            if networkx.is_directed_acyclic_graph(g):
+                print('--logic=epr', '--epr-edges=' + repr(','.join(f'{a}->{b}' for a,b in edges2)), utils.args.filename)
+            else:
+                print('--logic=fol', utils.args.filename)
         else:
-            print(base_name, 'FOL')
-        
+            print('--logic=universal', utils.args.filename)
+    
+    
     if 'formulas' in utils.args.expt_flags:
         for i, inv in enumerate(syntax.the_program.invs()):
             if inv.is_safety: continue
@@ -1285,7 +1470,68 @@ def fol_extract(solver: Solver) -> None:
 
 
 def fol_learn(solver: Solver) -> None:
-    pass
+    global _forkserver
+    _forkserver = ForkServer()
+    async def main() -> None:
+        sig = prog_to_sig(syntax.the_program)
+        golden = list(syntax.the_program.invs())[utils.args.index].expr
+        print("Target:", golden)
+        def all_prefixes() -> Iterator[Prefix]:
+            for d in range(1000):
+                for alts in range(d):
+                    yield from generate_exclusive(len(sig.sort_indices), d, alts, 4, True)
+        pc = PrefixConstraints()
+        if utils.args.logic == 'epr':
+            pc.logic = Logic.EPR
+        else:
+            pc.logic = Logic.FOL
+        constraints: List[Union[Pos, Neg]] = []
+        states: List[State] = []
+        prefixes = all_prefixes()
+        while True:
+            prefix = next(prefixes)
+            print("Trying ", prefix.linearize())
+            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix.linearize(), pc = pc, k_cubes=3)
+            to_sep = {}
+            current_constraints = set()
+            def add_constraint(c: Union[Neg, Pos]) -> None:
+                if c in current_constraints: return
+                if c.i not in to_sep:
+                    to_sep[c.i] = sep.add_model(state_to_model(states[c.i]))
+                sep.add_constraint(c.map(to_sep))
+                current_constraints.add(c)        
+            while True:
+                p = sep.separate(minimize=True)
+                if p is None:
+                    break
+                with syntax.the_program.scope.n_states(1):
+                    pp = formula_to_predicate(p, syntax.the_program.scope)
+                print("Separator:", pp)
+                for c in constraints:
+                    if not satisifies_constraint(c, pp, states):
+                        add_constraint(c)
+                        break
+                else:
+                    query_r = await robust_check_implication([pp], golden)
+                    if isinstance(query_r, Trace):
+                        i = len(states)
+                        states.append(query_r.as_state(0))
+                        constraints.append(Neg(i))
+                        add_constraint(Neg(i))
+                        print("Added negative constraint")
+                        continue
+                    query_r = await robust_check_implication([golden], pp)
+                    if isinstance(query_r, Trace):
+                        i = len(states)
+                        states.append(query_r.as_state(0))
+                        constraints.append(Pos(i))
+                        add_constraint(Pos(i))
+                        print("Added positive constraint")
+                        continue
+                    print("Matches")
+                    return
+    asyncio.run(main())
+
 
 def _check_core_unsat_times(transition: DefinitionDecl, core: List[Expr], new_conc: Expr, use_cvc4: bool) -> None:
     for i in range(10):
@@ -1392,7 +1638,7 @@ def _incremental_unsat(s: z3.Solver, assertions: List[z3.ExprRef]) -> z3.CheckSa
                 random.shuffle(assertions)
                 for i, a in enumerate(assertions):
                     if not z3.is_true(m.eval(a, model_completion=True)):
-                        print(f"adding {a}")
+                        print(f"adding {i}")
                         s.add(a)
                         assertions = assertions[:i]+assertions[i+1:]
                         break
@@ -1438,6 +1684,32 @@ def add_epr_edges(edges: Set[Tuple[str, str]], expr: z3.ExprRef, polarity: bool 
         assert False
 
 def fol_benchmark_solver(_: Solver) -> None:
+    # Verify, but with CVC5Solver
+    # from solver_cvc5 import CVC5Solver, SatResult
+    # solver = CVC5Solver(syntax.the_program)
+    # with solver.new_scope(1):
+    #     for tr in syntax.the_program.transitions():
+    #         with solver.new_scope(2):
+    #             print(f"Transition {tr.name}")
+    #             solver.add_expr(tr.as_twostate_formula(syntax.the_program.scope))
+    #             for inv in syntax.the_program.invs():
+    #                 solver.add_expr(inv.expr)
+
+    #             for inv_to_check in syntax.the_program.invs():
+    #                 with solver.new_scope(2):
+    #                     print(f"Checking {inv_to_check}", end = '... ', flush=True)
+    #                     solver.add_expr(New(Not(inv_to_check.expr)))
+    #                     res = solver.check()
+    #                     if res is not SatResult.unsat:
+    #                         print(res)
+    #                         print("System unsafe.")
+    #                         # print(solver.get_trace())
+    #                         return
+    #                     else:
+    #                         print("unsat.")
+    # print("Check complete, system is safe.")                        
+    # return
+
     if utils.args.output:
         sys.stdout = open(utils.args.output, "w")
     print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
@@ -1487,13 +1759,14 @@ def fol_benchmark_solver(_: Solver) -> None:
                     g.add_edges_from(edges)
                     print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
                     assertions = list(s.z3solver.assertions())
-                if f_i == 2:
-                    while True:
-                        ss = Solver()
-                        r = _incremental_unsat(ss.z3solver, assertions)
-                        print(f"Result: {r}")
-                        if r != z3.unknown:
-                            break
+                _find_unsat_core(transition, old_hyps, new_conc)
+                # if f_i == 2 or True:
+                #     while True:
+                #         ss = Solver()
+                #         r = _incremental_unsat(ss.z3solver, assertions)
+                #         print(f"Result: {r}")
+                #         if r != z3.unknown:
+                #             break
     
     if False:
         start = time.time()
@@ -1698,23 +1971,40 @@ def generalize_quantifiers(p: Expr, constraints: Set[Constraint], states: Dict[i
     return compose_prenex(prefix, matrix)
 
 def fol_debug_ig(_: Solver) -> None:
-    # if utils.args.output:
-    #     sys.stdout = open(utils.args.output, "w")
-    print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
-    data = pickle.load(open(utils.args.query, 'rb'))
-    p: Expr = data['solution']
-    constraints: List[Constraint] = data['constraints']
-    states: Dict[int, State] = data['states']
-    prior_frame: List[Expr] = data['prior_frame']
-    print(f"Initial solution: {p}")
-    # for q in prior_frame:
-    #     print(q)
-    pp = generalize_quantifiers(p, set(constraints), states, prior_frame)
-    if pp != p:
-        print(f"(GEN) Generalized to: {pp}")
-        print(f"(GEN) From:           {p}")
-    else:
-        print("Could not generalize")
+    global _forkserver
+    _forkserver = ForkServer()
+    async def main() -> None:
+        # if utils.args.output:
+        #     sys.stdout = open(utils.args.output, "w")
+        print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
+        data = pickle.load(open(utils.args.query, 'rb'))
+        (rationale, block, pos, states, prior_frame, golden) = data
+        
+        print(f"Results for IG query {utils.args.query} {rationale}")
+        
+        state_to_block: State = states[block.i]
+        for human_inv in syntax.the_program.invs():
+            i = human_inv.expr
+            if not state_to_block.eval(i):
+                print(f"{i} is a candidate solution")
+                res = await robust_check_transition(prior_frame + [i], i, parallelism=10, timeout=500)
+                if res == z3.unsat:
+                    print("relatively inductive (solution)")
+                elif res == z3.unknown:
+                    print("relative inductiveness unknown")
+                else:
+                    print("not relatively inductive (not solution)")
+    asyncio.run(main())
+    
+    # print(f"Initial solution: {p}")
+    # # for q in prior_frame:
+    # #     print(q)
+    # pp = generalize_quantifiers(p, set(constraints), states, prior_frame)
+    # if pp != p:
+    #     print(f"(GEN) Generalized to: {pp}")
+    #     print(f"(GEN) From:           {p}")
+    # else:
+    #     print("Could not generalize")
     
 def epr_edges(s: str) -> List[Tuple[str, str]]:
     r = []
@@ -1748,6 +2038,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_learn)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--index", dest="index", type=int, default=-1, help="Invariant index")
+    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--inv", dest="inv", type=str, default="", help="Invariant name")
     result.append(s)
 
@@ -1755,6 +2046,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_benchmark_solver)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
     result.append(s)
 
@@ -1772,6 +2064,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_benchmark_sep_unsep)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
     result.append(s)
 
@@ -1787,6 +2080,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.add_argument("--query", type=str, help="Solution to query")
     s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     # s.add_argument("--output", type=str, help="Output to file")
     result.append(s)
 

@@ -120,6 +120,7 @@ class MypyvyArgs:
     max_complexity: int
     max_clauses: int
     max_depth: int
+    index: int
     dynamic: bool
     epr_edges: List[Tuple[str,str]]
     separator: str
