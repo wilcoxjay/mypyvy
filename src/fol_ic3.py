@@ -1,6 +1,5 @@
 
-
-from typing import Any, Callable, DefaultDict, Dict, Generator, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Callable, DefaultDict, Dict, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import subprocess
@@ -18,28 +17,28 @@ import functools
 
 from dataclasses import dataclass
 from collections import defaultdict
-from async_tools import AsyncConnection, ScopedProcess, ScopedTasks, ForkServer
+
+from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, ForkServer
 from semantics import State
-import separators
 from separators.logic import Signature
-from typechecker import typecheck_expr
 from translator import Z3Translator
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import AppExpr, BinaryExpr, BoolSort, DefinitionDecl, Exists, Forall, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, SortedVar, UnaryExpr, UninterpretedSort
+from syntax import BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, TrueExpr, UnaryExpr
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
-from separators.separate import FixedImplicationSeparator, FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints
+from separators.separate import FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints
 
 import networkx
 import z3
+from solver_cvc5 import CVC5Solver, SatResult
 
 _forkserver = cast(ForkServer, None) # This needs to be initialized in 'main', before launching threads/asyncio but after globals (syntax.the_program, etc.) are filled in.
 
 # This is a class designed to cache the result of pickling.
 # This helps the main process which needs to serialize lemmas many times in robust_check_implication
-# It deserializes directly into the underlying Expr. This relies on Exprs being immutable.
+# It deserializes directly into the underlying Expr. This caching relies on Exprs being immutable.
 class TopLevelExpr:
     def __init__(self, v: Expr):
         self.v = v
@@ -73,8 +72,8 @@ async def _main_robust_check_worker(conn: AsyncConnection, n_states: int) -> Non
             r = s.check(timeout = min(1000000000, int(time_limit * 1000)))
             # print(f"{prefix} _robust_check(): r = {r}", file=log)
             # to ignore z3 models
-            # if not use_cvc4 and r == z3.sat:
-            #     r = z3.unknown
+            if not use_cvc4 and r == z3.sat:
+                r = z3.unknown
             tr = Z3Translator.model_to_trace(s.model(minimize=True), n_states) if r == z3.sat else r
         await conn.send(tr)
 
@@ -222,6 +221,358 @@ async def robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: O
         else:
             print(log_prefix, f'implication query result {res} took {elapsed:0.3f}', file=log)
 
+@dataclass
+class RobustCheckResult:
+    result: SatResult
+    trace: Optional[Trace] = None
+    # core: Set[Expr] = field(default_factory = set)
+    # transition: Optional[str] = None
+    # time: float = 0.0
+    @staticmethod
+    def from_z3_or_trace(r: Union[z3.CheckSatResult, Trace]) -> 'RobustCheckResult':
+        if isinstance(r, Trace):
+            return RobustCheckResult(SatResult.sat, r)
+        elif r == z3.unsat:
+            return RobustCheckResult(SatResult.unsat, None)
+        else:
+            return RobustCheckResult(SatResult.unknown, None)
+
+class RobustChecker:
+    async def check_implication(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult: ...
+    async def check_transition(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult: ...
+    
+class ClassicChecker(RobustChecker):
+    def __init__(self, log: TextIO = sys.stdout) -> None: 
+        self._log = log
+    async def check_implication(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
+        return RobustCheckResult.from_z3_or_trace(await robust_check_implication(hyps, conc, parallelism=parallelism, timeout=timeout, log=self._log))
+    async def check_transition(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
+        return RobustCheckResult.from_z3_or_trace(await robust_check_transition(hyps, conc, parallelism=parallelism, timeout=timeout, log=self._log))
+
+def _fancy_check_transition(hyps: List[Expr], new_conc: Expr, tr: Expr, _print: Callable = print) -> Union[List[int], Trace]:
+    sat_inst = z3.Optimize()
+    for i in range(len(hyps)):
+        sat_inst.add_soft(z3.Not(z3.Bool(f'I_{i}')))
+    
+    order: List[int] = []
+    badness = [0 for _ in range(len(hyps))]
+    unknown_count = 0
+    while True:
+        solver = CVC5Solver(syntax.the_program, timeout = 3000 * (1 + unknown_count))
+        with solver.new_scope(2):
+            solver.add_expr(tr)
+            solver.add_expr(New(Not(new_conc)))
+
+            # order = list(range(len(hyps)))
+            # random.shuffle(order)
+            # order = order[:random.randint(0, len(order))]
+            # order = []
+            order = list(range(len(hyps)))
+            random.shuffle(order)
+            order.sort(reverse=True, key=lambda x: badness[x])
+
+            while True:
+                result = sat_inst.check(*(z3.Not(z3.Bool(f'I_{i}')) for i in order))
+                # result = sat_inst.check()
+                if result == z3.sat:
+                    sel2 = []
+                    m = sat_inst.model()
+                    sel2 = [z3.is_true(m.eval(z3.Bool(f'I_{i}'), model_completion=True)) for i in range(len(hyps))]
+                    del m
+                    break
+                else:
+                    if len(order) == 0:
+                        assert False
+                    order.pop()
+            
+            _print(''.join(str(i) if i < 10 else '+' for i in badness), "badness")
+            # while True:
+            #     result = sat_inst.check(*(z3.Not(z3.Bool(f'I_{i}')) for i in order))
+            #     if result == z3.sat:
+            #         m = sat_inst.model()
+            #         sel2 = [z3.is_true(m.eval(z3.Bool(f'I_{i}'), model_completion=True)) for i in range(len(hyps))]
+            #         del m
+            #         break
+            #     else:
+            #         order.pop() # should be safe as we only add positive literal clauses
+            
+            for hyp, selected in zip(hyps, sel2):
+                if selected:
+                    solver.add_expr(hyp)
+            to_add = -1
+
+            while True:
+                r = solver.check()
+                _print(''.join('1' if v else '.' for v in sel2), r)
+    
+                if r == SatResult.unsat:
+                    return [i for i in range(len(hyps)) if sel2[i]]
+                elif r == SatResult.unknown:
+                    # order = [i for i in range(len(hyps)) if sel2[i]]
+                    # random.shuffle(order)
+                    # cl = []
+                    # for i in range(len(hyps)):
+                    #     if sel2[i]:
+                    #         cl.append(z3.Bool(f'I_{i}'))        
+                    # sat_inst.add_soft(z3.Or(*cl))
+                    if to_add != -1:
+                        badness[to_add] += 1
+                    else:
+                        for i in range(len(hyps)):
+                            if sel2[i]:
+                                badness[i] += 1
+                    unknown_count += 1
+                    break
+                elif r == SatResult.sat:
+                    trace = solver.get_trace()
+                    pre_state = trace.as_state(0)
+                    disprovers = [not pre_state.eval(hyps[i]) for i in range(len(hyps))]
+                    _print(''.join('1' if v else '.' for v in disprovers), '   model', sum(1 if v else 0 for v in disprovers))
+
+                    for i, dis, ssss in zip(range(len(hyps)), disprovers, sel2):
+                        if dis and ssss:
+                            assert False, hyps[i]
+                    # _print([solver.is_true(hyps[i]) for i in range(len(hyps))])
+                    # disprovers = [not(solver.is_true(hyps[i])) for i in range(len(hyps))]
+                    
+                    # _print("size of clause", sum([1 if v else 0 for i, v in enumerate(disprovers)]))
+                    sat_inst.add(z3.Or([z3.Bool(f'I_{i}') for i, v in enumerate(disprovers) if v]))
+                    if not any(disprovers):
+                        return trace
+                    to_add = random.sample([i for i in range(len(hyps)) if disprovers[i]], 1)[0]
+                    solver.add_expr(hyps[to_add])
+                    sel2[to_add] = True
+                    unknown_count = 0
+                 
+        del solver        
+
+async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDescriptor, log_prefix: str) -> None:
+    sys.stdout = os.fdopen(stdout.id, 'w')
+    sys.stdout.reconfigure(line_buffering=True)
+    exprs: Dict[int, Expr] = {}
+    tr: Expr = TrueExpr
+    conc: Expr = TrueExpr
+    def _print(*args: Any) -> None:
+        print(log_prefix, *args)
+    while True:
+        v = await conn.recv()
+        if 'exprs' in v:
+            for id, e in v['exprs'].items():
+                exprs[id] = e
+        if 'formulas' in v:
+            (tr, conc) = v['formulas']
+        if 'solve' in v:
+            (expr_ids, timeout) = v['solve']
+            if v['solver'] == 'cvc5-fancy':
+                r = _fancy_check_transition([exprs[i] for i in expr_ids], conc, tr, _print)
+                if isinstance(r, Trace):
+                    await conn.send(RobustCheckResult(SatResult.sat, r))
+                else:
+                    await conn.send(RobustCheckResult(SatResult.unsat))
+            elif v['solver'] == 'z3-basic' or v['solver'] == 'cvc4-basic':
+                s = Solver(use_cvc4=v['solver'] == 'cvc4-basic')
+                t = s.get_translator(2)
+                with s.new_frame():
+                    for i in expr_ids:
+                        s.add(t.translate_expr(exprs[i]))
+                    s.add(t.translate_expr(tr))
+                    s.add(t.translate_expr(New(Not(conc))))
+                    raw_result = s.check(timeout = min(1000000000, int(timeout * 1000)))
+                    if raw_result == z3.unsat:
+                        await conn.send(RobustCheckResult(SatResult.unsat))
+                    else:
+                        await conn.send(RobustCheckResult(SatResult.unknown))
+                del t, s
+            elif v['solver'] == 'cvc5-basic':
+                s5 = CVC5Solver(syntax.the_program, int(timeout * 1000))
+                with s5.new_scope(2):
+                    for i in expr_ids:
+                        s5.add_expr(exprs[i])
+                    s5.add_expr(tr)
+                    s5.add_expr(New(Not(conc)))
+                    raw_result5 = s5.check()
+                    if raw_result5 == SatResult.unsat:
+                        await conn.send(RobustCheckResult(SatResult.unsat))
+                    elif raw_result5 == SatResult.sat:
+                        await conn.send(RobustCheckResult(SatResult.sat, s5.get_trace()))
+                    else:
+                        await conn.send(RobustCheckResult(SatResult.unknown, None))
+                del s5
+
+async def _main_worker_advanced_implication(conn: AsyncConnection, stdout: FileDescriptor, log_prefix: str) -> None:
+    sys.stdout = os.fdopen(stdout.id, 'w')
+    sys.stdout.reconfigure(line_buffering=True)
+    exprs: Dict[int, Expr] = {}
+    while True:
+        v = await conn.recv()
+        if 'exprs' in v:
+            for id, e in v['exprs'].items():
+                exprs[id] = e
+        if 'solve' in v:
+            (expr_ids, timeout) = v['solve']
+            if v['solver'] == 'z3-basic' or v['solver'] == 'cvc4-basic':
+                s = Solver(use_cvc4=v['solver'] == 'cvc4-basic')
+                t = s.get_translator(1)
+                with s.new_frame():
+                    for i in expr_ids:
+                        s.add(t.translate_expr(exprs[i]))
+                    raw_result = s.check(timeout = min(1000000000, int(timeout * 1000)))
+                    if raw_result == z3.unsat:
+                        await conn.send(RobustCheckResult(SatResult.unsat))
+                    else:
+                        await conn.send(RobustCheckResult(SatResult.unknown))
+                del t, s
+            elif v['solver'] == 'cvc5-basic':
+                s5 = CVC5Solver(syntax.the_program, int(timeout * 1000))
+                with s5.new_scope(1):
+                    for i in expr_ids:
+                        s5.add_expr(exprs[i])
+                    raw_result5 = s5.check()
+                    if raw_result5 == SatResult.unsat:
+                        await conn.send(RobustCheckResult(SatResult.unsat))
+                    elif raw_result5 == SatResult.sat:
+                        await conn.send(RobustCheckResult(SatResult.sat, s5.get_trace()))
+                    else:
+                        await conn.send(RobustCheckResult(SatResult.unknown, None))
+                del s5
+
+class AdvancedChecker(RobustChecker):
+    def __init__(self, prog: Program, log: TextIO = sys.stdout) -> None:
+        self._prog = prog
+        self._log = log
+        self._transitions: List[str] = [tr.name for tr in self._prog.transitions()]
+        self._tr_formulas = {tr.name: tr.as_twostate_formula(self._prog.scope) for tr in self._prog.transitions()}
+        self._last_successful: Dict[str, str] = {}
+        self._log_id = _get_robust_id()
+        self._query_id = 0
+
+    def _get_log_prefix(self) -> str:
+        prefix = f"[{self._log_id}-{self._query_id}]"
+        self._query_id += 1
+        return prefix
+    def _print(self, prefix: str, *args: Any) -> None:
+        print(prefix, *args, file=self._log)
+
+    # Don't do anything special for implications
+    async def check_implication(self, _hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
+        log_prefix = self._get_log_prefix()
+        formulas = [Not(conc), *_hyps]
+        result: asyncio.Future[RobustCheckResult] = asyncio.Future()
+        strategies = [ ('z3-basic', 0.25), ('cvc5-basic', 0.5), ('z3-basic', 2.0), ('cvc5-basic', 5.0),('z3-basic', 10.0), ('cvc5-basic', 20.0)]
+        def get_next_attempt() -> Iterable[Tuple[str, float]]:
+            for attempt in range(1000000):
+                yield strategies[min(len(strategies)-1, attempt)]
+        strategy_gen = iter(get_next_attempt())
+        
+        async def worker() -> None:
+            while not result.done():
+                try: 
+                    with ScopedProcess(_forkserver, _main_worker_advanced_implication, FileDescriptor(self._log.fileno()), log_prefix) as conn:
+                        await conn.send({'exprs': {i: formulas[i] for i in range(len(formulas))}})
+                        while not result.done():
+                            (solver_type, timeout) = next(strategy_gen)
+                            await conn.send({'solve': (list(range(len(formulas))), timeout), 'solver': solver_type})
+                            resp: RobustCheckResult = await asyncio.wait_for(conn.recv(), timeout + 1)
+                            if resp.result == SatResult.unsat:
+                                if not result.done():
+                                    result.set_result(RobustCheckResult(SatResult.unsat))
+                            if resp.result == SatResult.sat:
+                                if not result.done():
+                                    result.set_result(resp)
+                                
+                except asyncio.TimeoutError:
+                    self._print(log_prefix, "Resetting solver process")
+                except StopIteration:
+                    self._print(log_prefix, "Ran out of strategies")
+
+        async def logger() -> None:
+            await asyncio.sleep(5)
+            if utils.args.log_dir != '':
+                fname = f'query-im-{log_prefix}.pickle'
+                with open(os.path.join(utils.args.log_dir, 'smt-queries', fname), 'wb') as f:
+                    pickle.dump((list(formulas[1:]), conc), f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        try:
+            async with ScopedTasks() as tasks:
+                start = time.time()
+                for i in range(parallelism):
+                    tasks.add(worker())
+                tasks.add(logger())
+                rr = await asyncio.wait_for(result, timeout if timeout > 0 else None)
+                self._print(log_prefix, f"Completed implication {rr.result} in {time.time() - start:0.3f}")
+                return rr
+        except asyncio.TimeoutError:
+            self._print(log_prefix, "Implication query timed out")
+            return RobustCheckResult(SatResult.unknown)
+
+    async def check_transition(self, _hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
+        log_prefix = self._get_log_prefix()
+        hyps = list(_hyps)
+        trs_unsat = {tr.name: False for tr in self._prog.transitions()}
+        attempts_started = {tr.name: 0 for tr in self._prog.transitions()}
+        result: asyncio.Future[RobustCheckResult] = asyncio.Future()
+        strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
+        def get_next_attempt() -> Iterable[Tuple[str, str, float]]:
+            while True:
+                for tr in self._transitions:
+                    if not trs_unsat[tr]:
+                        attempt_num = attempts_started[tr]
+                        attempts_started[tr] += 1
+                        if attempt_num == 0 and tr in self._last_successful:
+                            st = next(s for s in strategies if s[0] == self._last_successful[tr])
+                        elif tr in self._last_successful:
+                            st = strategies[min(len(strategies)-1, attempt_num-1)]
+                        else:
+                            st = strategies[min(len(strategies)-1, attempt_num)]
+                        yield (tr, *st)
+        strategy_gen = iter(get_next_attempt())
+        
+ 
+        async def worker() -> None:
+            while not result.done():
+                try: 
+                    with ScopedProcess(_forkserver, _main_worker_advanced_transition, FileDescriptor(self._log.fileno()), log_prefix) as conn:
+                        await conn.send({'exprs': {i: hyps[i] for i in range(len(hyps))}})
+                        while not result.done():
+                            (tr, solver_type, timeout) = next(strategy_gen)
+                            await conn.send({'formulas': (self._tr_formulas[tr], conc), 'tr-name': tr, 'solve': (list(range(len(hyps))), timeout), 'solver': solver_type})
+                            resp: RobustCheckResult = await asyncio.wait_for(conn.recv(), timeout + 1)
+                            # Save the success solver type for this transition so it is tried first next time
+                            if resp.result != SatResult.unknown:
+                                self._last_successful[tr] = solver_type
+                            if resp.result == SatResult.unsat:
+                                trs_unsat[tr] = True
+                                if all(trs_unsat.values()) and not result.done():
+                                    result.set_result(RobustCheckResult(SatResult.unsat))
+                            if resp.result == SatResult.sat:
+                                self._transitions = [tr, *(t for t in self._transitions if t != tr)]
+                                if not result.done():
+                                    result.set_result(resp)
+
+                except asyncio.TimeoutError:
+                    self._print(log_prefix, "Resetting solver process")
+                except StopIteration:
+                    self._print(log_prefix, "Ran out of strategies")
+
+        async def logger() -> None:
+            await asyncio.sleep(5)
+            if utils.args.log_dir != '':
+                fname = f'query-tr-{log_prefix}.pickle'
+                with open(os.path.join(utils.args.log_dir, 'smt-queries', fname), 'wb') as f:
+                    pickle.dump((hyps, conc), f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        try:
+            async with ScopedTasks() as tasks:
+                start = time.time()
+                for i in range(parallelism):
+                    tasks.add(worker())
+                tasks.add(logger())
+                rr = await asyncio.wait_for(result, timeout if timeout > 0 else None)
+                self._print(log_prefix, f"Completed transition {rr.result} in {time.time() - start:0.3f}")
+                return rr
+        except asyncio.TimeoutError:
+            self._print(log_prefix, "Transition query timed out")
+            return RobustCheckResult(SatResult.unknown)
 
 def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State], List[State]]) -> bool:
     if isinstance(c, Pos):
@@ -413,17 +764,20 @@ def subprefixes(p: Prefix) -> Sequence[Prefix]:
                                     not p.begin_forall if i == 0 and total_quants == 1 else p.begin_forall))
     return sub_p
 
-class IGSolver2:
-    def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int, prior_solver: Optional['IGSolver2'] = None):
+class IGSolver:
+    def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int, prior_solver: Optional['IGSolver'] = None):
         self._sig = prog_to_sig(prog)
         self._logs = logs
-        self._skip_prefixes = 'skip-epr-prefixes' in utils.args.expt_flags
+        self._skip_prefixes = 'no-skip-epr-prefixes' not in utils.args.expt_flags
         
         # Logging
         self._rationale = rationale
         self._identity = identity
         self._log_prefix = f"[{rationale[0].upper()}({identity})]"
         self._sep_problem_index = 0
+        self._total_constraints_found: int = 0
+        self._total_prefixes_considered: int = 0
+        self._total_skipped_prefixes: int = 0
         
         # A list of states local to this IG query. All constraints are w.r.t. this list
         self._states: List[State] = []
@@ -448,8 +802,6 @@ class IGSolver2:
         self._constraints_mapping: Dict[Constraint, Optional[Constraint]] = {}
         self._previous_constraints: Set[Constraint] = set()
 
-        # logging etc:
-        self._total_constraints_found: int = 0
 
     def _print(self, *args: Any, end: str='\n') -> None:
         print(self._log_prefix, *args, file=self._logs._ig_log, end=end)
@@ -465,23 +817,27 @@ class IGSolver2:
         return len(self._states) - 1
 
 
-    async def check_candidate(self, p: Expr) -> Union[Constraint, z3.CheckSatResult]:
-        minimize = 'no-minimize-cex' not in utils.args.expt_flags
+    async def check_candidate(self, checker: RobustChecker, p: Expr) -> Union[Constraint, SatResult]:
+        # minimize = 'no-minimize-cex' not in utils.args.expt_flags
+        
         # F_0 => p?
-        initial_state = await robust_check_implication([init.expr for init in syntax.the_program.inits()], p, minimize=minimize, parallelism=2, timeout=500, log=self._logs._smt_log)
-        if isinstance(initial_state, Trace):
+        # initial_state = await robust_check_implication([init.expr for init in syntax.the_program.inits()], p, minimize=minimize, parallelism=2, timeout=500, log=self._logs._smt_log)
+        initial_state = await checker.check_implication([init.expr for init in syntax.the_program.inits()], p, parallelism=2, timeout=300)
+        if initial_state.result == SatResult.sat and isinstance(initial_state.trace, Trace):
             self._print("Adding initial state")
-            return Pos(self.add_local_state(initial_state.as_state(0)))
-        elif initial_state == z3.unknown:
+            return Pos(self.add_local_state(initial_state.trace.as_state(0)))
+        elif initial_state.result == SatResult.unknown:
             self._print("Warning, implication query returned unknown")
                 
         # F_i-1 ^ p => wp(p)?
-        edge = await robust_check_transition([p, *self._frame], p, minimize=minimize, parallelism=2, timeout=500, log=self._logs._smt_log)
+        # edge = await robust_check_transition([p, *self._frame], p, minimize=minimize, parallelism=2, timeout=500, log=self._logs._smt_log)
+        edge = await checker.check_transition([p, *self._frame], p, parallelism=2, timeout=300)
 
-        if isinstance(edge, Trace):
+        if edge.result == SatResult.sat and isinstance(edge.trace, Trace):
             self._print(f"Adding edge")
-            return Imp(self.add_local_state(edge.as_state(0)), self.add_local_state(edge.as_state(1)))
-        return z3.unsat if edge == z3.unsat and edge == z3.unsat else z3.unknown
+            return Imp(self.add_local_state(edge.trace.as_state(0)), self.add_local_state(edge.trace.as_state(1)))
+        return SatResult.unsat if edge.result == SatResult.unsat and initial_state.result == SatResult.unsat else SatResult.unknown
+        #return z3.unsat if edge == z3.unsat and edge == z3.unsat else z3.unknown
 
 
     def prefix_generators(self, pc: PrefixConstraints) -> Iterator[Iterator[Prefix]]:
@@ -580,8 +936,10 @@ class IGSolver2:
                 while True:
                     candidate = next(itertools.chain.from_iterable(self.prefix_generators(pc)))
                     if self._skip_prefixes and not self.satisfies_epr(pc, candidate):
-                        self._print("Skipping", " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in candidate.linearize()))
+                        #self._print("Skipping", " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in candidate.linearize()))
+                        self._total_skipped_prefixes += 1
                         continue
+                    self._total_prefixes_considered += 1
                     return (candidate, release)
             except StopIteration:
                 pcs_stopped[pc_index] = True
@@ -592,6 +950,7 @@ class IGSolver2:
         async def worker_controller() -> None:
             worker_known_states: Set[int] = set()
             worker_prefix_sent = False
+            checker: RobustChecker = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
                     
             def send_constraints(cs: List[Constraint]) -> Tuple[List[Constraint], Dict[int, bytes]]:
                 new_states = set(s for c in cs for s in c.states()).difference(worker_known_states)
@@ -630,7 +989,7 @@ class IGSolver2:
                     prefix, release = prefix_release
                     pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
                     k_cubes = 3 if any(not fa for (fa, _) in prefix.linearize()) else 1
-                    debug_this_process = pre_pp == 'Aquorum. Around. Around. Avalue. Avalue. Enode.'
+                    debug_this_process = False # pre_pp == 'Aquorum. Around. Around. Avalue. Avalue. Enode.'
                     
                     n_discovered_constraints = 0
                     # start a separator instance
@@ -638,18 +997,19 @@ class IGSolver2:
                     next_constraints = list(self._necessary_constraints) + predict_useful_constraints(prefix)
 
                     start_time = time.time()
-                    logged_problem = False
-                    log_name = f"ig-{self._identity}-{self._sep_problem_index}"
-                    self._sep_problem_index += 1
+                    # logged_problem = False
+                    # log_name = f"ig-{self._identity}-{self._sep_problem_index}"
+                    # self._sep_problem_index += 1
+
                     self._print(f"Trying: {pre_pp}")
                     # Loop for adding constraints for a particular prefix
                     while True:
                         await conn.send({'constraints': send_constraints(next_constraints), 'sep': None,
                                          **({'prefix': prefix.linearize(), 'k_cubes': k_cubes, 'expt_flags': utils.args.expt_flags, 'label': self._log_prefix} if not worker_prefix_sent else {})})
                         worker_prefix_sent = True
-                        if not logged_problem and time.time() - start_time > 5:
-                            _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
-                            logged_problem = True
+                        # if not logged_problem and time.time() - start_time > 5:
+                        #     _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
+                        #     logged_problem = True
                         if debug_this_process:
                                 self._print(f"Separating")
                             
@@ -660,11 +1020,11 @@ class IGSolver2:
                             if debug_this_process:
                                 self._print(f"Checking {p}")
                             start = time.time()
-                            new_constraint_result = await self.check_candidate(p)
+                            new_constraint_result = await self.check_candidate(checker, p)
 
                             if debug_this_process:
-                                self._print(f"Received unsat? {new_constraint_result == z3.unsat} sat? {isinstance(new_constraint_result, Constraint)}")
-                            if new_constraint_result == z3.unknown:
+                                self._print(f"Received unsat? {new_constraint_result == SatResult.unsat} sat? {isinstance(new_constraint_result, Constraint)}")
+                            if new_constraint_result == SatResult.unknown:
                                 self._print(f"Solver returned unknown ({p})")
                                 await conn.send({'block_last_separator': None})
                                 continue
@@ -675,7 +1035,7 @@ class IGSolver2:
                                 if debug_this_process:
                                     self._print(f"Discovered: {len(sep_constraints)}/{n_discovered_constraints} in {time.time() - start}")
                                 continue
-                            elif new_constraint_result == z3.unsat:
+                            elif new_constraint_result == SatResult.unsat:
                                 if not solution.done():
                                     # if utils.args.log_dir != '':
                                     #     states_needed = set(s for c in sep_constraints for s in c.states())
@@ -696,11 +1056,13 @@ class IGSolver2:
                             (time_sep, time_eval) = cast(Tuple[float, float], v['times'])
                             t = time.time() - start_time
                             previous_constraints_used = len([c for c in core if c in self._previous_constraints])
-                            if t > 5:
-                                _log_sep_unsep('core-'+log_name, prefix.linearize(), core, self._states)
-                                self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}) log core-{log_name}")
-                            else:
-                                self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
+                            extra = ""
+                            # if t > 5:
+                            #     # _log_sep_unsep('core-'+log_name, prefix.linearize(), core, self._states)
+                            #     extra = f" log core-{log_name}"
+                            # else:
+                                
+                            self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}){extra}")
 
                             self._unsep_cores[prefix] = core
                             release()
@@ -715,10 +1077,10 @@ class IGSolver2:
                 try: await asyncio.sleep(30)
                 except asyncio.CancelledError:
                     self._print(f"finished in: {time.time() - query_start:0.3f} sec",
-                                f"constraints:{self._total_constraints_found}",
+                                f"constraints: {self._total_constraints_found} prefixes: {self._total_prefixes_considered} epr-skipped: {self._total_skipped_prefixes}",
                                 f"({'cancelled' if solution.cancelled() else 'done'})")
                     raise
-                self._print(f"time: {time.time() - query_start:0.3f} sec constraints:{self._total_constraints_found}")
+                self._print(f"time: {time.time() - query_start:0.3f} sec constraints: {self._total_constraints_found} prefixes: {self._total_prefixes_considered} epr-skipped: {self._total_skipped_prefixes}")
 
         async with ScopedTasks() as tasks:
             tasks.add(logger())
@@ -762,6 +1124,7 @@ class ParallelFolIc3:
         self._pulling_blocker: Dict[int, Tuple[int, int]] = {} # State for a predicate in F_i that prevents it pulling to F_i-1
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
+        self._push_robust_checkers: Dict[int, RobustChecker] = {}
         
         # Synchronization
         self._event_frames = asyncio.Event() # Signals when a frame is updated, either with a learned predicate or a push/pull
@@ -903,12 +1266,15 @@ class ParallelFolIc3:
             # Check if any new blocker exists
             # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
             fp = set(self.frame_predicates(i))
-            cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=self._threads_per_ig, log=self._logs._smt_log)
+            if index not in self._push_robust_checkers:
+                self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
+            # cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=self._threads_per_ig, log=self._logs._smt_log)
+            cex = await self._push_robust_checkers[index].check_transition(list(self._predicates[j] for j in fp), p, parallelism=self._threads_per_ig)
             if fp != set(self.frame_predicates(i)):
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
                 made_changes = True
                 continue
-            if cex == z3.unsat:
+            if cex.result == SatResult.unsat:
                 # print("Proven that:")
                 # for j in self.frame_predicates(i):
                 #     print(f"  {self._predicates[j]}")
@@ -920,12 +1286,13 @@ class ParallelFolIc3:
                 self._event_frames.set()
                 self._event_frames.clear()
                 made_changes = True
-            elif isinstance(cex, Trace):
+            elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
+                trace = cex.trace
                 # Add the blocker and the sucessor state. We need the successor state because
                 # if we show the blocker is reachable, it is actually the successor that invalidates
                 # the predicate and is required to mark it as bad
-                blocker = self.add_state(cex.as_state(0))
-                blocker_successor = self.add_state(cex.as_state(1))
+                blocker = self.add_state(trace.as_state(0))
+                blocker_successor = self.add_state(trace.as_state(1))
                 self.add_transition(blocker, blocker_successor)
 
                 self._pushing_blocker[index] = blocker
@@ -933,7 +1300,7 @@ class ParallelFolIc3:
                 self._event_frames.set()
                 self._event_frames.clear()
             else:
-                print(f"cex {cex}")
+                print(f"cex {cex.result}")
                 assert False
         return made_changes
 
@@ -979,15 +1346,13 @@ class ParallelFolIc3:
                     i = self.add_predicate(inv_decl.expr)
                     self._frame_numbers[i] = 1
 
-    async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '', timeout: Optional[float] = None, prior_solver: Optional[IGSolver2] = None) -> IGSolver2:
+    async def parallel_inductive_generalize(self, frame: int, state: int, rationale: str = '', timeout: Optional[float] = None, prior_solver: Optional[IGSolver] = None) -> IGSolver:
         ig_frame = set(self.frame_predicates(frame-1))
-        ig_solver = IGSolver2(self._states[state],
+        ig_solver = IGSolver(self._states[state],
                                   [self._states[x] for x in self._useful_reachable | self._initial_states],
                                   [self._predicates[x] for x in ig_frame],
                                   self._logs, syntax.the_program, rationale, self._next_ig_query_index, prior_solver)
         self._next_ig_query_index += 1
-        # TODO: 
-        # cancel due to timeout
         
         sol: asyncio.Future[Optional[Expr]] = asyncio.Future()
         async with ScopedTasks() as tasks:
@@ -1023,7 +1388,7 @@ class ParallelFolIc3:
             print(f"IG query cancelled ({state} in frame {frame} for {rationale})")
             return ig_solver
 
-        print(f"Learned new predicate {p} blocking {state} in frame {frame} for {rationale}")
+        print(f"Learned new lemma {p} blocking {state} in frame {frame} for {rationale}")
         self.add_predicate(p, frame)
         await self.push_all()
         self.print_predicates()
@@ -1055,21 +1420,23 @@ class ParallelFolIc3:
         formula_to_block = syntax.Not(s.as_onestate_formula()) \
                         if utils.args.logic != "universal" else \
                         syntax.Not(Diagram(s).to_ast())
+        checker: RobustChecker = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
         # We do this in a loop to ensure that if someone concurrently modifies the frames, we still compute a correct
         # predecessor.
         while True:
             fp = set(self.frame_predicates(frame-1))
             # edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
-            edge = await robust_check_transition([self._predicates[i] for i in fp], formula_to_block, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=2, log=self._logs._smt_log)
+            #edge = await robust_check_transition([self._predicates[i] for i in fp], formula_to_block, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=2, log=self._logs._smt_log)
+            edge = await checker.check_transition([self._predicates[i] for i in fp], formula_to_block, parallelism=2)
             if fp != set(self.frame_predicates(frame-1)):
                 continue
             break
-        if isinstance(edge, Trace):
-            pred = self.add_state(edge.as_state(0))
+        if isinstance(edge.trace, Trace):
+            pred = self.add_state(edge.trace.as_state(0))
             self.add_transition(pred, state)
             self._predecessor_cache[key] = pred
             return pred
-        elif edge == z3.unsat:
+        elif edge.result == SatResult.unsat:
             self._no_predecessors[state] = fp
             return None
         else:
@@ -1127,17 +1494,18 @@ class ParallelFolIc3:
             return False
         return True
 
-    def heuristic_priority(self, pred: int) -> float:
+    def heuristic_priority(self, pred: int) -> Any:
         def mat_size(e: Expr) -> int:
             if isinstance(e, QuantifierExpr): return mat_size(e.body)
             elif isinstance(e, UnaryExpr): return mat_size(e.arg)
             elif isinstance(e, NaryExpr): return sum(map(mat_size, e.args))
             else: return 1
-        return mat_size(self._predicates[pred]) + random.random() * 0.5
+        fn = self._frame_numbers[pred]
+        return (-fn if fn is not None else 0, mat_size(self._predicates[pred]) + random.random() * 0.5)
 
     async def heuristic_pushing_to_the_top_worker(self) -> None:
         # print("Starting heuristics")
-        timeouts = [10.0, 25.0, 100.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0]
+        timeouts = [100.0, 500.0, 2000.0]
         timeout_index = 0
         current_timeout: Dict[Tuple[int, int], int] = {}
         while True:
@@ -1148,8 +1516,8 @@ class ParallelFolIc3:
             # print(f"Finding task with index {timeout_index}")
             for pred in priorities:
                 # Don't push anything past the earliest safety
-                # if self.frame_leq(frame_N, self._frame_numbers[pred]):
-                #     continue
+                if self.frame_leq(frame_N, self._frame_numbers[pred]):
+                    continue
                 if not self.heuristically_blockable(pred):
                     continue
                 fn, st = self._frame_numbers[pred], self._pushing_blocker[pred]
@@ -1194,7 +1562,7 @@ class ParallelFolIc3:
 
     # This is the main loop responsible for learning classic IC3 lemmas by blocking bad states or backwardly reachable from bad
     async def learn(self) -> None:
-        prior_solver: Optional[IGSolver2] = None
+        prior_solver: Optional[IGSolver] = None
         while True:
             for safety in sorted(self._safeties, key = lambda x: ParallelFolIc3.frame_key(self._frame_numbers[x])):
                 fn = self._frame_numbers[safety]
@@ -1227,7 +1595,6 @@ class ParallelFolIc3:
         async with ScopedTasks() as tasks:
             if 'no-heuristic-pushing' not in utils.args.expt_flags:
                 tasks.add(self.heuristic_pushing_to_the_top_worker())
-                # tasks.add(self.heuristic_pushing_to_the_top_worker(True))
             tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
             while not self.is_complete():
@@ -1277,36 +1644,6 @@ def p_fol_ic3(_: Solver) -> None:
         await p.run()
     asyncio.run(main())
 
-def neg_normalize(e: Expr) -> Expr:
-    return e
-def structure_of(e: Expr) -> str:
-    if isinstance(e, QuantifierExpr):
-        return ("A" if e.quant == 'FORALL' else "E") * len(e.binder.vs) + " " + structure_of(e.body)
-    if isinstance(e, UnaryExpr):
-        if e.op == 'NOT':
-            x = structure_of(e.arg)
-            if x == 'l':
-                return 'l'
-            else:
-                return '!' + x
-    if isinstance(e, BinaryExpr):
-        if e.op == 'EQUAL' or e.op == 'NOTEQ':
-            return 'l'
-        if e.op == 'IMPLIES':
-            return "(" + structure_of(e.arg1) + " -> " + structure_of(e.arg2) + ")"
-        if e.op == 'IFF':
-            return "(" + structure_of(e.arg1) + " <-> " + structure_of(e.arg2) + ")"
-    if isinstance(e, AppExpr):
-        return 'l'
-    if isinstance(e, NaryExpr):
-        if e.op == 'AND':
-            return '(' + '&'.join(structure_of(x) for x in e.args) + ')'
-        if e.op == 'OR':
-            return '(' + '|'.join(structure_of(x) for x in e.args) + ')'
-    
-    print(e, type(e))
-    assert False
-    return str(e)
 
 def fol_extract(solver: Solver) -> None:
     import os.path
@@ -1462,12 +1799,6 @@ def fol_extract(solver: Solver) -> None:
         else:
             print('--logic=universal', utils.args.filename)
     
-    
-    if 'formulas' in utils.args.expt_flags:
-        for i, inv in enumerate(syntax.the_program.invs()):
-            if inv.is_safety: continue
-            print(f"0;0;0;{structure_of(neg_normalize(inv.expr))};{inv.expr};{base_name};{i}")
-
 
 def fol_learn(solver: Solver) -> None:
     global _forkserver
@@ -1633,12 +1964,12 @@ def _incremental_unsat(s: z3.Solver, assertions: List[z3.ExprRef]) -> z3.CheckSa
                 print("unknown")
                 return z3.unknown
             if r == z3.sat:
-                print("sat")
+                print("sat ", end ='', flush=True)
                 m = s.model()
                 random.shuffle(assertions)
                 for i, a in enumerate(assertions):
                     if not z3.is_true(m.eval(a, model_completion=True)):
-                        print(f"adding {i}")
+                        print(f"adding {i} ", end ='', flush=True)
                         s.add(a)
                         assertions = assertions[:i]+assertions[i+1:]
                         break
@@ -1684,6 +2015,8 @@ def add_epr_edges(edges: Set[Tuple[str, str]], expr: z3.ExprRef, polarity: bool 
         assert False
 
 def fol_benchmark_solver(_: Solver) -> None:
+    global _forkserver
+    _forkserver = ForkServer()
     # Verify, but with CVC5Solver
     # from solver_cvc5 import CVC5Solver, SatResult
     # solver = CVC5Solver(syntax.the_program)
@@ -1720,7 +2053,26 @@ def fol_benchmark_solver(_: Solver) -> None:
     else:
         (old_hyps, new_conc, minimize) = cast(Tuple[List[Expr], Expr, Optional[bool]], data)
         states = 1
+    
     if True:
+        print("testing checker")
+        start_time = time.time()
+        checker = AdvancedChecker(syntax.the_program)
+        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 2, 600.0))
+        end_time = time.time()
+        print (r_r.result)
+        print (f"=== Solution obtained in {end_time-start_time:0.3f}")
+
+        # print(checker._last_successful)
+        # print(checker._transitions)
+
+        start_time = time.time()
+        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 2, 600.0))
+        end_time = time.time()
+        print (r_r.result)
+        print (f"=== Solution obtained in {end_time-start_time:0.3f}")
+    
+    if False:
         print('Analyzing')
         for e in old_hyps:
             print("  ", e)
@@ -1737,29 +2089,130 @@ def fol_benchmark_solver(_: Solver) -> None:
                 s.add(t.translate_expr(e))
             
         formulas = [(lambda s, t, trans=transition: make_formula(s, t, syntax.the_program.scope, trans)) for transition in syntax.the_program.transitions()]
-        s = Solver()
+        s = Solver(use_cvc4=True)
+        s.z3solver.set('ctrl_c', False)
         t = s.get_translator(2)
-        for f_i, (f, transition) in enumerate(zip(formulas, syntax.the_program.transitions())):
-            #with open(f"{f_i}-{transition.name}.smt2", "w") as out:
-                with s.new_frame():
-                    f(s, t)
-                    # Write out to .smt2 files
-                    #out.write('(set-logic UF)\n')
-                    #out.write(s.z3solver.to_smt2())
+        trans_all = list(zip(formulas, syntax.the_program.transitions()))
+        # random.shuffle(trans_all)
+        for f_i, (f, transition) in enumerate(trans_all):
+                print(f"\nTransition {transition.name}")
+                # with s.new_frame():
+                #     f(s, t)
+                #     # Write out to .smt2 files
+                #     #out.write('(set-logic UF)\n')
+                #     #out.write(s.z3solver.to_smt2())
+                #     # Check EPR-ness
+                #     edges: Set[Tuple[str, str]] = set()
+                #     for func in syntax.the_program.functions():
+                #         for s1 in func.arity:
+                #             edges.add((str(s1), str(func.sort)))
+                #     for a in s.z3solver.assertions():
+                #         add_epr_edges(edges, a)
+                #     print(edges)
+                #     g = networkx.DiGraph()
+                #     g.add_edges_from(edges)
+                #     print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
+                #     assertions = list(s.z3solver.assertions())
+                
+                #if f_i != 4: continue
 
-                    # Check EPR-ness
-                    edges: Set[Tuple[str, str]] = set()
-                    for func in syntax.the_program.functions():
-                        for s1 in func.arity:
-                            edges.add((str(s1), str(func.sort)))
-                    for a in s.z3solver.assertions():
-                        add_epr_edges(edges, a)
-                    print(edges)
-                    g = networkx.DiGraph()
-                    g.add_edges_from(edges)
-                    print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
-                    assertions = list(s.z3solver.assertions())
-                _find_unsat_core(transition, old_hyps, new_conc)
+                if 'fancy-check' in utils.args.expt_flags:
+                    print("result", _fancy_check_transition(old_hyps, new_conc, transition.as_twostate_formula(syntax.the_program.scope)))
+                    continue
+
+                _exprs = [t.translate_expr(e) for e in old_hyps]
+                
+                s.z3solver.set("ctrl_c", False)
+                sat_inst = z3.Optimize()
+                for i in range(len(_exprs)):
+                    sat_inst.add_soft(z3.Not(z3.Bool(f'I_{i}')))
+                unk_times = [0] * len(_exprs)
+                tot_times = [0] * len(_exprs)
+                k = 0.2
+                pr = 0
+                solved = False
+                while not solved:
+                    with s.new_frame():
+                        for exp in [New(Not(new_conc)), transition.as_twostate_formula(syntax.the_program.scope)]:
+                            s.add(t.translate_expr(exp))
+                        
+                        order = list(range(len(_exprs)))
+                        random.shuffle(order)
+                        while True:
+                            result = sat_inst.check(*(z3.Not(z3.Bool(f'I_{i}')) for i in order))
+                            # result = sat_inst.check()
+                            if result == z3.sat:
+                                sel2 = []
+                                m = sat_inst.model()
+                                sel2 = [z3.is_true(m.eval(z3.Bool(f'I_{i}'), model_completion=True)) for i in range(len(_exprs))]
+                                del m
+                                break
+                            else:
+                                if len(order) == 0:
+                                    assert False
+                                order.pop()
+                        if solved: break
+
+                        for _e, selected in zip(_exprs, sel2):
+                            if selected:
+                                s.add(_e)
+                            
+                        while True:
+                            # print("")
+                            # print("checking")
+                            # print(''.join('1' if v else '0' for v in sel2))
+                            r = s.check(timeout=3000)
+                            print(''.join('1' if v else '0' for v in sel2), r)
+
+                            for i in range(len(_exprs)):
+                                if sel2[i]:
+                                    tot_times[i] += 1
+                            if r == z3.unsat:
+                                print("overall: unsat")
+                                solved = True
+                                break
+                            elif r == z3.unknown:
+                                for i in range(len(_exprs)):
+                                    if sel2[i]:
+                                        unk_times[i] += 1
+                                break
+                            elif r == z3.sat:
+                                model = s.model(minimize=True)
+                                # print("Model: ", model)
+                                # print("Model: ", model.sorts())
+                                # print("Model: ", model.get_universe(model.sorts()[0]))
+                                # assert False
+                                tr = Z3Translator.model_to_trace(model, 2)
+                                st = tr.as_state(0)
+                                disprovers = [not(st.eval(old_hyps[i])) for i in range(len(_exprs))]
+                                
+                                # print(''.join('1' if v else '0' for v in sel2), "sel")
+                                # disprovers = [not z3.is_true(m.eval(_exprs[i], model_completion=True)) for i in range(len(_exprs))]
+                                print(''.join('1' if v else '0' for v in disprovers), "   model", sum([1 if v else 0 for i, v in enumerate(disprovers)]))
+                                
+                                # true_formulas = [z3.is_true(m.eval(_exprs[i], model_completion=True)) for i in range(len(_exprs))]
+                                # print(''.join('1' if v else '0' for v in true_formulas), "is_true")
+                                # true_formulas = [z3.is_false(m.eval(_exprs[i], model_completion=True)) for i in range(len(_exprs))]
+                                # print(''.join('1' if v else '0' for v in true_formulas), "is_false")
+                                # print([m.eval(_exprs[i], model_completion=True) for i in range(len(_exprs))])
+
+                                for i, dis, ssss in zip(range(len(_exprs)), disprovers, sel2):
+                                    if dis and ssss:
+                                        assert False, _exprs[i]
+                                sat_inst.add(z3.Or([z3.Bool(f'I_{i}') for i, v in enumerate(disprovers) if v]))
+                                if len([i for i in range(len(_exprs)) if disprovers[i]]) == 0:
+                                    solved = True
+                                    print("overall: sat")
+                                    break
+                                to_add = random.sample([i for i in range(len(_exprs)) if disprovers[i]], 1)[0]
+                                s.add(_exprs[to_add])
+                                sel2[to_add] = True
+                                # print("added additional conjunct")
+                        if solved: break
+
+
+                
+                # _find_unsat_core(transition, old_hyps, new_conc)
                 # if f_i == 2 or True:
                 #     while True:
                 #         ss = Solver()
@@ -1767,10 +2220,11 @@ def fol_benchmark_solver(_: Solver) -> None:
                 #         print(f"Result: {r}")
                 #         if r != z3.unknown:
                 #             break
+
     
     if False:
         start = time.time()
-        r = asyncio.run(robust_check_transition(old_hyps, new_conc, parallelism=10, timeout=0))
+        r = asyncio.run(robust_check_transition(old_hyps, new_conc, parallelism=2, timeout=0))
         print(f"overall: {z3.sat if isinstance(r, Trace) else r} in {time.time() - start:0.3f}")
         
     if False:
@@ -1835,7 +2289,7 @@ def fol_benchmark_ig(_: Solver) -> None:
         logs._smt_log = open('/dev/null', 'w')
         logs._sep_log = open('/dev/null', 'w')
         # if 'ig2' in utils.args.expt_flags:
-        ig2 = IGSolver2(states[block.i],
+        ig2 = IGSolver(states[block.i],
                         [states[x.i] for x in pos if isinstance(x, Pos)],
                         prior_frame,
                         logs, syntax.the_program, rationale, 0)
@@ -1850,125 +2304,6 @@ def fol_benchmark_ig(_: Solver) -> None:
         
         
     asyncio.run(run_query())
-    
-def fol_benchmark_sep_unsep(_: Solver) -> None:
-    (prefix, constraints, states) = cast(Tuple[Tuple[Tuple[Optional[bool], int], ...], List[Constraint], Dict[int, State]], pickle.load(open(utils.args.query, 'rb')))
-    print(f"Prefix is: {prefix}, len(constraints) = {len(constraints)}")
-    sig = prog_to_sig(syntax.the_program, two_state=False)
-    sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, PrefixConstraints(), k_cubes=2)
-    mapping = {}
-    start = time.time()
-    cand: Optional[separators.logic.Formula] = None
-    for c in constraints:
-        for s in c.states():
-            if s not in mapping:
-                mapping[s] = sep.add_model(state_to_model(states[s]))
-        sep.add_constraint(c.map(mapping))
-        cand = sep.separate(minimize=True)
-        print(f"Candidate: {cand}")
-    if cand is not None:
-        print("Warning, expected UNSEP not {cand}")
-    end = time.time()
-    print(f"Elapsed: {end-start:0.3f}")
-
-def decompose_prenex(p: Expr) -> Tuple[List[Tuple[bool, str, str]], Expr]:
-    def binder_to_list(b: syntax.Binder, is_forall: bool) -> List[Tuple[bool, str, str]]:
-        return [(is_forall, v.name, cast(UninterpretedSort, v.sort).name) for v in b.vs]
-    if isinstance(p, QuantifierExpr):
-        sub_prefix, matrix = decompose_prenex(p.body)
-        return (binder_to_list(p.binder, p.quant == 'FORALL') + sub_prefix, matrix)
-    else:
-        return ([], p)
-
-def compose_prenex(prefix: Sequence[Tuple[bool, str, str]], matrix: Expr) -> Expr:
-    def _int(prefix: Sequence[Tuple[bool, str, str]], matrix: Expr) -> Expr:
-        if len(prefix) == 0: return matrix
-        sub_formula = _int(prefix[1:], matrix)
-        (is_forall, var, sort) = prefix[0]
-        if is_forall:
-            v = SortedVar(var, UninterpretedSort(sort))
-            if isinstance(sub_formula, QuantifierExpr) and sub_formula.quant == 'FORALL':
-                return Forall((v, *sub_formula.binder.vs), sub_formula.body)
-            return Forall((v,), sub_formula)
-        else:
-            v = SortedVar(var, UninterpretedSort(sort))
-            if isinstance(sub_formula, QuantifierExpr) and sub_formula.quant == 'EXISTS':
-                return Exists((v, *sub_formula.binder.vs), sub_formula.body)
-            return Exists((v,), sub_formula)
-    e = _int(prefix, matrix)
-    with syntax.the_program.scope.n_states(2):
-        typecheck_expr(syntax.the_program.scope, e, BoolSort)
-    return e
-
-def generalizations_of_prefix(prefix: List[Tuple[bool, str, str]]) -> Iterable[List[Tuple[bool, str, str]]]:
-    alternations = [list(g) for (_, g) in itertools.groupby(prefix, key = lambda x: x[0])]
-
-    # Turn an entire block of Exists into forall at once.
-    # for i, quantifier_block in enumerate(alternations):
-    #     if quantifier_block[0][0]: continue
-    #     yield list(itertools.chain.from_iterable(alternations[:i] + [[(True, v, s) for (_, v, s) in alternations[i]]] + alternations[i+1:]))
-
-    # Turn each E into a A individually, and lift it to the top of its block of E.
-    # So if we pick x in AAAEExEA, the resulting quantifier is AAAAxEEA
-    for i, (is_forall, var, sort) in enumerate(prefix):
-        if is_forall: continue
-        j = i
-        while j > 0 and not prefix[j-1][0]:
-            j -= 1
-        without_i = prefix[:i] + prefix[i+1:]
-        yield without_i[:j] + [(True, var, sort)] + without_i[j:]
-
-    # Swap EA into AE, a whole quantifier block at a time. AAA(EEEAA) becomes AAA(AAEEE).
-    # Guaranteed to not introduce more alternations
-    for i, quantifier_block in enumerate(alternations):
-        if quantifier_block[0][0]: continue
-        if i + 1 == len(alternations): continue
-        yield list(itertools.chain.from_iterable(alternations[:i] + [alternations[i+1], alternations[i]] + alternations[i+2:]))
-
-def prefix_in_epr(prefix: List[Tuple[bool, str, str]]) -> bool:
-    for q_a, q_b in itertools.combinations(prefix, 2):
-        if q_a[0] != q_b[0] and (q_a[2], q_b[2]) not in utils.args.epr_edges:
-            # print(f"Failed {q_a} {q_b}")
-            return False
-    return True
-
-
-async def check_candidate(p: Expr, prior_frame: List[Expr]) -> bool:
-    # F_0 => p?
-    initial_state = await robust_check_implication([init.expr for init in syntax.the_program.inits()], p, log=open("/dev/null", 'w'))
-    if initial_state is not None:
-        return False
-
-    # F_i-1 ^ p => wp(p)?
-    edge = await robust_check_transition([p, *prior_frame], p, parallelism = 2, timeout=500, log=open("/dev/null", 'w'))
-    if edge == z3.unsat:
-        return True
-    return False
-
-def generalize_quantifiers(p: Expr, constraints: Set[Constraint], states: Dict[int, State], prior_frame: List[Expr]) -> Expr:
-    prefix, matrix = decompose_prenex(p)
-    print(f"Original prefix {prefix}, matrix {matrix}")
-    assert prefix_in_epr(prefix)
-    while True:
-        for new_prefix in generalizations_of_prefix(prefix):
-            assert new_prefix != prefix
-            if not prefix_in_epr(new_prefix) and 'generalize-non-epr' not in utils.args.expt_flags:
-                print(f"Not in EPR")
-                continue
-            q = compose_prenex(new_prefix, matrix)
-            print(f"Trying... {q}")
-            if all(satisifies_constraint(c, q, states) for c in constraints):
-                print("Passed constraints")
-                if asyncio.run(check_candidate(q, prior_frame)):
-                    print("Accepted new formula")
-                    prefix = new_prefix
-                    break
-                print("Not relatively inductive")
-            else:
-                print("Rejected by constraints")
-        else:
-            break
-    return compose_prenex(prefix, matrix)
 
 def fol_debug_ig(_: Solver) -> None:
     global _forkserver
@@ -1996,15 +2331,6 @@ def fol_debug_ig(_: Solver) -> None:
                     print("not relatively inductive (not solution)")
     asyncio.run(main())
     
-    # print(f"Initial solution: {p}")
-    # # for q in prior_frame:
-    # #     print(q)
-    # pp = generalize_quantifiers(p, set(constraints), states, prior_frame)
-    # if pp != p:
-    #     print(f"(GEN) Generalized to: {pp}")
-    #     print(f"(GEN) From:           {p}")
-    # else:
-    #     print("Could not generalize")
     
 def epr_edges(s: str) -> List[Tuple[str, str]]:
     r = []
@@ -2059,21 +2385,6 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
     result.append(s)
-
-    s = subparsers.add_parser('fol-benchmark-sep-unsep', help='Test IG query solver')
-    s.set_defaults(main=fol_benchmark_sep_unsep)
-    s.add_argument("--query", type=str, help="Query to benchmark")
-    s.add_argument("--output", type=str, help="Output to file")
-    s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
-    result.append(s)
-
-    # s = subparsers.add_parser('fol-benchmark-ig', help='Test IG query solver')
-    # s.set_defaults(main=fol_benchmark_ig)
-    # s.add_argument("--query", type=str, help="Query to benchmark")
-    # s.add_argument("--output", type=str, help="Output to file")
-    # s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
-    # result.append(s)
 
     s = subparsers.add_parser('fol-debug-ig', help='Debug a IG solution')
     s.set_defaults(main=fol_debug_ig)
