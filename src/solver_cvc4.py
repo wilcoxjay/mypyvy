@@ -18,6 +18,7 @@ import dataclasses
 import sexp
 import subprocess
 import random
+import re
 from typing import List, Optional, Union, Dict, Sequence, cast
 
 import z3
@@ -198,10 +199,13 @@ class CVC4FuncDecl:
 @dataclass
 class CVC4Model:
     sexpr: dataclasses.InitVar[sexp.Sexp]
-
+    
     def __post_init__(self, sexpr: sexp.Sexp) -> None:
         assert isinstance(sexpr, sexp.SList), sexpr
-        self.sexprs = sexpr.contents[1:]
+        if len(sexpr.contents) > 0 and sexpr.contents[0] == 'model':
+            self.sexprs = sexpr.contents[1:]
+        else:
+            self.sexprs = sexpr.contents[:]
 
     def sorts(self) -> List[z3.SortRef]:
         ans: List[z3.SortRef] = []
@@ -210,7 +214,17 @@ class CVC4Model:
                 name = s.contents[1]
                 assert isinstance(name, str), name
                 ans.append(cast(z3.SortRef, CVC4Sort(name)))
+        
+        if len(ans) == 0:
+            r = re.compile(r"^ cardinality of ([-a-zA-Z0-9_$@]+) is [0-9]+$")
+            for s in self.sexprs:
+                # print(f"Considering {s}")
+                if isinstance(s, sexp.Comment):
+                    if m := r.match(s.contents):
+                        ans.append(cast(z3.SortRef, CVC4Sort(m.group(1))))
+
         return ans
+    
 
     def eval_in_scope(self, scope: Dict[str, CVC4UniverseElement], e: sexp.Sexp) -> Union[bool, CVC4UniverseElement, CVC4Int]:
         # print(scope)
@@ -218,6 +232,7 @@ class CVC4Model:
 
         if isinstance(e, sexp.SList):
             assert len(e) > 0, e
+            if e[0] == 'as': return self.eval_in_scope(scope, e[1])
             f = e[0]
             assert isinstance(f, str), f
             args = e[1:]
@@ -310,6 +325,19 @@ class CVC4Model:
                         break
 
                 return univ
+        
+        # Handle CVC5's model format
+        r = re.compile(r'^ rep: \(as ([-a-zA-Z0-9_@$]+) ([-a-zA-Z0-9_@$]+)\)$')
+        universe: List[z3.ExprRef] = []
+        for sexpr in self.sexprs:
+            if isinstance(sexpr, sexp.Comment):
+                if m := r.match(sexpr.contents):
+                    if m.group(2) == sort.name:
+                        elt_name = m.group(1)
+                        # print(elt_name, sort)
+                        universe.append(cast(z3.ExprRef, CVC4UniverseElement(elt_name, sort)))
+        assert len(universe) > 0, "Universe cannot be empty"
+        return universe
         assert False, ('could not find sort declaration in model', sort)
 
     def decls(self) -> List[z3.FuncDeclRef]:
