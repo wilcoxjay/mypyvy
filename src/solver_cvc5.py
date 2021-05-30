@@ -1,15 +1,18 @@
 
+import re, itertools, random
+
 from typing import Any, Dict, Set, Tuple, cast
 from dataclasses import dataclass, field
 from enum import Enum
-from semantics import Trace
-from syntax import AppExpr, BinaryExpr, Expr, Id, IfThenElse, Let, NaryExpr, New, Program, QuantifierExpr, Sort, UnaryExpr, UninterpretedSort
+from semantics import FunctionInterp, RelationInterp, Trace, Universe
+from syntax import AppExpr, BinaryExpr, ConstantDecl, Expr, FunctionDecl, Id, IfThenElse, Let, Bool, NaryExpr, New, Program, QuantifierExpr, RelationDecl, Sort, SortDecl, UnaryExpr, UninterpretedSort
 import pycvc5
 
 class SatResult(Enum):
     sat = 'sat'
     unsat = 'unsat'
     unknown = 'unknown'
+    def __str__(self) -> str: return self.value
 
 @dataclass
 class _CVC5Context:
@@ -76,10 +79,8 @@ class _CVC5Context:
             assert False
 
     def tr(self, e: Expr, state_i: int = 0, vars: Dict[str, pycvc5.Term] = {}) -> pycvc5.Term:
-        if isinstance(e, bool):
-            return self.solver.mkBoolean(e)
-        elif isinstance(e, int):
-            assert False
+        if isinstance(e, Bool):
+            return self.solver.mkBoolean(e.val)
         elif isinstance(e, UnaryExpr):
             if e.op == 'NEW':
                 return self.tr(e.arg, state_i+1, vars)
@@ -122,20 +123,22 @@ class _CVC5Context:
         elif isinstance(e, Let):
             pass
         else:
-            assert False
+            assert False, (type(e), e)
         print(f"Couldn't translate: {e}")
         print(f"Type: {type(e)}")
         print(f"Repr: {repr(e)}")
         assert False
 
 class CVC5Solver:
-    def __init__(self, program: Program) -> None:
+    def __init__(self, program: Program, timeout: int = 0) -> None:
         self._program = program
         self._solver = pycvc5.Solver()
         self._solver.setOption("produce-models", "true")
-        # self._solver.setOption("produce-assertions", "true")
         self._solver.setOption("fs-interleave", "true")
         self._solver.setOption("finite-model-find", "true")
+        self._solver.setOption("seed", str(random.randint(0,10000000)))
+        if timeout > 0:
+            self._solver.setOption("tlimit-per", str(timeout))
         self._current_states = -1
         self._is_sat = False
         self._context = _CVC5Context(self._solver)
@@ -194,9 +197,72 @@ class CVC5Solver:
             return SatResult.unsat
         else:
             return SatResult.unknown
+    def is_true(self, e: Expr) -> bool:
+        return str(self._solver.getValue(self._context.tr(e, 0, dict()))) != 'false'
     def get_trace(self) -> Trace:
         assert self._is_sat
-        tr = Trace(self._current_states + 1)
-        assert False
-        return tr
+        N_states = self._current_states + 1
+        trace = Trace(N_states)
+
+        prog = self._program
+
+        def sort_decl_of(sort: Sort) -> SortDecl:
+            assert isinstance(sort, UninterpretedSort)
+            d = prog.scope.sorts[sort.name]
+            return d
+
+        def name_of_term(t: pycvc5.Term) -> str:
+            s = str(t)
+            m = re.match('\(as (.+) [^ ]+\)', s)
+            if m:
+                return m.group(1)
+            return s
+        def get_univ(sort: str) -> Tuple[str, ...]:
+            elems = self._solver.getDomainElements(self._context.sorts[sort])
+            return tuple(name_of_term(e) for e in elems)
+
+        for sort in self._context.sorts.keys():
+            trace.univs[cast(SortDecl, prog.scope.get_sort(sort))] = get_univ(sort)
+
+        def _extract_rel(rel: RelationDecl, state: int) -> RelationInterp:
+            callee = self._context.get_sym_term(rel.name, state)
+            args = [self._solver.getDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
+            interp = {}
+            for t in itertools.product(*args):
+                interp[tuple(name_of_term(x) for x in t)] = str(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t))) == 'true'
+            return interp
+
+        def _extract_func(rel: FunctionDecl, state: int) -> FunctionInterp:
+            callee = self._context.get_sym_term(rel.name, state)
+            args = [self._solver.getDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
+            interp = {}
+            for t in itertools.product(*args):
+                interp[tuple(name_of_term(x) for x in t)] = name_of_term(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t)))
+            return interp
+        
+        def _extract_const(rel: ConstantDecl, state: int) -> str:
+            constant = self._context.get_sym_term(rel.name, state)
+            return name_of_term(self._solver.getValue(constant))
+
+        for rel in prog.relations():
+            if rel.mutable:
+                for i in range(N_states):
+                    trace.rel_interps[i][rel] = _extract_rel(rel, i)
+            else:
+                trace.immut_rel_interps[rel] = _extract_rel(rel, 0)
+        for func in prog.functions():
+            if func.mutable:
+                for i in range(N_states):
+                    trace.func_interps[i][func] = _extract_func(func, i)
+            else:
+                trace.immut_func_interps[func] = _extract_func(func, 0)
+        for const in prog.constants():
+            if const.mutable:
+                for i in range(N_states):
+                    trace.const_interps[i][const] = _extract_const(const, i)
+            else:
+                trace.immut_const_interps[const] = _extract_const(const, 0)
+
+        # print(trace)
+        return trace
 
