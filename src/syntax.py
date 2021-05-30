@@ -540,7 +540,7 @@ def faithful_print_prog(prog: Program, skip_invariants: bool = False) -> str:
 
 
 @functools.total_ordering
-@dataclass
+@dataclass(frozen=True)
 class AbstractExpr:
     def __lt__(self, other: Any) -> bool:
         if not isinstance(other, AbstractExpr):
