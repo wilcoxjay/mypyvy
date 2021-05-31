@@ -1031,6 +1031,19 @@ else:
     CheckDualEdgeOptimizeQueue = multiprocessing.Queue
     CheckDualEdgeOptimizeJoinableQueue = multiprocessing.JoinableQueue
 
+def assert_valid_hq(
+    ps: Tuple[Expr,...],
+    top_clauses: Tuple[Expr,...],
+    hq: HoareQuery,
+) -> None:
+    mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
+    assert all(0 <= i < len(ps) for i in hq.p), (hq.p, list(map(str, ps)))
+    assert len(hq.q_pre) == mp.m, (hq.q_pre, mp.m, list(map(str, top_clauses)))
+    assert len(hq.q_post) == mp.m, (hq.q_post, mp.m, list(map(str, top_clauses)))
+    for k in range(mp.m):
+        assert all(0 <= i < mp.n[k] for i in hq.q_pre[k]), (k, hq.q_pre[k], mp.m, mp.n, list(map(str, top_clauses)))
+        assert all(0 <= i < mp.n[k] for i in hq.q_post[k]), (k, hq.q_post[k], mp.m, mp.n, list(map(str, top_clauses)))
+
 def check_dual_edge_optimize_multiprocessing_helper(
         ps: Tuple[Expr,...],
         top_clauses: Tuple[Expr,...],
@@ -1042,13 +1055,15 @@ def check_dual_edge_optimize_multiprocessing_helper(
         save_smt2: bool, # TODO: move to separate function
         q1: CheckDualEdgeOptimizeJoinableQueue,
         q2: CheckDualEdgeOptimizeQueue,
+        join_q1: bool = True, # can be set to false if not running in separate process
 ) -> None:
     if use_cvc4:
         minimize = utils.args.cvc4_minimize_models
     else:
         minimize = True
     try:
-        assert len(hq.q_pre) == len(top_clauses)
+        assert_valid_hq(ps, top_clauses, hq)
+
         def send_result(hq: HoareQuery, valid: bool, cti: Optional[Tuple[PDState, PDState]] = None) -> None:
             assert cti is None or not valid
             if not produce_cti:
@@ -1056,6 +1071,7 @@ def check_dual_edge_optimize_multiprocessing_helper(
             q1.put((hq, valid, cti))
         def validate_cti(prestate: PDState, poststate: PDState) -> None:
             # TODO: remove this once we trust the code enough
+            return
             assert all(eval_in_state(None, prestate,  p) for p in ps), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
             assert all(eval_in_state(None, poststate, p) for p in ps), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
             assert all(eval_in_state(None, prestate,  mp.to_clause(k, hq.q_pre[k])) for k in range(mp.m)), f'{greeting}: {(ps, top_clauses, hq, s.debug_recent())}'
@@ -1271,7 +1287,8 @@ def check_dual_edge_optimize_multiprocessing_helper(
             assert s.check() == z3.sat
         # print(f'[{datetime.now()}] {greeting}: found optimal cti')
     finally:
-        q1.join()
+        if join_q1:
+            q1.join()
         print(f'[{datetime.now()}] {greeting}: finished and joined q1, returning')
 
 @dataclass
@@ -1495,6 +1512,7 @@ def check_dual_edge_optimize_find_cti(
                     q1,
                     q2,
                 )
+                # assert_valid_hq(*args[:3])
                 if TYPE_CHECKING: # trick to get typechecking for check_dual_edge_optimize_multiprocessing_helper
                     check_dual_edge_optimize_multiprocessing_helper(*args)
                 process = multiprocessing.Process(
@@ -1712,6 +1730,7 @@ def check_dual_edge_optimize_minimize_ps(
                     q1,
                     q2,
                 )
+                # assert_valid_hq(*args[:3])
                 if TYPE_CHECKING: # trick to get typechecking for check_dual_edge_optimize_multiprocessing_helper
                     check_dual_edge_optimize_multiprocessing_helper(*args)
                 process = multiprocessing.Process(
@@ -2013,9 +2032,10 @@ _cache_map_clause_state_interaction: Dict[Tuple[Tuple[SortedVar,...], Tuple[Expr
 # TODO: --cache-only checks for this cache (nothign right now)
 def _map_clause_state_interaction_helper(vls: Tuple[Tuple[SortedVar,...], Tuple[Expr,...], Union[PDState, Expr]]) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]:
     if isinstance(vls[2], PDState):
-        all_mss = map_clause_state_interaction_instantiate(vls[0], vls[1], vls[2])
+        all_mss = map_clause_state_interaction_z3(vls[0], vls[1], vls[2].as_state(0))
         if False: # TODO: run at some point to verify
-            _, all_mss2 = map_clause_state_interaction(*vls)
+            all_mss2 = map_clause_state_interaction_instantiate(vls[0], vls[1], vls[2])
+            #_, all_mss2 = map_clause_state_interaction(*vls)
             assert len(all_mss) == len(set(all_mss))
             assert len(all_mss2) == len(set(all_mss2))
             assert set(all_mss) == set(all_mss2), (sorted(all_mss), sorted(all_mss2))
@@ -2238,6 +2258,171 @@ def map_clause_state_interaction_instantiate(
     print(f'[{datetime.now()}] map_clause_state_interaction_instantiate: PID={os.getpid()}, iterated over {n} instantiations, found {len(result)} MSSs')
     return result
 
+
+def map_clause_state_interaction_z3(
+        variables: Tuple[SortedVar,...],
+        literals: Tuple[Expr,...],
+        state: State,
+) -> List[FrozenSet[int]]:
+    '''Return a list of maximal subclauses of the given clause (indices to
+    literals) that are violated by the given state (equivalent to
+    all_mss computed by map_clause_state_interaction), using an
+    encoding into z3 using quantification over finite types to
+    evaluate subclauses on the state.
+    '''
+    #
+    import z3
+
+    var_names = tuple(v.name for v in variables)
+    sort_names = []
+    for v in variables:
+        assert isinstance(v.sort, UninterpretedSort)
+        sort_names.append(v.sort.name)
+    lit_vs = [z3.Bool(f'lit_{i}') for i in range(len(literals))]
+    solver = z3.Solver()
+    seen: Set[str] = set()  # used to assert we don't have name collisions
+
+    # encode state and force it to evaluate to false on the subclause encoded by lit_vs
+
+    def p(st: str, must_be_new: bool = True) -> str:
+        st = 'state_' + st
+        assert (not must_be_new) or st not in seen, (st, seen)
+        seen.add(st)
+        return st
+
+    assertions: List[z3.ExprRef] = []  # will be added to the solver
+
+    # create z3 symbols for all relations, functions, and constants, and assert their meaning
+
+    # create universe unary relations
+    scope = max(len(elems) for elems in state.univs.values())
+    V = z3.Datatype(p('elements'))
+    def e(i: int) -> str:
+        return f'e{i}'
+    for i in range(scope):
+        V.declare(e(i))
+    V = V.create()
+    def is_e(i: int) -> z3.FuncDeclRef:
+        return getattr(V, 'is_' + e(i))
+    def ee(i: int) -> z3.ExprRef:
+        return getattr(V, e(i))
+    universes = {s.name: z3.Function(p(s.name), V, z3.BoolSort()) for s in state.univs}
+    elem_to_z3: Dict[str, z3.ExprRef] = {}
+    for s, elems in state.univs.items():
+        assertions.extend(universes[s.name](ee(i)) for i in range(len(elems)))
+        assertions.extend(z3.Not(universes[s.name](ee(i))) for i in range(len(elems), scope))
+        for i, elem in enumerate(elems):
+            assert elem not in elem_to_z3
+            elem_to_z3[elem] = ee(i)
+
+    # create relations
+    def lit(e: z3.ExprRef, polarity: bool) -> z3.ExprRef:
+        return e if polarity else z3.Not(e)
+    relations: Dict[str, Union[z3.ExprRef, z3.FuncDeclRef]] = {
+        r.name:
+        z3.Function(p(r.name), *repeat(V, len(r.arity)), z3.BoolSort()) if len(r.arity) > 0 else
+        z3.Bool(p(r.name))
+        for r in state.rel_interps
+    }
+    for r, ri in state.rel_interps.items():
+        if len(r.arity) == 0:
+            assert len(ri) == 1 and () in ri, (r, ri)
+            a = relations[r.name]
+            assert isinstance(a, z3.ExprRef)
+            assertions.append(lit(a, ri[()]))
+        else:
+            for tup, polarity in ri.items():
+                a = relations[r.name]
+                assert isinstance(a, z3.FuncDeclRef)
+                args = [elem_to_z3[x] for x in tup]
+                assertions.append(lit(a(*args), polarity))
+
+    # create functions
+    assert all(len(f.arity) > 0 for f in state.func_interps)
+    functions: Dict[str, z3.FuncDeclRef] = {
+        f.name:
+        z3.Function(p(f.name), *repeat(V, len(f.arity)), V)
+        for f in state.func_interps
+    }
+    for f, fi in state.func_interps.items():
+        for tup, img in fi.items():
+            args = [elem_to_z3[x] for x in tup]
+            assertions.append(functions[f.name](*args) == elem_to_z3[img])
+
+    # create constants
+    constants: Dict[str, z3.ExprRef] = {
+        c.name: z3.Const(p(c.name), V)
+        for c in state.const_interps
+    }
+    for c, ci in state.const_interps.items():
+        assertions.append(constants[c.name] == elem_to_z3[ci])
+
+    # now force state to evaluate to false on the subclause
+    z3_vs = [z3.Const(p(f'V{i}'), V) for i in range(len(variables))]
+    def to_z3(e: Expr) -> z3.ExprRef:
+        if isinstance(e, Id):
+            if e.name in var_names:
+                return z3_vs[var_names.index(e.name)]
+            elif e.name in constants:
+                return constants[e.name]
+            elif e.name in relations and isinstance(r := relations[e.name], z3.ExprRef):
+                return r
+            else:
+                assert False, e
+        elif isinstance(e, AppExpr) and e.callee in functions:
+            return functions[e.callee](*(map(to_z3, e.args)))
+        elif (isinstance(e, AppExpr) and e.callee in relations and
+              isinstance(r := relations[e.callee], z3.FuncDeclRef)):
+            return r(*(map(to_z3, e.args)))
+        elif isinstance(e, UnaryExpr) and e.op == 'NOT':
+            return z3.Not(to_z3(e.arg))
+        elif isinstance(e, BinaryExpr) and e.op == 'EQUAL':
+            return to_z3(e.arg1) == to_z3(e.arg2)
+        elif isinstance(e, BinaryExpr) and e.op == 'NOTEQ':
+            return to_z3(e.arg1) != to_z3(e.arg2)
+        else:
+            assert False, e
+    value = z3.Implies(
+        z3.And(*(
+            universes[s](v)
+            for v, s in zip(z3_vs, sort_names)
+        )),
+        z3.Or(*(
+            z3.And(lit_v, to_z3(lit))
+            for lit_v, lit in zip(lit_vs, literals)
+        ))
+    )
+    if len(z3_vs) > 0:
+        value = z3.ForAll(z3_vs, value)
+    assertions.append(z3.Not(value))
+    # now collect all maximal subclauses by finding all maximal satisfying assignments to lit_vs
+    print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, iterating over ? instantiations... ')
+    result: List[FrozenSet[int]] = []
+    for a in assertions:
+        solver.add(a)
+    while (z3_res := solver.check()) == z3.sat:
+        z3m = solver.model()
+        forced_to_true = set(
+            i for i, v in enumerate(lit_vs)
+            if not z3.is_false(z3m[v])
+        )
+        assert solver.check(*(lit_vs[j] for j in sorted(forced_to_true))) == z3.sat
+        for i in range(len(literals)):
+            if i not in forced_to_true:
+                res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
+                assert res in (z3.unsat, z3.sat)
+                if res == z3.sat:
+                    forced_to_true.add(i)
+        assert solver.check(*(lit_vs[j] for j in sorted(forced_to_true))) == z3.sat
+        # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
+        if len(result) % 100 == 0:
+            print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
+        result.append(frozenset(forced_to_true))
+        # block down
+        solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in forced_to_true)))
+    assert z3_res == z3.unsat, (res, str(solver))
+    print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, iterated over ? instantiations, found {len(result)} MSSs')
+    return result
 
 
 class SubclausesMapTurbo:
@@ -2719,7 +2904,10 @@ class MultiSubclausesMapICE:
         return result
 
     def to_clause(self, k: int, s: Iterable[int]) -> Expr:
-        lits = [self.literals[k][i] for i in sorted(s)]
+        s = sorted(s)
+        assert 0 <= k < self.m, (k, s, self.m, self.n)
+        assert all(0 <= i < self.n[k] for i in s), (k, s, self.m, self.n)
+        lits = [self.literals[k][i] for i in s]
         free = set(chain(*(free_ids(lit) for lit in lits)))
         vs = tuple(v for v in self.variables[k] if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
@@ -7927,6 +8115,247 @@ def enumerate_reachable_states(s: Solver) -> None:
             print('encountered unknown! all bets are off.')
 
 
+def incremental_induction_graph(solver: Solver) -> str:
+    '''
+    Compute incremental induction graph of human invariant
+    '''
+    prog = syntax.the_program
+    print(f'\n[{datetime.now()}] [PID={os.getpid()}] Starting incremental_induction_graph\n')
+
+    predicates = tuple(chain(*(as_clauses(inv.expr) for inv in prog.invs()))) # convert to CNF
+    dual_transitions: List[Tuple[FrozenSet[int], FrozenSet[int]]] = []
+    proven: Set[int] = set()
+    unproven = set(range(len(predicates)))
+
+    print(f'\n[{datetime.now()}] Predicates from human invariant ({len(predicates)}):')
+    for i, p in enumerate(predicates):
+        print(f'  [{i:3}]: {p}')
+
+    check_dual_edge_cache: Dict[Tuple[FrozenSet[int], FrozenSet[int]], bool] = dict()
+    def get_from_cache(ps: FrozenSet[int], qs: FrozenSet[int]) -> Optional[bool]:
+        if (ps, qs) in check_dual_edge_cache:
+            return check_dual_edge_cache[ps, qs]
+        for (ps_, qs_), v in check_dual_edge_cache.items():
+            if qs == qs_:
+                if (not v) and ps <= ps_:
+                    return False
+                elif v and ps >= ps_:
+                    return True
+        return None
+    def check_dual_edge(ps: FrozenSet[int], qs: FrozenSet[int]) -> bool:
+        def check(ps: FrozenSet[int], qs: FrozenSet[int]) -> bool:
+            if get_from_cache(ps, qs) is None:
+                print(f'[{datetime.now()}]  Checking edge:')
+                for j in sorted(ps):
+                    print(f'  {predicates[j]}')
+                print('  --> ')
+                for j in sorted(qs):
+                    print(f'  {predicates[j]}')
+                if False:
+                    # doesn't use CVC4
+                    cti, _ps = check_dual_edge(
+                        solver,
+                        tuple(predicates[j] for j in sorted(ps)),
+                        tuple(predicates[j] for j in sorted(qs)),
+                    )
+                else:
+                    # uses CVC4
+                    cti = check_dual_edge_optimize_find_cti(
+                        tuple(predicates[j] for j in sorted(ps)),
+                        tuple(predicates[j] for j in sorted(qs)),
+                        tuple(frozenset(range(len(destruct_clause(predicates[j])[1]))) for j in sorted(qs)),
+                        True,
+                    )
+                if cti is None:
+                    print(f'[{datetime.now()}]  Valid!')
+                else:
+                    print(f'[{datetime.now()}]  Invalid!')
+                check_dual_edge_cache[ps, qs] = cti is None
+            v = get_from_cache(ps, qs)
+            assert v is not None
+            return v
+
+        if get_from_cache(ps, qs) is None:
+            if check(ps, qs):
+               assert get_from_cache(ps, qs) is True
+            else:
+                # try to add more predicates to ps, and obtain a maximal ps such
+                for j in range(len(predicates)):
+                    if j not in ps and not check(ps | {j}, qs):
+                        ps |= {j}
+                # now ps is maximal, add all subsets of ps to cache
+                print(f'[{datetime.now()}]  Found maximal invalid edge:')
+                for j in sorted(ps):
+                    print(f'  {predicates[j]}')
+                print('  --> ')
+                for j in sorted(qs):
+                    print(f'  {predicates[j]}')
+                print()
+        v = get_from_cache(ps, qs)
+        assert v is not None
+        return v
+
+    n_ps = 0
+    n_qs = 1
+    while len(proven) < len(predicates):
+        edges = [(ps, qs) for (ps, qs) in
+                 product(combinations(sorted(proven), n_ps), combinations(sorted(unproven), n_qs))
+                 if get_from_cache(frozenset(ps), frozenset(qs)) is not False]
+        print(f'\n[{datetime.now()}] Checking {n_ps} --> {n_qs} edges (total of {len(edges)}):')
+        for i, (ps, qs) in enumerate(edges):
+            print(f'[{datetime.now()}]  Checking edge {i:10}:')
+            for j in ps:
+                print(f'  {predicates[j]}')
+            print('  --> ')
+            for j in qs:
+                print(f'  {predicates[j]}')
+            print()
+            if check_dual_edge(frozenset(ps), frozenset(qs)):
+                print(f'[{datetime.now()}] found dual edge:')
+                for j in ps:
+                    print(f'  {predicates[j]}')
+                print('  --> ')
+                for j in qs:
+                    print(f'  {predicates[j]}')
+                dual_transitions.append((frozenset(ps), frozenset(qs)))
+                proven |= set(qs)
+                unproven -= set(qs)
+                n_ps = 0
+                n_qs = 1
+                break
+        else:
+            # no new predicate was proven, increase n_ps if possible, otherwise increase n_qs
+            print(f'\n[{datetime.now()}] No {n_ps} --> {n_qs} edges found')
+            n_ps += 1
+            if n_ps > len(proven):
+                n_ps = 0
+                n_qs += 1
+                assert n_qs <= len(unproven)
+
+    print(f'\n[{datetime.now()}] Dual edges found ({len(dual_transitions)}):')
+    for ii, jj in dual_transitions:
+        print(f'  {sorted(ii)} --> {sorted(jj)}')
+    print()
+    return ''
+
+
+def test(solver: Solver) -> str:
+    '''
+    test map_clause_state_interaction_z3's performance
+    '''
+    prog = syntax.the_program
+    print(f'\n[{datetime.now()}] [PID={os.getpid()}] test\n')
+
+    top_clauses = (parse_and_typecheck_expr('forall node_0:node, node_1:node, node_2:node, node_3:node, quorum_c_0:quorum_c, quorum_c_1:quorum_c, quorum_c_2:quorum_c, quorum_f_0:quorum_f, round_0:round, round_1:round, round_2:round, round_3:round, value_0:value, value_1:value. node_0 = node_1 | node_0 = node_2 | node_0 = node_3 | node_1 = node_2 | node_1 = node_3 | node_2 = node_3 | quorum_c_0 = quorum_c_1 | quorum_c_0 = quorum_c_2 | quorum_c_1 = quorum_c_2 | round_0 = round_1 | round_0 = round_2 | round_0 = round_3 | round_1 = round_2 | round_1 = round_3 | round_2 = round_3 | value_0 = value_1 | fast(round_0) | !fast(round_1) | fast(round_2) | fast(round_3) | !le(round_0, round_0) | !le(round_0, round_1) | !le(round_0, round_2) | !le(round_0, round_3) | le(round_1, round_0) | !le(round_1, round_1) | !le(round_1, round_2) | !le(round_1, round_3) | le(round_2, round_0) | le(round_2, round_1) | !le(round_2, round_2) | !le(round_2, round_3) | le(round_3, round_0) | le(round_3, round_1) | le(round_3, round_2) | !le(round_3, round_3) | member_c(node_0, quorum_c_0) | !member_c(node_0, quorum_c_1) | !member_c(node_0, quorum_c_2) | !member_c(node_1, quorum_c_0) | !member_c(node_1, quorum_c_1) | member_c(node_1, quorum_c_2) | !member_c(node_2, quorum_c_0) | member_c(node_2, quorum_c_1) | !member_c(node_2, quorum_c_2) | member_c(node_3, quorum_c_0) | !member_c(node_3, quorum_c_1) | member_c(node_3, quorum_c_2) | !member_f(node_0, quorum_f_0) | !member_f(node_1, quorum_f_0) | !member_f(node_2, quorum_f_0) | !member_f(node_3, quorum_f_0) | any_msg(round_0) | any_msg(round_1) | any_msg(round_2) | any_msg(round_3) | choosable_c(round_0, value_0, quorum_c_0) | choosable_c(round_0, value_0, quorum_c_1) | choosable_c(round_0, value_0, quorum_c_2) | choosable_c(round_0, value_1, quorum_c_0) | choosable_c(round_0, value_1, quorum_c_1) | choosable_c(round_0, value_1, quorum_c_2) | choosable_c(round_1, value_0, quorum_c_0) | choosable_c(round_1, value_0, quorum_c_1) | !choosable_c(round_1, value_0, quorum_c_2) | choosable_c(round_1, value_1, quorum_c_0) | choosable_c(round_1, value_1, quorum_c_1) | !choosable_c(round_1, value_1, quorum_c_2) | choosable_c(round_2, value_0, quorum_c_0) | choosable_c(round_2, value_0, quorum_c_1) | !choosable_c(round_2, value_0, quorum_c_2) | choosable_c(round_2, value_1, quorum_c_0) | choosable_c(round_2, value_1, quorum_c_1) | !choosable_c(round_2, value_1, quorum_c_2) | !choosable_c(round_3, value_0, quorum_c_0) | !choosable_c(round_3, value_0, quorum_c_1) | !choosable_c(round_3, value_0, quorum_c_2) | !choosable_c(round_3, value_1, quorum_c_0) | !choosable_c(round_3, value_1, quorum_c_1) | !choosable_c(round_3, value_1, quorum_c_2) | choosable_f(round_0, value_0, quorum_f_0) | choosable_f(round_0, value_1, quorum_f_0) | choosable_f(round_1, value_0, quorum_f_0) | choosable_f(round_1, value_1, quorum_f_0) | choosable_f(round_2, value_0, quorum_f_0) | choosable_f(round_2, value_1, quorum_f_0) | !choosable_f(round_3, value_0, quorum_f_0) | !choosable_f(round_3, value_1, quorum_f_0) | decision(round_0, value_0) | decision(round_0, value_1) | decision(round_1, value_0) | decision(round_1, value_1) | decision(round_2, value_0) | decision(round_2, value_1) | decision(round_3, value_0) | decision(round_3, value_1) | !left_round(node_0, round_0) | left_round(node_0, round_1) | left_round(node_0, round_2) | left_round(node_0, round_3) | !left_round(node_1, round_0) | !left_round(node_1, round_1) | !left_round(node_1, round_2) | left_round(node_1, round_3) | !left_round(node_2, round_0) | left_round(node_2, round_1) | left_round(node_2, round_2) | left_round(node_2, round_3) | !left_round(node_3, round_0) | !left_round(node_3, round_1) | left_round(node_3, round_2) | left_round(node_3, round_3) | one_a(round_0) | !one_a(round_1) | one_a(round_2) | !one_a(round_3) | one_b(node_0, round_0) | one_b(node_0, round_1) | one_b(node_0, round_2) | one_b(node_0, round_3) | one_b(node_1, round_0) | !one_b(node_1, round_1) | one_b(node_1, round_2) | one_b(node_1, round_3) | one_b(node_2, round_0) | !one_b(node_2, round_1) | one_b(node_2, round_2) | one_b(node_2, round_3) | one_b(node_3, round_0) | one_b(node_3, round_1) | one_b(node_3, round_2) | one_b(node_3, round_3) | proposal(round_0, value_0) | proposal(round_0, value_1) | proposal(round_1, value_0) | proposal(round_1, value_1) | proposal(round_2, value_0) | proposal(round_2, value_1) | proposal(round_3, value_0) | proposal(round_3, value_1) | vote(node_0, round_0, value_0) | vote(node_0, round_0, value_1) | vote(node_0, round_1, value_0) | vote(node_0, round_1, value_1) | vote(node_0, round_2, value_0) | vote(node_0, round_2, value_1) | vote(node_0, round_3, value_0) | vote(node_0, round_3, value_1) | vote(node_1, round_0, value_0) | vote(node_1, round_0, value_1) | vote(node_1, round_1, value_0) | vote(node_1, round_1, value_1) | vote(node_1, round_2, value_0) | vote(node_1, round_2, value_1) | vote(node_1, round_3, value_0) | vote(node_1, round_3, value_1) | vote(node_2, round_0, value_0) | vote(node_2, round_0, value_1) | vote(node_2, round_1, value_0) | vote(node_2, round_1, value_1) | vote(node_2, round_2, value_0) | vote(node_2, round_2, value_1) | vote(node_2, round_3, value_0) | vote(node_2, round_3, value_1) | vote(node_3, round_0, value_0) | vote(node_3, round_0, value_1) | vote(node_3, round_1, value_0) | vote(node_3, round_1, value_1) | vote(node_3, round_2, value_0) | vote(node_3, round_2, value_1) | vote(node_3, round_3, value_0) | vote(node_3, round_3, value_1) | none != round_0 | decision_quorum_c(round_0, value_0) != quorum_c_1 | decision_quorum_c(round_0, value_1) != quorum_c_1 | decision_quorum_c(round_1, value_0) != quorum_c_1 | decision_quorum_c(round_1, value_1) != quorum_c_1 | decision_quorum_c(round_2, value_0) != quorum_c_1 | decision_quorum_c(round_2, value_1) != quorum_c_1 | decision_quorum_c(round_3, value_0) != quorum_c_1 | decision_quorum_c(round_3, value_1) != quorum_c_1 | decision_quorum_f(round_0, value_0) != quorum_f_0 | decision_quorum_f(round_0, value_1) != quorum_f_0 | decision_quorum_f(round_1, value_0) != quorum_f_0 | decision_quorum_f(round_1, value_1) != quorum_f_0 | decision_quorum_f(round_2, value_0) != quorum_f_0 | decision_quorum_f(round_2, value_1) != quorum_f_0 | decision_quorum_f(round_3, value_0) != quorum_f_0 | decision_quorum_f(round_3, value_1) != quorum_f_0', 1),)
+
+    print(f'\n[{datetime.now()}] top_clauses ({len(top_clauses)}):')
+    for i, x in enumerate(top_clauses):
+        print(f'  [{i:3}]: {x}')
+    print()
+
+    ps = [parse_and_typecheck_expr(st, 1) for st in [
+        'forall round0:round, value0:value. !decision(round0, value0) | none != round0',
+        'forall node0:node, round0:round, value0:value. any_msg(round0) | proposal(round0, value0) | !vote(node0, round0, value0)',
+        'forall node0:node, quorum_f0:quorum_f, round0:round, value1:value. !fast(round0) | !member_f(node0, quorum_f0) | !decision(round0, value1) | vote(node0, round0, value1) | decision_quorum_f(round0, value1) != quorum_f0',
+        'forall round0:round. fast(round0) | !any_msg(round0)',
+        'forall round_1:round, value_1:value. fast(round_1) | !decision(round_1, value_1) | proposal(round_1, value_1)',
+        'forall round0:round, value0:value, value1:value. value0 = value1 | !proposal(round0, value0) | !proposal(round0, value1)',
+        'forall node0:node, round0:round, value0:value, value1:value. value0 = value1 | !vote(node0, round0, value0) | !vote(node0, round0, value1)',
+        'forall node_0:node, round_1:round. one_a(round_1) | !one_b(node_0, round_1)',
+        'forall round2:round. !any_msg(round2) | one_a(round2)',
+        'forall round0:round, value0:value. one_a(round0) | !proposal(round0, value0)',
+        'forall node0:node, round1:round, round2:round. !le(round1, round2) | left_round(node0, round1) | !left_round(node0, round2)',
+        'forall node0:node, quorum_c0:quorum_c, round0:round, value0:value. fast(round0) | !member_c(node0, quorum_c0) | !decision(round0, value0) | vote(node0, round0, value0) | decision_quorum_c(round0, value0) != quorum_c0',
+        'forall round0:round. !one_a(round0) | none != round0',
+        'forall node0:node, round0:round, round1:round. round0 = round1 | !le(round0, round1) | left_round(node0, round0) | !one_b(node0, round1)',
+        'forall quorum_f_0:quorum_f, round_1:round, round_2:round, value_1:value. fast(round_1) | !le(round_1, round_2) | !choosable_f(round_1, value_1, quorum_f_0) | proposal(round_1, value_1) | !proposal(round_2, value_1)',
+        'forall quorum_f0:quorum_f, round0:round, round1:round, value0:value. !le(round1, round0) | !any_msg(round0) | any_msg(round1) | !choosable_f(round1, value0, quorum_f0)',
+    ]]
+
+    print(f'\n[{datetime.now()}] ps ({len(ps)}):')
+    for i, x in enumerate(ps):
+        print(f'  [{i:3}]: {x}')
+    print()
+
+
+    qs = [parse_and_typecheck_expr('forall node_3:node, round_1:round. !fast(round_1) | !left_round(node_3, round_1) | !one_a(round_1) | one_b(node_3, round_1)', 1)]
+
+    print(f'\n[{datetime.now()}] qs ({len(qs)}):')
+    for i, x in enumerate(qs):
+        print(f'  [{i:3}]: {x}')
+    print()
+
+
+    assert len(qs) == len(top_clauses)
+
+    states: List[PDState] = []
+    mp = MultiSubclausesMapICE(top_clauses, states, []) # only used to compute q_seed
+    q_seed = [
+        frozenset(j for j in range(mp.n[k]) if mp.literals[k][j] in destruct_clause(qs[k])[1])
+        for k in range(mp.m)
+    ]
+    print(f'\n[{datetime.now()}] q_seed ({len(q_seed)}):')
+    for i, y in enumerate(q_seed):
+        print(f'  [{i:3}]: {y}')
+    print()
+    assert all(
+        qs[k] == mp.to_clause(k, q_seed[k])
+        for k in range(mp.m)
+    )
+
+    if False:
+        # good test for check_dual_edge_optimize, took ~45 minutes, eventhough the original sat was received after a few seconds
+        cti, _ = check_dual_edge_optimize(
+            tuple(ps),
+            mp.top_clauses,
+            tuple(q_seed),
+        )
+    else:
+        # use the optimal hq from the log file
+        hq = HoareQuery(
+            p=frozenset([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+            q_pre=(frozenset([109,113]),),
+            q_post=(frozenset([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,122,123,124,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188]),),
+            cardinalities=(),
+            i_transition=0,
+        )
+        use_cvc4 = True
+        timeout = 60
+        q1 = CheckDualEdgeOptimizeJoinableQueue()
+        q2 = CheckDualEdgeOptimizeQueue()
+        args = (
+            tuple(ps),
+            top_clauses,
+            hq,
+            True, # produce_cti
+            False, # optimize
+            False, # whole_clauses
+            use_cvc4,
+            False,
+            q1,
+            q2,
+            False, # join_q1
+        )
+        # assert_valid_hq(*args[:3])
+        check_dual_edge_optimize_multiprocessing_helper(*args)
+        hq2, valid, cti = q1.get(True)
+        q1.task_done()
+        assert hq == hq2
+        assert not valid and cti is not None
+    assert cti is not None
+    prestate, poststate = cti
+    print(f'\n[{datetime.now()}] prestate:\n{prestate}\n\n')
+    states.append(prestate)
+    print(f'[{datetime.now()}] Running mp._new_states([0])')
+    mp._new_states([0])
+    print(f'\n[{datetime.now()}] poststate:\n{poststate}\n\n')
+    states.append(poststate)
+    print(f'[{datetime.now()}] Running mp._new_states([1])')
+    mp._new_states([1])
+    print(f'[{datetime.now()}] Done!')
+    return ''
+
+
 def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.ArgumentParser]:
     result : List[argparse.ArgumentParser] = []
 
@@ -7970,6 +8399,16 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     # primal_dual_houdini
     s = subparsers.add_parser('pd-primal-dual-houdini', help='Run the "Primal-Dual" algorithm')
     s.set_defaults(main=primal_dual_houdini)
+    result.append(s)
+
+    # incremental_induction_graph
+    s = subparsers.add_parser('pd-incremental-induction-graph', help='Compute the incremental induction graph for the human invariant')
+    s.set_defaults(main=incremental_induction_graph)
+    result.append(s)
+
+    # test
+    s = subparsers.add_parser('pd-test', help='Used for various experiments and tests during development of pd.py code')
+    s.set_defaults(main=test)
     result.append(s)
 
     for s in result:
