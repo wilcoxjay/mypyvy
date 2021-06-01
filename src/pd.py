@@ -2406,14 +2406,14 @@ def map_clause_state_interaction_z3(
             i for i, v in enumerate(lit_vs)
             if not z3.is_false(z3m[v])
         )
-        assert solver.check(*(lit_vs[j] for j in sorted(forced_to_true))) == z3.sat
+        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, str(solver))
         for i in range(len(literals)):
             if i not in forced_to_true:
                 res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
-                assert res in (z3.unsat, z3.sat)
+                assert res in (z3.unsat, z3.sat), (res, str(solver))
                 if res == z3.sat:
                     forced_to_true.add(i)
-        assert solver.check(*(lit_vs[j] for j in sorted(forced_to_true))) == z3.sat
+        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, str(solver))
         # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
         if len(result) % 100 == 0:
             print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
