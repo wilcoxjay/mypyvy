@@ -450,6 +450,7 @@ class State(FirstOrderStructure):
             set(r1.keys()) == set(r2.keys()) and
             all(r1[k][0] <= r2[k][0] and r1[k][1] <= r2[k][1] for k in r1) and
             set(f1.keys()) == set(f2.keys()) and
+            all(len(f1[k]) <= len(f2[k]) for k in f1) and
             all(f1[k][i] <= f2[k][i]
                 for k in f1
                 for i in range(len(f1[k]))
