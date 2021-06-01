@@ -6,14 +6,25 @@ multi-vocabulary formulas, and a convenience class State.
 from __future__ import annotations
 from dataclasses import dataclass
 from itertools import chain, product, combinations
+from collections import defaultdict
 import re
-from typing import List, Optional, Tuple, Union, Dict, cast
+from typing import List, Optional, Tuple, Union, Dict, cast, TypeVar, Any, FrozenSet
 from abc import ABC, abstractmethod
 
 import utils
 import typechecker
 import syntax
 from syntax import Expr, ConstantDecl, RelationDecl, FunctionDecl, SortDecl
+
+
+K = TypeVar('K')
+V = TypeVar('V')
+def histogram(d: Dict[K, V]) -> Dict[V, int]:
+    h: Dict[V, int] = defaultdict(int)
+    for v in d.values():
+        h[v] += 1
+    return h
+
 
 Element = str
 Universe = Dict[SortDecl, Tuple[Element, ...]]  # ODED: I think this should be Sort or str, rather than SortDecl. The universe does not interpret sorts like Int or Bool (I think).
@@ -381,6 +392,67 @@ class State(FirstOrderStructure):
         assert matching_sorts, f'unknown element name: {element_name}'
         assert len(matching_sorts) == 1, f'ambiguous element name: {element_name}'
         return matching_sorts[0]
+
+    Fingerprint = Tuple[
+            FrozenSet[Tuple[str, int]],
+            FrozenSet[Tuple[str, Tuple[int, int]]],
+            FrozenSet[Tuple[str, Tuple[int, ...]]],
+            FrozenSet[Tuple[Tuple[str, str], bool]],
+    ]
+
+    @property
+    def fingerprint(self) -> Fingerprint:
+        '''Return a value that is guaranteed to be identical for isomorphic
+        structures, and can be used as a cheap check or a hash key for
+        detecting possibly isomorphic structures
+
+        '''
+        if not hasattr(self, '_fingerprint'):
+            consts_of_sort: Dict[str, List[ConstantDecl]] = defaultdict(list)
+            for d in self.const_interps:
+                consts_of_sort[str(d.sort)].append(d)
+            self._fingerprint = (
+                frozenset((str(d), len(x)) for d, x in self.univs.items()),
+                frozenset(
+                    (str(d), (h[True], h[False]))
+                    for d, ri in self.rel_interps.items()
+                    for h in [histogram(ri)]
+                ),
+                frozenset(
+                    (str(d), tuple(sorted(histogram(fi).values(), reverse=True)))
+                    for d, fi in self.func_interps.items()
+                ),
+                frozenset(
+                    ((c1.name, c2.name), self.const_interps[c1] == self.const_interps[c2])
+                    for cs in consts_of_sort.values()
+                    for c1, c2 in combinations(sorted(cs, key=str), 2)
+                ),
+            )
+        return self._fingerprint
+
+    def maybe_substructure(self, other: State) -> bool:
+        fp1 = self.fingerprint
+        fp2 = other.fingerprint
+        u1 = dict(fp1[0])
+        u2 = dict(fp2[0])
+        r1 = dict(fp1[1])
+        r2 = dict(fp2[1])
+        f1 = dict(fp1[2])
+        f2 = dict(fp2[2])
+        c1 = dict(fp1[3])
+        c2 = dict(fp2[3])
+        return (
+            set(u1.keys()) == set(u2.keys()) and
+            all(u1[k] <= u2[k] for k in u1) and
+            set(r1.keys()) == set(r2.keys()) and
+            all(r1[k][0] <= r2[k][0] and r1[k][1] <= r2[k][1] for k in r1) and
+            set(f1.keys()) == set(f2.keys()) and
+            all(f1[k][i] <= f2[k][i]
+                for k in f1
+                for i in range(len(f1[k]))
+            ) and
+            c1 == c2
+        )
 
 
 def try_printed_by(struct: FirstOrderStructure, s: SortDecl, elt: str) -> Optional[str]:

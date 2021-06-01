@@ -1057,6 +1057,8 @@ def check_dual_edge_optimize_multiprocessing_helper(
         q2: CheckDualEdgeOptimizeQueue,
         join_q1: bool = True, # can be set to false if not running in separate process
 ) -> None:
+    greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
+
     if use_cvc4:
         minimize = utils.args.cvc4_minimize_models
     else:
@@ -1096,7 +1098,6 @@ def check_dual_edge_optimize_multiprocessing_helper(
         recv_unsats()
         prog = syntax.the_program
         mp = MultiSubclausesMapICE(top_clauses, [], []) # only used to get clauses from seeds
-        greeting = f'[PID={os.getpid()}] check_dual_edge_optimize_multiprocessing_helper: use_cvc4={use_cvc4}, hq={hq}'
         # TODO: better logging, maybe with meaningful process names
         def get_solver(hq: HoareQuery) -> Tuple[Solver, Z3Translator]:
             s = Solver(use_cvc4=use_cvc4)
@@ -5273,6 +5274,7 @@ def primal_dual_houdini(solver: Solver) -> str:
     assert cheap_check_implication(inits, safety), 'Initial states not safe'
 
     states: List[PDState] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
+    states_of_fingerprint: Dict[State.Fingerprint, List[int]] = defaultdict(list)
     maps: List[MultiSubclausesMapICE] = []  # for each state, a MultiSubclausesMapICE map with only the negation of its diagram. used in several places either to get the negation of the state's diagram or to find a clause that excludes it (mostly when finding p's, I think)
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
@@ -5306,51 +5308,72 @@ def primal_dual_houdini(solver: Solver) -> str:
         nonlocal internal_ctis
         #production# assert all(eval_in_state(None, s, predicates[j]) for j in sorted(inductive_invariant))
         note = ' (internal cti)' if internal_cti else ' (live state)'
+        print(f'[{datetime.now()}] add_state: starting')
         if s not in states:
-            print(f'[{datetime.now()}] add_state{note}: checking for substructures... ')
-            work = list(chain(
-                ((s, t) for t in states),
-                ((t, s) for t in states),
-            ))
-            if utils.args.cpus is None or utils.args.cpus == 1 or len(work) <= 1:
-                results = [is_substructure(u, v) for u, v in work]
+            maybe_isomorphic = states_of_fingerprint[s.as_state(0).fingerprint]
+            if len(maybe_isomorphic) > 0:
+                print(f'[{datetime.now()}] add_state{note}: checking for isomorphism ({len(maybe_isomorphic)} candidates)... ')
+            for j in maybe_isomorphic:
+                if is_substructure(s, states[j]) and is_substructure(states[j], s):
+                    print(f'[{datetime.now()}] add_state{note}: isomorphic to previous state: states[{j}]')
+                    i = j
+                    break
             else:
-                with multiprocessing.Pool(min(utils.args.cpus, len(work))) as pool:
-                    results = pool.starmap_async(
-                        is_substructure,
-                        work,
-                    ).get(9999999)
-            is_substructure_results = dict(zip(work, results))
-            substructures = frozenset(
-                i for i, t in enumerate(states)
-                if is_substructure_results[(t, s)]
-            )
-            superstructures = frozenset(
-                i for i, t in enumerate(states)
-                if is_substructure_results[(s, t)]
-            )
-            if False:
-                assert substructures == frozenset(
+                print(f'[{datetime.now()}] add_state{note}: checking for substructures... ')
+                work = list(chain(
+                    ((s, t) for t in states),
+                    ((t, s) for t in states),
+                ))
+                if utils.args.cpus is None or utils.args.cpus == 1 or len(work) <= 1:
+                    results = [is_substructure(u, v) for u, v in work]
+                else:
+                    with multiprocessing.Pool(min(utils.args.cpus, len(work))) as pool:
+                        results = pool.starmap_async(
+                            is_substructure,
+                            work,
+                        ).get(9999999)
+                is_substructure_results = dict(zip(work, results))
+                substructures = frozenset(
                     i for i, t in enumerate(states)
-                    if is_substructure(t, s)
+                    if is_substructure_results[(t, s)]
                 )
-                assert superstructures == frozenset(
+                superstructures = frozenset(
                     i for i, t in enumerate(states)
-                    if is_substructure(s, t)
+                    if is_substructure_results[(s, t)]
                 )
-            print(f'[{datetime.now()}] done')
-            isomorphic = substructures & superstructures
-            if len(isomorphic) > 0:
-                #production# assert len(isomorphic) == 1, sorted(isomorphic)
-                i = list(isomorphic)[0]
-                print(f'[{datetime.now()}] add_state{note}: isomorphic to previous state: states[{i}]')
-            else:
+                if False:
+                    assert substructures == frozenset(
+                        i for i, t in enumerate(states)
+                        if is_substructure(t, s)
+                    )
+                    assert superstructures == frozenset(
+                        i for i, t in enumerate(states)
+                        if is_substructure(s, t)
+                    )
+                print(f'[{datetime.now()}] done')
+                isomorphic = substructures & superstructures
+                assert len(isomorphic) == 0
                 i = len(states)
                 print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}]')
                 states.append(s)
+                states_of_fingerprint[s.as_state(0).fingerprint].append(i)
                 for j in sorted(substructures):
+                    if not states[j].as_state(0).maybe_substructure(states[i].as_state(0)):
+                        print(states[i].as_state(0))
+                        print(states[i].as_state(0).fingerprint)
+                        print('\n\n\n')
+                        print(states[j].as_state(0))
+                        print(states[j].as_state(0).fingerprint)
+                        assert False
                     substructure.append((i, j))
                 for j in sorted(superstructures):
+                    if not states[i].as_state(0).maybe_substructure(states[j].as_state(0)):
+                        print(states[i].as_state(0))
+                        print(states[i].as_state(0).fingerprint)
+                        print('\n\n\n')
+                        print(states[j].as_state(0))
+                        print(states[j].as_state(0).fingerprint)
+                        assert False
                     substructure.append((j, i))
                 cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
@@ -5360,6 +5383,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 internal_ctis |= {i}
             else:
                 live_states |= {i}
+            print(f'[{datetime.now()}] add_state: done')
             return i
         else:
             i = states.index(s)
@@ -5375,6 +5399,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     live_states |= {i}
                 else:
                     print(f'[{datetime.now()}] add_state{note}: already have states[{i}] in live_states')
+            print(f'[{datetime.now()}] add_state: done')
             return i
 
     def add_transition(i: int, j: int) -> None:
