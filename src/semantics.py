@@ -431,6 +431,9 @@ class State(FirstOrderStructure):
         return self._fingerprint
 
     def maybe_substructure(self, other: State) -> bool:
+        '''
+        Guaranteed to return True if self is a substructure of other
+        '''
         fp1 = self.fingerprint
         fp2 = other.fingerprint
         u1 = dict(fp1[0])

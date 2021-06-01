@@ -280,18 +280,16 @@ def check_initial(solver: Solver, p: Expr) -> Optional[Trace]:
     return None
 
 
-def is_substructure(s: PDState, t: PDState) -> bool:
+def is_substructure(s: Union[PDState, State], t: Union[PDState, State]) -> bool:
     '''Returns true if s is a sub structure of t'''
-    sorts_s = sorted(s.univs.keys(), key=str)
-    sorts_t = sorted(t.univs.keys(), key=str)
-    cheap_check = [str(x) for x in sorts_s] == [str(x) for x in sorts_t] and all(
-        len(s.univs[k1]) <= len(t.univs[k2])
-        for k1, k2 in zip(sorts_s, sorts_t)
-    )
-    if not cheap_check:
+    if isinstance(s, PDState):
+        s = s.as_state(0)
+    if isinstance(t, PDState):
+        t = t.as_state(0)
+    if not s.maybe_substructure(t):
         return False
-    diag_s = Diagram(s.as_state(0)).to_ast()
-    diag_t = Diagram(t.as_state(0)).to_ast()
+    diag_s = Diagram(s).to_ast()
+    diag_t = Diagram(t).to_ast()
     if diag_s == diag_t:
         return True
     return cheap_check_implication([diag_t], [diag_s])
@@ -5350,6 +5348,23 @@ def primal_dual_houdini(solver: Solver) -> str:
                         i for i, t in enumerate(states)
                         if is_substructure(s, t)
                     )
+                if False:
+                    for j in sorted(substructures):
+                        if not states[j].as_state(0).maybe_substructure(states[i].as_state(0)):
+                            print(states[i].as_state(0))
+                            print(states[i].as_state(0).fingerprint)
+                            print('\n\n\n')
+                            print(states[j].as_state(0))
+                            print(states[j].as_state(0).fingerprint)
+                            assert False
+                    for j in sorted(superstructures):
+                        if not states[i].as_state(0).maybe_substructure(states[j].as_state(0)):
+                            print(states[i].as_state(0))
+                            print(states[i].as_state(0).fingerprint)
+                            print('\n\n\n')
+                            print(states[j].as_state(0))
+                            print(states[j].as_state(0).fingerprint)
+                            assert False
                 print(f'[{datetime.now()}] done')
                 isomorphic = substructures & superstructures
                 assert len(isomorphic) == 0
@@ -5357,24 +5372,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}]')
                 states.append(s)
                 states_of_fingerprint[s.as_state(0).fingerprint].append(i)
-                for j in sorted(substructures):
-                    if not states[j].as_state(0).maybe_substructure(states[i].as_state(0)):
-                        print(states[i].as_state(0))
-                        print(states[i].as_state(0).fingerprint)
-                        print('\n\n\n')
-                        print(states[j].as_state(0))
-                        print(states[j].as_state(0).fingerprint)
-                        assert False
-                    substructure.append((i, j))
-                for j in sorted(superstructures):
-                    if not states[i].as_state(0).maybe_substructure(states[j].as_state(0)):
-                        print(states[i].as_state(0))
-                        print(states[i].as_state(0).fingerprint)
-                        print('\n\n\n')
-                        print(states[j].as_state(0))
-                        print(states[j].as_state(0).fingerprint)
-                        assert False
-                    substructure.append((j, i))
+                substructure.extend((i, j) for j in sorted(substructures))
+                substructure.extend((j, i) for j in sorted(superstructures))
                 cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
