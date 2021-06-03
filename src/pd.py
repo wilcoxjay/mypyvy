@@ -2073,6 +2073,58 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
         for k, v in zip(real_work, results):
             _cache_map_clause_state_interaction[k] = v
     return [_cache_map_clause_state_interaction[k] for k in work]
+
+
+# cache and helper for multiprocessing for map_clause_state_size_interaction
+_cache_map_clause_state_size_interaction: Dict[Tuple[
+    Tuple[SortedVar,...],
+    Tuple[Expr,...],
+    PDState,
+    int,
+], List[FrozenSet[int]]] = dict() # maps to all_mss for specific size
+_cache_clause_state_mss: Dict[Tuple[
+    Tuple[SortedVar,...],
+    Tuple[Expr,...],
+    PDState,
+], List[FrozenSet[int]]] = defaultdict(list) # maps to known MSSs
+def _map_clause_state_size_interaction_helper(workitem: Tuple[
+        Tuple[SortedVar,...],
+        Tuple[Expr,...],
+        PDState,
+        int,
+        List[FrozenSet[int]], # known MSSs
+]) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]: # all_mss, new_mss
+    variables, literals, state, size, known_mss = workitem
+    all_mss, new_mss = map_clause_state_size_interaction(variables, literals, state.as_state(0), size, known_mss)
+    return all_mss, new_mss
+def multiprocessing_map_clause_state_size_interaction(work: List[Tuple[
+        Tuple[SortedVar,...],
+        Tuple[Expr,...],
+        PDState,
+        int,
+]]) -> List[List[FrozenSet[int]]]:
+    real_work = [i for i, w in enumerate(work) if w not in _cache_map_clause_state_size_interaction]
+    if len(real_work) > 0:
+        if utils.args.cpus is None:
+            n = 1
+        else:
+            n = min(utils.args.cpus, len(real_work))
+        results: List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = []
+        workitems = [(*work[i], _cache_clause_state_mss[work[i][:3]]) for i in real_work]
+        if n > 1:
+            with multiprocessing.Pool(n) as pool:
+               results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should
+                   _map_clause_state_size_interaction_helper,
+                   workitems
+               ).get(9999999) # see: https://stackoverflow.com/a/1408476
+        else:
+            results = list(map(_map_clause_state_size_interaction_helper, workitems))
+        for i, v in zip(real_work, results):
+            _cache_map_clause_state_size_interaction[work[i]] = v[0]
+            _cache_clause_state_mss[work[i][:3]].extend(v[1])
+    return [_cache_map_clause_state_size_interaction[w] for w in work]
+
+
 def map_clause_state_interaction(variables: Tuple[SortedVar,...],
                                  literals: Tuple[Expr,...],
                                  state_or_predicate: Union[PDState, Expr],
@@ -2280,6 +2332,10 @@ def map_clause_state_interaction_z3(
     lit_vs = [z3.Bool(f'lit_{i}') for i in range(len(literals))]
     solver = z3.Solver()
     seen: Set[str] = set()  # used to assert we don't have name collisions
+    size_vs = [z3.Bool(f'size_{i}') for i in range(len(literals))]
+
+    for i, size_v in enumerate(size_vs):
+        solver.add(z3.Implies(size_v, z3.AtMost(*lit_vs, i)))
 
     # encode state and force it to evaluate to false on the subclause encoded by lit_vs
 
@@ -2399,29 +2455,233 @@ def map_clause_state_interaction_z3(
     result: List[FrozenSet[int]] = []
     for a in assertions:
         solver.add(a)
-    while (z3_res := solver.check()) == z3.sat:
+    if True:
+        while (z3_res := solver.check()) == z3.sat:
+            z3m = solver.model()
+            forced_to_true = set(
+                i for i, v in enumerate(lit_vs)
+                if not z3.is_false(z3m[v])
+            )
+            assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+            for i in range(len(literals)):
+                if i not in forced_to_true:
+                    res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
+                    assert res in (z3.unsat, z3.sat), (res, solver.to_smt2())
+                    if res == z3.sat:
+                        forced_to_true.add(i)
+            assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+            # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
+            if len(result) % 100 == 0:
+                print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
+            result.append(frozenset(forced_to_true))
+            # block down
+            solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in forced_to_true)))
+        assert z3_res == z3.unsat, (z3_res, solver.to_smt2())
+    else:
+        # version that explores by size
+        for size_v in size_vs:
+            print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, covering {size_v}...')
+            while (z3_res := solver.check(size_v)) == z3.sat:
+                z3m = solver.model()
+                forced_to_true = set(
+                    i for i, v in enumerate(lit_vs)
+                    if not z3.is_false(z3m[v])
+                )
+                assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+                for i in range(len(literals)):
+                    if i not in forced_to_true:
+                        res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
+                        assert res in (z3.unsat, z3.sat), (res, solver.to_smt2())
+                        if res == z3.sat:
+                            forced_to_true.add(i)
+                assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+                # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
+                if len(result) % 100 == 0:
+                    print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
+                result.append(frozenset(forced_to_true))
+                # block down
+                solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in forced_to_true)))
+            assert z3_res == z3.unsat, (z3_res, solver.to_smt2())
+            print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, covered {size_v} with a total of {len(result)} MSSs')
+    print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, iterated over ? instantiations, found {len(result)} MSSs')
+    return result
+
+
+def map_clause_state_size_interaction(
+        variables: Tuple[SortedVar,...],
+        literals: Tuple[Expr,...],
+        state: State,
+        size: int,
+        known_mss: List[FrozenSet[int]],
+) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]: # all_mss, new_mss
+    '''Return a list of maximal subclauses of the given clause (indices to
+    literals) that are violated by the given state that cover all
+    subclauses up to given size.
+    '''
+    #
+    import z3
+
+    var_names = tuple(v.name for v in variables)
+    sort_names = []
+    for v in variables:
+        assert isinstance(v.sort, UninterpretedSort)
+        sort_names.append(v.sort.name)
+    lit_vs = [z3.Bool(f'lit_{i}') for i in range(len(literals))]
+    solver = z3.Solver()
+    seen: Set[str] = set()  # used to assert we don't have name collisions
+    size_v = z3.Bool(f'size_v')
+
+    solver.add(z3.Implies(size_v, z3.AtMost(*lit_vs, size)))
+
+    # encode state and force it to evaluate to false on the subclause encoded by lit_vs
+
+    def p(st: str, must_be_new: bool = True) -> str:
+        st = 'state_' + st
+        assert (not must_be_new) or st not in seen, (st, seen)
+        seen.add(st)
+        return st
+
+    assertions: List[z3.ExprRef] = []  # will be added to the solver
+
+    # create z3 symbols for all relations, functions, and constants, and assert their meaning
+
+    # create universe unary relations
+    scope = max(len(elems) for elems in state.univs.values())
+    V = z3.Datatype(p('elements'))
+    def e(i: int) -> str:
+        return f'e{i}'
+    for i in range(scope):
+        V.declare(e(i))
+    V = V.create()
+    def is_e(i: int) -> z3.FuncDeclRef:
+        return getattr(V, 'is_' + e(i))
+    def ee(i: int) -> z3.ExprRef:
+        return getattr(V, e(i))
+    universes = {s.name: z3.Function(p(s.name), V, z3.BoolSort()) for s in state.univs}
+    elem_to_z3: Dict[str, z3.ExprRef] = {}
+    for s, elems in state.univs.items():
+        assertions.extend(universes[s.name](ee(i)) for i in range(len(elems)))
+        assertions.extend(z3.Not(universes[s.name](ee(i))) for i in range(len(elems), scope))
+        for i, elem in enumerate(elems):
+            assert elem not in elem_to_z3
+            elem_to_z3[elem] = ee(i)
+
+    # create relations
+    def lit(e: z3.ExprRef, polarity: bool) -> z3.ExprRef:
+        return e if polarity else z3.Not(e)
+    relations: Dict[str, Union[z3.ExprRef, z3.FuncDeclRef]] = {
+        r.name:
+        z3.Function(p(r.name), *repeat(V, len(r.arity)), z3.BoolSort()) if len(r.arity) > 0 else
+        z3.Bool(p(r.name))
+        for r in state.rel_interps
+    }
+    for r, ri in state.rel_interps.items():
+        if len(r.arity) == 0:
+            assert len(ri) == 1 and () in ri, (r, ri)
+            a = relations[r.name]
+            assert isinstance(a, z3.ExprRef)
+            assertions.append(lit(a, ri[()]))
+        else:
+            for tup, polarity in ri.items():
+                a = relations[r.name]
+                assert isinstance(a, z3.FuncDeclRef)
+                args = [elem_to_z3[x] for x in tup]
+                assertions.append(lit(a(*args), polarity))
+
+    # create functions
+    assert all(len(f.arity) > 0 for f in state.func_interps)
+    functions: Dict[str, z3.FuncDeclRef] = {
+        f.name:
+        z3.Function(p(f.name), *repeat(V, len(f.arity)), V)
+        for f in state.func_interps
+    }
+    for f, fi in state.func_interps.items():
+        for tup, img in fi.items():
+            args = [elem_to_z3[x] for x in tup]
+            assertions.append(functions[f.name](*args) == elem_to_z3[img])
+
+    # create constants
+    constants: Dict[str, z3.ExprRef] = {
+        c.name: z3.Const(p(c.name), V)
+        for c in state.const_interps
+    }
+    for c, ci in state.const_interps.items():
+        assertions.append(constants[c.name] == elem_to_z3[ci])
+
+    # now force state to evaluate to false on the subclause
+    z3_vs = [z3.Const(p(f'V{i}'), V) for i in range(len(variables))]
+    def to_z3(e: Expr) -> z3.ExprRef:
+        if isinstance(e, Id):
+            if e.name in var_names:
+                return z3_vs[var_names.index(e.name)]
+            elif e.name in constants:
+                return constants[e.name]
+            elif e.name in relations and isinstance(r := relations[e.name], z3.ExprRef):
+                return r
+            else:
+                assert False, e
+        elif isinstance(e, AppExpr) and e.callee in functions:
+            return functions[e.callee](*(map(to_z3, e.args)))
+        elif (isinstance(e, AppExpr) and e.callee in relations and
+              isinstance(r := relations[e.callee], z3.FuncDeclRef)):
+            return r(*(map(to_z3, e.args)))
+        elif isinstance(e, UnaryExpr) and e.op == 'NOT':
+            return z3.Not(to_z3(e.arg))
+        elif isinstance(e, BinaryExpr) and e.op == 'EQUAL':
+            return to_z3(e.arg1) == to_z3(e.arg2)
+        elif isinstance(e, BinaryExpr) and e.op == 'NOTEQ':
+            return to_z3(e.arg1) != to_z3(e.arg2)
+        else:
+            assert False, e
+    value = z3.Implies(
+        z3.And(*(
+            universes[s](v)
+            for v, s in zip(z3_vs, sort_names)
+        )),
+        z3.Or(*(
+            z3.And(lit_v, to_z3(lit))
+            for lit_v, lit in zip(lit_vs, literals)
+        ))
+    )
+    if len(z3_vs) > 0:
+        value = z3.ForAll(z3_vs, value)
+    assertions.append(z3.Not(value))
+
+    for a in assertions:
+        solver.add(a)
+
+    all_mss: List[FrozenSet[int]] = known_mss[:] # for now we use all known MSSs. later we can try to use unsat core to minimize the result
+    new_mss: List[FrozenSet[int]] = []
+    # block all known MSSs
+    for mss in known_mss:
+        solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in mss)))
+    # now collect more maximal subclauses violating state until size is covered
+    print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, covering size {size}...')
+    while (z3_res := solver.check(size_v)) == z3.sat:
         z3m = solver.model()
         forced_to_true = set(
             i for i, v in enumerate(lit_vs)
             if not z3.is_false(z3m[v])
         )
-        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, str(solver))
+        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
         for i in range(len(literals)):
             if i not in forced_to_true:
                 res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
-                assert res in (z3.unsat, z3.sat), (res, str(solver))
+                assert res in (z3.unsat, z3.sat), (res, solver.to_smt2())
                 if res == z3.sat:
                     forced_to_true.add(i)
-        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, str(solver))
-        # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
-        if len(result) % 100 == 0:
-            print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
-        result.append(frozenset(forced_to_true))
+        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+        # print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, found {len(result)+1:8}-th new MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
+        mss = frozenset(forced_to_true)
+        all_mss.append(mss)
+        new_mss.append(mss)
+        if len(new_mss) - 1 % 100 == 0:
+            print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, found {len(new_mss):8}-th new MSS ({len(all_mss)} total MSSs)')
         # block down
         solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in forced_to_true)))
-    assert z3_res == z3.unsat, (res, str(solver))
-    print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, iterated over ? instantiations, found {len(result)} MSSs')
-    return result
+    assert z3_res == z3.unsat, (z3_res, solver.to_smt2())
+    print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, covered {size}, found {len(new_mss)} new MSSs, total of {len(all_mss)} MSSs')
+    return all_mss, new_mss
 
 
 class SubclausesMapTurbo:
@@ -2911,6 +3171,286 @@ class MultiSubclausesMapICE:
         vs = tuple(v for v in self.variables[k] if v.name in free)
         return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
+
+class MultiSubclausesMapBySizeSep:
+    '''Class used to store a map of subclauses of several clauses, and
+    obtain a conjunction of subclauses that satisfy positive,
+    negative, and implication constraints on some given states. This
+    class computes and maintains the mapping between subclauses and
+    states by the size of subclauses, namely, number of literals,
+    significantly speeding up the search for small subclauses.
+
+    '''
+    def __init__(self,
+                 top_clauses: Sequence[Expr],
+                 states: List[PDState],  # assumed to only grow
+                 predicates: List[Expr],  # assumed to only grow
+                 # optimize: bool = False, # see comment about soft_* in separate
+    ):
+        '''
+        states is assumed to be a list that is increasing but never modified
+        '''
+        self.states = states
+        self.predicates = predicates
+        self.top_clauses = tuple(top_clauses)
+        self.m = len(self.top_clauses)
+        # assert self.m > 0
+        self.variables = [destruct_clause(self.top_clauses[k])[0] for k in range(self.m)]
+        self.literals = [destruct_clause(self.top_clauses[k])[1] for k in range(self.m)]
+        self.n = [len(self.literals[k]) for k in range(self.m)]
+        self.all_n = [frozenset(range(self.n[k])) for k in range(self.m)]  # used in complement fairly frequently
+        self.solver = z3.Solver()
+        self.lit_vs = [[z3.Bool(f'lit_{k}_{i}') for i in range(self.n[k])] for k in range(self.m)] # lit_vs[k][i] represents the i'th literal in the k'th clause
+        self.var_vs = [[z3.Bool(f'var_{k}_{i}') for i in range(len(self.variables[k]))] for k in range(self.m)] # var_vs[k][i] represents the i'th variable in the k'th clause
+        self.size_vs = [[z3.Bool(f'size_{k}_{i}') for i in range(self.n[k])] + [z3.BoolVal(True)] for k in range(self.m)] # size_vs[k][i] represents that the k'th clause has at most i literals (for 0 <= i <= n[k])
+        self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # predicate_vs[k][i] represents the implication of value of the k'th clause by self.predicates[i]
+        self.state_size_mapped: Set[Tuple[int,int,int]] = set() # (k, i, n) in the set means for states[i] and clause k, subclauses up to size n have been found and mapped in the solver, i.e., z3.Implies(size_vs[k][n], state_vs[k][i] == ...)
+        self._state_vs: Dict[Tuple[int, int], z3.ExprRef] = dict()
+
+        if utils.args.domain_independence:
+            self._constrain_domain_independence()
+        self._constrain_variables()
+        self._constrain_size()
+
+    def state_v(self, k: int, i: int) -> z3.ExprRef:
+        '''state_v(k, i) represents the value of the k'th clause in self.states[i]'''
+        if (k, i) not in self._state_vs:
+            self._state_vs[k, i] = z3.Bool(f'state_{k}_{i}')
+        return self._state_vs[k, i]
+
+    def _constrain_size(self) -> None:
+        for k in range(self.m):
+            for i, size_v in enumerate(self.size_vs[k]):
+                self.solver.add(z3.Implies(size_v, z3.AtMost(*self.lit_vs[k], i)))
+
+    def _constrain_variables(self) -> None:
+        for k in range(self.m):
+            d: Dict[str, int] = {
+                v.name: i
+                for i, v in enumerate(self.variables[k])
+            }
+            for i, l in enumerate(self.literals[k]):
+                for name in sorted(free_ids(l)):
+                    if name in d:
+                        self.solver.add(z3.Implies(self.lit_vs[k][i], self.var_vs[k][d[name]]))
+
+    def _constrain_domain_independence(self) -> None:
+        '''for each equality literal between two vars, if the literal is used, then some "domain constraining" literal for each var must also be used.'''
+        def destruct_variable_equality(lit: Expr) -> Optional[Tuple[str, str]]:
+            if not isinstance(lit, BinaryExpr):
+                return None
+            if lit.op == 'NOTEQ':
+                return None
+            assert lit.op == 'EQUAL', lit.op
+            left = lit.arg1
+            right = lit.arg2
+            def is_var(x: Id) -> bool:
+                prog = syntax.the_program
+                scope = prog.scope
+                o = scope.get(x.name)
+                assert o is None or isinstance(o, ConstantDecl)
+                return o is None
+            if (not isinstance(left, Id) or not is_var(left) or
+               not isinstance(right, Id) or not is_var(right)):
+                return None
+            else:
+                return left.name, right.name
+
+        def domain_independent_literals_for_var(lits: Tuple[Expr, ...], v: str) -> Iterable[int]:
+            for j, lit in enumerate(lits):
+                if v in free_ids(lit) and destruct_variable_equality(lit) is None:
+                    yield j
+
+        for k in range(self.m):
+            for i, l in enumerate(self.literals[k]):
+                o = destruct_variable_equality(l)
+                if o is not None:
+                    for v in o:
+                        self.solver.add(z3.Implies(self.lit_vs[k][i], z3.Or(*[self.lit_vs[k][j] for j in domain_independent_literals_for_var(self.literals[k], v)])))
+
+    def _new_states_size(self, size: Sequence[int], states_to_map: Iterable[int]) -> None:
+        '''states_to_map is a list of indices into self.states, size is a self.m long
+        list with the size of each clause.
+        '''
+        if self.m == 0:
+            return
+        assert len(size) == self.m
+        # now, actually map the states that are needed to map
+        to_map = sorted(set((k, i, size[k]) for k in range(self.m) for i in states_to_map) - self.state_size_mapped)
+        if len(to_map) == 0:
+            return
+        self.state_size_mapped.update(to_map)
+        print(f'[{datetime.now()}] _new_states_size: starting')
+        print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(to_map)} work items for size {size} for top_clauses: {[str(self.to_clause(k, self.all_n[k])) for k in range(self.m)]}')
+        total_mss = 0
+        results = multiprocessing_map_clause_state_size_interaction([
+            (self.variables[k], self.literals[k], self.states[i], n)
+            for k, i, n in to_map
+        ])
+        for (k, i, n), all_mss in zip(to_map, results):
+            # could also have used something more fine grained here,
+            # with ==> unconditioned and only <== conditioned on
+            # size_v. we can try this if solver.check starts to take
+            # too long in separate.
+            self.solver.add(z3.Implies(self.size_vs[k][n], self.state_v(k, i) == z3.And(*(
+                z3.Or(*(
+                    self.lit_vs[k][j] for j in sorted(self.all_n[k] - v)
+                ))
+                for v in all_mss
+            ))))
+            total_mss += len(all_mss)
+        print(f'[{datetime.now()}] Done subclauses-states (total_new_mss={total_mss})')
+        print(f'[{datetime.now()}] _new_states_size: done')
+
+
+    def _new_predicates(self) -> None:
+        if self.m == 0:
+            return
+        new = range(len(self.predicate_vs[0]), len(self.predicates))
+        if len(new) == 0:
+            return
+        for k in range(self.m):
+            self.predicate_vs[k].extend(z3.Bool(f'p_{k}_{i}') for i in new)
+            print(f'[{datetime.now()}] Mapping out subclauses-predicate interaction with {len(new)} new predicates for {self.to_clause(k, self.all_n[k])}')
+            total_mus = 0
+            total_mss = 0
+            results = multiprocessing_map_clause_state_interaction([
+                (self.variables[k], self.literals[k], self.predicates[i])
+                for i in new
+            ])
+            for i in new:
+                all_mus, all_mss = results.pop(0)
+                assert len(all_mus) == 0
+                # use only all_mss
+                self.solver.add(self.predicate_vs[k][i] == z3.And(*(
+                    z3.Or(*(
+                        self.lit_vs[k][j] for j in sorted(self.all_n[k] - v)
+                    ))
+                    for v in all_mss
+                )))
+                total_mus += len(all_mus)
+                total_mss += len(all_mss)
+            print(f'[{datetime.now()}] Done subclauses-predicates (total_cdnf={total_mus + total_mss}, total_mus={total_mus}, total_mss={total_mss})')
+
+    def separate(self,
+                 size: Sequence[int],
+                 pos: Collection[int] = (),
+                 neg: Collection[int] = (),
+                 imp: Collection[Tuple[int, int]] = (),
+                 pos_ps: Collection[int] = (), # each clause must be implied by these predicates (used to force initiation)
+                 neg_ps: Collection[int] = (), # each clause must not be implied by these predicates
+    ) -> Optional[List[FrozenSet[int]]]:
+        '''
+        find a conjunction of subclauses that respects given constraints
+
+        size should be of length self.m, and specifies the maximal number of literals in each clause
+
+        TODO: to we need an unsat core in case there is no subclause?
+
+        NOTE: the result must contain a subclause of each top clause, i.e., true cannot be used instead of one of the top clauses
+        '''
+        assert len(size) == self.m
+        assert all(0 <= size[k] for k in range(self.m))
+        size = [min(size[k], self.n[k]) for k in range(self.m)]
+        assert all(0 <= i < len(self.states) for i in chain(pos, neg))
+        assert all(0 <= i < len(self.predicates) for i in chain(pos_ps, neg_ps))
+        self._new_states_size(
+            size,
+            list(chain(
+                pos,
+                neg,
+                chain(*imp),
+            )),
+        )
+        self._new_predicates()
+        print(f'[{datetime.now()}] MultiSubclausesMapBySizeSep.separate: starting')
+        sep = list(chain(
+            (self.size_vs[k][size[k]] for k in range(self.m)),
+            (z3.And(*(self.state_v(k, i) for k in range(self.m))) for i in sorted(pos)),
+            (z3.Or(*(z3.Not(self.state_v(k, i)) for k in range(self.m))) for i in sorted(neg)),
+            (z3.Implies(
+                z3.And(*(self.state_v(k, i) for k in range(self.m))),
+                z3.And(*(self.state_v(k, j) for k in range(self.m))),
+            ) for i, j in sorted(imp)),
+            (z3.And(*(self.predicate_vs[k][i] for k in range(self.m))) for i in sorted(pos_ps)),
+            (z3.And(*(z3.Not(self.predicate_vs[k][i]) for k in range(self.m))) for i in sorted(neg_ps)),
+        ))
+        self.solver.push()
+        for c in sep:
+            self.solver.add(c)
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapBySizeSep.solver... ')
+        t_start = datetime.now()
+        res = self.solver.check()
+        t_end = datetime.now()
+        print(f'[{datetime.now()}] Checking MultiSubclausesMapBySizeSep.solver... got {res}')
+        assert res in (z3.unsat, z3.sat)
+        if (t_end - t_start).total_seconds() > 3600:
+            smt2 = self.solver.to_smt2()
+            fn = f'{sha1(smt2.encode()).hexdigest()}.sexpr'
+            print(f'[{datetime.now()}] MultiSubclausesMapBySizeSep.separate: that took very long, saving saving query to {fn} ({len(smt2)} bytes)')
+            open(fn, 'w').write(smt2)
+        if res == z3.unsat:
+            self.solver.pop()
+            print(f'[{datetime.now()}] MultiSubclausesMapBySizeSep.separate: done')
+            return None
+        # minimize the number of quantifiers used, not sure how much this is needed, but as long as the solver is fast we can keep it
+        for n in itertools.count():
+            if utils.args.max_quantifiers is not None and n > utils.args.max_quantifiers:
+                self.solver.pop()
+                print(f'[{datetime.now()}] MultiSubclausesMapBySizeSep.separate: reached maximal number of quantifiers')
+                print(f'[{datetime.now()}] MultiSubclausesMapBySizeSep.separate: done')
+                return None
+            self.solver.push()
+            for k in range(self.m):
+                self.solver.add(z3.AtMost(*self.var_vs[k], n))
+            print(f'[{datetime.now()}] Checking MultiSubclausesMapBySizeSep.solver (optimizing quantifiers, n={n})... ')
+            res = self.solver.check()
+            print(f'[{datetime.now()}] Checking MultiSubclausesMapBySizeSep.solver (optimizing quantifiers, n={n})... got {res}')
+            assert res in (z3.unsat, z3.sat)
+            if res == z3.sat:
+                model = self.solver.model()
+                forced_to_false = [set(
+                    i for i, v in enumerate(self.lit_vs[k])
+                    if not z3.is_true(model[v])
+                ) for k in range(self.m)]
+                self.solver.pop()
+                for k in range(self.m):
+                    self.solver.add(z3.AtMost(*self.var_vs[k], n))
+                break
+            else:
+                self.solver.pop()
+        # minimize for strongest possible clause. TODO: should minimize size instead
+        for k in range(self.m):
+            for i in range(self.n[k]):
+                if i not in forced_to_false[k]:
+                    ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]] + [(k, i)]
+                    print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing literals)... ')
+                    res = self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki)))
+                    print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver (optimizing literals)... got {res}')
+                    assert res in (z3.unsat, z3.sat)
+                    if res == z3.sat:
+                        model = self.solver.model()
+                        for kk in range(self.m):
+                            for ii, v in enumerate(self.lit_vs[k]):
+                                if ii not in forced_to_false[kk] and not z3.is_true(model[v]):
+                                    forced_to_false[kk].add(ii)
+                        assert i in forced_to_false[k]
+        ki = [(kk, ii) for kk in range(self.m) for ii in forced_to_false[kk]]
+        assert self.solver.check(*(z3.Not(self.lit_vs[kk][ii]) for kk, ii in sorted(ki))) == z3.sat # TODO: remove assertion after we are confident about this code
+        result = [frozenset(self.all_n[k] - forced_to_false[k]) for k in range(self.m)]
+        assert all(len(result[k]) <= size[k] for k in range(self.m)), (size, result)
+        self.solver.pop()
+        print(f'[{datetime.now()}] MultiSubclausesMapBySizeSep.separate: done')
+        return result
+
+    def to_clause(self, k: int, s: Iterable[int]) -> Expr:
+        s = sorted(s)
+        assert 0 <= k < self.m, (k, s, self.m, self.n)
+        assert all(0 <= i < self.n[k] for i in s), (k, s, self.m, self.n)
+        lits = [self.literals[k][i] for i in s]
+        free = set(chain(*(free_ids(lit) for lit in lits)))
+        vs = tuple(v for v in self.variables[k] if v.name in free)
+        return Forall(vs, Or(*lits)) if len(vs) > 0 else Or(*lits)
 
 
 def forward_explore_marco_turbo(solver: Solver,
@@ -5273,7 +5813,7 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     states: List[PDState] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
     states_of_fingerprint: Dict[State.Fingerprint, List[int]] = defaultdict(list)
-    maps: List[MultiSubclausesMapICE] = []  # for each state, a MultiSubclausesMapICE map with only the negation of its diagram. used in several places either to get the negation of the state's diagram or to find a clause that excludes it (mostly when finding p's, I think)
+    maps: List[MultiSubclausesMapBySizeSep] = []  # for each state, a MultiSubclausesMapBySizeSep map with only the negation of its diagram. used in several places either to get the negation of the state's diagram or to find a clause that excludes it (mostly when finding p's, I think)
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
     live_states: FrozenSet[int] = frozenset() # not yet ruled out by invariant, and also currently active in the houdini level
@@ -5298,6 +5838,8 @@ def primal_dual_houdini(solver: Solver) -> str:
     human_invariant_to_predicate: Dict[int,int] = dict() # dict mapping index of human_invariant to index of predicates
     human_invariant_proved: Set[int] = set() # indices into human_invariant that are implied by the current inductive_invariant
     human_invariant_implies: Set[int] = set() # indices into predicates of predicates that are implied by the human invariant
+    max_size = max(len(destruct_clause(h)[1]) for h in human_invariant) # TODO: don't cheat
+    print(f'[{datetime.now()}] primal_dual_houdini: max_size = {max_size}')
 
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
 
@@ -5365,11 +5907,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                             print(states[j].as_state(0))
                             print(states[j].as_state(0).fingerprint)
                             assert False
+                print(f'[{datetime.now()}] add_state{note}: substructures={sorted(substructures)}, superstructures={sorted(superstructures)}')
                 print(f'[{datetime.now()}] done')
                 isomorphic = substructures & superstructures
                 assert len(isomorphic) == 0
                 i = len(states)
-                print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}]')
                 states.append(s)
                 states_of_fingerprint[s.as_state(0).fingerprint].append(i)
                 substructure.extend((i, j) for j in sorted(substructures))
@@ -5377,7 +5919,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
-                maps.append(MultiSubclausesMapICE([c], states, init_ps))
+                maps.append(MultiSubclausesMapBySizeSep([c], states, init_ps))
+                print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}], c={c}')
             if internal_cti:
                 internal_ctis |= {i}
             else:
@@ -6079,15 +6622,17 @@ def primal_dual_houdini(solver: Solver) -> str:
             worklist_budget -= 1
             seen_before |= {frozenset(goals)}
 
-            mp = MultiSubclausesMapICE(
+            mp = MultiSubclausesMapBySizeSep(
                 [g for g in goals],
                 states,
                 init_ps,
             )
             n_literals = sum(mp.n)
+            size: int = 1
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
                 s = frozenset(s) | reachable
                 res = mp.separate(
+                    tuple(size for _ in range(mp.m)),
                     pos=sorted(reachable),
                     # imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
                     imp=sorted((i, j) for i, j in transitions if i in s and j in s), # ODED: I think we don't need substructures here since for them the implication must hold anyway
@@ -6318,6 +6863,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     for i in sorted(to_eliminate):
                         while True:
                             seed = maps[i].separate(
+                                (size,),
                                 pos=(pos | reachable),
                                 neg=[i],
                                 pos_ps=[0],
@@ -6343,6 +6889,11 @@ def primal_dual_houdini(solver: Solver) -> str:
                 if added_new_p:
                     continue
                 print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find any new p predicate')
+                if size < max_size:
+                    print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find dual edge upto size {size}, increasing size')
+                    size += 1
+                    continue
+                print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: size limit reached')
                 # we have not added a new p
                 if len(goals) == n_qs:
                     print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: cannot find dual edge for this worklist item')
@@ -6564,6 +7115,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             for i in sorted(to_eliminate):
                 while True:
                     seed = maps[i].separate(
+                        (max_size,), # TODO: iterate over sizes
                         pos=(pos | reachable),
                         neg=[i],
                         pos_ps=[0],
