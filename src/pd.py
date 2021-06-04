@@ -2076,54 +2076,52 @@ def multiprocessing_map_clause_state_interaction(work: List[Tuple[
 
 
 # cache and helper for multiprocessing for map_clause_state_size_interaction
-_cache_map_clause_state_size_interaction: Dict[Tuple[
-    Tuple[SortedVar,...],
-    Tuple[Expr,...],
-    PDState,
-    int,
-], List[FrozenSet[int]]] = dict() # maps to all_mss for specific size
 _cache_clause_state_mss: Dict[Tuple[
     Tuple[SortedVar,...],
     Tuple[Expr,...],
     PDState,
 ], List[FrozenSet[int]]] = defaultdict(list) # maps to known MSSs
 def _map_clause_state_size_interaction_helper(workitem: Tuple[
-        Tuple[SortedVar,...],
-        Tuple[Expr,...],
-        PDState,
-        int,
-        List[FrozenSet[int]], # known MSSs
-]) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]: # all_mss, new_mss
-    variables, literals, state, size, known_mss = workitem
-    all_mss, new_mss = map_clause_state_size_interaction(variables, literals, state.as_state(0), size, known_mss)
+        Tuple[SortedVar,...], # variables
+        Tuple[Expr,...], # literals
+        PDState, # state
+        int, # size
+        List[FrozenSet[int]], # known MSSs of given state (will end up in all_mss)
+        List[FrozenSet[int]], # MSSs to block (won't end up in all_mss)
+        Optional[float], # timeout
+]) -> Tuple[Optional[List[FrozenSet[int]]], List[FrozenSet[int]]]: # all_mss, new_mss
+    variables, literals, state, size, known_mss, block_mss, timeout = workitem
+    all_mss, new_mss = map_clause_state_size_interaction(variables, literals, state.as_state(0), size, known_mss, block_mss, timeout)
     return all_mss, new_mss
 def multiprocessing_map_clause_state_size_interaction(work: List[Tuple[
-        Tuple[SortedVar,...],
-        Tuple[Expr,...],
-        PDState,
-        int,
-]]) -> List[List[FrozenSet[int]]]:
-    real_work = [i for i, w in enumerate(work) if w not in _cache_map_clause_state_size_interaction]
-    if len(real_work) > 0:
-        if utils.args.cpus is None:
-            n = 1
-        else:
-            n = min(utils.args.cpus, len(real_work))
-        results: List[Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]] = []
-        workitems = [(*work[i], _cache_clause_state_mss[work[i][:3]]) for i in real_work]
-        if n > 1:
-            with multiprocessing.Pool(n) as pool:
-               results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should
-                   _map_clause_state_size_interaction_helper,
-                   workitems
-               ).get(9999999) # see: https://stackoverflow.com/a/1408476
-        else:
-            results = list(map(_map_clause_state_size_interaction_helper, workitems))
-        for i, v in zip(real_work, results):
-            _cache_map_clause_state_size_interaction[work[i]] = v[0]
-            _cache_clause_state_mss[work[i][:3]].extend(v[1])
-    return [_cache_map_clause_state_size_interaction[w] for w in work]
-
+        Tuple[SortedVar,...], # variables
+        Tuple[Expr,...], # literals
+        PDState, # state
+        int, # size
+        List[FrozenSet[int]], # block_mss
+        Optional[float], # timeout
+]]) -> List[Optional[List[FrozenSet[int]]]]:
+    if len(work) == 0:
+        return []
+    if utils.args.cpus is None:
+        n = 1
+    else:
+        n = min(utils.args.cpus, len(work))
+    workitems = [
+        (variables, literals, state, size, _cache_clause_state_mss[variables, literals, state], block_mss, timeout)
+        for variables, literals, state, size, block_mss, timeout in work
+    ]
+    if n > 1:
+        with multiprocessing.Pool(n) as pool:
+           results = pool.map_async( # type: ignore # seems to be an issue with typeshed having wrong type for map_async, should
+               _map_clause_state_size_interaction_helper,
+               workitems
+           ).get(9999999) # see: https://stackoverflow.com/a/1408476
+    else:
+        results = list(map(_map_clause_state_size_interaction_helper, workitems))
+    for w, v in zip(work, results):
+        _cache_clause_state_mss[w[:3]].extend(v[1])
+    return [v[0] for v in results]
 
 def map_clause_state_interaction(variables: Tuple[SortedVar,...],
                                  literals: Tuple[Expr,...],
@@ -2513,14 +2511,20 @@ def map_clause_state_size_interaction(
         state: State,
         size: int,
         known_mss: List[FrozenSet[int]],
-) -> Tuple[List[FrozenSet[int]], List[FrozenSet[int]]]: # all_mss, new_mss
+        block_mss: List[FrozenSet[int]],
+        timeout: Optional[float],
+) -> Tuple[Optional[List[FrozenSet[int]]], List[FrozenSet[int]]]: # all_mss, new_mss
     '''Return a list of maximal subclauses of the given clause (indices to
     literals) that are violated by the given state that cover all
     subclauses up to given size.
+
+    On timeout, return (None, new_mss), with the new MSSs found
     '''
     #
+    t_start = datetime.now()
     import z3
-
+    if timeout is None:
+        timeout =  float('inf')
     var_names = tuple(v.name for v in variables)
     sort_names = []
     for v in variables:
@@ -2531,7 +2535,12 @@ def map_clause_state_size_interaction(
     seen: Set[str] = set()  # used to assert we don't have name collisions
     size_v = z3.Bool(f'size_v')
 
+    # constraint size
     solver.add(z3.Implies(size_v, z3.AtMost(*lit_vs, size)))
+
+    # block MSSs in block_mss
+    for mss in block_mss:
+        solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in mss)))
 
     # encode state and force it to evaluate to false on the subclause encoded by lit_vs
 
@@ -2657,7 +2666,8 @@ def map_clause_state_size_interaction(
         solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in mss)))
     # now collect more maximal subclauses violating state until size is covered
     print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, covering size {size}...')
-    while (z3_res := solver.check(size_v)) == z3.sat:
+    while (not (timedout := (datetime.now() - t_start).total_seconds() >= timeout) and
+           (z3_res := solver.check(size_v)) == z3.sat):
         z3m = solver.model()
         forced_to_true = set(
             i for i, v in enumerate(lit_vs)
@@ -2675,13 +2685,17 @@ def map_clause_state_size_interaction(
         mss = frozenset(forced_to_true)
         all_mss.append(mss)
         new_mss.append(mss)
-        if len(new_mss) - 1 % 100 == 0:
+        if (len(new_mss) - 1) % 100 == 0:
             print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, found {len(new_mss):8}-th new MSS ({len(all_mss)} total MSSs)')
         # block down
         solver.add(z3.Or(*(lit_vs[i] for i in range(len(literals)) if i not in forced_to_true)))
-    assert z3_res == z3.unsat, (z3_res, solver.to_smt2())
-    print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, covered {size}, found {len(new_mss)} new MSSs, total of {len(all_mss)} MSSs')
-    return all_mss, new_mss
+    if timedout:
+        print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, timed out while covering {size}, found {len(new_mss)} new MSSs')
+        return None, new_mss
+    else:
+        assert z3_res == z3.unsat, (z3_res, solver.to_smt2())
+        print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, covered {size} in {(datetime.now() - t_start).total_seconds()} seconds, found {len(new_mss)} new MSSs, total of {len(all_mss)} MSSs')
+        return all_mss, new_mss
 
 
 class SubclausesMapTurbo:
@@ -3206,6 +3220,8 @@ class MultiSubclausesMapBySizeSep:
         self.predicate_vs: List[List[z3.ExprRef]] = [[] for k in range(self.m)] # predicate_vs[k][i] represents the implication of value of the k'th clause by self.predicates[i]
         self.state_size_mapped: Set[Tuple[int,int,int]] = set() # (k, i, n) in the set means for states[i] and clause k, subclauses up to size n have been found and mapped in the solver, i.e., z3.Implies(size_vs[k][n], state_vs[k][i] == ...)
         self._state_vs: Dict[Tuple[int, int], z3.ExprRef] = dict()
+        self.permanent_pos: Set[int] = set() # indices into self.states for which we permanently force separators to be true
+        self.blocked_mss: List[Set[FrozenSet[int]]] = [set() for k in range(self.m)]
 
         if utils.args.domain_independence:
             self._constrain_domain_independence()
@@ -3283,15 +3299,20 @@ class MultiSubclausesMapBySizeSep:
         print(f'[{datetime.now()}] _new_states_size: starting')
         print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(to_map)} work items for size {size} for top_clauses: {[str(self.to_clause(k, self.all_n[k])) for k in range(self.m)]}')
         total_mss = 0
-        results = multiprocessing_map_clause_state_size_interaction([
-            (self.variables[k], self.literals[k], self.states[i], n)
-            for k, i, n in to_map
-        ])
+        results = multiprocessing_map_clause_state_size_interaction([(
+            self.variables[k],
+            self.literals[k],
+            self.states[i],
+            n,
+            sorted(self.blocked_mss[k]),
+            None,
+        ) for k, i, n in to_map])
         for (k, i, n), all_mss in zip(to_map, results):
             # could also have used something more fine grained here,
             # with ==> unconditioned and only <== conditioned on
             # size_v. we can try this if solver.check starts to take
             # too long in separate.
+            assert all_mss is not None, (k, i, n)
             self.solver.add(z3.Implies(self.size_vs[k][n], self.state_v(k, i) == z3.And(*(
                 z3.Or(*(
                     self.lit_vs[k][j] for j in sorted(self.all_n[k] - v)
@@ -3302,6 +3323,53 @@ class MultiSubclausesMapBySizeSep:
         print(f'[{datetime.now()}] Done subclauses-states (total_new_mss={total_mss})')
         print(f'[{datetime.now()}] _new_states_size: done')
 
+    def _new_permanent_pos_size(self, size: Sequence[int], permanent_pos: Set[int]) -> None:
+        '''states_to_map is a list of indices into self.states, size is a self.m long
+        list with the size of each clause.
+        '''
+        if self.m == 0:
+            return
+        assert len(size) == self.m
+        assert self.permanent_pos <= permanent_pos
+        for i in sorted(permanent_pos - self.permanent_pos):
+            for k in range(self.m):
+                self.solver.add(self.state_v(k, i))
+        self.permanent_pos |= permanent_pos
+        # now, actually map the states that are needed to map
+        print(f'[{datetime.now()}] _new_permanent_pos_size: starting')
+        to_map = sorted(set((k, i, size[k]) for k in range(self.m) for i in self.permanent_pos) - self.state_size_mapped)
+        timeout = 60.0
+        while len(to_map) > 0:
+            print(f'[{datetime.now()}] Mapping out subclauses-state interaction with {len(to_map)} work items for size {size} and timeout {timeout} for top_clauses: {[str(self.to_clause(k, self.all_n[k])) for k in range(self.m)]}')
+            new_blocked_mss = 0
+            results = multiprocessing_map_clause_state_size_interaction([(
+                self.variables[k],
+                self.literals[k],
+                self.states[i],
+                n,
+                sorted(self.blocked_mss[k]),
+                timeout
+            ) for k, i, n in to_map])
+            next_to_map: List[Tuple[int, int, int]] = []
+            for (k, i, n), all_mss in zip(to_map, results):
+                for mss in _cache_clause_state_mss[self.variables[k], self.literals[k], self.states[i]]:
+                    if mss not in self.blocked_mss[k]:
+                        self.solver.add(z3.Or(*(
+                            self.lit_vs[k][j] for j in sorted(self.all_n[k] - mss)
+                        )))
+                        self.blocked_mss[k].add(mss)
+                        new_blocked_mss += 1
+                if all_mss is None:
+                    # timed out, should revisit
+                    next_to_map.append((k, i, n))
+                else:
+                    # mark as mapped
+                    self.state_size_mapped.add((k, i, n))
+            print(f'[{datetime.now()}] Done subclauses-states (new_blocked_mss={new_blocked_mss})')
+            if new_blocked_mss == 0:
+                timeout *= 2
+            to_map = next_to_map
+        print(f'[{datetime.now()}] _new_permanent_pos_size: done')
 
     def _new_predicates(self) -> None:
         if self.m == 0:
@@ -3337,6 +3405,7 @@ class MultiSubclausesMapBySizeSep:
                  pos: Collection[int] = (),
                  neg: Collection[int] = (),
                  imp: Collection[Tuple[int, int]] = (),
+                 permanent_pos: Collection[int] = (), # indices into self.states for which the current and future separators must be true, must always be increasing w.r.t. previous calls
                  pos_ps: Collection[int] = (), # each clause must be implied by these predicates (used to force initiation)
                  neg_ps: Collection[int] = (), # each clause must not be implied by these predicates
     ) -> Optional[List[FrozenSet[int]]]:
@@ -3352,8 +3421,11 @@ class MultiSubclausesMapBySizeSep:
         assert len(size) == self.m
         assert all(0 <= size[k] for k in range(self.m))
         size = [min(size[k], self.n[k]) for k in range(self.m)]
-        assert all(0 <= i < len(self.states) for i in chain(pos, neg))
+        assert all(0 <= i < len(self.states) for i in chain(pos, neg, chain(*imp), permanent_pos))
         assert all(0 <= i < len(self.predicates) for i in chain(pos_ps, neg_ps))
+        permanent_pos = set(permanent_pos)
+        assert self.permanent_pos <= permanent_pos
+        self._new_permanent_pos_size(size, permanent_pos)
         self._new_states_size(
             size,
             list(chain(
@@ -6633,7 +6705,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 s = frozenset(s) | reachable
                 res = mp.separate(
                     tuple(size for _ in range(mp.m)),
-                    pos=sorted(reachable),
+                    permanent_pos=sorted(reachable),
                     # imp=sorted((i, j) for i, j in chain(transitions, substructure) if i in s and j in s),
                     imp=sorted((i, j) for i, j in transitions if i in s and j in s), # ODED: I think we don't need substructures here since for them the implication must hold anyway
                     pos_ps=[0],
@@ -6864,7 +6936,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                         while True:
                             seed = maps[i].separate(
                                 (size,),
-                                pos=(pos | reachable),
+                                permanent_pos=sorted(reachable),
+                                pos=sorted(pos),
                                 neg=[i],
                                 pos_ps=[0],
                                 # soft_neg=soft_neg, # TODO: or to_eliminate ?
@@ -7116,7 +7189,8 @@ def primal_dual_houdini(solver: Solver) -> str:
                 while True:
                     seed = maps[i].separate(
                         (max_size,), # TODO: iterate over sizes
-                        pos=(pos | reachable),
+                        permanent_pos=sorted(reachable),
+                        pos=sorted(pos),
                         neg=[i],
                         pos_ps=[0],
                         # soft_neg=soft_neg, # TODO: or to_eliminate ?
