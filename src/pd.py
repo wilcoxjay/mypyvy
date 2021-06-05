@@ -1360,6 +1360,20 @@ def check_dual_edge_optimize_find_cti(
         for i_transition in range(n_transitions)
         for i_q in range(mp.m)
     ]
+    if not whole_clauses:
+        # greedily try to jump to the top of q_post
+        active_queries += [
+            HoareQuery(
+                p=frozenset(range(len(ps))),
+                q_pre=q_seed,
+                q_post=tuple(mp.all_n[k] if k == i_q else frozenset() for k in range(mp.m)),
+                cardinalities=(),
+                i_transition=i_transition,
+            )
+            for i_transition in range(n_transitions)
+            for i_q in range(mp.m)
+            if q_seed[i_q] != mp.all_n[i_q]
+        ]
 
     print(f'[{datetime.now()}] check_dual_edge_optimize_find_cti: initially with {len(active_queries)} active queries')
 
@@ -1449,6 +1463,8 @@ def check_dual_edge_optimize_find_cti(
 
             # filter using unknown unsats and possibly return
             active_queries = [hq for hq in active_queries if not known_to_be_unsat(hq)]
+            if current_hq is not None:
+                active_queries = [hq for hq in active_queries if hq.replace_transition(0) < current_hq.replace_transition(0)] # only keep queries for which a SAT result would be better than the current CTI
             if len(active_queries) == 0:
                 # we are done
                 print(f'[{datetime.now()}] [PID={os.getpid()}] check_dual_edge_optimize_find_cti: no more active queries, returning {"cti" if current_cti is not None else "unsat"}')
