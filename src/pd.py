@@ -1812,6 +1812,18 @@ def check_dual_edge_optimize(
     print('  -->')
     for q in qs:
         print(f'  {q}')
+    print(f'[{datetime.now()}] check_dual_edge_optimize_cache: starting')
+    for prestate, poststate in _cache_transitions:
+        if (all(eval_in_state(None, prestate,  p) for p in ps) and
+            all(eval_in_state(None, prestate,  q) for q in qs) and
+            all(eval_in_state(None, poststate, p) for p in ps) and not
+            all(eval_in_state(None, poststate, q) for q in qs)
+        ):
+            print(f'[{datetime.now()}] check_dual_edge_optimize: found cached cti violating dual edge')
+            print(f'[{datetime.now()}] check_dual_edge_optimize_cache: done')
+            print(f'[{datetime.now()}] check_dual_edge_optimize: done')
+            return ((prestate, poststate), None)
+    print(f'[{datetime.now()}] check_dual_edge_optimize_cache: done')
     res = check_dual_edge_optimize_find_cti(ps, top_clauses, q_seed, whole_clauses)
     if res is not None:
         # res contains optimal cti
