@@ -6345,7 +6345,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                     r = dual_close_forward(r)
             n_reachable = len(reachable)
             n_inductive_invariant = len(inductive_invariant)
-            forward_explore_from_predicates(r) # TODO: not sure if we should do this here or not
+            # forward_explore_from_predicates(r) # TODO: not sure if we should do this here or not # ODED'21: removed this to experiment
             #TODO# assert n_reachable == len(reachable), '?' see sharded-kv-retransmit.pd-primal-dual-houdini.dfc198b.seed-1234.log
             #TODO# assert n_inductive_invariant == len(inductive_invariant), '?' sharded-kv-retransmit_unsafe.pd-primal-dual-houdini.daf032c.seed-1234.log paxos_forall_choosable.pd-primal-dual-houdini.daf032c.seed-0.log
             r = dual_close_forward(r)
@@ -6355,7 +6355,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 print(f'[{datetime.now()}] dual_houdini_frames: checking for dual-backward-transition from predicates{sorted(goals)}')
                 res = find_dual_backward_transition(
                     a,
-                    r_0,
+                    r_0,  # ODED'21: not clear why this is r_0 and not r
                     goals,
                 )
                 print(f'[{datetime.now()}] dual_houdini_frames: done checking for dual-backward-transition predicates{sorted(goals)}')
@@ -6397,7 +6397,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             #         r = dual_close_forward(r)
             #         assert qs <= r
             n_inductive_invariant = len(inductive_invariant)
-            forward_explore_from_predicates(r) # this is probably a good place for this
+            # forward_explore_from_predicates(r) # this is probably a good place for this # ODED'21: no it isn't! there's no difference from the last time. # ODED'21: removed this to experiment
             #TODO# assert n_reachable == len(reachable), '?'
             #production# assert n_inductive_invariant == len(inductive_invariant), '?'
             r = dual_close_forward(r)
@@ -6451,7 +6451,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                         #production# assert qs <= r
                         n_reachable = len(reachable)
                         n_inductive_invariant = len(inductive_invariant)
-                        forward_explore_from_predicates(r)  # this is probably a good place for this, note this may find a new inductive invariant, which is inconsistent with the frames, as in primal houdini_frames (I think)
+                        # forward_explore_from_predicates(r)  # this is probably a good place for this, note this may find a new inductive invariant, which is inconsistent with the frames, as in primal houdini_frames (I think) # ODED'21: removed this to experiment
                         #TODO# assert n_reachable == len(reachable), '?'
                         #TODO# assert n_inductive_invariant == len(inductive_invariant), '?'
                         r = dual_close_forward(r)
@@ -6515,9 +6515,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                     dom |= {j}
             # no need for fixpoint since substructure is transitive
         else:
-            dom = frozenset(range(len(states)))
+            dom = frozenset(range(len(states))) # ODED'21: NB: we're using all states, not only live ones, i.e., including internal ctis
         dom = frozenset(i for i in dom if all(
-            eval_in_state(None, states[i], p) for p in ps
+            eval_in_state(None, states[i], p) for p in ps  # ODED'21: this filtering is unclear to me
         ))
         z3s = z3.Solver()
         for i in sorted(pos):
