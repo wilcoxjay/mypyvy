@@ -5914,6 +5914,8 @@ def primal_dual_houdini(solver: Solver) -> str:
     states: List[PDState] = [] # used both for the high level houdini states (reachable, live_states) and the internal CTIs of the "dual edge solver" (internal_ctis)
     states_of_fingerprint: Dict[State.Fingerprint, List[int]] = defaultdict(list)
     maps: List[MultiSubclausesMapBySizeSep] = []  # for each state, a MultiSubclausesMapBySizeSep map with only the negation of its diagram. used in several places either to get the negation of the state's diagram or to find a clause that excludes it (mostly when finding p's, I think)
+    _maps: Dict[Tuple[Expr,...], MultiSubclausesMapBySizeSep] = dict() # a cache of MultiSubclausesMapBySizeSep indexed by top_clauses
+    find_dual_edge_ctis: Dict[Tuple[Expr,...], FrozenSet[int]] = defaultdict(frozenset) # keep a set of useful ctis for each goals in find_dual_edge
     # the following are indices into states:
     reachable: FrozenSet[int] = frozenset()
     live_states: FrozenSet[int] = frozenset() # not yet ruled out by invariant, and also currently active in the houdini level
@@ -5942,6 +5944,11 @@ def primal_dual_houdini(solver: Solver) -> str:
     print(f'[{datetime.now()}] primal_dual_houdini: max_size = {max_size}')
 
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
+
+    def get_map(top_clauses: Tuple[Expr,...]) -> MultiSubclausesMapBySizeSep:
+        if top_clauses not in _maps:
+            _maps[top_clauses] = MultiSubclausesMapBySizeSep(top_clauses, states, init_ps)
+        return _maps[top_clauses]
 
     def add_state(s: PDState, internal_cti: bool) -> int:
         nonlocal live_states
@@ -6019,7 +6026,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 cs = as_clauses(Not(Diagram(s.as_state(0)).to_ast()))
                 assert len(cs) == 1
                 c = cs[0]
-                maps.append(MultiSubclausesMapBySizeSep([c], states, init_ps))
+                maps.append(get_map((c,)))
                 print(f'[{datetime.now()}] add_state{note}: adding new state: states[{i}], c={c}')
             if internal_cti:
                 internal_ctis |= {i}
@@ -6722,11 +6729,7 @@ def primal_dual_houdini(solver: Solver) -> str:
             worklist_budget -= 1
             seen_before |= {frozenset(goals)}
 
-            mp = MultiSubclausesMapBySizeSep(
-                [g for g in goals],
-                states,
-                init_ps,
-            )
+            mp = get_map(goals)
             n_literals = sum(mp.n)
             size: int = 1
             def check_sep(s: Collection[int]) -> Optional[Tuple[List[Predicate], List[FrozenSet[int]]]]:
@@ -6836,7 +6839,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                             _cache_initial.append(state)
                     return prestate, poststate
                 return None
-            ctis: FrozenSet[int] = frozenset()
+            ctis: FrozenSet[int] = find_dual_edge_ctis[goals]
             while True:
                 while True: # find a Q or discover there is none and learn internal_ctis
                     if False:
@@ -6945,19 +6948,20 @@ def primal_dual_houdini(solver: Solver) -> str:
                         #production# assert (i_pre, i_post) not in transitions
                         add_transition(i_pre, i_post)
                         ctis |= {i_pre, i_post}
+                        find_dual_edge_ctis[goals] |= {i_pre, i_post}
                         n_ctis += 1
                         print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: found new cti')
                 # here, we have enough internal_ctis to rule out all possible q's
-                #production# assert check_sep(ctis) is None
+                assert check_sep(ctis) is None, (ctis, check_sep(ctis))
                 added_new_p = False
                 if n_ps is None:
                     # minimize ctis outside of pos and learn a new predicate that separates them from pos
-                    # TODO: use unsat cores
-                    soft_neg = ctis - pos
+                    # TODO: use unsat cores to speed this up
+                    # soft_neg = ctis - pos
                     for i in sorted(ctis - pos):
                        if i in ctis and check_sep(ctis - {i}) is None:
                            ctis -= {i}
-                    #production# assert check_sep(ctis) is None
+                    assert check_sep(ctis) is None, (ctis, check_sep(ctis))
                     to_eliminate = ctis - pos
                     print(f'[{datetime.now()}] [PID={os.getpid()}] find_dual_edge: looking for a new p that will eliminate some of: {sorted(to_eliminate)}')
                     for i in sorted(to_eliminate):
