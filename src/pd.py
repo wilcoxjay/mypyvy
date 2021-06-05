@@ -23,6 +23,7 @@ import queue
 from datetime import datetime, timedelta
 from hashlib import sha1
 from dataclasses import dataclass
+import gzip
 
 from syntax import *
 from logic import *
@@ -5945,6 +5946,30 @@ def primal_dual_houdini(solver: Solver) -> str:
 
     # reason_for_predicate: Dict[int, FrozenSet[int]] = defaultdict(frozenset) # for each predicate index, the indices of the states it helps to exclude # TODO: maybe bring this back here, but some predicates are to rule out actual states, and some just for internal CTIs
 
+    def save_algorithm_state() -> None:
+        algorith_state = (
+            states,
+            states_of_fingerprint,
+            find_dual_edge_ctis,
+            reachable,
+            live_states,
+            internal_ctis,
+            transitions,
+            substructure,
+            predicates,
+            inductive_invariant,
+            live_predicates,
+            dual_transitions,
+            frames,
+            step_frames,
+            dual_frames,
+        )
+        pd = pickle.dumps(algorith_state)
+        fn = f'{sha1(pd).hexdigest()}.pd.gz'
+        print(f'[{datetime.now()}] [PID={os.getpid()}] primal_dual_houdini: saving algorith state to {fn} ({len(pd)} bytes)')
+        with gzip.open(fn, 'wb') as f:
+            f.write(pd)
+
     def get_map(top_clauses: Tuple[Expr,...]) -> MultiSubclausesMapBySizeSep:
         if top_clauses not in _maps:
             _maps[top_clauses] = MultiSubclausesMapBySizeSep(top_clauses, states, init_ps)
@@ -7361,11 +7386,17 @@ def primal_dual_houdini(solver: Solver) -> str:
                 return 'UNSAFE'
         return None
 
+    first_iteration = True
     while True:
         # TODO: add a little BMC
         assert_invariants()
 
         print(f'[{datetime.now()}] New global iteration')
+
+        if not first_iteration:
+            save_algorithm_state()
+        else:
+            first_iteration = False
 
         n_inductive_invariant = len(inductive_invariant)
         n_reachable = len(reachable)
