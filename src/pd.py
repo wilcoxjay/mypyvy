@@ -2460,14 +2460,14 @@ def map_clause_state_interaction_z3(
                 i for i, v in enumerate(lit_vs)
                 if not z3.is_false(z3m[v])
             )
-            assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+            assert (res := solver.check(*(assumptions := [lit_vs[j] for j in sorted(forced_to_true)]))) == z3.sat, (res, assumptions, solver.to_smt2())
             for i in range(len(literals)):
                 if i not in forced_to_true:
                     res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
                     assert res in (z3.unsat, z3.sat), (res, solver.to_smt2())
                     if res == z3.sat:
                         forced_to_true.add(i)
-            assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+            assert (res := solver.check(*(assumptions := [lit_vs[j] for j in sorted(forced_to_true)]))) == z3.sat, (res, assumptions, solver.to_smt2())
             # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
             if len(result) % 100 == 0:
                 print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
@@ -2485,14 +2485,14 @@ def map_clause_state_interaction_z3(
                     i for i, v in enumerate(lit_vs)
                     if not z3.is_false(z3m[v])
                 )
-                assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+                assert (res := solver.check(*(assumptions := [lit_vs[j] for j in sorted(forced_to_true)]))) == z3.sat, (res, assumptions, solver.to_smt2())
                 for i in range(len(literals)):
                     if i not in forced_to_true:
                         res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
                         assert res in (z3.unsat, z3.sat), (res, solver.to_smt2())
                         if res == z3.sat:
                             forced_to_true.add(i)
-                assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+                assert (res := solver.check(*(assumptions := [lit_vs[j] for j in sorted(forced_to_true)]))) == z3.sat, (res, assumptions, solver.to_smt2())
                 # print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
                 if len(result) % 100 == 0:
                     print(f'[{datetime.now()}] map_clause_state_interaction_z3: PID={os.getpid()}, found {len(result)+1:8}-th MSS')
@@ -2673,14 +2673,14 @@ def map_clause_state_size_interaction(
             i for i, v in enumerate(lit_vs)
             if not z3.is_false(z3m[v])
         )
-        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+        assert (res := solver.check(*(assumptions := [lit_vs[j] for j in sorted(forced_to_true)]))) == z3.sat, (res, assumptions, solver.to_smt2())
         for i in range(len(literals)):
             if i not in forced_to_true:
                 res = solver.check(*(lit_vs[j] for j in sorted(forced_to_true | {i})))
                 assert res in (z3.unsat, z3.sat), (res, solver.to_smt2())
                 if res == z3.sat:
                     forced_to_true.add(i)
-        assert (res := solver.check(*(lit_vs[j] for j in sorted(forced_to_true)))) == z3.sat, (res, solver.to_smt2())
+        assert (res := solver.check(*(assumptions := [lit_vs[j] for j in sorted(forced_to_true)]))) == z3.sat, (res, assumptions, solver.to_smt2())
         # print(f'[{datetime.now()}] map_clause_state_size_interaction: PID={os.getpid()}, found {len(result)+1:8}-th new MSS ({len(forced_to_true):4}): {sorted(forced_to_true)}')
         mss = frozenset(forced_to_true)
         all_mss.append(mss)
