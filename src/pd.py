@@ -5970,6 +5970,62 @@ def primal_dual_houdini(solver: Solver) -> str:
         with gzip.open(fn, 'wb') as f:
             f.write(pd)
 
+    def restart_from_file(fn: str) -> None:
+        nonlocal reachable
+        print(f'[{datetime.now()}] restart_from_file: loading algorithm state from {fn}')
+        with gzip.open(fn, 'rb') as f:
+            pd = f.read()
+        print(f'[{datetime.now()}] restart_from_file: file {fn} read ({len(pd)} bytes)')
+        # assert str(sha1(pd)) == fn.split('.')[0]
+        algorith_state = pickle.loads(pd)
+        print(f'[{datetime.now()}] restart_from_file: algorith state unpickled')
+        (
+            _states,
+            _states_of_fingerprint,
+            _find_dual_edge_ctis,
+            _reachable,
+            _live_states,
+            _internal_ctis,
+            _transitions,
+            _substructure,
+            _predicates,
+            _inductive_invariant,
+            _live_predicates,
+            _dual_transitions,
+            _frames,
+            _step_frames,
+            _dual_frames,
+        ) = algorith_state
+
+        # add all reachable states
+        state_i: Dict[int, int] = dict()
+        for n, i in enumerate(_reachable):
+            print(f'[{datetime.now()}] restart_from_file: processing reachable state {n} / {len(_reachable)}')
+            s = _states[i]
+            ii = add_state(s, False)
+            state_i[i] = ii
+            if all(eval_in_state(None, s, p) for p in inits):
+                _cache_initial.append(s)
+                reachable |= {ii}
+        print(f'[{datetime.now()}] restart_from_file: state_i = {state_i}')
+        # add all transitions and substructures
+        for i, j in _transitions:
+            if i in _reachable and j in _reachable:
+                add_transition(state_i[i], state_i[j])
+                _cache_transitions.append((states[state_i[i]], states[state_i[j]]))
+        assert reachable == frozenset(state_i[i] for i in _reachable), (reachable, _reachable)
+
+        # add all invariant predicates
+        predicate_i: Dict[int, int] = dict()
+        for n, i in enumerate(_inductive_invariant):
+            print(f'[{datetime.now()}] restart_from_file: processing invariant predicate {n} / {len(_inductive_invariant)}')
+            p = _predicates[i]
+            predicate_i[i] = add_predicate(p)
+        print(f'[{datetime.now()}] restart_from_file: predicate_i = {predicate_i}')
+        print(f'[{datetime.now()}] restart_from_file: done')
+        print_status_and_check_termination()
+        assert_invariants()
+
     def get_map(top_clauses: Tuple[Expr,...]) -> MultiSubclausesMapBySizeSep:
         if top_clauses not in _maps:
             _maps[top_clauses] = MultiSubclausesMapBySizeSep(top_clauses, states, init_ps)
