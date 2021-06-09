@@ -7386,6 +7386,9 @@ def primal_dual_houdini(solver: Solver) -> str:
                 return 'UNSAFE'
         return None
 
+    if hasattr(utils.args, 'restart_from'):
+        restart_from_file(utils.args.restart_from)
+
     first_iteration = True
     while True:
         # TODO: add a little BMC
@@ -9112,6 +9115,8 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     # primal_dual_houdini
     s = subparsers.add_parser('pd-primal-dual-houdini', help='Run the "Primal-Dual" algorithm')
     s.set_defaults(main=primal_dual_houdini)
+    s.add_argument('--restart-from', help='.pd.gz filename to restart from')
+
     result.append(s)
 
     # incremental_induction_graph
