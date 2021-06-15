@@ -346,6 +346,112 @@ def _fancy_check_transition(hyps: List[Expr], new_conc: Expr, tr: Expr, _print: 
                  
         del solver        
 
+def _fancy_check_transition2_internal(hyps: List[Expr], new_conc: Expr, tr: Expr, timeout: float = 1.0, _print: Callable = print) -> Union[List[int], None, Trace]:
+    sat_inst = z3.Optimize()
+    for i in range(len(hyps)):
+        sat_inst.add_soft(z3.Not(z3.Bool(f'I_{i}')))
+    # sat_inst.add(z3.Bool('I_0'))
+    order: List[int] = []
+    badness = [0 for _ in range(len(hyps))]
+    unknown_count = 0
+    while True:
+        solver = CVC5Solver(syntax.the_program, timeout = int(timeout * 1000))
+        with solver.new_scope(2):
+            solver.add_expr(tr)
+            solver.add_expr(New(Not(new_conc)))
+
+            while True:
+                # result = sat_inst.check(*(z3.Not(z3.Bool(f'I_{i}')) for i in order))
+                result = sat_inst.check()
+                if result == z3.sat:
+                    sel2 = []
+                    m = sat_inst.model()
+                    sel2 = [z3.is_true(m.eval(z3.Bool(f'I_{i}'), model_completion=True)) for i in range(len(hyps))]
+                    del m
+                    break
+                else:
+                    return None
+                    if len(order) == 0:
+                        assert False
+                    order.pop()
+            
+            # _print(''.join(str(i) if i < 10 else '+' for i in badness), "badness")
+            # while True:
+            #     result = sat_inst.check(*(z3.Not(z3.Bool(f'I_{i}')) for i in order))
+            #     if result == z3.sat:
+            #         m = sat_inst.model()
+            #         sel2 = [z3.is_true(m.eval(z3.Bool(f'I_{i}'), model_completion=True)) for i in range(len(hyps))]
+            #         del m
+            #         break
+            #     else:
+            #         order.pop() # should be safe as we only add positive literal clauses
+            
+            for hyp, selected in zip(hyps, sel2):
+                if selected:
+                    solver.add_expr(hyp)
+            to_add = -1
+
+            while True:
+                r = solver.check()
+                _print(''.join('1' if v else '.' for v in sel2), r)
+    
+                if r == SatResult.unsat:
+                    return [i for i in range(len(hyps)) if sel2[i]]
+                elif r == SatResult.unknown:
+                    # order = [i for i in range(len(hyps)) if sel2[i]]
+                    # random.shuffle(order)
+                    cl = []
+                    for i in range(len(hyps)):
+                        if sel2[i]:
+                            cl.append(z3.Not(z3.Bool(f'I_{i}')))
+                    sat_inst.add(z3.Or(*cl))
+                    
+                    if to_add != -1:
+                        badness[to_add] += 1
+                    else:
+                        pass
+                        # for i in range(len(hyps)):
+                        #     if sel2[i]:
+                        #         badness[i] += 1
+                    unknown_count += 1
+                    break
+                elif r == SatResult.sat:
+                    trace = solver.get_trace()
+                    pre_state = trace.as_state(0)
+                    disprovers = [not pre_state.eval(hyps[i]) for i in range(len(hyps))]
+                    _print(''.join('-' if v else '.' for v in disprovers), '   model', sum(1 if v else 0 for v in disprovers))
+
+                    for i, dis, ssss in zip(range(len(hyps)), disprovers, sel2):
+                        if dis and ssss:
+                            assert False, hyps[i]
+                    # _print([solver.is_true(hyps[i]) for i in range(len(hyps))])
+                    # disprovers = [not(solver.is_true(hyps[i])) for i in range(len(hyps))]
+                    
+                    # _print("size of clause", sum([1 if v else 0 for i, v in enumerate(disprovers)]))
+                    sat_inst.add(z3.Or([z3.Bool(f'I_{i}') for i, v in enumerate(disprovers) if v]))
+                    if not any(disprovers):
+                        return trace
+                    to_add_possibilities = [i for i in range(len(hyps)) if disprovers[i]]
+                    # random.shuffle(to_add_possibilities)
+                    to_add_possibilities.sort(key = lambda i: badness[i])
+                    to_add = to_add_possibilities[0]
+                    # to_add = random.sample([i for i in range(len(hyps)) if disprovers[i]], 1)[0]
+                    solver.add_expr(hyps[to_add])
+                    sel2[to_add] = True
+                    unknown_count = 0
+                 
+        del solver
+
+# def _fancy_check_transition2(hyps: List[Expr], new_conc: Expr, tr: Expr, _print: Callable = print) -> Union[List[int], Trace]:
+#     timeout = 16.0
+#     while True:
+#         r = _fancy_check_transition2_internal(hyps, new_conc, tr, timeout=timeout, _print=_print)
+#         if r is None:
+#             _print(f"Restarting MARCO with timeout {timeout}")
+#             timeout *= 2
+#             continue
+#         return r
+
 async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDescriptor, log_prefix: str) -> None:
     sys.stdout = os.fdopen(stdout.id, 'w')
     sys.stdout.reconfigure(line_buffering=True)
@@ -364,7 +470,7 @@ async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDe
         if 'solve' in v:
             (expr_ids, timeout) = v['solve']
             if v['solver'] == 'cvc5-fancy':
-                r = _fancy_check_transition([exprs[i] for i in expr_ids], conc, tr, _print)
+                r = _fancy_check_transition2_internal([exprs[i] for i in expr_ids], conc, tr, timeout=v['unk_timeout'], _print=_print)
                 if isinstance(r, Trace):
                     await conn.send(RobustCheckResult(SatResult.sat, r))
                 else:
@@ -442,7 +548,7 @@ class AdvancedChecker(RobustChecker):
         self._log = log
         self._transitions: List[str] = [tr.name for tr in self._prog.transitions()]
         self._tr_formulas = {tr.name: tr.as_twostate_formula(self._prog.scope) for tr in self._prog.transitions()}
-        self._last_successful: Dict[str, str] = {}
+        self._last_successful: Dict[str, Tuple[str, float, float]] = {}
         self._log_id = _get_robust_id()
         self._query_id = 0
 
@@ -458,7 +564,7 @@ class AdvancedChecker(RobustChecker):
         log_prefix = self._get_log_prefix()
         formulas = [Not(conc), *_hyps]
         result: asyncio.Future[RobustCheckResult] = asyncio.Future()
-        strategies = [ ('z3-basic', 0.25), ('cvc5-basic', 0.5), ('z3-basic', 2.0), ('cvc5-basic', 5.0),('z3-basic', 10.0), ('cvc5-basic', 20.0)]
+        strategies = [ ('z3-basic', 0.25), ('cvc5-basic', 0.5), ('z3-basic', 2.0), ('cvc5-basic', 5.0), ('z3-basic', 10.0), ('cvc5-basic', 20.0)]
         def get_next_attempt() -> Iterable[Tuple[str, float]]:
             for attempt in range(1000000):
                 yield strategies[min(len(strategies)-1, attempt)]
@@ -511,20 +617,23 @@ class AdvancedChecker(RobustChecker):
         trs_unsat = {tr.name: False for tr in self._prog.transitions()}
         attempts_started = {tr.name: 0 for tr in self._prog.transitions()}
         result: asyncio.Future[RobustCheckResult] = asyncio.Future()
-        strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
-        def get_next_attempt() -> Iterable[Tuple[str, str, float]]:
+        #strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
+        #strategies = [('cvc5-fancy', 100000.0)]
+        strategies = [('cvc5-basic', 0.5, 0), ('z3-basic', 0.25, 0), ('cvc5-fancy', 20.0, 2), ('cvc5-fancy', 400.0, 16), ('cvc5-fancy', 1600.0, 64)]
+        
+        def get_next_attempt() -> Iterable[Tuple[str, Tuple[str, float, float]]]:
             while True:
                 for tr in self._transitions:
                     if not trs_unsat[tr]:
                         attempt_num = attempts_started[tr]
                         attempts_started[tr] += 1
                         if attempt_num == 0 and tr in self._last_successful:
-                            st = next(s for s in strategies if s[0] == self._last_successful[tr])
+                            st = self._last_successful[tr]
                         elif tr in self._last_successful:
                             st = strategies[min(len(strategies)-1, attempt_num-1)]
                         else:
                             st = strategies[min(len(strategies)-1, attempt_num)]
-                        yield (tr, *st)
+                        yield (tr, st)
         strategy_gen = iter(get_next_attempt())
         
  
@@ -534,12 +643,12 @@ class AdvancedChecker(RobustChecker):
                     with ScopedProcess(_forkserver, _main_worker_advanced_transition, FileDescriptor(self._log.fileno()), log_prefix) as conn:
                         await conn.send({'exprs': {i: hyps[i] for i in range(len(hyps))}})
                         while not result.done():
-                            (tr, solver_type, timeout) = next(strategy_gen)
-                            await conn.send({'formulas': (self._tr_formulas[tr], conc), 'tr-name': tr, 'solve': (list(range(len(hyps))), timeout), 'solver': solver_type})
+                            (tr, (solver_type, timeout, unk_timeout)) = next(strategy_gen)
+                            await conn.send({'formulas': (self._tr_formulas[tr], conc), 'tr-name': tr, 'solve': (list(range(len(hyps))), timeout), 'solver': solver_type, 'unk_timeout': unk_timeout})
                             resp: RobustCheckResult = await asyncio.wait_for(conn.recv(), timeout + 1)
                             # Save the success solver type for this transition so it is tried first next time
                             if resp.result != SatResult.unknown:
-                                self._last_successful[tr] = solver_type
+                                self._last_successful[tr] = (solver_type, timeout, unk_timeout)
                             if resp.result == SatResult.unsat:
                                 trs_unsat[tr] = True
                                 if all(trs_unsat.values()) and not result.done():
@@ -888,6 +997,11 @@ class IGSolver:
     def add_to_frame(self, f: Expr) -> None:
         self._frame.append(f)
         # TODO: invalidate all -> constraints that don't have pre-states satisfying f, and rework those predicates that are no longer unsep
+    
+    def add_negative_state(self, s: State) -> None:
+        i = self.add_local_state(s)
+        self._necessary_constraints.add(Neg(i))
+    
     async def solve(self, n_threads: int = 1, timeout: Optional[float] = None) -> Optional[Expr]:
         _log_ig_problem(self._log_prefix, self._rationale, Neg(0), list(self._reachable_constraints), self._states, self._frame, [inv for inv in syntax.the_program.invs()])
 
@@ -1579,7 +1693,35 @@ class ParallelFolIc3:
                     self._unsafe = True
                     return
                 (fn, st) = blockable
+                start = time.time()
                 new_solver = await self.parallel_inductive_generalize(fn, st, rationale="learning", timeout = None, prior_solver = prior_solver)
+                new_time = time.time()
+                time_to_generalize = new_time-start+1
+                generalizations_found = 0
+                while True:
+                    start = time.time()
+                    if safety not in self._pushing_blocker: break
+                    blockable = await self.blockable_state(fn,  self._pushing_blocker[safety], "learning")
+                    if blockable is None:
+                        print("Safety Violation!")
+                        self._unsafe = True
+                        return
+                    (fn2, st2) = blockable
+                    if fn2 != fn: break # exit if we aren't in the same frame
+                    new_solver.add_negative_state(self._states[st2])
+                    p = await new_solver.solve(self._threads_per_ig, timeout = time_to_generalize)
+                    if p is None:
+                        break
+                    print(f"Generalized to {p}")
+                    generalizations_found += 1
+                    self.add_predicate(p, fn2)
+                    await self.push_all()
+                    self.print_predicates()
+                    new_time = time.time()
+                    time_to_generalize -= new_time-start
+                    if time_to_generalize < 0.001: break
+                print(f"Generalized a total of {generalizations_found} times")
+                
                 prior_solver = new_solver
                 break
             else:
@@ -2047,18 +2189,20 @@ def fol_benchmark_solver(_: Solver) -> None:
         sys.stdout = open(utils.args.output, "w")
     print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
     data = pickle.load(open(utils.args.query, 'rb'))
-    if len(data) == 4:
-        (old_hyps, new_conc, minimize, transition_name) = cast(Tuple[List[Expr], Expr, Optional[bool], Optional[str]], data)
+    if len(data) == 2:
+        (old_hyps, new_conc) = cast(Tuple[List[Expr], Expr], data)
         states = 2
     else:
-        (old_hyps, new_conc, minimize) = cast(Tuple[List[Expr], Expr, Optional[bool]], data)
-        states = 1
+        assert False
     
     if True:
+        for e in old_hyps:
+            print("  ", e)
+        print("  ", new_conc)
         print("testing checker")
         start_time = time.time()
         checker = AdvancedChecker(syntax.the_program)
-        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 2, 600.0))
+        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
         end_time = time.time()
         print (r_r.result)
         print (f"=== Solution obtained in {end_time-start_time:0.3f}")
@@ -2067,7 +2211,7 @@ def fol_benchmark_solver(_: Solver) -> None:
         # print(checker._transitions)
 
         start_time = time.time()
-        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 2, 600.0))
+        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
         end_time = time.time()
         print (r_r.result)
         print (f"=== Solution obtained in {end_time-start_time:0.3f}")
@@ -2322,10 +2466,11 @@ def fol_debug_ig(_: Solver) -> None:
             i = human_inv.expr
             if not state_to_block.eval(i):
                 print(f"{i} is a candidate solution")
-                res = await robust_check_transition(prior_frame + [i], i, parallelism=10, timeout=500)
-                if res == z3.unsat:
+                checker = AdvancedChecker(syntax.the_program)
+                res = await checker.check_transition(prior_frame + [i], i, parallelism=10, timeout=500)
+                if res.result == SatResult.unsat:
                     print("relatively inductive (solution)")
-                elif res == z3.unknown:
+                elif res.result == SatResult.unknown:
                     print("relative inductiveness unknown")
                 else:
                     print("not relatively inductive (not solution)")
