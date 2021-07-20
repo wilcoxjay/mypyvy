@@ -227,17 +227,23 @@ class CVC5Solver:
         def _extract_rel(rel: RelationDecl, state: int) -> RelationInterp:
             callee = self._context.get_sym_term(rel.name, state)
             args = [self._solver.getDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
-            interp = {}
-            for t in itertools.product(*args):
-                interp[tuple(name_of_term(x) for x in t)] = str(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t))) == 'true'
+            interp: Dict[Tuple[str, ...], bool] = {}
+            if len(args) > 0:
+                for t in itertools.product(*args):
+                    interp[tuple(name_of_term(x) for x in t)] = str(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t))) == 'true'
+            else:
+                interp[()] = str(self._solver.getValue(callee)) == 'true'
             return interp
 
         def _extract_func(rel: FunctionDecl, state: int) -> FunctionInterp:
             callee = self._context.get_sym_term(rel.name, state)
             args = [self._solver.getDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
-            interp = {}
-            for t in itertools.product(*args):
-                interp[tuple(name_of_term(x) for x in t)] = name_of_term(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t)))
+            interp: Dict[Tuple[str, ...], str] = {}
+            if len(args) > 0:
+                for t in itertools.product(*args):
+                    interp[tuple(name_of_term(x) for x in t)] = name_of_term(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t)))
+            else:
+                interp[()] = name_of_term(self._solver.getValue(callee))
             return interp
         
         def _extract_const(rel: ConstantDecl, state: int) -> str:
