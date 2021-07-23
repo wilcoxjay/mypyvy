@@ -468,7 +468,8 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
         if 'block_last_separator' in v:
             sep.block_last_separator()
         if 'sep' in v:
-            minimized = False
+            minimized_reset_value = 'always-minimize-sep' in utils.args.expt_flags
+            minimized = minimized_reset_value
             while True:
                 print(label, f"Separating with prefix {prefix}")
                 start = time.time()
@@ -494,7 +495,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                         sep.add_constraint(c.map(mapping))
                         sep_constraints.add(c)
                         sep_constraints_order.append(c)
-                        minimized = False
+                        minimized = minimized_reset_value
                         eval_time += time.time() - start
                         break
                     else:
