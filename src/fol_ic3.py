@@ -11,6 +11,7 @@ import pickle
 import asyncio
 import itertools
 import signal
+import tempfile
 
 from dataclasses import dataclass
 from collections import defaultdict
@@ -482,6 +483,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                     p = formula_to_predicate(sep_r, prog.scope)
                 print(label, f"Internal candidate: {p}")
                 start = time.time()
+                evaled_constraints = []
                 for c in constraints:
                     if c in sep_constraints: continue
                     if not satisifies_constraint(c, p, states):
@@ -495,6 +497,8 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                         minimized = False
                         eval_time += time.time() - start
                         break
+                    else:
+                        evaled_constraints.append(c)
                 else:
                     eval_time += time.time() - start
                     # All known constraints are satisfied
@@ -505,7 +509,18 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                         print(label, f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
                         await conn.send({'candidate': p, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
                         break
+                this_eval_time = time.time() - start
+                if 'log-long-eval' in utils.args.expt_flags and this_eval_time > 0.1:
+                    with tempfile.NamedTemporaryFile(prefix='eval-', suffix='.pickle', dir=os.path.join(utils.args.log_dir, 'eval'), delete=False) as temp:
+                        states_to_save = {}
+                        for c in evaled_constraints:
+                            if c in sep_constraints: continue
+                            for s in c.states():
+                                if s not in states_to_save:
+                                    states_to_save[s] = states[s]
+                        pickle.dump((states_to_save, p), temp)
 
+                    
 
 @dataclass(eq=True, frozen=True)
 class Prefix:
@@ -584,25 +599,40 @@ class PrefixQueue:
         self._sig =  sig
         self._prefix_generators: Dict[Tuple[int, int, int], Iterator[Prefix]] = {} # maps (depth, alts, max_repeats) to a prefix generator
 
-        if logic == Logic.Universal:
-            pcs = [PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts=2)]
-        elif logic == Logic.EPR:
-            pcs = [PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.EPR, max_alt=2)]
-        elif logic == Logic.FOL:
-            pcs = [PrefixConstraints(Logic.Universal),
-                   PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.FOL, max_alt=2, max_repeated_sorts=2),
-                   PrefixConstraints(Logic.FOL, max_alt=2)]
+        if 'no-prefix-restrictions' not in utils.args.expt_flags:
+            # Prefix restrictions
+            if logic == Logic.Universal:
+                pcs = [
+                    PrefixConstraints(Logic.Universal),
+                    PrefixConstraints(Logic.Universal, max_repeated_sorts=2)]
+            elif logic == Logic.EPR:
+                pcs = [
+                    PrefixConstraints(Logic.Universal),
+                    PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.EPR, max_alt=2)]
+            elif logic == Logic.FOL:
+                pcs = [
+                    PrefixConstraints(Logic.Universal),
+                    PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.FOL, max_alt=2, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.FOL, max_alt=2)]
+            else:
+                assert False
         else:
-            assert False
+            # No prefix restrictions
+            if logic == Logic.Universal:
+                pcs = [PrefixConstraints(Logic.Universal)]
+            elif logic == Logic.EPR:
+                pcs = [PrefixConstraints(Logic.EPR, max_alt=2)]
+            elif logic == Logic.FOL:
+                pcs = [PrefixConstraints(Logic.FOL, max_alt=2)]
+            else:
+                assert False
         for _pc in pcs:
             if _pc.logic == Logic.EPR:
                 qe = [(self._sig.sort_indices[x], self._sig.sort_indices[y])
@@ -1407,32 +1437,33 @@ class ParallelFolIc3:
                         sol.set_result(None)
                     return
 
-                time_to_generalize = 4.0 * main_solve_time + 1
-                generalizations_found = 0
-                while True:
-                    gen_solve_start = time.time()
-                    if p is None:
-                        break
-                    new_blocker = await self._frames.speculative_push(p, b.frame, b)
-                    if new_blocker is None:
-                        break
-                    
-                    # The new state should satisfy the current candidate p
-                    assert eval_predicate(self._frames._states[new_blocker.state], p)
+                if 'no-multi-generalize' not in utils.args.expt_flags:
+                    time_to_generalize = 4.0 * main_solve_time + 1
+                    generalizations_found = 0
+                    while True:
+                        gen_solve_start = time.time()
+                        if p is None:
+                            break
+                        new_blocker = await self._frames.speculative_push(p, b.frame, b)
+                        if new_blocker is None:
+                            break
+                        
+                        # The new state should satisfy the current candidate p
+                        assert eval_predicate(self._frames._states[new_blocker.state], p)
 
-                    negative_states.add(new_blocker.state)
-                    ig_solver.add_negative_state(self._frames._states[new_blocker.state])
-                    new_p = await ig_solver.solve(self._threads_per_ig, timeout = time_to_generalize)
-                    if new_p is None:
-                        print("Failed to find generalized lemma in time")
-                        break
-                    p = new_p
-                    print(f"Generalized to {p}")
-                    generalizations_found += 1
-                    gen_solve_end = time.time()
-                    time_to_generalize -= gen_solve_end-gen_solve_start
-                    if time_to_generalize < 0.005: break
-                print(f"Generalized a total of {generalizations_found} times")
+                        negative_states.add(new_blocker.state)
+                        ig_solver.add_negative_state(self._frames._states[new_blocker.state])
+                        new_p = await ig_solver.solve(self._threads_per_ig, timeout = time_to_generalize)
+                        if new_p is None:
+                            print("Failed to find generalized lemma in time")
+                            break
+                        p = new_p
+                        print(f"Generalized to {p}")
+                        generalizations_found += 1
+                        gen_solve_end = time.time()
+                        time_to_generalize -= gen_solve_end-gen_solve_start
+                        if time_to_generalize < 0.005: break
+                    print(f"Generalized a total of {generalizations_found} times")
 
                 if not sol.done():
                     sol.set_result(p)
@@ -1554,7 +1585,7 @@ def p_fol_ic3(_: Solver) -> None:
     # Redirect stdout if we have a log directory
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
-        for dir in ['smt-queries', 'ig-problems', 'sep-unsep', 'sep-problems']:
+        for dir in ['smt-queries', 'ig-problems', 'sep-unsep', 'sep-problems', 'eval']:
             os.makedirs(os.path.join(utils.args.log_dir, dir), exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=True, encoding='utf8')
 
@@ -2038,6 +2069,27 @@ def fol_benchmark_ig(_: Solver) -> None:
         
     asyncio.run(run_query())
 
+
+def fol_benchmark_eval(_: Solver) -> None:
+    total = 0.0
+    for input_fname in os.listdir(utils.args.query):
+        with open(os.path.join(utils.args.query, input_fname), 'rb') as f:
+            try:
+                data: Tuple[Dict[int, State], Expr] = pickle.load(f)
+            except EOFError:
+                continue
+            (states, p) = data
+
+            start = time.time()
+            print(p)
+            for key, st in states.items():
+                print(st.eval(p), ','.join(f'{len(l)}' for l in st.univs.values()))
+            end = time.time()
+            print(f"elapsed: {end-start:0.3f}")
+            total += end-start
+    print(f"overall: {total:0.3f}")
+
+
 def fol_debug_ig(_: Solver) -> None:
     global _forkserver
     _forkserver = ForkServer()
@@ -2118,6 +2170,13 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
+    result.append(s)
+
+    s = subparsers.add_parser('fol-benchmark-eval', help='Test formula evaluation performance')
+    s.set_defaults(main=fol_benchmark_eval)
+    s.add_argument("--query", type=str, help="Query to benchmark")
+    s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
     result.append(s)
 
     s = subparsers.add_parser('fol-debug-ig', help='Debug a IG solution')
