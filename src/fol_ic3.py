@@ -25,7 +25,7 @@ import syntax
 from syntax import BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, TrueExpr, UnaryExpr
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
-from separators.separate import FixedImplicationSeparatorPyCryptoSat, Logic, PrefixConstraints
+from separators.separate import FixedImplicationSeparatorPyCryptoSat, FixedImplicationSeparatorPyCryptoSatCNF, Logic, PrefixConstraints, Separator
 
 import networkx
 import z3
@@ -432,7 +432,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
     sys.stdout.reconfigure(line_buffering=True) # type: ignore
     print("Started Worker")
     prog = syntax.the_program
-    sep = cast(FixedImplicationSeparatorPyCryptoSat, None)
+    sep: Separator = cast(Separator, None)
     label = '[?]'
     sep_pc = PrefixConstraints()
     if utils.args.logic == 'epr':
@@ -456,7 +456,10 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
         if 'prefix' in v:
             prefix, k_cubes, expt_flags, label = v['prefix'], v['k_cubes'], v['expt_flags'], v['label']
             del sep
-            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=False)
+            if 'sep-cnf' not in utils.args.expt_flags:
+                sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=False)
+            else:
+                sep = FixedImplicationSeparatorPyCryptoSatCNF(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=False)
             sep_constraints = set()
             sep_constraints_order = []
             mapping = {}
@@ -629,9 +632,9 @@ class PrefixQueue:
             if logic == Logic.Universal:
                 pcs = [PrefixConstraints(Logic.Universal)]
             elif logic == Logic.EPR:
-                pcs = [PrefixConstraints(Logic.EPR, max_alt=2)]
+                pcs = [PrefixConstraints(Logic.EPR)]
             elif logic == Logic.FOL:
-                pcs = [PrefixConstraints(Logic.FOL, max_alt=2)]
+                pcs = [PrefixConstraints(Logic.FOL)]
             else:
                 assert False
         for _pc in pcs:
@@ -2082,11 +2085,11 @@ def fol_benchmark_eval(_: Solver) -> None:
             (states, p) = data
 
             start = time.time()
-            print(p)
             for key, st in states.items():
-                print(st.eval(p), ','.join(f'{len(l)}' for l in st.univs.values()))
+                value = st.eval(p)
+                #print(st.eval(p), ','.join(f'{len(l)}' for l in st.univs.values()))
             end = time.time()
-            print(f"elapsed: {end-start:0.3f}")
+            print(f"elapsed: {1000.0*(end-start)/len(states):0.3f} ms/eval {p}")
             total += end-start
     print(f"overall: {total:0.3f}")
 
