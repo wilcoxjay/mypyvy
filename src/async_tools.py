@@ -295,3 +295,12 @@ class ScopedTasks:
         self.futs.extend(asyncio.ensure_future(a) for a in aws)
     async def __aexit__(self, a: Any, b: Any, c: Any) -> None:
         await _cancel_and_wait_for_cleanup(self.futs)
+
+
+_forkserver: Optional['ForkServer'] = None # This needs to be initialized in 'main', before launching threads/asyncio but after globals (syntax.the_program, etc.) are filled in.
+
+def get_forkserver() -> ForkServer:
+    global _forkserver
+    if _forkserver is None:
+        _forkserver = ForkServer()
+    return _forkserver

@@ -1,7 +1,7 @@
 
 import re, itertools, random
 
-from typing import Any, Dict, Set, Tuple, cast
+from typing import Any, ContextManager, Dict, Protocol, Set, Tuple, cast
 from dataclasses import dataclass, field
 from enum import Enum
 from semantics import FunctionInterp, RelationInterp, Trace, Universe
@@ -13,6 +13,13 @@ class SatResult(Enum):
     unsat = 'unsat'
     unknown = 'unknown'
     def __str__(self) -> str: return self.value
+
+class SMTSolver(Protocol):
+    def new_scope(self, n_states:int) -> ContextManager: ...
+    def add_expr(self, e: Expr) -> None: ...
+    def check(self) -> SatResult: ...
+    def is_true(self, e: Expr) -> bool: ...
+    def get_trace(self) -> Trace: ...
 
 @dataclass
 class _CVC5Context:
@@ -129,7 +136,7 @@ class _CVC5Context:
         print(f"Repr: {repr(e)}")
         assert False
 
-class CVC5Solver:
+class CVC5Solver(SMTSolver):
     def __init__(self, program: Program, timeout: int = 0) -> None:
         self._program = program
         self._solver = pycvc5.Solver()
