@@ -125,7 +125,7 @@ class MypyvyArgs:
     epr_edges: List[Tuple[str,str]]
     separator: str
     log_dir: str
-    expt_flags: Set[str]
+    expt_flags: List[str]
     all_subclauses: bool
     optimize_ctis: bool
     json: bool

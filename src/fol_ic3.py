@@ -1224,10 +1224,15 @@ def p_fol_ic3(_: Solver) -> None:
             os.makedirs(os.path.join(utils.args.log_dir, dir), exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=True, encoding='utf8')
 
+    if 'no-epr' in utils.args.expt_flags and utils.args.logic == 'epr':
+        utils.args.logic = 'fol'
+
     # Print initial header with command line
     print(f"ParallelFolIC3 log for {os.path.basename(utils.args.filename)}")
     print(f"Command line: {' '.join(sys.argv)}")
-
+    print(f"Expt-flags: {', '.join(utils.args.expt_flags)}")
+    print(f"Logic: {utils.args.logic}")
+    
     get_forkserver() # Cause the forkserver to start here
     async def main() -> None:
         # We need to do this inside a function so that the asyncio objects in the constructor of
@@ -1766,7 +1771,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=p_fol_ic3)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--cpus", dest="cpus", type=int, default=10, help="CPU threads to use (best effort only)")
     result.append(s)
@@ -1774,7 +1779,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s = subparsers.add_parser('fol-extract', help='Extract conjuncts to a file')
     s.set_defaults(main=fol_extract)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     result.append(s)
 
     s = subparsers.add_parser('fol-learn', help='Learn a given formula')
@@ -1790,14 +1795,14 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     result.append(s)
 
     s = subparsers.add_parser('fol-benchmark-ig', help='Test IG query solver')
     s.set_defaults(main=fol_benchmark_ig)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
@@ -1807,14 +1812,14 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_benchmark_eval)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     result.append(s)
 
     s = subparsers.add_parser('fol-debug-ig', help='Debug a IG solution')
     s.set_defaults(main=fol_debug_ig)
     s.add_argument("--query", type=str, help="Solution to query")
     s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
-    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: set(x.split(',')), default=set(), help="Experimental flags")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     # s.add_argument("--output", type=str, help="Output to file")
     result.append(s)
