@@ -142,16 +142,29 @@ def typecheck_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> 
                               (e.callee,))
             return sort  # bogus
 
-        if (isinstance(d, RelationDecl) or isinstance(d, FunctionDecl)) and \
-           d.mutable and not scope.mutable_allowed():
-            name = 'relation' if isinstance(d, RelationDecl) else 'function'
-            utils.print_error(e.span, f'Only immutable {name}s can be referenced in this context')
-            # note that we don't return here. typechecking can continue.
-            # see NOTE(typechecking-malformed-programs)
+        if isinstance(d, RelationDecl) or isinstance(d, FunctionDecl):
+            if d.mutable and not scope.mutable_allowed():
+                name = 'relation' if isinstance(d, RelationDecl) else 'function'
+                utils.print_error(e.span,
+                                  f'Only immutable {name}s can be referenced in this context, but {d.name} is mutable')
+                # note that we don't return here. typechecking can continue.
+                # see NOTE(typechecking-malformed-programs)
+            elif e.n_new > 0:
+                if not d.mutable:
+                    utils.print_error(e.span, f'{d.name} is immutable but primed')
+                if not scope.new_allowed(e.n_new):
+                    if e.n_new == 1:
+                        utils.print_error(e.span, f'{d.name} cannot be primed here')
+                    else:
+                        utils.print_error(e.span, f'{d.name} is primed too many timed here')
 
-        if isinstance(d, DefinitionDecl) and not scope.call_allowed(d):
+        if isinstance(d, DefinitionDecl) and not scope.call_allowed(d, e.n_new):
+            if e.n_new > 0:
+                prime_msg = f' with {e.n_new} primes'
+            else:
+                prime_msg = ''
             utils.print_error(e.span,
-                              f'a {d.num_states}-state definition cannot be called from a '
+                              f'a {d.num_states}-state definition cannot be called{prime_msg} from a '
                               f'{scope.num_states}-state context inside {scope.current_state_index} nested new()s!')
 
         if not d.arity or len(e.args) != len(d.arity):
@@ -187,11 +200,20 @@ def typecheck_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> 
             utils.print_error(e.span, 'Function %s must be applied to arguments' % (e.name,))
             return sort  # bogus
 
-        if (isinstance(d, RelationDecl) or isinstance(d, ConstantDecl)) \
-           and d.mutable and not scope.mutable_allowed():
-            name = 'relation' if isinstance(d, RelationDecl) else 'constant'
-            utils.print_error(e.span, f'Only immutable {name}s can be referenced in this context')
-            return sort  # bogus
+        if isinstance(d, RelationDecl) or isinstance(d, ConstantDecl):
+            if d.mutable and not scope.mutable_allowed():
+                name = 'relation' if isinstance(d, RelationDecl) else 'constant'
+                utils.print_error(e.span, f'Only immutable {name}s can be referenced in this context')
+                return sort  # bogus
+
+            elif e.n_new > 0:
+                if not d.mutable:
+                    utils.print_error(e.span, f'{d.name} is immutable but primed')
+                if not scope.new_allowed(e.n_new):
+                    if e.n_new == 1:
+                        utils.print_error(e.span, f'{d.name} cannot be primed here')
+                    else:
+                        utils.print_error(e.span, f'{d.name} is primed too many timed here')
 
         if isinstance(d, RelationDecl):
             if d.arity:
@@ -206,9 +228,21 @@ def typecheck_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> 
             if d.arity:
                 utils.print_error(e.span, 'Definition %s must be applied to arguments' % (e.name,))
                 return sort  # bogus
+            if not scope.call_allowed(d, e.n_new):
+                if e.n_new > 0:
+                    prime_msg = f' with {e.n_new} primes'
+                else:
+                    prime_msg = ''
+                utils.print_error(e.span,
+                                  f'a {d.num_states}-state definition cannot be called{prime_msg} from a '
+                                  f'{scope.num_states}-state context inside {scope.current_state_index} nested new()s!')
+
             check_constraint(e.span, sort, d.sort)
             return BoolSort
         else:
+            if e.n_new > 0:
+                utils.print_error(e.span, f'{e.name} is a variable, but is primed here')
+
             vsort, = d
             vsort = check_constraint(e.span, sort, vsort)
             return vsort
