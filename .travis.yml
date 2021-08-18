@@ -12,4 +12,4 @@ install:
   - pip install -r requirements.txt
   - wget https://github.com/CVC4/CVC4/releases/download/1.8/cvc4-1.8-x86_64-linux-opt
   - chmod +x cvc4-1.8-x86_64-linux-opt
-script: make test
+script: make test-ci

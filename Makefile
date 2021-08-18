@@ -14,6 +14,8 @@ SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*
 
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd-old pd sep
 
+test-ci: check check-imports unit typecheck verify trace updr pd-old pd sep
+
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
 	grep the_program $(SRC_FILES) || true
