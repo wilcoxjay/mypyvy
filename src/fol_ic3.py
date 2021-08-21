@@ -23,7 +23,7 @@ from separators.logic import Signature
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, TrueExpr, UnaryExpr
+from syntax import AppExpr, BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, TrueExpr, UnaryExpr, faithful_print_prog
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparatorPyCryptoSat, FixedImplicationSeparatorPyCryptoSatCNF, Logic, PrefixConstraints, Separator
@@ -1407,8 +1407,67 @@ def fol_extract(solver: Solver) -> None:
         else:
             print('--logic=universal', utils.args.filename)
     
-
+    if 'print-old-transitions' in utils.args.expt_flags:
+        def has_new(e: Expr) -> bool:
+            if isinstance(e, UnaryExpr) and e.op == 'NEW':
+                return True
+            if isinstance(e, (syntax.Bool, syntax.Int)):
+                return False
+            elif isinstance(e, UnaryExpr):
+                return has_new(e.arg)
+            elif isinstance(e, BinaryExpr):
+                return has_new(e.arg1) or has_new(e.arg2)
+            elif isinstance(e, NaryExpr):
+                return any(has_new(arg) for arg in e.args)
+            elif isinstance(e, AppExpr):
+                return any(has_new(arg) for arg in e.args)
+            elif isinstance(e, QuantifierExpr):
+                return has_new(e.body)
+            elif isinstance(e, syntax.Id):
+                return False
+            elif isinstance(e, IfThenElse):
+                return has_new(e.branch) or has_new(e.then) or has_new(e.els)
+            elif isinstance(e, Let):
+                return has_new(e.val) or has_new(e.body)
+            else:
+                assert False, (type(e), e)
+        def to_old(e: Expr) -> Expr:
+            if not has_new(e):
+                return AppExpr('old', (e,), span=e.span)
+            if isinstance(e, UnaryExpr) and e.op == 'NEW':
+                return e.arg
+            
+            if isinstance(e, (syntax.Bool, syntax.Int)):
+                return e
+            elif isinstance(e, UnaryExpr):
+                return UnaryExpr(e.op, to_old(e.arg), span=e.span)
+            elif isinstance(e, BinaryExpr):
+                return BinaryExpr(e.op, to_old(e.arg1), to_old(e.arg2), span=e.span)
+            elif isinstance(e, NaryExpr):
+                return NaryExpr(e.op, tuple(to_old(arg) for arg in e.args), span=e.span)
+            elif isinstance(e, AppExpr):
+                new_args = tuple(to_old(arg) for arg in e.args)
+                return AppExpr(e.callee, new_args, span=e.span)
+            elif isinstance(e, QuantifierExpr):
+                return QuantifierExpr(e.quant, e.binder.vs, to_old(e.body), span=e.span)
+            elif isinstance(e, syntax.Id):
+                assert False, "should have already concluded not has-new"
+            elif isinstance(e, IfThenElse):
+                return IfThenElse(to_old(e.branch), to_old(e.then), to_old(e.els), span=e.span)
+            elif isinstance(e, Let):
+                assert len(e.binder.vs) == 1
+                new_val = to_old(e.val)
+                new_body = to_old(e.body)
+                return Let(e.binder.vs[0], new_val, new_body, span=e.span)
+            else:
+                assert False, (type(e), e)
+            
+        for tr in syntax.the_program.transitions():
+            tr.expr = to_old(tr.expr)
+            
+        print(syntax.the_program)
 def fol_learn(solver: Solver) -> None:
+    raise NotImplementedError
     # get_forkserver()
     # async def main() -> None:
     #     sig = prog_to_sig(syntax.the_program)
