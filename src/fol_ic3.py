@@ -865,7 +865,7 @@ class IC3Frames:
                 made_changes = True
                 continue
             if cex.result == SatResult.unsat:
-                print(f"Pushed {p} to frame {i+1}")
+                print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p}")
                 self._frame_numbers[index] = i + 1
                 self._event_frame_update.set()
                 self._event_frame_update.clear()
@@ -896,7 +896,7 @@ class IC3Frames:
             if i in self._safeties: continue # don't mark safety properties as redundant
             result = await self._redundancy_checker.check_implication([self._lemmas[j] for j in self.frame_lemmas(None) if i != j], self._lemmas[i], parallelism=self._pushing_parallelism, timeout=10)
             if result.result == SatResult.unsat:
-                print(self._lemmas[i], "is redundant")
+                print(f"Redundant lemma: {self._lemmas[i]}")
                 self._redundant_lemmas.add(i)
 
     def _check_for_f_infinity(self) -> bool:
@@ -909,7 +909,7 @@ class IC3Frames:
             for index, p in enumerate(self._lemmas):
                 p_frame = self._frame_numbers[index]
                 if p_frame is not None and i < p_frame:
-                    print(f"Pushed {p} to frame inf")
+                    print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame inf: {p}")
                     self._frame_numbers[index] = None
                     made_changes = True
         return made_changes
@@ -1217,10 +1217,8 @@ class ParallelFolIc3:
             for safety in sorted(self._frames._safeties, key = lambda x: IC3Frames.frame_key(self._frames._frame_numbers[x])):
                 blockable = await self._frames.get_blocker(safety)
                 if blockable is None:
-                    if self._frames._frame_numbers[safety] is not None:
-                        print("Safety Violation!")
-                        self._unsafe = True
-                    return
+                    break # try again with new safety property (as by the time we call get_blocker() the safety property may have moved)
+                    # we rely on cancellation (from await self._frames.wait_for_completion()) to stop this loop
                 new_solver = await self.parallel_inductive_generalize(blockable, rationale="learning", timeout = None, prior_solver = prior_solver)                
                 prior_solver = new_solver
                 break
