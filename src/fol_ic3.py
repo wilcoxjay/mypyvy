@@ -44,11 +44,6 @@ def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State]
             return False
     return True
 
-def _log_ig_problem(name:str, rationale: str, block: Neg, pos: List[Constraint], states: Union[List[State], Dict[int, State]], prior_frame: List[Expr], golden: List[InvariantDecl]) -> None:
-    if utils.args.log_dir == '': return
-    with open(os.path.join(utils.args.log_dir, 'ig-problems', f'{name}.pickle'), 'wb') as f:
-        pickle.dump((rationale, block, pos, {i: states[i] for c in [block, *pos] for i in c.states()}, prior_frame, golden), f)
-
 class Logging:
     def __init__(self, log_dir: str) -> None:
         self._log_dir = log_dir
@@ -351,7 +346,11 @@ class PrefixQueue:
         self._pcs_worked_on[self._outstanding[p]] -= 1
         del self._outstanding[p]
 
-          
+def _log_ig_problem(name:str, rationale: str, block: Neg, pos: List[Constraint], states: Union[List[State], Dict[int, State]], prior_frame: List[Expr], golden: List[InvariantDecl]) -> None:
+    if utils.args.log_dir == '': return
+    with open(os.path.join(utils.args.log_dir, 'ig-problems', f'{name}.pickle'), 'wb') as f:
+        pickle.dump((rationale, block, pos, {i: states[i] for c in [block, *pos] for i in c.states()}, prior_frame, golden), f)
+   
 
 class IGSolver:
     def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int, prior_solver: Optional['IGSolver'] = None):
@@ -818,79 +817,79 @@ class IC3Frames:
             return await self._blockable_state(new_blocker)
 
 
-    # Pushing
-    async def _push_once(self) -> bool:
-        made_changes = False
-        for index, p in sorted(enumerate(self._lemmas), key = lambda x: IC3Frames.frame_key(self._frame_numbers[x[0]])):
-            # No need to push things already in F_inf or bad lemmas
-            i = self._frame_numbers[index]
-            if i is None or index in self._bad_lemmas:
-                continue
-            if index in self._immediate_pushing_blocker:
-                blocker = self._immediate_pushing_blocker[index]
-                # Check if blocking state is reachable (thus we should never push)
-                if blocker in self._reachable:
-                    assert index in self._bad_lemmas
-                    continue
-                # Check if the blocker state is still in F_i
-                if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
-                    blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)                    
-                    self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-                    continue
-                # The blocker is invalidated
-                self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
-                del self._immediate_pushing_blocker[index]
-            # Either there is no known blocker or it was just invalidated by some new lemma in F_i
-            # First check if any former blockers still work
-            for former_blocker in self._former_pushing_blockers[index]:
-                if all(self.eval(lemma, former_blocker) for lemma in self.frame_lemmas(i)):
-                    print(f"Using former blocker {former_blocker}")
-                    self._immediate_pushing_blocker[index] = former_blocker
-                    blocker_data = Blocker(state=former_blocker, frame=i, lemma=index, type_is_predecessor=False)
-                    self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-            # We found a former one to use
-            if index in self._immediate_pushing_blocker:
-                continue
+    async def _push_lemma(self, index: int) -> bool:
+        p, i = self._lemmas[index], self._frame_numbers[index]
+        assert self._push_lock.locked()
 
-
-            # Check if any new blocker exists
-            # cex = check_transition(self._solver, list(self._predicates[j] for j in self.frame_predicates(i)), p, minimize=False)
-            fp = set(self.frame_lemmas(i))
-            if index not in self._push_robust_checkers:
-                self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
-            # cex = await robust_check_transition(list(self._predicates[j] for j in fp), p, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=self._threads_per_ig, log=self._logs._smt_log)
-            cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism)
-            if fp != set(self.frame_lemmas(i)):
-                # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
-                made_changes = True
-                continue
-            if cex.result == SatResult.unsat:
-                print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p}")
-                self._frame_numbers[index] = i + 1
-                self._event_frame_update.set()
-                self._event_frame_update.clear()
-                made_changes = True
-            elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
-                trace = cex.trace
-                # Add the blocker and the sucessor state. We need the successor state because
-                # if we show the blocker is reachable, it is actually the successor that invalidates
-                # the lemma and is required to mark it as bad
-                blocker = await self.add_state(trace.as_state(0))
-                blocker_successor = await self.add_state(trace.as_state(1))
-                await self.add_transition(blocker, blocker_successor)
-
-                self._immediate_pushing_blocker[index] = blocker
-                blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
+        # No need to push things already in F_inf or bad lemmas
+        if i is None or index in self._bad_lemmas:
+            return False
+        if index in self._immediate_pushing_blocker:
+            blocker = self._immediate_pushing_blocker[index]
+            # Check if blocking state is reachable (thus we should never push)
+            if blocker in self._reachable:
+                assert index in self._bad_lemmas
+                return False
+            # Check if the blocker state is still in F_i
+            if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
+                blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)                    
                 self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-                # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
-                self._event_frame_update.set()
-                self._event_frame_update.clear()
-            else:
-                print(f"cex {cex.result}")
-                assert False
-        return made_changes
+                return False
+            # The blocker is invalidated
+            self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
+            del self._immediate_pushing_blocker[index]
+        
+        # Either there is no known blocker or it was just invalidated by some new lemma in F_i
+        # First check if any former blockers still work
+        for former_blocker in self._former_pushing_blockers[index]:
+            if all(self.eval(lemma, former_blocker) for lemma in self.frame_lemmas(i)):
+                print(f"Using former blocker {former_blocker}")
+                self._immediate_pushing_blocker[index] = former_blocker
+                blocker_data = Blocker(state=former_blocker, frame=i, lemma=index, type_is_predecessor=False)
+                self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+        # We found a former one to use
+        if index in self._immediate_pushing_blocker:
+            return False
+
+
+        # Check if any new blocker exists
+        
+        if index not in self._push_robust_checkers:
+            self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
+        
+        fp = set(self.frame_lemmas(i))
+        cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism)
+        assert fp == set(self.frame_lemmas(i))
+
+        if cex.result == SatResult.unsat:
+            print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p} (core size: {len(cex.core)}/{len(fp)})")
+            self._frame_numbers[index] = i + 1
+            self._event_frame_update.set()
+            self._event_frame_update.clear()
+            return True
+        elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
+            trace = cex.trace
+            # Add the blocker and the sucessor state. We need the successor state because
+            # if we show the blocker is reachable, it is actually the successor that invalidates
+            # the lemma and is required to mark it as bad
+            blocker = await self.add_state(trace.as_state(0))
+            blocker_successor = await self.add_state(trace.as_state(1))
+            await self.add_transition(blocker, blocker_successor)
+
+            self._immediate_pushing_blocker[index] = blocker
+            blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
+            self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+            # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
+            self._event_frame_update.set()
+            self._event_frame_update.clear()
+            return False
+        else:
+            print(f"cex {cex.result}")
+            assert False
 
     async def _check_f_inf_redundancy(self) -> None:
+        start = time.time()
+        
         f_inf = list(self.frame_lemmas(None))
         for i in f_inf:
             if i in self._safeties: continue # don't mark safety properties as redundant
@@ -898,21 +897,33 @@ class IC3Frames:
             if result.result == SatResult.unsat:
                 print(f"Redundant lemma: {self._lemmas[i]}")
                 self._redundant_lemmas.add(i)
+        
+        print(f"Checked redundancy in {time.time() - start:0.3f} sec")
 
-    def _check_for_f_infinity(self) -> bool:
-        made_changes = False
-        for i in range(max(x for x in self._frame_numbers if x is not None)):
-            # Check to see if any frame
-            if i in self._frame_numbers:
-                continue
-            # Frame has no predicates that aren't also in later frames. Move any such predicates to F_inf
-            for index, p in enumerate(self._lemmas):
-                p_frame = self._frame_numbers[index]
-                if p_frame is not None and i < p_frame:
-                    print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame inf: {p}")
-                    self._frame_numbers[index] = None
-                    made_changes = True
-        return made_changes
+    async def push(self) -> None:
+        async with self._push_lock:
+            start = time.time()
+            frame_num = 0
+
+            while True:
+                for index in range(len(self._lemmas)):
+                    if self._frame_numbers[index] == frame_num:
+                        await self._push_lemma(index)
+
+                if frame_num > 0 and not any(fn == frame_num for fn in self._frame_numbers):
+                    # frame is empty, sweep all greater finite frames to f_inf
+                    swept_to_f_inf = 0
+                    for index in range(len(self._lemmas)):
+                        fn = self._frame_numbers[index]
+                        if fn is not None and frame_num <= fn:
+                            print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame inf: {self._lemmas[index]}")
+                            self._frame_numbers[index] = None
+                            swept_to_f_inf += 1
+                    if swept_to_f_inf > 0:
+                        await self._check_f_inf_redundancy()
+                    break
+                frame_num += 1
+            print(f"Pushing completed in {time.time() - start:0.3f} sec")
 
     async def wait_for_frame_update(self) -> None:
         await self._event_frame_update.wait()
@@ -926,23 +937,6 @@ class IC3Frames:
                 # TODO: check for unsafe-ness
                 # if any():
                 #     pass
-
-    async def push(self) -> None:
-        async with self._push_lock:
-            start = time.time()
-            while True:
-                pushed = await self._push_once()
-                made_infinite = self._check_for_f_infinity()
-                if made_infinite and 'no-f-inf-redundancy' not in utils.args.expt_flags:
-                    await self._check_f_inf_redundancy()
-        
-                # We did something, so go see if more can happen
-                if pushed or made_infinite:
-                    continue
-                break
-            print(f"Pushing completed in {time.time() - start:0.3f} sec")
-            self._event_frame_update.set()
-            self._event_frame_update.clear()
 
     async def get_blocker(self, lemm: int) -> Optional[Blocker]:
         async with self._push_lock:
@@ -1496,6 +1490,7 @@ def fol_extract(solver: Solver) -> None:
             tr.expr = to_old(tr.expr)
             
         print(syntax.the_program)
+        
 def fol_learn(solver: Solver) -> None:
     raise NotImplementedError
     # get_forkserver()
@@ -1559,121 +1554,6 @@ def fol_learn(solver: Solver) -> None:
     #                 return
     # asyncio.run(main())
     pass
-
-def _check_core_unsat_times(transition: DefinitionDecl, core: List[Expr], new_conc: Expr, use_cvc4: bool) -> None:
-    for i in range(10):
-        s = Solver(use_cvc4=use_cvc4)
-        t = s.get_translator(2)
-        s.add(t.translate_expr(New(Not(new_conc))))
-        s.add(t.translate_expr(transition.as_twostate_formula(syntax.the_program.scope)))
-        s.z3solver.set('seed', random.randint(1,2**64-1))
-        s.z3solver.set('ctrl_c', False)
-        for c in core:
-            s.add(t.translate_expr(c))
-        start = time.time()
-        r = s.check(timeout=100000)
-        print(f'{r} {time.time()-start:0.3f}')
-            
-
-def _minimize_unsat_core(transition: DefinitionDecl, core: List[Expr], new_conc: Expr) -> None:
-    s = Solver()
-    t = s.get_translator(2)
-    s.add(t.translate_expr(New(Not(new_conc))))
-    s.add(t.translate_expr(transition.as_twostate_formula(syntax.the_program.scope)))
-    s.z3solver.set('seed', random.randint(1,2**64-1))
-    s.z3solver.set('ctrl_c', False)
-    final_core = core[:0]
-    T = 1000
-    while len(core) > 0:
-        with s.new_frame():
-            for c in final_core + core[1:]:
-                s.add(t.translate_expr(c))
-            r = s.check(timeout=T)
-            print(f'final_core={len(final_core)} rest={len(core)} res={r}')
-            if r == z3.unknown:
-                T = T + 1000
-                continue
-            if r == z3.unsat:
-                pass
-            else:
-                final_core = final_core + [core[0]]
-            core = core[1:]
-            T = 1000
-    print(f"minimized core has size {len(final_core)}")
-    for f in final_core:
-        print(f'  {f}')
-    print("With z3:")
-    _check_core_unsat_times(transition, final_core, new_conc, False)
-    print("With cvc4:")
-    _check_core_unsat_times(transition, final_core, new_conc, True)
-    
-def _find_unsat_core(transition: DefinitionDecl, old_hyps: List[Expr], new_conc: Expr) -> None:
-    s = Solver()
-    s.z3solver.set('seed', random.randint(1,2**64-1))
-    s.z3solver.set('ctrl_c', False)
-    t = s.get_translator(2)
-    s.add(t.translate_expr(New(Not(new_conc))))
-    s.add(t.translate_expr(transition.as_twostate_formula(syntax.the_program.scope)))
-    
-    current_core: List[Expr] = []
-    all_hyps = list(old_hyps)
-    start = time.time()
-    current_core = list(all_hyps[:1])
-    T = 1000
-    while True:
-        with s.new_frame():
-            for c in current_core:
-                s.add(t.translate_expr(c))
-            print(f'{len(current_core)} {T}')
-            r = s.check(timeout=T)
-            print(r)
-            if r == z3.unsat:
-                print(f'found core in {time.time()-start}sec ({len(current_core)})')
-                _minimize_unsat_core(transition, current_core, new_conc)
-                return
-            if r == z3.unknown:
-                T = T + 1000
-                if len(current_core) > 0:
-                    random.shuffle(current_core)
-                    current_core = current_core[:-1]
-            if r == z3.sat:
-                T = max(100, (T * 3)//4)
-                random.shuffle(all_hyps)
-                for e in all_hyps:
-                    if e in current_core: continue
-                    current_core.append(e)
-                    break
-
-    print("UNKNOWN??")
-
-def _incremental_unsat(s: z3.Solver, assertions: List[z3.ExprRef]) -> z3.CheckSatResult:
-    s.push()
-    try:
-        s.set('timeout', 3000)
-        s.set('seed', random.randint(0, 1000000000))
-        while True:
-            r = s.check()
-            if r == z3.unsat:
-                print("unsat")
-                return z3.unsat
-            if r == z3.unknown:
-                print("unknown")
-                return z3.unknown
-            if r == z3.sat:
-                print("sat ", end ='', flush=True)
-                m = s.model()
-                random.shuffle(assertions)
-                for i, a in enumerate(assertions):
-                    if not z3.is_true(m.eval(a, model_completion=True)):
-                        print(f"adding {i} ", end ='', flush=True)
-                        s.add(a)
-                        assertions = assertions[:i]+assertions[i+1:]
-                        break
-                else:
-                    print("sat")
-                    return z3.sat
-    finally:
-        s.pop()
 
 def add_epr_edges(edges: Set[Tuple[str, str]], expr: z3.ExprRef, polarity: bool = True, univ_sorts: Set[str] = set()) -> None:
     if z3.is_quantifier(expr):
@@ -1904,6 +1784,23 @@ def fol_debug_frames(_: Solver) -> None:
                 print(lemmas[i])
             print(f"trimmed {len(orig_frame) - len(frame)} lemmas of {len(orig_frame)}")
 
+        async def check_frame_redundancy3(lemmas: Dict, frames: Dict) -> None:
+            frame_numbers, bad_lemmas, safeties, initial_conditions = frames['frame_numbers'], frames['bad_lemmas'], frames['safeties'], frames['initial_conditions']
+            redundancy_frames = set()
+            checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w'))
+            
+            for index in sorted(range(len(frame_numbers)), key = lambda x: IC3Frames.frame_key(frame_numbers[x]), reverse=True):
+                orig_frame = [i for i in range(len(frame_numbers)) if IC3Frames.frame_leq(frame_numbers[index], frame_numbers[i]) and i not in redundancy_frames]
+                result = await checker.check_implication([lemmas[j] for j in orig_frame if index != j], lemmas[index], parallelism=2, timeout=100)
+                if result.result == SatResult.unsat:
+                    print(lemmas[index], "is redundant")
+                    redundancy_frames.add(index)
+            
+            for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
+                fn_str = f"{frame_num:2}" if frame_num is not None else ' +'
+                code = '$' if index in safeties else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else 'r' if index in redundancy_frames else ' '
+                print(f"lemma {fn_str} {code} {lemmas[index]}")
+
         async def check_golden_invariant(lemmas: Dict, frames: Dict) -> None:
             golden_invariant = [e.expr for e in syntax.the_program.invs()]
             checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w'))
@@ -1925,10 +1822,13 @@ def fol_debug_frames(_: Solver) -> None:
                     found = frame
             return found
 
-        frame_of_interest = find_frame_by_time(100000)
+        frame_of_interest = find_frame_by_time(4808)
         print_frames(lemmas, frame_of_interest)
-        print("\nRedundancy of F_inf:")
-        await check_frame_redundancy2(lemmas, frame_of_interest, None)
+        # for i in sorted(set(frame_of_interest['frame_numbers']), key=lambda x: (0, x) if x is not None else (1,0)):
+        #     print(f"\nRedundancy of F_{i}:")
+        #     await check_frame_redundancy2(lemmas, frame_of_interest, i)
+        await check_frame_redundancy3(lemmas, frame_of_interest)
+
         print("\nGolden invariant implication:")
         await check_golden_invariant(lemmas, frame_of_interest)
     asyncio.run(main())
