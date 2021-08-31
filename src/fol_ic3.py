@@ -14,9 +14,10 @@ import signal
 import tempfile
 
 from dataclasses import dataclass
-from collections import defaultdict
+from collections import Counter, defaultdict
 
-from async_tools import AsyncConnection, ScopedProcess, ScopedTasks, get_forkserver
+from trace_tools import Tracer, load_trace, trace
+from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
 from robust_check import AdvancedChecker, ClassicChecker, RobustChecker
 from semantics import State
 from separators.logic import Signature
@@ -47,17 +48,17 @@ def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State]
 class Logging:
     def __init__(self, log_dir: str) -> None:
         self._log_dir = log_dir
-        self._sep_log_fname = '/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'sep.log')
-        self._sep_log: TextIO = open(self._sep_log_fname, 'w') if log_dir == '' else open(self._sep_log_fname, 'w', buffering=1)
-        self._smt_log: TextIO = open('/dev/null', 'w') if log_dir == '' else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w', buffering=1)
-        self._ig_log: TextIO  = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'),  'w', buffering=1)
+        supress_logs = True
+        self._sep_log: TextIO = open('/dev/null', 'w') if log_dir == '' or supress_logs else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w', buffering=1)
+        self._smt_log: TextIO = open('/dev/null', 'w') if log_dir == '' or supress_logs else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w', buffering=1)
+        self._ig_log: TextIO  = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
         self._lemmas_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'lemmas.pickle'), 'wb')
         self._frames_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'frames.pickle'), 'wb')
 
 
-async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str) -> None:
-    sys.stdout = open(log_fname, "a")
-    sys.stdout.reconfigure(line_buffering=True) # type: ignore
+async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescriptor) -> None:
+    sys.stdout = os.fdopen(log.id, 'w')
+    sys.stdout.reconfigure(line_buffering=True)
     print("Started Worker")
     prog = syntax.the_program
     sep: Separator = cast(Separator, None)
@@ -103,9 +104,9 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
             minimized = minimized_reset_value
             while True:
                 print(label, f"Separating with prefix {prefix}")
-                start = time.time()
+                start = time.perf_counter()
                 sep_r = sep.separate(minimize=minimized)
-                sep_time += time.time() - start
+                sep_time += time.perf_counter() - start
                 if sep_r is None:
                     print(label, f"UNSEP |core|={len(sep_constraints)} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
                     await conn.send({'unsep': True, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
@@ -114,7 +115,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                 with prog.scope.n_states(1):
                     p = formula_to_predicate(sep_r, prog.scope)
                 print(label, f"Internal candidate: {p}")
-                start = time.time()
+                start = time.perf_counter()
                 evaled_constraints = []
                 for c in constraints:
                     if c in sep_constraints: continue
@@ -127,12 +128,12 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                         sep_constraints.add(c)
                         sep_constraints_order.append(c)
                         minimized = minimized_reset_value
-                        eval_time += time.time() - start
+                        eval_time += time.perf_counter() - start
                         break
                     else:
                         evaled_constraints.append(c)
                 else:
-                    eval_time += time.time() - start
+                    eval_time += time.perf_counter() - start
                     # All known constraints are satisfied
                     if not minimized:
                         minimized = True
@@ -141,7 +142,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
                         print(label, f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
                         await conn.send({'candidate': p, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
                         break
-                this_eval_time = time.time() - start
+                this_eval_time = time.perf_counter() - start
                 if 'log-long-eval' in utils.args.expt_flags and this_eval_time > 0.1:
                     with tempfile.NamedTemporaryFile(prefix='eval-', suffix='.pickle', dir=os.path.join(utils.args.log_dir, 'eval'), delete=False) as temp:
                         states_to_save = {}
@@ -156,7 +157,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log_fname: str
 
 @dataclass(eq=True, frozen=True)
 class Prefix:
-    __slots__= ['quant_blocks', 'begin_forall']
+    # __slots__= ['quant_blocks', 'begin_forall']
     quant_blocks: Tuple[Tuple[int, ...], ...]
     begin_forall: bool
 
@@ -302,12 +303,12 @@ class PrefixQueue:
                 return False
         return True
 
-    def get_prefix(self) -> Prefix:
+    def get_prefix(self) -> Tuple[Prefix, int]:
 
         if len(self._front_of_queue) > 0:
             (p, pc_index) = self._front_of_queue.pop()
             self._outstanding[p] = pc_index
-            return p
+            return p, pc_index
 
         while True:
             possiblities = [(i, count) for (i, count) in enumerate(self._pcs_worked_on) if not self._pcs_stopped[i]]
@@ -329,7 +330,7 @@ class PrefixQueue:
                     continue
                 self._total_prefixes_considered += 1
                 self._outstanding[candidate] = pc_index
-                return candidate
+                return candidate, pc_index
         
     
     # Return a prefix to the front of the queue. Used to support resuming after a successful separation with new constraints
@@ -399,9 +400,11 @@ class IGSolver:
         return len(self._states) - 1
 
 
-    async def check_candidate(self, checker: RobustChecker, p: Expr) -> Union[Constraint, SatResult]:
+    async def check_candidate(self, checker: RobustChecker, p: Expr, span: Tracer.Span) -> Union[Constraint, SatResult]:
         # F_0 => p?
-        initial_state = await checker.check_implication([init.expr for init in syntax.the_program.inits()], p, parallelism=2, timeout=300)
+        with span.span('SMT-init') as s:
+            initial_state = await checker.check_implication([init.expr for init in syntax.the_program.inits()], p, parallelism=2, timeout=300)
+            s.data(result=initial_state.result)
         if initial_state.result == SatResult.sat and isinstance(initial_state.trace, Trace):
             self._print("Adding initial state")
             return Pos(self.add_local_state(initial_state.trace.as_state(0)))
@@ -409,7 +412,9 @@ class IGSolver:
             self._print("Warning, implication query returned unknown")
 
         # F_i-1 ^ p => wp(p)?
-        edge = await checker.check_transition([p, *self._frame], p, parallelism=2, timeout=300)
+        with span.span('SMT-tr') as s:
+            edge = await checker.check_transition([p, *self._frame], p, parallelism=2, timeout=300)
+            s.data(result=edge.result)
         if edge.result == SatResult.sat and isinstance(edge.trace, Trace):
             self._print(f"Adding edge")
             return Imp(self.add_local_state(edge.trace.as_state(0)), self.add_local_state(edge.trace.as_state(1)))
@@ -451,7 +456,7 @@ class IGSolver:
         i = self.add_local_state(s)
         self._necessary_constraints.add(Neg(i))
     
-    async def solve(self, n_threads: int = 1, timeout: Optional[float] = None) -> Optional[Expr]:
+    async def solve(self, n_threads: int = 1, timeout: Optional[float] = None, span: Tracer.Span = Tracer.dummy_span()) -> Optional[Expr]:
         _log_ig_problem(self._log_prefix, self._rationale, Neg(0), list(self._reachable_constraints), self._states, self._frame, [inv for inv in syntax.the_program.invs()])
 
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
@@ -483,116 +488,123 @@ class IGSolver:
 
                 return [x for x in itertools.chain.from_iterable(itertools.zip_longest(*cores)) if x is not None]
 
-            with ScopedProcess(get_forkserver(), _main_IG2_worker, self._sig, self._logs._sep_log_fname) as conn:
+            with ScopedProcess(get_forkserver(), _main_IG2_worker, self._sig, FileDescriptor(self._logs._sep_log.fileno())) as conn:
                 # Loop over prefixes
                 while True:
                     # get a prefix.
                     try:
-                        prefix = self._prefix_queue.get_prefix()
+                        prefix, pcs_index = self._prefix_queue.get_prefix()
                     except StopIteration:
                         self._print("Stopping worker")
                         return
-                    
-                    try:
-                        pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
-                        k_cubes = 3 if any(not fa for (fa, _) in prefix.linearize()) else 1
-                        debug_this_process = False # pre_pp == 'Aquorum. Around. Around. Avalue. Avalue. Enode.'
-                        
-                        n_discovered_constraints = 0
-                        # start a separator instance
-                        worker_prefix_sent = False
+                    with span.span("Pre") as prefix_span:
+                        try:
+                            pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + self._sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
+                            k_cubes = 3 if any(not fa for (fa, _) in prefix.linearize()) else 1
+                            debug_this_process = False # pre_pp == 'Aquorum. Around. Around. Avalue. Avalue. Enode.'
+                            prefix_span.data(prefix=prefix, category=pcs_index)
 
-                        if prefix in self._unsep_cores:
-                            previous_solve_constraints: List[Constraint] = list(self._unsep_cores[prefix])
-                        else:
-                            previous_solve_constraints = []
+                            n_discovered_constraints = 0
+                            # start a separator instance
+                            worker_prefix_sent = False
 
-                        next_constraints = list(self._necessary_constraints) + predict_useful_constraints(prefix, previous_solve_constraints)
-
-                        start_time = time.time()
-                        # logged_problem = False
-                        # log_name = f"ig-{self._identity}-{self._sep_problem_index}"
-                        # self._sep_problem_index += 1
-
-                        self._print(f"Trying: {pre_pp}")
-                        # Loop for adding constraints for a particular prefix
-                        while True:
-                            if solution.done():
-                                self._print("Solution is .done(), exiting")
-                                return
-                            await conn.send({'constraints': send_constraints(next_constraints), 'sep': None,
-                                            **({'prefix': prefix.linearize(), 'k_cubes': k_cubes, 'expt_flags': utils.args.expt_flags, 'label': self._log_prefix} if not worker_prefix_sent else {})})
-                            worker_prefix_sent = True
-                            # if not logged_problem and time.time() - start_time > 5:
-                            #     _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
-                            #     logged_problem = True
-                            if debug_this_process:
-                                    self._print(f"Separating")
-                                
-                            v = await conn.recv()
-                            if 'candidate' in v:
-                                p, sep_constraints, (time_sep, time_eval) = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints']), cast(Tuple[float, float], v['times'])
-                                self._unsep_cores[prefix] = sep_constraints # share our constraints with others that may be running
-                                if debug_this_process:
-                                    self._print(f"Checking {p}")
-                                start = time.time()
-                                new_constraint_result = await self.check_candidate(checker, p)
-
-                                if debug_this_process:
-                                    self._print(f"Received unsat? {new_constraint_result == SatResult.unsat} sat? {isinstance(new_constraint_result, Constraint)}")
-                                if new_constraint_result == SatResult.unknown:
-                                    self._print(f"Solver returned unknown ({p})")
-                                    await conn.send({'block_last_separator': None})
-                                    continue
-                                if isinstance(new_constraint_result, Constraint):
-                                    next_constraints = [new_constraint_result, *self._necessary_constraints, *predict_useful_constraints(prefix, previous_solve_constraints)]
-                                    self._total_constraints_found += 1
-                                    n_discovered_constraints += 1
-                                    if debug_this_process:
-                                        self._print(f"Discovered: {len(sep_constraints)}/{n_discovered_constraints} in {time.time() - start}")
-                                    continue
-                                elif new_constraint_result == SatResult.unsat:
-                                    if not solution.done():
-                                        # if utils.args.log_dir != '':
-                                        #     states_needed = set(s for c in sep_constraints for s in c.states())
-                                        #     structs = dict((i, s) for i, s in enumerate(self._states) if i in states_needed)
-                                        #     with open(os.path.join(utils.args.log_dir, f'ig-solutions/ig-solution-{self._log_prefix}.pickle'), 'wb') as output:
-                                        #         pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': self._frame}, output)
-
-                                        self._prefix_queue.return_prefix(prefix)
-                                        t = time.time() - start_time
-                                        previous_constraints_used = len([c for c in sep_constraints if c in self._previous_constraints])
-                                        self._print(f"SEP: {pre_pp} with core={len(sep_constraints)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
-                                        self._print(f"Learned {p}")
-                                        solution.set_result(p)
-                                    return
-                                assert False
-
-                            elif 'unsep' in v:
-                                core: List[Constraint] = v['constraints']
-                                (time_sep, time_eval) = cast(Tuple[float, float], v['times'])
-                                t = time.time() - start_time
-                                previous_constraints_used = len([c for c in core if c in self._previous_constraints])
-                                extra = ""
-                                self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}){extra}")
-                                self._unsep_cores[prefix] = core
-                                self._prefix_queue.complete_prefix(prefix)
-                                break
+                            if prefix in self._unsep_cores:
+                                previous_solve_constraints: List[Constraint] = list(self._unsep_cores[prefix])
                             else:
-                                assert False
-                    except asyncio.CancelledError:
-                        self._prefix_queue.return_prefix(prefix)
-                        raise
+                                previous_solve_constraints = []
+
+                            next_constraints = list(self._necessary_constraints) + predict_useful_constraints(prefix, previous_solve_constraints)
+
+                            start_time = time.perf_counter()
+                            # logged_problem = False
+                            # log_name = f"ig-{self._identity}-{self._sep_problem_index}"
+                            # self._sep_problem_index += 1
+
+                            self._print(f"Trying: {pre_pp}")
+                            # Loop for adding constraints for a particular prefix
+                            while True:
+                                if solution.done():
+                                    self._print("Solution is .done(), exiting")
+                                    return
+                                with prefix_span.span('Sep') as sep_span:
+                                    await conn.send({'constraints': send_constraints(next_constraints), 'sep': None,
+                                                    **({'prefix': prefix.linearize(), 'k_cubes': k_cubes, 'expt_flags': utils.args.expt_flags, 'label': self._log_prefix} if not worker_prefix_sent else {})})
+                                    worker_prefix_sent = True
+                                    # if not logged_problem and time.perf_counter() - start_time > 5:
+                                    #     _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
+                                    #     logged_problem = True
+                                    if debug_this_process:
+                                            self._print(f"Separating")
+                                        
+                                    v = await conn.recv()
+                                if 'candidate' in v:
+                                    p, sep_constraints, (time_sep, time_eval) = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints']), cast(Tuple[float, float], v['times'])
+                                    sep_span.data(core=len(sep_constraints), time_sep=time_sep, time_eval=time_eval)
+                                    self._unsep_cores[prefix] = sep_constraints # share our constraints with others that may be running
+                                    if debug_this_process:
+                                        self._print(f"Checking {p}")
+                                    start = time.perf_counter()
+                                    new_constraint_result = await self.check_candidate(checker, p, prefix_span)
+
+                                    if debug_this_process:
+                                        self._print(f"Received unsat? {new_constraint_result == SatResult.unsat} sat? {isinstance(new_constraint_result, Constraint)}")
+                                    if new_constraint_result == SatResult.unknown:
+                                        self._print(f"Solver returned unknown ({p})")
+                                        await conn.send({'block_last_separator': None})
+                                        continue
+                                    if isinstance(new_constraint_result, Constraint):
+                                        next_constraints = [new_constraint_result, *self._necessary_constraints, *predict_useful_constraints(prefix, previous_solve_constraints)]
+                                        self._total_constraints_found += 1
+                                        n_discovered_constraints += 1
+                                        if debug_this_process:
+                                            self._print(f"Discovered: {len(sep_constraints)}/{n_discovered_constraints} in {time.perf_counter() - start}")
+                                        continue
+                                    elif new_constraint_result == SatResult.unsat:
+                                        if not solution.done():
+                                            # if utils.args.log_dir != '':
+                                            #     states_needed = set(s for c in sep_constraints for s in c.states())
+                                            #     structs = dict((i, s) for i, s in enumerate(self._states) if i in states_needed)
+                                            #     with open(os.path.join(utils.args.log_dir, f'ig-solutions/ig-solution-{self._log_prefix}.pickle'), 'wb') as output:
+                                            #         pickle.dump({'states': structs, 'constraints': sep_constraints, 'solution': p, 'prior_frame': self._frame}, output)
+
+                                            self._prefix_queue.return_prefix(prefix)
+                                            t = time.perf_counter() - start_time
+                                            previous_constraints_used = len([c for c in sep_constraints if c in self._previous_constraints])
+                                            self._print(f"SEP: {pre_pp} with core={len(sep_constraints)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
+                                            self._print(f"Learned {p}")
+                                            prefix_span.data(sep=True)
+                                            solution.set_result(p)
+                                        return
+                                    assert False
+
+                                elif 'unsep' in v:
+                                    core: List[Constraint] = v['constraints']
+                                    (time_sep, time_eval) = cast(Tuple[float, float], v['times'])
+                                    sep_span.data(core=len(core), time_sep=time_sep, time_eval=time_eval)
+                                    t = time.perf_counter() - start_time
+                                    previous_constraints_used = len([c for c in core if c in self._previous_constraints])
+                                    extra = ""
+                                    self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}){extra}")
+                                    self._unsep_cores[prefix] = core
+                                    self._prefix_queue.complete_prefix(prefix)
+                                    prefix_span.data(unsep=True)
+                                    break
+                                else:
+                                    assert False
+                        except asyncio.CancelledError:
+                            self._prefix_queue.return_prefix(prefix)
+                            prefix_span.data(cancelled=True)
+                            raise
 
         async def logger() -> None:
-            query_start = time.time()
+            query_start = time.perf_counter()
             self._print(f"Starting IG query with timeout {timeout}")
             try:
                 while True:
                     await asyncio.sleep(30)
-                    self._print(f"time: {time.time() - query_start:0.3f} sec constraints: {self._total_constraints_found} prefixes: {self._total_prefixes_considered} epr-skipped: {self._total_skipped_prefixes}")
+                    self._print(f"time: {time.perf_counter() - query_start:0.3f} sec constraints: {self._total_constraints_found} prefixes: {self._total_prefixes_considered} epr-skipped: {self._total_skipped_prefixes}")
             finally:
-                self._print(f"finished in: {time.time() - query_start:0.3f} sec",
+                self._print(f"finished in: {time.perf_counter() - query_start:0.3f} sec",
                             f"constraints: {self._total_constraints_found} prefixes: {self._total_prefixes_considered} epr-skipped: {self._total_skipped_prefixes}",
                             f"({'cancelled' if solution.cancelled() else 'done'})")
 
@@ -617,7 +629,7 @@ class Blocker:
 
 class IC3Frames:
     FrameNum = Optional[int]
-    def __init__(self, logs: Logging, parallelism: int = 1) -> None:
+    def __init__(self, logs: Logging, span: Tracer.Span, parallelism: int = 1) -> None:
         self._states: List[State] = [] # List of discovered states (excluding some internal cex edges)
         self._initial_states: Set[int] = set() # States satisfying the initial conditions
         self._transitions: Set[Tuple[int, int]] = set() # Set of transitions between states (s,t)
@@ -644,6 +656,7 @@ class IC3Frames:
         self._push_lock = asyncio.Lock()
         self._event_frame_update = asyncio.Event()
         self._logs = logs
+        self._span = span
         self._pushing_parallelism = parallelism
         
         self._push_robust_checkers: Dict[int, RobustChecker] = {}
@@ -817,113 +830,122 @@ class IC3Frames:
             return await self._blockable_state(new_blocker)
 
 
-    async def _push_lemma(self, index: int) -> bool:
+    async def _push_lemma(self, index: int, span: Tracer.Span) -> bool:
         p, i = self._lemmas[index], self._frame_numbers[index]
         assert self._push_lock.locked()
 
         # No need to push things already in F_inf or bad lemmas
         if i is None or index in self._bad_lemmas:
             return False
-        if index in self._immediate_pushing_blocker:
-            blocker = self._immediate_pushing_blocker[index]
-            # Check if blocking state is reachable (thus we should never push)
-            if blocker in self._reachable:
-                assert index in self._bad_lemmas
-                return False
-            # Check if the blocker state is still in F_i
-            if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
-                blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)                    
-                self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-                return False
-            # The blocker is invalidated
-            self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
-            del self._immediate_pushing_blocker[index]
-        
-        # Either there is no known blocker or it was just invalidated by some new lemma in F_i
-        # First check if any former blockers still work
-        for former_blocker in self._former_pushing_blockers[index]:
-            if all(self.eval(lemma, former_blocker) for lemma in self.frame_lemmas(i)):
-                print(f"Using former blocker {former_blocker}")
-                self._immediate_pushing_blocker[index] = former_blocker
-                blocker_data = Blocker(state=former_blocker, frame=i, lemma=index, type_is_predecessor=False)
-                self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-        # We found a former one to use
-        if index in self._immediate_pushing_blocker:
-            return False
+        with span.span("PushLemma") as span:
+            span.data(lemma=index)
+            with span.span("ImBlocker"):
+                if index in self._immediate_pushing_blocker:
+                    blocker = self._immediate_pushing_blocker[index]
+                    # Check if blocking state is reachable (thus we should never push)
+                    if blocker in self._reachable:
+                        assert index in self._bad_lemmas
+                        return False
+                    # Check if the blocker state is still in F_i
+                    if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
+                        blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)                    
+                        self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+                        return False
+                    # The blocker is invalidated
+                    self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
+                    del self._immediate_pushing_blocker[index]
+            
+
+            # Either there is no known blocker or it was just invalidated by some new lemma in F_i
+            # First check if any former blockers still work
+            with span.span("Former"):
+                for former_blocker in self._former_pushing_blockers[index]:
+                    if all(self.eval(lemma, former_blocker) for lemma in self.frame_lemmas(i)):
+                        print(f"Using former blocker {former_blocker}")
+                        self._immediate_pushing_blocker[index] = former_blocker
+                        blocker_data = Blocker(state=former_blocker, frame=i, lemma=index, type_is_predecessor=False)
+                        self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+                # We found a former one to use
+                if index in self._immediate_pushing_blocker:
+                    return False
 
 
-        # Check if any new blocker exists
-        
-        if index not in self._push_robust_checkers:
-            self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
-        
-        fp = set(self.frame_lemmas(i))
-        cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism)
-        assert fp == set(self.frame_lemmas(i))
+            # Check if any new blocker exists
+            
+            with span.span("SMTpush") as smt_span:
+                if index not in self._push_robust_checkers:
+                    self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
+                
+                fp = set(self.frame_lemmas(i))
+                cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism)
+                assert fp == set(self.frame_lemmas(i))
 
-        if cex.result == SatResult.unsat:
-            print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p} (core size: {len(cex.core)}/{len(fp)})")
-            self._frame_numbers[index] = i + 1
-            self._event_frame_update.set()
-            self._event_frame_update.clear()
-            return True
-        elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
-            trace = cex.trace
-            # Add the blocker and the sucessor state. We need the successor state because
-            # if we show the blocker is reachable, it is actually the successor that invalidates
-            # the lemma and is required to mark it as bad
-            blocker = await self.add_state(trace.as_state(0))
-            blocker_successor = await self.add_state(trace.as_state(1))
-            await self.add_transition(blocker, blocker_successor)
+                if cex.result == SatResult.unsat:
+                    print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p} (core size: {len(cex.core)}/{len(fp)})")
+                    smt_span.data(pushed=True)
+                    self._frame_numbers[index] = i + 1
+                    self._event_frame_update.set()
+                    self._event_frame_update.clear()
+                    return True
+                elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
+                    trace = cex.trace
+                    # Add the blocker and the sucessor state. We need the successor state because
+                    # if we show the blocker is reachable, it is actually the successor that invalidates
+                    # the lemma and is required to mark it as bad
+                    blocker = await self.add_state(trace.as_state(0))
+                    blocker_successor = await self.add_state(trace.as_state(1))
+                    await self.add_transition(blocker, blocker_successor)
 
-            self._immediate_pushing_blocker[index] = blocker
-            blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
-            self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-            # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
-            self._event_frame_update.set()
-            self._event_frame_update.clear()
-            return False
-        else:
-            print(f"cex {cex.result}")
-            assert False
+                    self._immediate_pushing_blocker[index] = blocker
+                    blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
+                    self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+                    # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
+                    self._event_frame_update.set()
+                    self._event_frame_update.clear()
+                    return False
+                else:
+                    print(f"cex {cex.result}")
+                    assert False
 
-    async def _check_f_inf_redundancy(self) -> None:
-        start = time.time()
+    async def _check_f_inf_redundancy(self, push_span: Tracer.Span) -> None:
+        with push_span.span('Redundancy'):
+            start = time.perf_counter()
         
-        f_inf = list(self.frame_lemmas(None))
-        for i in f_inf:
-            if i in self._safeties: continue # don't mark safety properties as redundant
-            result = await self._redundancy_checker.check_implication([self._lemmas[j] for j in self.frame_lemmas(None) if i != j], self._lemmas[i], parallelism=self._pushing_parallelism, timeout=10)
-            if result.result == SatResult.unsat:
-                print(f"Redundant lemma: {self._lemmas[i]}")
-                self._redundant_lemmas.add(i)
-        
-        print(f"Checked redundancy in {time.time() - start:0.3f} sec")
+            f_inf = list(self.frame_lemmas(None))
+            for i in f_inf:
+                if i in self._safeties: continue # don't mark safety properties as redundant
+                result = await self._redundancy_checker.check_implication([self._lemmas[j] for j in self.frame_lemmas(None) if i != j], self._lemmas[i], parallelism=self._pushing_parallelism, timeout=10)
+                if result.result == SatResult.unsat:
+                    print(f"Redundant lemma: {self._lemmas[i]}")
+                    self._redundant_lemmas.add(i)
+            
+            print(f"Checked redundancy in {time.perf_counter() - start:0.3f} sec")
 
     async def push(self) -> None:
         async with self._push_lock:
-            start = time.time()
-            frame_num = 0
+            with self._span.span('Push') as push_span:
+                start = time.perf_counter()
+                frame_num = 0
 
-            while True:
-                for index in range(len(self._lemmas)):
-                    if self._frame_numbers[index] == frame_num:
-                        await self._push_lemma(index)
-
-                if frame_num > 0 and not any(fn == frame_num for fn in self._frame_numbers):
-                    # frame is empty, sweep all greater finite frames to f_inf
-                    swept_to_f_inf = 0
+                while True:
                     for index in range(len(self._lemmas)):
-                        fn = self._frame_numbers[index]
-                        if fn is not None and frame_num <= fn:
-                            print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame inf: {self._lemmas[index]}")
-                            self._frame_numbers[index] = None
-                            swept_to_f_inf += 1
-                    if swept_to_f_inf > 0:
-                        await self._check_f_inf_redundancy()
-                    break
-                frame_num += 1
-            print(f"Pushing completed in {time.time() - start:0.3f} sec")
+                        if self._frame_numbers[index] == frame_num:
+                            await self._push_lemma(index, push_span)
+
+                    if frame_num > 0 and not any(fn == frame_num for fn in self._frame_numbers):
+                        # frame is empty, sweep all greater finite frames to f_inf
+                        swept_to_f_inf = 0
+                        for index in range(len(self._lemmas)):
+                            fn = self._frame_numbers[index]
+                            if fn is not None and frame_num <= fn:
+                                print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame inf: {self._lemmas[index]}")
+                                self._frame_numbers[index] = None
+                                swept_to_f_inf += 1
+                        if swept_to_f_inf > 0:
+                            await self._check_f_inf_redundancy(push_span)
+                        break
+                    frame_num += 1
+                print(f"Pushing completed in {time.perf_counter() - start:0.3f} sec")
 
     async def wait_for_frame_update(self) -> None:
         await self._event_frame_update.wait()
@@ -1026,10 +1048,11 @@ class IC3Frames:
 
 class ParallelFolIc3:
     FrameNum = Optional[int]
-    def __init__(self) -> None:
+    def __init__(self, span: Tracer.Span) -> None:
         
         # Logging, etc
         self._start_time: float = 0
+        self._root_span = span
         self._logs = Logging(utils.args.log_dir)
         self._next_ig_query_index = 0
 
@@ -1039,11 +1062,11 @@ class ParallelFolIc3:
         self._threads_per_ig = max(1, thread_budget//2) if 'no-heuristic-pushing' not in utils.args.expt_flags else thread_budget
                
         self._current_push_heuristic_tasks: Set[Tuple[int,int]] = set() # Which (frame, state) pairs are being worked on by the push heuristic?
-        self._frames = IC3Frames(self._logs, self._threads_per_ig)
+        self._frames = IC3Frames(self._logs, self._root_span, self._threads_per_ig)
         
     def print_frames(self) -> None:
         self._frames.print_lemmas()
-        elapsed = time.time() - self._start_time
+        elapsed = time.perf_counter() - self._start_time
         print(f"time: {elapsed:0.3f} sec")
         self._frames.log_frames(elapsed = elapsed)
 
@@ -1072,40 +1095,42 @@ class ParallelFolIc3:
         
         negative_states = set([b.state])
         sol: asyncio.Future[Optional[Expr]] = asyncio.Future()
-        async with ScopedTasks() as tasks:
-            async def frame_updater()-> None:
-                while True:
-                    current_frame = set(self._frames.frame_lemmas(b.frame-1))
-                    if ig_frame != current_frame:
-                        for f in current_frame - ig_frame:
-                            ig_solver.add_to_frame(self._frames._lemmas[f])
-                    await self._frames.wait_for_frame_update()
+        
+        async def frame_updater()-> None:
+            while True:
+                current_frame = set(self._frames.frame_lemmas(b.frame-1))
+                if ig_frame != current_frame:
+                    for f in current_frame - ig_frame:
+                        ig_solver.add_to_frame(self._frames._lemmas[f])
+                await self._frames.wait_for_frame_update()
 
-            async def concurrent_block()-> None:
-                while True:
-                    if all(any(not self._frames.eval(l, n) for l in self._frames.frame_lemmas(b.frame)) for n in negative_states):
-                        print(f"States blocked in frame {b.frame} by concurrent task")
-                        if not sol.done():
-                            sol.set_result(None)
-                        else:
-                            break
-                    await self._frames.wait_for_frame_update()
-
-            async def solver() -> None:
-                main_solve_start = time.time()
-                p = await ig_solver.solve(self._threads_per_ig, timeout = timeout)
-                main_solve_time = time.time() - main_solve_start
-
-                if p is None:
+        async def concurrent_block()-> None:
+            while True:
+                if all(any(not self._frames.eval(l, n) for l in self._frames.frame_lemmas(b.frame)) for n in negative_states):
+                    print(f"States blocked in frame {b.frame} by concurrent task")
                     if not sol.done():
                         sol.set_result(None)
-                    return
+                    else:
+                        break
+                await self._frames.wait_for_frame_update()
 
-                if 'no-multi-generalize' not in utils.args.expt_flags:
-                    time_to_generalize = 1.5 * main_solve_time + 0.1
-                    generalizations_found = 0
-                    while True:
-                        gen_solve_start = time.time()
+        async def solver(IG_span: Tracer.Span) -> None:
+            with IG_span.span('Solve') as solve_span:
+                main_solve_start = time.perf_counter()
+                p = await ig_solver.solve(self._threads_per_ig, timeout = timeout, span = solve_span)
+                main_solve_time = time.perf_counter() - main_solve_start
+
+            if p is None:
+                if not sol.done():
+                    sol.set_result(None)
+                return
+
+            if 'no-multi-generalize' not in utils.args.expt_flags:
+                time_to_generalize = 1.5 * main_solve_time + 0.1
+                generalizations_found = 0
+                while True:
+                    with IG_span.span('Gen') as solve_span:
+                        gen_solve_start = time.perf_counter()
                         if p is None:
                             break
                         new_blocker = await self._frames.speculative_push(p, b.frame, b)
@@ -1117,26 +1142,32 @@ class ParallelFolIc3:
 
                         negative_states.add(new_blocker.state)
                         ig_solver.add_negative_state(self._frames._states[new_blocker.state])
-                        new_p = await ig_solver.solve(self._threads_per_ig, timeout = time_to_generalize)
+
+                        new_p = await ig_solver.solve(self._threads_per_ig, timeout = time_to_generalize, span = solve_span)
+
                         if new_p is None:
                             print("Failed to find generalized lemma in time")
                             break
                         p = new_p
                         print(f"Generalized to {p}")
                         generalizations_found += 1
-                        gen_solve_end = time.time()
+                        gen_solve_end = time.perf_counter()
                         time_to_generalize -= gen_solve_end-gen_solve_start
                         if time_to_generalize < 0.005: break
-                    print(f"Generalized a total of {generalizations_found} times")
+                print(f"Generalized a total of {generalizations_found} times")
 
-                if not sol.done():
-                    sol.set_result(p)
+            if not sol.done():
+                sol.set_result(p)
 
-            tasks.add(frame_updater())
-            tasks.add(concurrent_block())
-            tasks.add(solver())
-            final_p = await sol
-
+        
+        with self._root_span.span('IG', ig_solver._identity) as IG_span:
+            IG_span.data(rationale=rationale)
+            async with ScopedTasks() as tasks:
+                tasks.add(frame_updater())
+                tasks.add(concurrent_block())
+                tasks.add(solver(IG_span))
+                final_p = await sol
+            IG_span.data(result=None if final_p is None else str(final_p))
         if final_p is None:
             print(f"IG query cancelled ({b.state} in frame {b.frame} for {rationale})")
             return ig_solver
@@ -1218,20 +1249,26 @@ class ParallelFolIc3:
                 break
             else:
                 return
+    
+    async def flush_trace(self) -> None:
+        while True:
+            self._root_span.flush()
+            await asyncio.sleep(3)
 
     async def run(self) -> None:
-        self._start_time = time.time()
+        self._start_time = time.perf_counter()
         await self.init()
         await self._frames.push()
         self.print_frames()
         async with ScopedTasks() as tasks:
+            tasks.add(self.flush_trace())
             if 'no-heuristic-pushing' not in utils.args.expt_flags:
                 tasks.add(self.heuristic_pushing_to_the_top_worker())
             # tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
             await self._frames.wait_for_completion()
 
-        print(f"Elapsed: {time.time() - self._start_time:0.2f} sec")
+        print(f"Elapsed: {time.perf_counter() - self._start_time:0.3f} sec")
         if all(self._frames._frame_numbers[i] is None for i in self._frames._safeties):
             print("Program is SAFE.")
             for frame, (index, p) in zip(self._frames._frame_numbers, enumerate(self._frames._lemmas)):
@@ -1272,8 +1309,10 @@ def p_fol_ic3(_: Solver) -> None:
             print("End of tasks.", flush=True)
         signal.signal(signal.SIGUSR1, print_tasks)
         # asyncio.get_event_loop().set_debug(True)
-        p = ParallelFolIc3()
-        await p.run()
+        trace_file = os.path.join(utils.args.log_dir, "trace.pickle") if utils.args.log_dir else '/dev/null'
+        with trace(open(trace_file, 'wb')) as tracer:
+            p = ParallelFolIc3(tracer)
+            await p.run()
     asyncio.run(main())
 
 
@@ -1633,19 +1672,19 @@ def fol_benchmark_solver(_: Solver) -> None:
             print("  ", e)
         print("  ", new_conc)
         print("testing checker")
-        start_time = time.time()
+        start_time = time.perf_counter()
         checker = AdvancedChecker(syntax.the_program) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker()
         r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
-        end_time = time.time()
+        end_time = time.perf_counter()
         print (r_r.result)
         print (f"=== Solution obtained in {end_time-start_time:0.3f}")
 
         # print(checker._last_successful)
         # print(checker._transitions)
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
-        end_time = time.time()
+        end_time = time.perf_counter()
         print (r_r.result)
         print (f"=== Solution obtained in {end_time-start_time:0.3f}")
 
@@ -1686,11 +1725,11 @@ def fol_benchmark_eval(_: Solver) -> None:
                 continue
             (states, p) = data
 
-            start = time.time()
+            start = time.perf_counter()
             for key, st in states.items():
                 value = st.eval(p)
                 #print(st.eval(p), ','.join(f'{len(l)}' for l in st.univs.values()))
-            end = time.time()
+            end = time.perf_counter()
             print(f"elapsed: {1000.0*(end-start)/len(states):0.3f} ms/eval {p}")
             total += end-start
     print(f"overall: {total:0.3f}")
@@ -1741,6 +1780,33 @@ def fol_debug_frames(_: Solver) -> None:
                     frames.append(f)
             except EOFError:
                 pass
+        with open(os.path.join(utils.args.log_dir, "trace.pickle"), 'rb') as f:
+            trace = load_trace(f)
+            # print(trace)
+            data = []
+            for ig_query in trace.descendants('IG'):
+                times: DefaultDict[int, float] = defaultdict(lambda: 0.0)
+                for prefix_query in ig_query.descendants('Pre'):
+                    times[prefix_query.data['category']] += prefix_query.duration
+                    # print(f"{prefix_query.data['category']} {prefix_query.duration:0.3f}")
+                badness = max(times.values())/ min(times.values())
+                data.append((ig_query.duration, badness, f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}"))
+                print(f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}", list(times.items()))
+                
+            for (duration, badness, description) in sorted(data):
+                print(f"{description} {badness:0.2f}")
+
+            total = 0.0
+            for push in trace.descendants('Push'):
+                total += push.duration
+            print(f"Total pushing time {total}")
+
+            total = 0.0
+            for ig in trace.descendants('IG'):
+                if ig.data['rationale'] == 'learning':
+                    total += ig.duration
+            print(f"Total learning time {total}")
+
         def print_frames(lemmas: Dict, frames: Dict) -> None:
             frame_numbers, bad_lemmas, safeties, initial_conditions = frames['frame_numbers'], frames['bad_lemmas'], frames['safeties'], frames['initial_conditions']
             print ("[IC3] ---- Frame summary")
@@ -1822,15 +1888,11 @@ def fol_debug_frames(_: Solver) -> None:
                     found = frame
             return found
 
-        frame_of_interest = find_frame_by_time(4808)
-        print_frames(lemmas, frame_of_interest)
-        # for i in sorted(set(frame_of_interest['frame_numbers']), key=lambda x: (0, x) if x is not None else (1,0)):
-        #     print(f"\nRedundancy of F_{i}:")
-        #     await check_frame_redundancy2(lemmas, frame_of_interest, i)
-        await check_frame_redundancy3(lemmas, frame_of_interest)
-
-        print("\nGolden invariant implication:")
-        await check_golden_invariant(lemmas, frame_of_interest)
+        # frame_of_interest = find_frame_by_time(4808)
+        # print_frames(lemmas, frame_of_interest)
+        # await check_frame_redundancy3(lemmas, frame_of_interest)
+        # print("\nGolden invariant implication:")
+        # await check_golden_invariant(lemmas, frame_of_interest)
     asyncio.run(main())
     
     

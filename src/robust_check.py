@@ -266,12 +266,12 @@ class AdvancedChecker(RobustChecker):
 
         try:
             async with ScopedTasks() as tasks:
-                start = time.time()
+                start = time.perf_counter()
                 for i in range(parallelism):
                     tasks.add(worker())
                 tasks.add(logger())
                 rr = await asyncio.wait_for(result, timeout if timeout > 0 else None)
-                self._print(log_prefix, f"Completed implication {rr.result} in {time.time() - start:0.3f}")
+                self._print(log_prefix, f"Completed implication {rr.result} in {time.perf_counter() - start:0.3f}")
                 return rr
         except asyncio.TimeoutError:
             self._print(log_prefix, "Implication query timed out")
@@ -339,12 +339,12 @@ class AdvancedChecker(RobustChecker):
 
         try:
             async with ScopedTasks() as tasks:
-                start = time.time()
+                start = time.perf_counter()
                 for i in range(parallelism):
                     tasks.add(worker())
                 tasks.add(logger())
                 rr = await asyncio.wait_for(result, timeout if timeout > 0 else None)
-                self._print(log_prefix, f"Completed transition {rr.result} in {time.time() - start:0.3f}")
+                self._print(log_prefix, f"Completed transition {rr.result} in {time.perf_counter() - start:0.3f}")
                 return rr
         except asyncio.TimeoutError:
             self._print(log_prefix, "Transition query timed out")
@@ -453,14 +453,14 @@ async def _robust_check(formulas: Sequence[Callable[[], Iterable[Union[Expr, _To
                         (f_i, index, use_cvc4, timeout) = v
                         v_prime: Tuple[List[Union[Expr, _TopLevelExpr]], bool, float] = (list(formulas[f_i]()), use_cvc4, timeout)
                         await conn.send(v_prime)
-                        start = time.time()
+                        start = time.perf_counter()
                         try:
                             r = await asyncio.wait_for(conn.recv(), timeout + 1)
                         except asyncio.TimeoutError:
-                            end = time.time()
+                            end = time.perf_counter()
                             print(f"{prefix} attempt (F_{f_i} i={index} {'cvc4' if use_cvc4 else 'z3'} to={timeout}) aborted due to solver over time in {end-start:0.3f}", file=log)
                             break
-                        end = time.time()
+                        end = time.perf_counter()
                         print(f"{prefix} attempt (F_{f_i} i={index} {'cvc4' if use_cvc4 else 'z3'} to={timeout}) returned {z3.sat if isinstance(r, Trace) else r} in {end-start:0.3f}", file=log)
                         if r == z3.unsat:
                             formulas_unsat.add(f_i)
@@ -480,7 +480,7 @@ async def _robust_check(formulas: Sequence[Callable[[], Iterable[Union[Expr, _To
 async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
     id = _get_robust_id()
     log_prefix = f'[Tr-{id}]'
-    start = time.time()
+    start = time.perf_counter()
     r: Union[Trace, z3.CheckSatResult, None] = None
     try:
         transitions = list(syntax.the_program.transitions())
@@ -496,7 +496,7 @@ async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, min
         r = await _robust_check(formulas, 2, parallelism=parallelism, timeout=timeout, log=log, prefix=log_prefix)
         return r
     finally:
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
         res = 'unsat' if r == z3.unsat else 'sat' if isinstance(r, Trace) else 'unk' if r == z3.unknown else 'int'
         if elapsed > 5 and utils.args.log_dir != '':
             fname = f'tr-query-{id}-{res}-{int(elapsed):04d}.pickle'
@@ -509,7 +509,7 @@ async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, min
 async def _robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
     id = _get_robust_id()
     log_prefix = f'[Im-{id}]'
-    start = time.time()
+    start = time.perf_counter()
     r: Union[Trace, z3.CheckSatResult, None] = None
     try:
         def make_formula() -> Iterable[Expr]:
@@ -520,7 +520,7 @@ async def _robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: 
         r = await _robust_check([make_formula], 1, parallelism=parallelism, timeout=timeout, log=log, prefix=log_prefix)
         return r
     finally:
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
         res = 'unsat' if r == z3.unsat else 'sat' if isinstance(r, Trace) else 'unk' if r == z3.unknown else 'int'
         if elapsed > 5 and utils.args.log_dir != '':
             fname = f'im-query-{id}-{res}-{int(elapsed):04d}.pickle'
