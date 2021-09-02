@@ -6,10 +6,10 @@
 #
 #
 
-sort node
-sort request
-sort response
 sort db_request_id
+sort node
+sort response
+sort request
 
 immutable relation match(request, response)
 
