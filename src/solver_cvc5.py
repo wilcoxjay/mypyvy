@@ -109,6 +109,8 @@ class _CVC5Context:
                 return self.solver.mkTerm(pycvc5.kinds.And, *(self.tr(a, state_i, vars) for a in e.args))
             elif e.op == 'OR':
                 return self.solver.mkTerm(pycvc5.kinds.Or, *(self.tr(a, state_i, vars) for a in e.args))
+            elif e.op == 'DISTINCT':
+                return self.solver.mkTerm(pycvc5.kinds.Distinct, *(self.tr(a, state_i, vars) for a in e.args))
         elif isinstance(e, AppExpr):
             callee = self.get_sym_term(e.callee, state_i)
             args = [self.tr(arg, state_i, vars) for arg in e.args]
@@ -134,7 +136,7 @@ class _CVC5Context:
         print(f"Couldn't translate: {e}")
         print(f"Type: {type(e)}")
         print(f"Repr: {repr(e)}")
-        assert False
+        assert False, e
 
 class CVC5Solver(SMTSolver):
     def __init__(self, program: Program, timeout: int = 0) -> None:
