@@ -1090,12 +1090,19 @@ class DefinitionDecl(Decl):
             self.mods, repr(self.expr))
 
     def __str__(self) -> str:
-        return 'transition %s(%s)\n  modifies %s\n  %s' % \
-            (self.name,
+        if self.is_public_transition:
+            return 'transition %s(%s)\n  modifies %s\n  %s' % \
+                (self.name,
+                ', '.join([str(v) for v in self.binder.vs]),
+                ', '.join([str(m) for m in self.mods]),
+                self.expr)
+        else:
+            assert self.num_states in [0,1,2]
+            return '%sdefinition %s(%s) = %s' % \
+            ('zerostate ' if self.num_states == 0 else 'twostate ' if self.num_states == 2 else '',
+             self.name,
              ', '.join([str(v) for v in self.binder.vs]),
-             ', '.join([str(m) for m in self.mods]),
              self.expr)
-
     @staticmethod
     def _frame(scope: Scope, mods: Tuple[ModifiesClause, ...]) -> Tuple[Expr, ...]:
         frame = []
