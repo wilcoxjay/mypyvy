@@ -5,11 +5,11 @@
 # Berkovits I., Lazic M., Losa G., Padon O., Shoham S. Verification of Threshold-Based Distributed Algorithms by Decomposition to Decidable Logics. CAV 2019. https://link.springer.com/chapter/10.1007%2F978-3-030-25543-5_15
 #
 
-sort node     # n > 3t
 sort quorum_a # >= n - t
+sort value
 sort quorum_b # >= (n+3t+1)/2
 sort quorum_c # >= (n-t+1)/2
-sort value
+sort node     # n > 3t
 
 immutable relation member_f(node) # faulty nodes
 immutable relation member_a(node, quorum_a)

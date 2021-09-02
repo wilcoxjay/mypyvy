@@ -4,11 +4,11 @@
 # adding ghost functions decision_quorum_c and decision_quorum_f, and derived relations
 # choosable_c and choosable_f
 
-sort node
+sort round
 sort value
 sort quorum_c
 sort quorum_f
-sort round
+sort node
 
 immutable constant none: round
 immutable relation le(round, round) @no_minimize

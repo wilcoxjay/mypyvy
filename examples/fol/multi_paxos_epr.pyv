@@ -1,12 +1,12 @@
 
 # Hand translated from oopsla17-paxos/multi_paxos_epr.ivy
 
-sort node
-sort value
-sort quorum
-sort round
 sort inst
 sort votemap
+sort round
+sort value
+sort quorum
+sort node
 
 immutable constant none: round
 immutable relation le(round, round) @no_minimize

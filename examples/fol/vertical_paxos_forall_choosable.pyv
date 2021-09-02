@@ -3,11 +3,11 @@
 # ghost functions decision_quorum and round_config, and a derived
 # relation choosable
 
-sort node
-sort value
-sort quorum
 sort round
 sort config
+sort value
+sort quorum
+sort node
 
 immutable constant none: value
 

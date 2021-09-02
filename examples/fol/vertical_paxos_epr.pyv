@@ -1,10 +1,10 @@
 # this file is most similar to oopsla17-epr's vertical_paxos_epr.ivy
 
-sort node
-sort value
-sort quorum
 sort round
+sort value
 sort config
+sort quorum
+sort node
 
 immutable constant none: value
 

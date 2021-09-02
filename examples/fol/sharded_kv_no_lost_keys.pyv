@@ -1,6 +1,6 @@
 sort key
-sort value
 sort node
+sort value
 
 mutable relation table(node, key, value)
 mutable relation owner(node, key)

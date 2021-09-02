@@ -2,10 +2,10 @@
 # quantified invariant by adding two ghost functions:
 # decision_quorum and choosable_node
 
-sort node
+sort round
 sort value
 sort quorum
-sort round
+sort node
 
 immutable constant none: round
 immutable relation le(round, round) @no_minimize

@@ -1,6 +1,6 @@
 sort address
-sort value
 sort core
+sort value
 
 mutable function memory(address) : value
 

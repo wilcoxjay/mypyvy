@@ -1,5 +1,5 @@
-sort node
 sort quorum
+sort node
 sort value
 
 immutable relation member(node, quorum)

@@ -1,9 +1,9 @@
-sort node
-sort value
-sort quorum
-sort round
 sort inst
 sort votemap
+sort round
+sort value
+sort quorum
+sort node
 
 immutable constant none: round
 immutable relation le(round, round)

@@ -7,8 +7,8 @@
 # 
 
 sort node
-sort request
 sort response
+sort request
 
 immutable relation match(request, response)
 

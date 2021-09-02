@@ -3,11 +3,11 @@
 # but no other derived relations (i.e., no decision_quorum and no
 # choosable)
 
-sort node
-sort value
 sort quorum_1
-sort quorum_2
 sort round
+sort value
+sort quorum_2
+sort node
 
 immutable constant none: round
 immutable relation le(round, round) @no_minimize
