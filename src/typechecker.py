@@ -284,8 +284,8 @@ def typecheck_declcontainingexpr(scope: syntax.Scope, d: syntax.DeclContainingEx
             typecheck_expr(scope, d.expr, BoolSort)
 
         if syntax.symbols_used(scope, d.expr) == set():
-            utils.print_error(d.span, 'this initial condition mentions no mutable symbols. '
-                              'it should be declared `axiom` instead.')
+            utils.print_warning(d.span, 'this initial condition mentions no mutable symbols. '
+                                'it should be declared `axiom` instead.')
     elif isinstance(d, syntax.InvariantDecl):
         d.expr = syntax.close_free_vars(d.expr, span=d.span)
         with scope.n_states(1):
