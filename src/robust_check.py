@@ -18,25 +18,25 @@ import z3
 class RobustCheckResult:
     result: SatResult
     trace: Optional[Trace] = None
-    core: Set[int] = field(default_factory = set)
+    core: Set[int] = field(default_factory=set)
     transition: Optional[str] = None
     # time: float = 0.0
 
 class RobustChecker(Protocol):
     async def check_implication(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult: ...
     async def check_transition(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult: ...
-    
+
 
 def _fancy_check_transition2_internal(hyps: List[Expr], new_conc: Expr, tr: Expr, timeout: float = 1.0, _print: Callable = print) -> Union[List[int], None, Trace]:
     sat_inst = z3.Optimize()
     for i in range(len(hyps)):
         sat_inst.add_soft(z3.Not(z3.Bool(f'I_{i}')))
     # sat_inst.add(z3.Bool('I_0'))
-    order: List[int] = []
+    # order: List[int] = []
     badness = [0 for _ in range(len(hyps))]
     unknown_count = 0
     while True:
-        solver = CVC5Solver(syntax.the_program, timeout = int(timeout * 1000))
+        solver = CVC5Solver(syntax.the_program, timeout=int(timeout * 1000))
         with solver.new_scope(2):
             solver.add_expr(tr)
             solver.add_expr(New(Not(new_conc)))
@@ -52,7 +52,7 @@ def _fancy_check_transition2_internal(hyps: List[Expr], new_conc: Expr, tr: Expr
                     break
                 else:
                     return None
-                    
+
             for hyp, selected in zip(hyps, sel2):
                 if selected:
                     solver.add_expr(hyp)
@@ -61,7 +61,7 @@ def _fancy_check_transition2_internal(hyps: List[Expr], new_conc: Expr, tr: Expr
             while True:
                 r = solver.check()
                 _print(''.join('1' if v else '.' for v in sel2), r)
-    
+
                 if r == SatResult.unsat:
                     return [i for i in range(len(hyps)) if sel2[i]]
                 elif r == SatResult.unknown:
@@ -72,7 +72,7 @@ def _fancy_check_transition2_internal(hyps: List[Expr], new_conc: Expr, tr: Expr
                         if sel2[i]:
                             cl.append(z3.Not(z3.Bool(f'I_{i}')))
                     sat_inst.add(z3.Or(*cl))
-                    
+
                     if to_add != -1:
                         badness[to_add] += 1
                     else:
@@ -93,20 +93,20 @@ def _fancy_check_transition2_internal(hyps: List[Expr], new_conc: Expr, tr: Expr
                             assert False, hyps[i]
                     # _print([solver.is_true(hyps[i]) for i in range(len(hyps))])
                     # disprovers = [not(solver.is_true(hyps[i])) for i in range(len(hyps))]
-                    
+
                     # _print("size of clause", sum([1 if v else 0 for i, v in enumerate(disprovers)]))
                     sat_inst.add(z3.Or([z3.Bool(f'I_{i}') for i, v in enumerate(disprovers) if v]))
                     if not any(disprovers):
                         return trace
                     to_add_possibilities = [i for i in range(len(hyps)) if disprovers[i]]
                     # random.shuffle(to_add_possibilities)
-                    to_add_possibilities.sort(key = lambda i: badness[i])
+                    to_add_possibilities.sort(key=lambda i: badness[i])
                     to_add = to_add_possibilities[0]
                     # to_add = random.sample([i for i in range(len(hyps)) if disprovers[i]], 1)[0]
                     solver.add_expr(hyps[to_add])
                     sel2[to_add] = True
                     unknown_count = 0
-                 
+
         del solver
 
 async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDescriptor, log_prefix: str) -> None:
@@ -115,6 +115,7 @@ async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDe
     exprs: Dict[int, Expr] = {}
     tr: Expr = TrueExpr
     conc: Expr = TrueExpr
+
     def _print(*args: Any) -> None:
         print(log_prefix, *args)
     while True:
@@ -142,9 +143,9 @@ async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDe
                         s.add(t.translate_expr(exprs[i]))
                     s.add(t.translate_expr(tr))
                     s.add(t.translate_expr(New(Not(conc))))
-                    raw_result = s.check(timeout = min(1000000000, int(timeout * 1000)))
+                    raw_result = s.check(timeout=min(1000000000, int(timeout * 1000)))
                     if raw_result == z3.unsat:
-                        await conn.send(RobustCheckResult(SatResult.unsat, core = set(range(len(expr_ids)))))
+                        await conn.send(RobustCheckResult(SatResult.unsat, core=set(range(len(expr_ids)))))
                     else:
                         await conn.send(RobustCheckResult(SatResult.unknown))
                 del t, s
@@ -157,7 +158,7 @@ async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDe
                     s5.add_expr(New(Not(conc)))
                     raw_result5 = s5.check()
                     if raw_result5 == SatResult.unsat:
-                        await conn.send(RobustCheckResult(SatResult.unsat, core = set(range(len(expr_ids)))))
+                        await conn.send(RobustCheckResult(SatResult.unsat, core=set(range(len(expr_ids)))))
                     elif raw_result5 == SatResult.sat:
                         await conn.send(RobustCheckResult(SatResult.sat, s5.get_trace()))
                     else:
@@ -181,7 +182,7 @@ async def _main_worker_advanced_implication(conn: AsyncConnection, stdout: FileD
                 with s.new_frame():
                     for i in expr_ids:
                         s.add(t.translate_expr(exprs[i]))
-                    raw_result = s.check(timeout = min(1000000000, int(timeout * 1000)))
+                    raw_result = s.check(timeout=min(1000000000, int(timeout * 1000)))
                     if raw_result == z3.unsat:
                         await conn.send(RobustCheckResult(SatResult.unsat, core=set(range(len(expr_ids)))))
                     else:
@@ -222,6 +223,7 @@ class AdvancedChecker(RobustChecker):
         prefix = f"[{self._log_id}-{self._query_id}]"
         self._query_id += 1
         return prefix
+
     def _print(self, prefix: str, *args: Any) -> None:
         print(prefix, *args, file=self._log)
 
@@ -230,15 +232,16 @@ class AdvancedChecker(RobustChecker):
         log_prefix = self._get_log_prefix()
         formulas = [Not(conc), *_hyps]
         result: asyncio.Future[RobustCheckResult] = asyncio.Future()
-        strategies = [ ('z3-basic', 0.25), ('cvc5-basic', 0.5), ('z3-basic', 2.0), ('cvc5-basic', 5.0), ('z3-basic', 10.0), ('cvc5-basic', 20.0)]
+        strategies = [('z3-basic', 0.25), ('cvc5-basic', 0.5), ('z3-basic', 2.0), ('cvc5-basic', 5.0), ('z3-basic', 10.0), ('cvc5-basic', 20.0)]
+
         def get_next_attempt() -> Iterable[Tuple[str, float]]:
             for attempt in range(1000000):
-                yield strategies[min(len(strategies)-1, attempt)]
+                yield strategies[min(len(strategies) - 1, attempt)]
         strategy_gen = iter(get_next_attempt())
-        
+
         async def worker() -> None:
             while not result.done():
-                try: 
+                try:
                     with ScopedProcess(get_forkserver(), _main_worker_advanced_implication, FileDescriptor(self._log.fileno()), log_prefix) as conn:
                         await conn.send({'exprs': {i: formulas[i] for i in range(len(formulas))}})
                         while not result.done():
@@ -251,7 +254,7 @@ class AdvancedChecker(RobustChecker):
                             if resp.result == SatResult.sat:
                                 if not result.done():
                                     result.set_result(resp)
-                                
+
                 except asyncio.TimeoutError:
                     self._print(log_prefix, "Resetting solver process")
                 except StopIteration:
@@ -283,10 +286,10 @@ class AdvancedChecker(RobustChecker):
         trs_unsat: Dict[str, Set[int]] = {}
         attempts_started = {tr.name: 0 for tr in self._prog.transitions()}
         result: asyncio.Future[RobustCheckResult] = asyncio.Future()
-        #strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
-        #strategies = [('cvc5-fancy', 100000.0)]
+        # strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
+        # strategies = [('cvc5-fancy', 100000.0)]
         strategies = [('cvc5-basic', 0.5, 0), ('z3-basic', 0.25, 0), ('cvc5-fancy', 20.0, 2), ('cvc5-fancy', 400.0, 16), ('cvc5-fancy', 1600.0, 64)]
-        
+
         def get_next_attempt() -> Iterable[Tuple[str, Tuple[str, float, float]]]:
             while True:
                 for tr in self._transitions:
@@ -296,16 +299,15 @@ class AdvancedChecker(RobustChecker):
                         if attempt_num == 0 and tr in self._last_successful:
                             st = self._last_successful[tr]
                         elif tr in self._last_successful:
-                            st = strategies[min(len(strategies)-1, attempt_num-1)]
+                            st = strategies[min(len(strategies) - 1, attempt_num - 1)]
                         else:
-                            st = strategies[min(len(strategies)-1, attempt_num)]
+                            st = strategies[min(len(strategies) - 1, attempt_num)]
                         yield (tr, st)
         strategy_gen = iter(get_next_attempt())
-        
- 
+
         async def worker() -> None:
             while not result.done():
-                try: 
+                try:
                     with ScopedProcess(get_forkserver(), _main_worker_advanced_transition, FileDescriptor(self._log.fileno()), log_prefix) as conn:
                         await conn.send({'exprs': {i: hyps[i] for i in range(len(hyps))}})
                         while not result.done():
@@ -350,8 +352,6 @@ class AdvancedChecker(RobustChecker):
             self._print(log_prefix, "Transition query timed out")
             return RobustCheckResult(SatResult.unknown)
 
-
-
 # This is a class designed to cache the result of pickling.
 # This helps the main process which needs to serialize lemmas many times in robust_check_implication
 # It deserializes directly into the underlying Expr. This caching relies on Exprs being immutable.
@@ -382,7 +382,7 @@ async def _main_robust_check_worker(conn: AsyncConnection, n_states: int) -> Non
                 if not use_cvc4:
                     s.add(t.translate_expr(e))
                 else:
-                    s.add(t2.translate_expr(e))    
+                    s.add(t2.translate_expr(e))
             # print(f"{prefix} _robust_check(): checking ({f_i}, {count}, {use_cvc4}) in {time_limit}", file=log)
             # print(s.assertions())
             r = s.check(timeout = min(1000000000, int(time_limit * 1000)))
@@ -407,14 +407,14 @@ async def _robust_check(formulas: Sequence[Callable[[], Iterable[Union[Expr, _To
     _total_time: float = 0
     _time_spent: Dict[Tuple[int, bool], float] = dict((k, 0.0) for k in _params)
     formulas_unsat: Set[int] = set()
-    
+
     def get_timeout(k: Tuple[int, bool], index: int) -> float:
         (f_i, use_cvc4) = k
         if use_cvc4:
             return 0.5 * 2**index + index * 0.5
         else:
             return 0.2 if index == 0 else 0.5 if index == 1 else 1.5 * _luby(index - 2)
-            
+
     def get_next() -> Optional[Tuple[int, int, bool, float]]:
         nonlocal _total_time
         if timeout > 0 and _total_time >= timeout:
@@ -477,7 +477,7 @@ async def _robust_check(formulas: Sequence[Callable[[], Iterable[Union[Expr, _To
             tasks.add(_manager())
         return await result
 
-async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
+async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, minimize: Optional[bool] = None, transition: Optional[DefinitionDecl] = None, parallelism: int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
     id = _get_robust_id()
     log_prefix = f'[Tr-{id}]'
     start = time.perf_counter()
@@ -487,6 +487,7 @@ async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, min
         tr_formulas = [_TopLevelExpr(transition.as_twostate_formula(syntax.the_program.scope)) for transition in transitions]
         new_formula = _TopLevelExpr(New(Not(new_conc)))
         old_hyp_formulas = [_TopLevelExpr(h) for h in old_hyps]
+        
         def make_formula(i: int) -> Iterable[Union[Expr, _TopLevelExpr]]:
             yield from [new_formula, tr_formulas[i]]
             exprs = list(old_hyp_formulas)
@@ -506,7 +507,7 @@ async def _robust_check_transition(old_hyps: Iterable[Expr], new_conc: Expr, min
         else:
             print(log_prefix, f'transition query result {res} took {elapsed:0.3f}', file=log)
 
-async def _robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism:int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
+async def _robust_check_implication(hyps: Iterable[Expr], conc: Expr, minimize: Optional[bool] = None, parallelism: int = 1, timeout: float = 0.0, log: TextIO = sys.stdout) -> Union[Trace, z3.CheckSatResult]:
     id = _get_robust_id()
     log_prefix = f'[Im-{id}]'
     start = time.perf_counter()
@@ -534,14 +535,16 @@ def _robust_result_from_z3_or_trace(hyps: Iterable, r: Union[z3.CheckSatResult, 
     if isinstance(r, Trace):
         return RobustCheckResult(SatResult.sat, r)
     elif r == z3.unsat:
-        return RobustCheckResult(SatResult.unsat, core = set(range(len(list(hyps)))))
+        return RobustCheckResult(SatResult.unsat, core=set(range(len(list(hyps)))))
     else:
         return RobustCheckResult(SatResult.unknown, None)
-        
+
 class ClassicChecker(RobustChecker):
-    def __init__(self, log: TextIO = sys.stdout) -> None: 
+    def __init__(self, log: TextIO = sys.stdout) -> None:
         self._log = log
+    
     async def check_implication(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
         return _robust_result_from_z3_or_trace(hyps, await _robust_check_implication(hyps, conc, parallelism=parallelism, timeout=timeout, log=self._log))
+    
     async def check_transition(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
         return _robust_result_from_z3_or_trace(hyps, await _robust_check_transition(hyps, conc, parallelism=parallelism, timeout=timeout, log=self._log))

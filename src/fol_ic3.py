@@ -14,7 +14,7 @@ import signal
 import tempfile
 
 from dataclasses import dataclass
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 from trace_tools import Tracer, load_trace, trace
 from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
@@ -51,7 +51,7 @@ class Logging:
         supress_logs = True
         self._sep_log: TextIO = open('/dev/null', 'w') if log_dir == '' or supress_logs else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w', buffering=1)
         self._smt_log: TextIO = open('/dev/null', 'w') if log_dir == '' or supress_logs else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w', buffering=1)
-        self._ig_log: TextIO  = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
+        self._ig_log: TextIO = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
         self._lemmas_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'lemmas.pickle'), 'wb')
         self._frames_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'frames.pickle'), 'wb')
 
@@ -67,12 +67,12 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
     if utils.args.logic == 'epr':
         sep_pc.logic = Logic.EPR
         qe = [(sig.sort_indices[x], sig.sort_indices[y])
-            for (x,y) in itertools.product(sig.sort_names, sig.sort_names)
-            if (x,y) not in utils.args.epr_edges]
+              for (x, y) in itertools.product(sig.sort_names, sig.sort_names)
+              if (x, y) not in utils.args.epr_edges]
         sep_pc.disallowed_quantifier_edges = qe
     else:
         sep_pc.logic = Logic.FOL
-        
+
     constraints: List[Constraint] = []
     sep_constraints: Set[Constraint] = set()
     sep_constraints_order: List[Constraint] = []
@@ -95,7 +95,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
             sep_time, eval_time = 0.0, 0.0
         if 'constraints' in v:
             (cons, extra_states) = v['constraints']
-            states.update((i, pickle.loads(p)) for i,p in extra_states.items())
+            states.update((i, pickle.loads(p)) for i, p in extra_states.items())
             constraints = list(cons)
         if 'block_last_separator' in v:
             sep.block_last_separator()
@@ -137,7 +137,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
                     # All known constraints are satisfied
                     if not minimized:
                         minimized = True
-                        continue # continue the loop, now asking for a minimized separator
+                        continue  # continue the loop, now asking for a minimized separator
                     else:
                         print(label, f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
                         await conn.send({'candidate': p, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
@@ -153,7 +153,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
                                     states_to_save[s] = states[s]
                         pickle.dump((states_to_save, p), temp)
 
-                    
+
 
 @dataclass(eq=True, frozen=True)
 class Prefix:
@@ -174,7 +174,7 @@ class Prefix:
         return tuple(quants)
 
 def generate_exclusive(sorts: int, depth: int, alts: int, repeat: int, existentials: bool) -> Iterator[Prefix]:
-    def _repeat_of(b: Tuple[Tuple[int, ...], ...], sorts:int =sorts) -> int:
+    def _repeat_of(b: Tuple[Tuple[int, ...], ...], sorts: int = sorts) -> int:
         counts = [0 for s in range(sorts)]
         for block in b:
             for i in range(sorts):
@@ -199,20 +199,20 @@ def generate_exclusive(sorts: int, depth: int, alts: int, repeat: int, existenti
                 yield (b,)
         if depth == 0:
             return # alts > 0 but depth = 0, infeasible
-        
+
         for quants_in_first in (reversed(range(1, depth)) if ifa else range(1, min(depth, depth_e+1))):
             for first_block in _blocks(sorts_allowance, quants_in_first):
                 remaining_allowance = tuple(a - b for a,b in zip(sorts_allowance, first_block))
                 rem_depth_e = (depth_e - quants_in_first) if not ifa else depth_e
                 for rest in _gen(remaining_allowance, depth - quants_in_first, alts - 1, not ifa, rem_depth_e):
                     yield (first_block, *rest)
-    
-    for depth_e in range(0, depth+1):
+
+    for depth_e in range(0, depth + 1):
         for b in _gen(tuple(min(repeat, depth) for _ in range(sorts)), depth, alts, True, depth_e):
             if _repeat_of(b) == repeat:
                 yield Prefix(b, True)
     if not existentials: return
-    for depth_e in range(0, depth+1):
+    for depth_e in range(0, depth + 1):
         for b in _gen(tuple(min(repeat, depth) for _ in range(sorts)), depth, alts, False, depth_e):
             if _repeat_of(b) == repeat:
                 yield Prefix(b, False)
@@ -272,8 +272,8 @@ class PrefixQueue:
                       for (x,y) in itertools.product(self._sig.sort_names, self._sig.sort_names)
                       if (x,y) not in utils.args.epr_edges]
                 _pc.disallowed_quantifier_edges = qe
-        
-        
+
+
         self._skip_prefixes = skip_prefixes
         self._pcs = pcs
         self._pcs_stopped = [False] * len(self._pcs)
@@ -284,7 +284,7 @@ class PrefixQueue:
         # Logging
         self._total_skipped_prefixes = 0
         self._total_prefixes_considered = 0
-    
+
     def _get_prefix_generator(self, pc: PrefixConstraints) -> Iterator[Iterator[Prefix]]:
         alts = 0 if pc.logic == Logic.Universal else pc.max_alt + 1
         for d in range(10):
@@ -294,7 +294,7 @@ class PrefixQueue:
                         # print(f"Starting {d} {alt}")
                         self._prefix_generators[(d, alt, max_r)] = generate_exclusive(len(self._sig.sorts), d, alt, max_r, alt > 0)
                     yield self._prefix_generators[(d, alt, max_r)]
-  
+
     def satisfies_epr(self, pc: PrefixConstraints, p: Prefix) -> bool:
         if pc.logic != Logic.EPR: return True
         for q_a, q_b in itertools.combinations(p.linearize(), 2):
@@ -317,7 +317,7 @@ class PrefixQueue:
             pc_index, _ = min(possiblities, key = lambda x: x[1])
             self._pcs_worked_on[pc_index] += 1
             pc = self._pcs[pc_index]
-            
+
             while True:
                 try:
                     candidate = next(itertools.chain.from_iterable(self._get_prefix_generator(pc)))
@@ -331,8 +331,8 @@ class PrefixQueue:
                 self._total_prefixes_considered += 1
                 self._outstanding[candidate] = pc_index
                 return candidate, pc_index
-        
-    
+
+
     # Return a prefix to the front of the queue. Used to support resuming after a successful separation with new constraints
     def return_prefix(self, p: Prefix) -> None:
         assert p in self._outstanding
@@ -351,13 +351,13 @@ def _log_ig_problem(name:str, rationale: str, block: Neg, pos: List[Constraint],
     if utils.args.log_dir == '': return
     with open(os.path.join(utils.args.log_dir, 'ig-problems', f'{name}.pickle'), 'wb') as f:
         pickle.dump((rationale, block, pos, {i: states[i] for c in [block, *pos] for i in c.states()}, prior_frame, golden), f)
-   
+
 
 class IGSolver:
     def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int, prior_solver: Optional['IGSolver'] = None):
         self._sig = prog_to_sig(prog)
         self._logs = logs
-        
+
         # Logging
         self._rationale = rationale
         self._identity = identity
@@ -366,7 +366,7 @@ class IGSolver:
         self._total_constraints_found: int = 0
         self._total_prefixes_considered: int = 0
         self._total_skipped_prefixes: int = 0
-        
+
         # A list of states local to this IG query. All constraints are w.r.t. this list
         self._states: List[State] = []
         self._states_pickled_cache: List[bytes] = []
@@ -377,13 +377,13 @@ class IGSolver:
 
         self._necessary_constraints: Set[Constraint] = set([Neg(self.add_local_state(state))]) # This is just Neg(0), the state to block
         self._reachable_constraints: Set[Constraint] = set([Pos(self.add_local_state(st)) for st in positive])
-        
+
         # Prefix handling
         # self._max_repeats = 3
 
         self._prefix_queue = PrefixQueue(self._sig, Logic.from_str(utils.args.logic), 'no-skip-epr-prefixes' not in utils.args.expt_flags)
         self._unsep_cores: Dict[Prefix, List[Constraint]] = {}
-        
+
         self._previous_unsep_cores: Dict[Prefix, List[Constraint]] = {} if prior_solver is None else prior_solver._unsep_cores
         self._previous_states = [] if prior_solver is None else prior_solver._states
         self._previous_to_current_states: Dict[int, int] = {}
@@ -451,11 +451,11 @@ class IGSolver:
     def add_to_frame(self, f: Expr) -> None:
         self._frame.append(f)
         # TODO: invalidate all -> constraints that don't have pre-states satisfying f, and rework those predicates that are no longer unsep
-    
+
     def add_negative_state(self, s: State) -> None:
         i = self.add_local_state(s)
         self._necessary_constraints.add(Neg(i))
-    
+
     async def solve(self, n_threads: int = 1, timeout: Optional[float] = None, span: Tracer.Span = Tracer.dummy_span()) -> Optional[Expr]:
         _log_ig_problem(self._log_prefix, self._rationale, Neg(0), list(self._reachable_constraints), self._states, self._frame, [inv for inv in syntax.the_program.invs()])
 
@@ -535,7 +535,7 @@ class IGSolver:
                                     #     logged_problem = True
                                     if debug_this_process:
                                             self._print(f"Separating")
-                                        
+
                                     v = await conn.recv()
                                 if 'candidate' in v:
                                     p, sep_constraints, (time_sep, time_eval) = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints']), cast(Tuple[float, float], v['times'])
@@ -637,12 +637,12 @@ class IC3Frames:
         self._predecessors: DefaultDict[int, Set[int]] = defaultdict(set) # Predecessors s of t in s -> t
         self._reachable: Set[int] = set() # Known reachable states (not necessarily including initial states)
         self._useful_reachable: Set[int] = set() # Known reachable states that violate some lemma
-        
+
         self._lemmas: List[Expr] = [] # List of predicates discovered
         self._frame_numbers: List[Optional[int]] = [] # the frame number for each lemma
         self._initial_conditions: Set[int] = set() # predicates that are initial conditions in F_0
         self._safeties: Set[int] = set() # predicates that are safety properties
-        
+
         self._eval_cache: Dict[Tuple[int, int], bool] = {} # Record eval for a (lemma, state)
         self._immediate_pushing_blocker: Dict[int, int] = {} # State for a lemma in F_i that prevents it pushing to F_i+1
         self._ultimate_pushing_blocker: Dict[int, Optional[Blocker]] = {} # (State, Frame) that prevents the lemma from pushing (may be an ancestor of the immediate pushing blocker, None if can't be pushed)
@@ -651,24 +651,24 @@ class IC3Frames:
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
         self._bad_lemmas: Set[int] = set() # Predicates that violate a known reachable state
         self._redundant_lemmas: Set[int] = set() # Predicates that are implied by the conjunction of non-redundant F_inf lemmas
-        
-        
+
+
         self._push_lock = asyncio.Lock()
         self._event_frame_update = asyncio.Event()
         self._logs = logs
         self._span = span
         self._pushing_parallelism = parallelism
-        
+
         self._push_robust_checkers: Dict[int, RobustChecker] = {}
         self._predecessor_robust_checker: RobustChecker = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
         self._redundancy_checker: RobustChecker = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
-        
-        
+
+
     # Frame number manipulations (make None === infinity)
     @staticmethod
     def frame_max(a: FrameNum, b: FrameNum) -> FrameNum:
         if a is None or b is None: return None
-        return max(a,b)
+        return max(a, b)
     @staticmethod
     def frame_leq(a: FrameNum, b: FrameNum) -> bool:
         if b is None: return True
@@ -694,10 +694,10 @@ class IC3Frames:
         self._states.append(s)
         # print(f"State {i} is {s[0].as_state(s[1])}")
         return i
-    async def add_transition(self, a:int, b:int) -> None:
-        if (a,b) in self._transitions:
+    async def add_transition(self, a: int, b: int) -> None:
+        if (a, b) in self._transitions:
             return
-        self._transitions.add((a,b))
+        self._transitions.add((a, b))
         self._predecessors[b].add(a)
         self._successors[a].add(b)
         # Warning: this method does not compute new reachability. In all current uses, the
@@ -716,10 +716,10 @@ class IC3Frames:
         yield from ((a, b) for a, b in self._transitions if all(self.eval(p, a) for p in self.frame_lemmas(i)))
 
     def print_lemmas(self) -> None:
-        print ("[IC3] ---- Frame summary")
+        print("[IC3] ---- Frame summary")
         # cnt = len([i for (i,fn) in enumerate(self._frame_numbers) if fn == 0 and i in self._bad_predicates])
         # print(f"[IC3] lemma  0 b ... (x{cnt})")
-        for i, p, index in sorted(zip(self._frame_numbers, self._lemmas, range(len(self._lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
+        for i, p, index in sorted(zip(self._frame_numbers, self._lemmas, range(len(self._lemmas))), key=lambda x: IC3Frames.frame_key(x[0])):
             if i == 0 and index in self._bad_lemmas:
                 continue
             code = '$' if index in self._safeties else \
@@ -782,7 +782,7 @@ class IC3Frames:
             self._no_predecessors[state] = fp
             return None
         else:
-            assert False       
+            assert False
 
     def _saturate_reachability(self, state:int) -> None:
         # Mark state reachable
@@ -848,13 +848,13 @@ class IC3Frames:
                         return False
                     # Check if the blocker state is still in F_i
                     if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
-                        blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)                    
+                        blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
                         self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
                         return False
                     # The blocker is invalidated
                     self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
                     del self._immediate_pushing_blocker[index]
-            
+
 
             # Either there is no known blocker or it was just invalidated by some new lemma in F_i
             # First check if any former blockers still work
@@ -871,11 +871,11 @@ class IC3Frames:
 
 
             # Check if any new blocker exists
-            
+
             with span.span("SMTpush") as smt_span:
                 if index not in self._push_robust_checkers:
                     self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
-                
+
                 fp = set(self.frame_lemmas(i))
                 cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism)
                 assert fp == set(self.frame_lemmas(i))
@@ -910,7 +910,7 @@ class IC3Frames:
     async def _check_f_inf_redundancy(self, push_span: Tracer.Span) -> None:
         with push_span.span('Redundancy'):
             start = time.perf_counter()
-        
+
             f_inf = list(self.frame_lemmas(None))
             for i in f_inf:
                 if i in self._safeties: continue # don't mark safety properties as redundant
@@ -918,7 +918,7 @@ class IC3Frames:
                 if result.result == SatResult.unsat:
                     print(f"Redundant lemma: {self._lemmas[i]}")
                     self._redundant_lemmas.add(i)
-            
+
             print(f"Checked redundancy in {time.perf_counter() - start:0.3f} sec")
 
     async def push(self) -> None:
@@ -970,11 +970,11 @@ class IC3Frames:
         assert b.frame <= frame
         if b.type_is_predecessor:
             assert b.successor != -1
-            
+
             if not all(self.eval(f_i, b.successor) for f_i in self.frame_lemmas(b.frame + 1)):
                 print("Didn't speculate because post-state is not in next frame")
                 return None
-            
+
             # We need to check for a predecessor
             s = self._states[b.successor]
             formula_to_block = syntax.Not(s.as_onestate_formula() if utils.args.logic != "universal" else Diagram(s).to_ast())
@@ -997,15 +997,15 @@ class IC3Frames:
                 print("Didn't speculate because post-state has no predecessors")
                 return None
             else:
-                assert False       
-            
+                assert False
+
 
         assert b.lemma != -1
         lemm = b.lemma
-        i = frame 
+        i = frame
         p = self._lemmas[lemm]
 
-        if self._frame_numbers[lemm] != i: 
+        if self._frame_numbers[lemm] != i:
             print("Didn't speculate because lemma has been pushed")
             return None
 
@@ -1013,7 +1013,7 @@ class IC3Frames:
             fp = set(self.frame_lemmas(i))
             if lemm not in self._push_robust_checkers:
                 self._push_robust_checkers[lemm] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
-            
+
             cex = await self._push_robust_checkers[lemm].check_transition([*(self._lemmas[j] for j in fp), l], p, parallelism=self._pushing_parallelism)
             if fp != set(self.frame_lemmas(i)):
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
@@ -1037,7 +1037,7 @@ class IC3Frames:
                 actual_blocker = await self._blockable_state(blocker_data)
                 if actual_blocker is None:
                     print("Didn't speculate because blocker is reachable")
-                    return None                    
+                    return None
                 if actual_blocker.frame != i:
                     print("Speculating with actual blocker in another frame")
                     # return None
@@ -1049,7 +1049,7 @@ class IC3Frames:
 class ParallelFolIc3:
     FrameNum = Optional[int]
     def __init__(self, span: Tracer.Span) -> None:
-        
+
         # Logging, etc
         self._start_time: float = 0
         self._root_span = span
@@ -1057,13 +1057,13 @@ class ParallelFolIc3:
         self._next_ig_query_index = 0
 
         self._sig = prog_to_sig(syntax.the_program, two_state=False)
-        
+
         thread_budget = utils.args.cpus if utils.args.cpus is not None else 10
         self._threads_per_ig = max(1, thread_budget//2) if 'no-heuristic-pushing' not in utils.args.expt_flags else thread_budget
-               
+
         self._current_push_heuristic_tasks: Set[Tuple[int,int]] = set() # Which (frame, state) pairs are being worked on by the push heuristic?
         self._frames = IC3Frames(self._logs, self._root_span, self._threads_per_ig)
-        
+
     def print_frames(self) -> None:
         self._frames.print_lemmas()
         elapsed = time.perf_counter() - self._start_time
@@ -1092,10 +1092,10 @@ class ParallelFolIc3:
                                   [self._frames._lemmas[x] for x in ig_frame],
                                   self._logs, syntax.the_program, rationale, self._next_ig_query_index, prior_solver)
         self._next_ig_query_index += 1
-        
+
         negative_states = set([b.state])
         sol: asyncio.Future[Optional[Expr]] = asyncio.Future()
-        
+
         async def frame_updater()-> None:
             while True:
                 current_frame = set(self._frames.frame_lemmas(b.frame-1))
@@ -1136,7 +1136,7 @@ class ParallelFolIc3:
                         new_blocker = await self._frames.speculative_push(p, b.frame, b)
                         if new_blocker is None:
                             break
-                        
+
                         # The new state should satisfy the current candidate p
                         assert eval_predicate(self._frames._states[new_blocker.state], p)
 
@@ -1159,7 +1159,7 @@ class ParallelFolIc3:
             if not sol.done():
                 sol.set_result(p)
 
-        
+
         with self._root_span.span('IG', ig_solver._identity) as IG_span:
             IG_span.data(rationale=rationale)
             async with ScopedTasks() as tasks:
@@ -1220,7 +1220,7 @@ class ParallelFolIc3:
                     timeout = timeouts[timeout_index] if timeout_index < len(timeouts) else None
                     print(f"Heuristically blocking state {st} in frame {fn} timeout {timeout}")
                     await self.parallel_inductive_generalize(blocker, 'heuristic-push', timeout=timeout)
-                    
+
                     current_timeout[(fn, st)] = timeout_index + 1
                     timeout_index = 0
                 finally:
@@ -1244,12 +1244,12 @@ class ParallelFolIc3:
                 if blockable is None:
                     break # try again with new safety property (as by the time we call get_blocker() the safety property may have moved)
                     # we rely on cancellation (from await self._frames.wait_for_completion()) to stop this loop
-                new_solver = await self.parallel_inductive_generalize(blockable, rationale="learning", timeout = None, prior_solver = prior_solver)                
+                new_solver = await self.parallel_inductive_generalize(blockable, rationale="learning", timeout = None, prior_solver = prior_solver)
                 prior_solver = new_solver
                 break
             else:
                 return
-    
+
     async def flush_trace(self) -> None:
         while True:
             self._root_span.flush()
@@ -1293,7 +1293,7 @@ def p_fol_ic3(_: Solver) -> None:
     print(f"Command line: {' '.join(sys.argv)}")
     print(f"Expt-flags: {', '.join(utils.args.expt_flags)}")
     print(f"Logic: {utils.args.logic}")
-    
+
     get_forkserver() # Cause the forkserver to start here
     async def main() -> None:
         # We need to do this inside a function so that the asyncio objects in the constructor of
@@ -1376,7 +1376,7 @@ def fol_extract(solver: Solver) -> None:
             conjuncts += 1
             quants = max(quants, count_quantifiers(x.expr))
         sig = prog_to_sig(syntax.the_program)
-        
+
         edges: Set[Tuple[str, str]] = set()
         for func in syntax.the_program.functions():
             for s1 in func.arity:
@@ -1395,9 +1395,9 @@ def fol_extract(solver: Solver) -> None:
         g = networkx.DiGraph()
         g.add_edges_from(edges)
         epr = 'Y' if networkx.is_directed_acyclic_graph(g) else ''
-        
+
         print(f"{base_name}&{epr}&{conjuncts}&{quants}&{len(sig.sorts)}&{len(sig.relations) + len(sig.constants) + len(sig.functions)}")
-    
+
     if 'epr' in utils.args.expt_flags:
         # Check EPR-ness
         edges2: Set[Tuple[str, str]] = set()
@@ -1406,7 +1406,7 @@ def fol_extract(solver: Solver) -> None:
                 edges2.add((str(s1), str(func.sort)))
         sol = Solver()
         t = sol.get_translator(2)
-            
+
         for trans in prog.transitions():
             with sol.new_frame():
                 sol.add(t.translate_expr(trans.as_twostate_formula(prog.scope)))
@@ -1461,7 +1461,7 @@ def fol_extract(solver: Solver) -> None:
             print(f"Final edges: {edges2}")
         g = networkx.DiGraph()
         g.add_edges_from(edges2)
-        
+
         #print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
         if networkx.is_directed_acyclic_graph(g):
             remaining = set(s.name for s in prog.sorts())
@@ -1487,7 +1487,7 @@ def fol_extract(solver: Solver) -> None:
                 print('--logic=fol', utils.args.filename)
         else:
             print('--logic=universal', utils.args.filename)
-    
+
     if 'print-old-transitions' in utils.args.expt_flags:
         def has_new(e: Expr) -> bool:
             if isinstance(e, UnaryExpr) and e.op == 'NEW':
@@ -1517,7 +1517,7 @@ def fol_extract(solver: Solver) -> None:
                 return AppExpr('old', (e,), span=e.span)
             if isinstance(e, UnaryExpr) and e.op == 'NEW':
                 return e.arg
-            
+
             if isinstance(e, (syntax.Bool, syntax.Int)):
                 return e
             elif isinstance(e, UnaryExpr):
@@ -1542,7 +1542,7 @@ def fol_extract(solver: Solver) -> None:
                 return Let(e.binder.vs[0], new_val, new_body, span=e.span)
             else:
                 assert False, (type(e), e)
-            
+
         with open(utils.args.output, 'w') as f:
             print(f"# Mypyvy old syntax auto-generated from {os.path.basename(utils.args.filename)}", file=f)
             prev: Optional[syntax.Decl] = None
@@ -1554,7 +1554,7 @@ def fol_extract(solver: Solver) -> None:
                 if not isinstance(decl, TraceDecl):
                     print(decl, file=f)
                 prev = decl
-        
+
 def fol_learn(solver: Solver) -> None:
     raise NotImplementedError
     # get_forkserver()
@@ -1585,7 +1585,7 @@ def fol_learn(solver: Solver) -> None:
     #             if c.i not in to_sep:
     #                 to_sep[c.i] = sep.add_model(state_to_model(states[c.i]))
     #             sep.add_constraint(c.map(to_sep))
-    #             current_constraints.add(c)        
+    #             current_constraints.add(c)
     #         while True:
     #             p = sep.separate(minimize=True)
     #             if p is None:
@@ -1650,7 +1650,7 @@ def add_epr_edges(edges: Set[Tuple[str, str]], expr: z3.ExprRef, polarity: bool 
             add_epr_edges(edges, children[2], polarity, univ_sorts)
         else:
             pass # print(f"{expr}")
-    
+
     else:
         assert False
 
@@ -1679,7 +1679,7 @@ def fol_benchmark_solver(_: Solver) -> None:
     #                         return
     #                     else:
     #                         print("unsat.")
-    # print("Check complete, system is safe.")                        
+    # print("Check complete, system is safe.")
     # return
 
     if utils.args.output:
@@ -1691,7 +1691,7 @@ def fol_benchmark_solver(_: Solver) -> None:
         states = 2
     else:
         assert False
-    
+
     if True:
         for e in old_hyps:
             print("  ", e)
@@ -1728,15 +1728,15 @@ def fol_benchmark_ig(_: Solver) -> None:
                         prior_frame,
                         logs, syntax.the_program, rationale, 0)
         await ig2.solve(10)
-            
+
         # else:
         #     ig = IGSolver(states[block.i],
         #                   [states[x.i] for x in pos if isinstance(x, Pos)],
         #                   prior_frame,
         #                   logs, syntax.the_program, rationale, 0)
         #     await ig.solve(10)
-        
-        
+
+
     asyncio.run(run_query())
 
 
@@ -1768,9 +1768,9 @@ def fol_debug_ig(_: Solver) -> None:
         print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
         data = pickle.load(open(utils.args.query, 'rb'))
         (rationale, block, pos, states, prior_frame, golden) = data
-        
+
         print(f"Results for IG query {utils.args.query} {rationale}")
-        
+
         state_to_block: State = states[block.i]
         for human_inv in syntax.the_program.invs():
             i = human_inv.expr
@@ -1817,7 +1817,7 @@ def fol_debug_frames(_: Solver) -> None:
                 badness = max(times.values())/ min(times.values())
                 data.append((ig_query.duration, badness, f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}"))
                 print(f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}", list(times.items()))
-                
+
             for (duration, badness, description) in sorted(data):
                 print(f"{description} {badness:0.2f}")
 
@@ -1844,7 +1844,7 @@ def fol_debug_frames(_: Solver) -> None:
             print("[IC3] ----")
             if frames['elapsed'] is not None:
                 print(f"time: {frames['elapsed']:0.3f}")
-        
+
         async def check_frame_redundancy(lemmas: Dict, frames: Dict, frame_number: IC3Frames.FrameNum) -> None:
             frame = [i for i in range(len(frames['frame_numbers'])) if IC3Frames.frame_leq(frame_number, frames['frame_numbers'][i])]
             print("frame is", len(frame), "lemmas")
@@ -1879,14 +1879,14 @@ def fol_debug_frames(_: Solver) -> None:
             frame_numbers, bad_lemmas, safeties, initial_conditions = frames['frame_numbers'], frames['bad_lemmas'], frames['safeties'], frames['initial_conditions']
             redundancy_frames = set()
             checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w'))
-            
+
             for index in sorted(range(len(frame_numbers)), key = lambda x: IC3Frames.frame_key(frame_numbers[x]), reverse=True):
                 orig_frame = [i for i in range(len(frame_numbers)) if IC3Frames.frame_leq(frame_numbers[index], frame_numbers[i]) and i not in redundancy_frames]
                 result = await checker.check_implication([lemmas[j] for j in orig_frame if index != j], lemmas[index], parallelism=2, timeout=100)
                 if result.result == SatResult.unsat:
                     print(lemmas[index], "is redundant")
                     redundancy_frames.add(index)
-            
+
             for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
                 fn_str = f"{frame_num:2}" if frame_num is not None else ' +'
                 code = '$' if index in safeties else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else 'r' if index in redundancy_frames else ' '
@@ -1895,7 +1895,7 @@ def fol_debug_frames(_: Solver) -> None:
         async def check_golden_invariant(lemmas: Dict, frames: Dict) -> None:
             golden_invariant = [e.expr for e in syntax.the_program.invs()]
             checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w'))
-            
+
             frame_numbers, bad_lemmas, safeties, initial_conditions = frames['frame_numbers'], frames['bad_lemmas'], frames['safeties'], frames['initial_conditions']
             for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
                 if frame_num == 0 and index in bad_lemmas:
@@ -1905,7 +1905,7 @@ def fol_debug_frames(_: Solver) -> None:
                 result = await checker.check_implication(golden_invariant, lemmas[index], parallelism=5, timeout=100)
                 imp = ">>" if result.result == SatResult.unsat else '  '
                 print(f"lemma {fn_str} {code} {imp} {lemmas[index]}")
-            
+
         def find_frame_by_time(time: float) -> Dict:
             found = {}
             for frame in frames:
@@ -1919,11 +1919,11 @@ def fol_debug_frames(_: Solver) -> None:
         # print("\nGolden invariant implication:")
         # await check_golden_invariant(lemmas, frame_of_interest)
     asyncio.run(main())
-    
+
 def extract_vmt(_: Solver) -> None:
     prog = syntax.the_program
     scope = cast(Scope[str], prog.scope)
-    
+
     def to_smtlib(expr: Expr) -> str:
         if isinstance(expr, syntax.Bool):
             return "true" if expr.val else "false"
@@ -1958,7 +1958,7 @@ def extract_vmt(_: Solver) -> None:
             if expr.op == 'DISTINCT':
                 return f"(distinct {args})"
             assert False
-        
+
         elif isinstance(expr, AppExpr):
             d = scope.get(expr.callee)
             if isinstance(d, DefinitionDecl):
@@ -1969,12 +1969,12 @@ def extract_vmt(_: Solver) -> None:
                 return f"({callee} {args})"
             else:
                 assert False, f'{d}\n{expr}'
-        
+
         elif isinstance(expr, QuantifierExpr):
             bvs = ' '.join(f"({b.name} {syntax.get_decl_from_sort(b.sort).name})" for b in expr.binder.vs)
             with scope.in_scope(expr.binder, [b.name for b in expr.binder.vs]):
                 e = to_smtlib(expr.body)
-            
+
             return f"({'forall' if expr.quant == 'FORALL' else 'exists'} ({bvs}) {e})"
 
         elif isinstance(expr, syntax.Id):
@@ -2002,7 +2002,7 @@ def extract_vmt(_: Solver) -> None:
         outfile.write("\n")
         for sort in prog.sorts():
             outfile.write(f"(declare-sort {sort.name} 0)\n")
-        
+
         outfile.write("\n")
         for sort in prog.sorts():
             size = 1
@@ -2085,34 +2085,34 @@ def extract_vmt(_: Solver) -> None:
             ax = rel.derived_axiom
             assert ax is not None
             assert rel.mutable
-            outfile.write(f"""\n(define-fun .def___{rel.name} () Bool (! 
+            outfile.write(f"""\n(define-fun .def___{rel.name} () Bool (!
  (let (($v {to_smtlib(ax)}
  ))
  (and $v))
  :definition __{rel.name}))""")
             with scope.n_states(2):
-                outfile.write(f"""\n(define-fun .def_{rel.name} () Bool (! 
+                outfile.write(f"""\n(define-fun .def_{rel.name} () Bool (!
  (let (($v {to_smtlib(New(ax))}
  ))
  (and $v))
  :definition {rel.name}))""")
 
         safeties = to_smtlib(syntax.And(*(inv.expr for inv in prog.safeties())))
-        outfile.write(f"""\n(define-fun .prop () Bool (! 
+        outfile.write(f"""\n(define-fun .prop () Bool (!
  (let (($v {safeties}
  ))
  (and $v))
  :invar-property 0))\n""")
 
         inits = to_smtlib(syntax.And(*(inv.expr for inv in prog.inits())))
-        outfile.write(f"""\n(define-fun .init () Bool (! 
+        outfile.write(f"""\n(define-fun .init () Bool (!
  (let (($v {inits}
  ))
  (and $v))
  :init true))\n""")
 
         axioms = to_smtlib(syntax.And(*(ax.expr for ax in prog.axioms())))
-        outfile.write(f"""\n(define-fun .axiom () Bool (! 
+        outfile.write(f"""\n(define-fun .axiom () Bool (!
  (let (($v {axioms}
  ))
  (and $v))
@@ -2121,7 +2121,7 @@ def extract_vmt(_: Solver) -> None:
         for tr in prog.transitions():
             expr = tr.as_twostate_formula(prog.scope)
             with scope.n_states(2):
-                outfile.write(f"""\n(define-fun .action_{tr.name} () Bool (! 
+                outfile.write(f"""\n(define-fun .action_{tr.name} () Bool (!
     (let (($v {to_smtlib(expr)}
     ))
     (and $v))
@@ -2198,7 +2198,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     # s.add_argument("--output", type=str, help="Output to file")
     result.append(s)
-    
+
     s = subparsers.add_parser('fol-debug-frames', help='Debug a frame set')
     s.set_defaults(main=fol_debug_frames)
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
