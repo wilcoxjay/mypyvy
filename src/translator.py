@@ -485,9 +485,24 @@ class Z3Translator:
         sort_decls: Dict[Sort, SortDecl] = {}  # TODO: remove once Universe maps sorts and not SortDecls
         elements: Dict[Tuple[Sort, z3.ExprRef], Element] = {}
         z3elements: Dict[Tuple[Sort, Element], z3.ExprRef] = {}
-        for z3sort in sorted(z3model.sorts(), key=str):
-            z3elems = sorted(z3model.get_universe(z3sort), key=str)
+
+        # collect all z3sorts, including sorts that appear in decls but not in z3model.sorts()
+        z3sorts = z3model.sorts()
+        z3sort_names = set(s.name() for s in z3sorts) | set(sorts.keys())
+        for z3decl in sorted(z3model.decls(), key=str):
+            for z3sort in [z3decl.domain(i) for i in range(z3decl.arity())] + [z3decl.range()]:
+                name = z3sort.name()
+                if name not in z3sort_names:
+                    print(f'model_to_first_order_structure: Found undeclared sort {name} in z3decl: {z3decl}')
+                    z3sorts.append(z3sort)
+                    z3sort_names.add(name)
+        for z3sort in sorted(z3sorts, key=str):
             name = z3sort.name()
+            assert name not in sorts
+            univ = z3model.get_universe(z3sort)
+            if univ is None:
+                univ = [z3model.eval(z3.Const(f'{name}_arbitrary', z3sort), model_completion=True)]
+            z3elems = sorted(univ, key=str)
             sort = UninterpretedSort(name)
             sort.decl = SortDecl(name)
             sorts[sort.name] = sort
@@ -524,6 +539,8 @@ class Z3Translator:
             return _eval
 
         for z3decl in sorted(z3model.decls(), key=str):
+            if any(z3decl.domain(i).name() not in sorts for i in range(z3decl.arity())):
+                assert False, z3decl
             name = z3decl.name()
             dom = tuple(
                 sorts[z3decl.domain(i).name()]

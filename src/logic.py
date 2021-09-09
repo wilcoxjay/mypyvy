@@ -23,6 +23,7 @@ from semantics import Trace, State, FirstOrderStructure
 from translator import Z3Translator, TRANSITION_INDICATOR
 import solver
 from solver import Solver
+import parser
 
 
 def check_solver(s: Solver, num_states: int, minimize: Optional[bool] = None) -> Optional[Trace]:
@@ -261,6 +262,24 @@ def assert_any_transition(s: Solver, t: Z3Translator,
         s.add(z3.Implies(tid, t.translate_expr(New(frame, state_index))))
 
     s.add(z3.Or(*tids))
+
+
+def check_theorem(th: syntax.TheoremDecl, s: Solver,
+                  errmsgs: List[Tuple[Optional[syntax.Span], str]] = [],
+                  verbose: bool = True) -> Optional[Trace]:
+    if th.num_states == 2:
+        num_states = 2
+    elif th.num_states == 1:
+        num_states = 1
+    else:
+        num_states = 0
+
+    t = s.get_translator(num_states)
+
+    with s.new_frame():
+        s.add(t.translate_expr(Not(th.expr)))
+
+        return check_unsat(errmsgs, s, num_states, verbose=verbose)
 
 
 def check_bmc(s: Solver, safety: Expr, depth: int, preconds: Optional[Iterable[Expr]] = None,
@@ -619,3 +638,13 @@ def reorder(lst: List[Union[SortDecl, RelationDecl, ConstantDecl, FunctionDecl]]
 
     assert 0 <= order < math.factorial(len(lst))
     return list(utils.generator_element(itertools.permutations(lst), order))
+
+def parse_and_typecheck_expr(input: str, n_states: int = 0, close_free_vars: bool = False) -> syntax.Expr:
+    e = parser.parse_expr(input)
+    if close_free_vars:
+        e = syntax.close_free_vars(e, span=e.span)
+
+    scope = syntax.the_program.scope
+    with scope.n_states(n_states):
+        typechecker.typecheck_expr(scope, e, None)
+    return e

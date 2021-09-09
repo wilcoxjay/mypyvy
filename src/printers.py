@@ -1,6 +1,9 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
+import utils
+import logic
+import solver
 import syntax
 from syntax import UninterpretedSort, SortDecl, ConstantDecl, RelationDecl, FunctionDecl
 from semantics import print_element, RelationInterp, FirstOrderStructure
@@ -51,14 +54,34 @@ def get_ordinal(order: RelationInterp, elt: str) -> int:
     assert elt in graph
     return len(graph[elt]) - 1
 
-def ordered_by_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
+def ordered_by_printer(struct: FirstOrderStructure, sortdecl: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1
     order_name = args[0]
     order = get_relation(order_name)
-    us = UninterpretedSort(s.name)
+    us = UninterpretedSort(sortdecl.name)
     assert order.arity == (us, us) and not order.mutable
+    old_error_count = utils.error_count
+    solve = solver.Solver()
+    thm_expr_strs = [
+        (f'{order_name}(X, X)', 'reflexive'),
+        (f'{order_name}(X, Y) & {order_name}(Y, X) -> X = Y', 'antisymmetric'),
+        (f'{order_name}(X, Y) & {order_name}(Y, Z) -> {order_name}(X, Z)', 'transitive'),
+        (f'{order_name}(X, Y) & {order_name}(X, Y) -> {order_name}(Y, Z) | {order_name}(Z, Y)', 'semi-linear'),
+    ]
+    for e_str, prop_name in thm_expr_strs:
+        e = logic.parse_and_typecheck_expr(e_str, close_free_vars=True)
+        th = syntax.TheoremDecl(name=None, expr=e, num_states=0)
+        if (m := logic.check_theorem(th, solve, verbose=False)) is not None:
+            utils.error_count += 1
+            utils.logger.always_print(f'warning: relation {order_name} is not {prop_name}')
+            utils.logger.always_print(f'info: try adding "axiom {e_str}"')
+            utils.logger.always_print('info: see counterexample below')
+            sortdecl.annotations = ()
+            utils.logger.always_print(str(m))
+    if utils.error_count > old_error_count:
+        utils.print_error_and_exit(None, f'ordered_by_printer: relation {order_name} is not a total order. aborting...')
     ordinal = get_ordinal(struct.rel_interps[order], elt)
-    return f'{s.name}{ordinal}'
+    return f'{sortdecl.name}{ordinal}'
 
 def set_printer(struct: FirstOrderStructure, s: SortDecl, elt: str, args: List[str]) -> str:
     assert len(args) == 1

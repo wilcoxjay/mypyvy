@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
+import re
 import string
 
 from typing import Iterable, Iterator, List, Mapping, Optional, Set, Union, overload
@@ -82,18 +83,14 @@ class CharBuffer:
     def add_input(self, new_input: str) -> None:
         self.contents += new_input
 
-    def at_eof(self) -> bool:
-        return self.pos >= len(self.contents)
-
-    def peek(self) -> str:
-        assert not self.at_eof()
-        return self.contents[self.pos]
-
-    def advance(self) -> str:
-        assert not self.at_eof()
-        c = self.peek()
-        self.pos += 1
-        return c
+token_specification = [
+    ('ID', r'[^(); \t\n]+'),
+    ('COMMENT', r';.*\n'),
+    ('LPAREN', r'\('),
+    ('RPAREN', r'\)'),
+    ('BLANK', r'[ \t\n]+')
+]
+tok_regex = re.compile('|'.join('(?P<%s>%s)' % pair for pair in token_specification))
 
 @dataclass
 class SexpLexer:
@@ -103,36 +100,71 @@ class SexpLexer:
         self.buffer.add_input(new_input)
 
     def skip_whitespace(self) -> None:
-        while not self.buffer.at_eof() and self.buffer.peek() in string.whitespace:
-            self.buffer.advance()
+        contents = self.buffer.contents
+        n = len(contents)
+        i = self.buffer.pos
+        while i < n and contents[i] in string.whitespace:
+            i += 1
+        self.buffer.pos = i
 
     def tokens(self) -> Iterable[Union[Comment, Atom, str, EOF]]:
-        parens = '()'
-        separators = '();' + string.whitespace
-
         while True:
-            self.skip_whitespace()
-
-            if self.buffer.at_eof():
+            mo = tok_regex.match(self.buffer.contents, self.buffer.pos)
+            if mo is None:
                 yield EOF()
                 continue
-
-            c = self.buffer.peek()
-            if c in parens:
-                self.buffer.advance()
-                yield c
-            elif c == ';':
-                self.buffer.advance()
-                comment = []
-                while not self.buffer.at_eof() and self.buffer.peek() != '\n':
-                    comment.append(self.buffer.advance())
-                yield Comment(''.join(comment))
+            kind = mo.lastgroup
+            value = mo.group()
+            # print(self.buffer.pos, mo.start(), mo.end(), value)
+            self.buffer.pos = mo.end()
+            if kind == 'ID':
+                yield Atom(value)
+            elif kind == 'COMMENT':
+                yield Comment(value[1:])
+            elif kind == 'LPAREN':
+                yield '('
+            elif kind == 'RPAREN':
+                yield ')'
+            elif kind == 'BLANK':
+                continue
             else:
-                tok = []
-                while not self.buffer.at_eof() and self.buffer.peek() not in separators:
-                    tok.append(self.buffer.advance())
-                assert len(tok) > 0
-                yield Atom(''.join(tok))
+                assert False
+
+        # assert False
+        #
+        # parens = '()'
+        # separators = '();' + string.whitespace
+        #
+        # while True:
+        #     self.skip_whitespace()
+        #
+        #     contents = self.buffer.contents
+        #     n = len(contents)
+        #
+        #     if self.buffer.pos >= n:
+        #         yield EOF()
+        #         continue
+        #
+        #     c = contents[self.buffer.pos]
+        #     if c in parens:
+        #         self.buffer.pos += 1
+        #         yield c
+        #     elif c == ';':
+        #         self.buffer.pos += 1
+        #         start = self.buffer.pos
+        #         i = start
+        #         while i < n and contents[i] != '\n':
+        #             i += 1
+        #         self.buffer.pos = i
+        #         yield Comment(contents[start:i])
+        #     else:
+        #         start = self.buffer.pos
+        #         i = start
+        #         while i < n and contents[i] not in separators:
+        #             i += 1
+        #         self.buffer.pos = i
+        #         # assert self.buffer.pos > start
+        #         yield Atom(contents[start:i])
 
 @dataclass
 class SexpParser:
@@ -145,24 +177,25 @@ class SexpParser:
     def parse(self) -> Iterable[Union[Sexp, EOF]]:
         for tok in self.lexer.tokens():
             # print(repr(tok))
-            if isinstance(tok, EOF):
-                new_input = yield tok
+            t = type(tok)
+            if t is EOF:
+                new_input = yield tok  # type: ignore
                 if new_input is not None:
                     assert isinstance(new_input, str)
                     self.add_input(new_input)
-            elif isinstance(tok, (Comment, Atom)):
-                if isinstance(tok, Atom):
-                    ans: Union[str, Comment] = tok.name
+            elif t is Comment or t is Atom:
+                if t is Atom:
+                    ans: Union[str, Comment] = tok.name  # type: ignore
                 else:
-                    ans = tok
+                    ans = tok  # type: ignore
 
                 if not self.stack:
                     yield ans
                 else:
                     self.stack[-1].append(ans)
             else:
-                assert isinstance(tok, str)
-                assert tok in '()'
+                # assert isinstance(tok, str)
+                # assert tok in '()'
                 if tok == '(':
                     self.stack.append([])
                 else:
