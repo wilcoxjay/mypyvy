@@ -24,7 +24,7 @@ from separators.logic import Signature
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import AppExpr, BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, UnaryExpr
+from syntax import AppExpr, BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, TraceDecl, UnaryExpr
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 from separators import Constraint, Neg, Pos, Imp
 from separators.separate import FixedImplicationSeparatorPyCryptoSat, FixedImplicationSeparatorPyCryptoSatCNF, Logic, PrefixConstraints, Separator
@@ -1461,7 +1461,25 @@ def fol_extract(solver: Solver) -> None:
             print(f"Final edges: {edges2}")
         g = networkx.DiGraph()
         g.add_edges_from(edges2)
+        
         #print(f"graph is acyclic: {networkx.is_directed_acyclic_graph(g)}")
+        if networkx.is_directed_acyclic_graph(g):
+            remaining = set(s.name for s in prog.sorts())
+            redges = list(edges2)
+            result: List[str] = []
+            while len(remaining) > 0:
+                for r in sorted(remaining):
+                    if all(e[1] != r for e in redges):
+                        result.append(r)
+                        redges = [e for e in redges if e[0] != r]
+                        remaining.remove(r)
+                        break
+                else:
+                    assert False, "not acyclic"
+            print()
+            for r in result:
+                print(f"sort {r}")
+            print()
         if has_exists:
             if networkx.is_directed_acyclic_graph(g):
                 print('--logic=epr', '--epr-edges=' + repr(','.join(f'{a}->{b}' for a,b in edges2)), utils.args.filename)
@@ -1525,10 +1543,17 @@ def fol_extract(solver: Solver) -> None:
             else:
                 assert False, (type(e), e)
             
-        for tr in syntax.the_program.transitions():
-            tr.expr = to_old(tr.expr)
-            
-        print(syntax.the_program)
+        with open(utils.args.output, 'w') as f:
+            print(f"# Mypyvy old syntax auto-generated from {os.path.basename(utils.args.filename)}", file=f)
+            prev: Optional[syntax.Decl] = None
+            for decl in syntax.the_program.decls:
+                if prev is not None and type(decl) != type(prev):
+                    print("", file=f)
+                if isinstance(decl, DefinitionDecl) and decl.num_states == 2:
+                    decl.expr = to_old(decl.expr)
+                if not isinstance(decl, TraceDecl):
+                    print(decl, file=f)
+                prev = decl
         
 def fol_learn(solver: Solver) -> None:
     raise NotImplementedError
@@ -1895,7 +1920,214 @@ def fol_debug_frames(_: Solver) -> None:
         # await check_golden_invariant(lemmas, frame_of_interest)
     asyncio.run(main())
     
+def extract_vmt(_: Solver) -> None:
+    prog = syntax.the_program
+    scope = cast(Scope[str], prog.scope)
     
+    def to_smtlib(expr: Expr) -> str:
+        if isinstance(expr, syntax.Bool):
+            return "true" if expr.val else "false"
+        elif isinstance(expr, syntax.Int):
+            assert False, "Integers not supported"
+        elif isinstance(expr, UnaryExpr) and expr.op == 'NEW':
+            assert scope.new_allowed()
+            with scope.next_state_index():
+                return to_smtlib(expr.arg)
+        elif isinstance(expr, UnaryExpr):
+            arg = to_smtlib(expr.arg)
+            if expr.op == 'NOT':
+                return f"(not {arg})"
+            assert False
+        elif isinstance(expr, BinaryExpr):
+            a, b = to_smtlib(expr.arg1), to_smtlib(expr.arg2)
+            if expr.op == 'IMPLIES':
+                return f"(=> {a} {b})"
+            if expr.op == 'IFF':
+                return f"(= {a} {b})"
+            if expr.op == 'EQUAL':
+                return f"(= {a} {b})"
+            if expr.op == 'NOTEQ':
+                return f"(not (= {a} {b}))"
+            assert False
+        elif isinstance(expr, NaryExpr):
+            args = ' '.join(to_smtlib(arg) for arg in expr.args)
+            if expr.op == 'AND':
+                return f"(and {args})"
+            if expr.op == 'OR':
+                return f"(or {args})"
+            if expr.op == 'DISTINCT':
+                return f"(distinct {args})"
+            assert False
+        
+        elif isinstance(expr, AppExpr):
+            d = scope.get(expr.callee)
+            if isinstance(d, DefinitionDecl):
+                assert False, "definitions not supported"
+            elif isinstance(d, (syntax.RelationDecl, syntax.FunctionDecl)):
+                args = ' '.join(to_smtlib(arg) for arg in expr.args)
+                callee = f"__{d.name}" if d.mutable and scope.current_state_index == 0 else d.name
+                return f"({callee} {args})"
+            else:
+                assert False, f'{d}\n{expr}'
+        
+        elif isinstance(expr, QuantifierExpr):
+            bvs = ' '.join(f"({b.name} {syntax.get_decl_from_sort(b.sort).name})" for b in expr.binder.vs)
+            with scope.in_scope(expr.binder, [b.name for b in expr.binder.vs]):
+                e = to_smtlib(expr.body)
+            
+            return f"({'forall' if expr.quant == 'FORALL' else 'exists'} ({bvs}) {e})"
+
+        elif isinstance(expr, syntax.Id):
+            d = scope.get(expr.name)
+            assert d is not None, f'{expr.name}\n{expr}'
+            if isinstance(d, (syntax.RelationDecl, syntax.ConstantDecl)):
+                return f"__{d.name}" if d.mutable and scope.current_state_index == 0 else d.name
+            elif isinstance(d, DefinitionDecl):
+                assert False
+            else:
+                assert not isinstance(d, syntax.FunctionDecl)  # impossible since functions have arity > 0
+                e, = d
+                return e
+        elif isinstance(expr, IfThenElse):
+            return f"(ite {to_smtlib(expr.branch)} {to_smtlib(expr.then)} {to_smtlib(expr.els)})"
+        elif isinstance(expr, Let):
+            assert False, "let not supported"
+        else:
+            assert False, expr
+
+
+    with open(utils.args.output, 'w') as outfile:
+        outfile.write(f"; VMT translation of {utils.args.filename} (IC3PO flavored)")
+
+        outfile.write("\n")
+        for sort in prog.sorts():
+            outfile.write(f"(declare-sort {sort.name} 0)\n")
+        
+        outfile.write("\n")
+        for sort in prog.sorts():
+            size = 1
+            outfile.write(f"(define-fun .{sort.name} ((S {sort.name})) {sort.name} (! S :sort {size}))\n")
+
+        outfile.write("\n")
+        for const in prog.constants():
+            if const.mutable:
+                outfile.write(f"(declare-fun __{const.name} () {syntax.get_decl_from_sort(const.sort).name})\n")
+        for rel in prog.relations():
+            if rel.mutable:
+                rel_args = ' '.join(syntax.get_decl_from_sort(s).name for s in rel.arity)
+                outfile.write(f"(declare-fun __{rel.name} ({rel_args}) Bool)\n")
+        for func in prog.functions():
+            if func.mutable:
+                func_args = ' '.join(syntax.get_decl_from_sort(s).name for s in func.arity)
+                outfile.write(f"(declare-fun __{func.name} ({func_args}) {syntax.get_decl_from_sort(func.sort).name})\n")
+
+        outfile.write("\n")
+        for const in prog.constants():
+            if const.mutable:
+                outfile.write(f"(declare-fun {const.name} () {syntax.get_decl_from_sort(const.sort).name})\n")
+        for rel in prog.relations():
+            if rel.mutable:
+                rel_args = ' '.join(syntax.get_decl_from_sort(s).name for s in rel.arity)
+                outfile.write(f"(declare-fun {rel.name} ({rel_args}) Bool)\n")
+        for func in prog.functions():
+            if func.mutable:
+                func_args = ' '.join(syntax.get_decl_from_sort(s).name for s in func.arity)
+                outfile.write(f"(declare-fun {func.name} ({func_args}) {syntax.get_decl_from_sort(func.sort).name})\n")
+
+        outfile.write("\n")
+        for const in prog.constants():
+            if const.mutable:
+                outfile.write(f"(define-fun .{const.name} () {syntax.get_decl_from_sort(const.sort).name} (! __{const.name} :next {const.name}))\n")
+        for rel in prog.relations():
+            if rel.mutable:
+                rel_decl_args = ' '.join(f"(V{i} {syntax.get_decl_from_sort(s).name})" for i, s in enumerate(rel.arity))
+                rel_args = ' '.join(f"V{i}" for i, s in enumerate(rel.arity))
+                rel_call = f"__{rel.name}" if len(rel.arity) == 0 else f"(__{rel.name} {rel_args})"
+                outfile.write(f"(define-fun .{rel.name} ({rel_decl_args}) Bool (! {rel_call} :next {rel.name}))\n")
+        for func in prog.functions():
+            if func.mutable:
+                func_decl_args = ' '.join(f"(V{i} {syntax.get_decl_from_sort(s).name})" for i, s in enumerate(func.arity))
+                func_args = ' '.join(f"V{i}" for i, s in enumerate(func.arity))
+                outfile.write(f"(define-fun .{func.name} ({func_decl_args}) {syntax.get_decl_from_sort(func.sort).name} (! (__{func.name} {func_args}) :next {func.name}))\n")
+
+        outfile.write("\n")
+        for const in prog.constants():
+            if not const.mutable:
+                outfile.write(f"(declare-fun {const.name} () {syntax.get_decl_from_sort(const.sort).name})\n")
+        for rel in prog.relations():
+            if not rel.mutable:
+                rel_args = ' '.join(syntax.get_decl_from_sort(s).name for s in rel.arity)
+                outfile.write(f"(declare-fun {rel.name} ({rel_args}) Bool)\n")
+        for func in prog.functions():
+            if not func.mutable:
+                func_args = ' '.join(syntax.get_decl_from_sort(s).name for s in func.arity)
+                outfile.write(f"(declare-fun {func.name} ({func_args}) {syntax.get_decl_from_sort(func.sort).name})\n")
+
+
+        outfile.write("\n")
+        for const in prog.constants():
+            if not const.mutable:
+                outfile.write(f"(define-fun .{const.name} () {syntax.get_decl_from_sort(const.sort).name} (! {const.name} :global true))\n")
+        for rel in prog.relations():
+            if not rel.mutable:
+                rel_decl_args = ' '.join(f"(V{i} {syntax.get_decl_from_sort(s).name})" for i, s in enumerate(rel.arity))
+                rel_args = ' '.join(f"V{i}" for i, s in enumerate(rel.arity))
+                rel_call = rel.name if len(rel.arity) == 0 else f"({rel.name} {rel_args})"
+                outfile.write(f"(define-fun .{rel.name} ({rel_decl_args}) Bool (! {rel_call} :global true))\n")
+        for func in prog.functions():
+            if not func.mutable:
+                func_decl_args = ' '.join(f"(V{i} {syntax.get_decl_from_sort(s).name})" for i, s in enumerate(func.arity))
+                func_args = ' '.join(f"V{i}" for i, s in enumerate(func.arity))
+                outfile.write(f"(define-fun .{func.name} ({func_decl_args}) {syntax.get_decl_from_sort(func.sort).name} (! ({func.name} {func_args}) :global true))\n")
+
+
+        for rel in prog.derived_relations():
+            ax = rel.derived_axiom
+            assert ax is not None
+            assert rel.mutable
+            outfile.write(f"""\n(define-fun .def___{rel.name} () Bool (! 
+ (let (($v {to_smtlib(ax)}
+ ))
+ (and $v))
+ :definition __{rel.name}))""")
+            with scope.n_states(2):
+                outfile.write(f"""\n(define-fun .def_{rel.name} () Bool (! 
+ (let (($v {to_smtlib(New(ax))}
+ ))
+ (and $v))
+ :definition {rel.name}))""")
+
+        safeties = to_smtlib(syntax.And(*(inv.expr for inv in prog.safeties())))
+        outfile.write(f"""\n(define-fun .prop () Bool (! 
+ (let (($v {safeties}
+ ))
+ (and $v))
+ :invar-property 0))\n""")
+
+        inits = to_smtlib(syntax.And(*(inv.expr for inv in prog.inits())))
+        outfile.write(f"""\n(define-fun .init () Bool (! 
+ (let (($v {inits}
+ ))
+ (and $v))
+ :init true))\n""")
+
+        axioms = to_smtlib(syntax.And(*(ax.expr for ax in prog.axioms())))
+        outfile.write(f"""\n(define-fun .axiom () Bool (! 
+ (let (($v {axioms}
+ ))
+ (and $v))
+ :axiom true))\n""")
+
+        for tr in prog.transitions():
+            expr = tr.as_twostate_formula(prog.scope)
+            with scope.n_states(2):
+                outfile.write(f"""\n(define-fun .action_{tr.name} () Bool (! 
+    (let (($v {to_smtlib(expr)}
+    ))
+    (and $v))
+    :action {tr.name}))\n""")
+
+
 def epr_edges(s: str) -> List[Tuple[str, str]]:
     r = []
     for pair in s.split(','):
@@ -1922,6 +2154,7 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_extract)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
+    s.add_argument("--output", type=str, help="Output to file")
     result.append(s)
 
     s = subparsers.add_parser('fol-learn', help='Learn a given formula')
@@ -1971,6 +2204,11 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     # s.add_argument("--output", type=str, help="Output to file")
+    result.append(s)
+
+    s = subparsers.add_parser('extract-vmt', help='Extract a .vmt file')
+    s.set_defaults(main=extract_vmt)
+    s.add_argument("--output", required=True, type=str, help="Output to file")
     result.append(s)
 
     return result
