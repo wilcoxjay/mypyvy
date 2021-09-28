@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from semantics import FunctionInterp, RelationInterp, Trace, Universe
 from syntax import AppExpr, BinaryExpr, ConstantDecl, Expr, FunctionDecl, Id, IfThenElse, Let, Bool, NaryExpr, New, Program, QuantifierExpr, RelationDecl, Sort, SortDecl, UnaryExpr, UninterpretedSort
-import pycvc5
+
+try:
+    import pycvc5
+except ModuleNotFoundError:
+    pass
 
 class SatResult(Enum):
     sat = 'sat'
@@ -145,6 +149,7 @@ class CVC5Solver(SMTSolver):
         self._solver.setOption("produce-models", "true")
         self._solver.setOption("fs-interleave", "true")
         self._solver.setOption("finite-model-find", "true")
+        self._solver.setOption("produce-unsat-cores", "true")
         self._solver.setOption("seed", str(random.randint(0,10000000)))
         if timeout > 0:
             self._solver.setOption("tlimit-per", str(timeout))

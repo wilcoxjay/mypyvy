@@ -20,14 +20,18 @@ from trace_tools import Tracer, load_trace, trace
 from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
 from robust_check import AdvancedChecker, ClassicChecker, RobustChecker
 from semantics import State
-from separators.logic import Signature
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
 from syntax import AppExpr, BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, TraceDecl, UnaryExpr
 from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
-from separators import Constraint, Neg, Pos, Imp
-from separators.separate import FixedImplicationSeparatorPyCryptoSat, FixedImplicationSeparatorPyCryptoSatCNF, Logic, PrefixConstraints, Separator
+
+try:
+    from separators.logic import Signature
+    from separators import Constraint, Neg, Pos, Imp
+    from separators.separate import FixedImplicationSeparatorPyCryptoSat, FixedImplicationSeparatorPyCryptoSatCNF, Logic, PrefixConstraints, Separator
+except ModuleNotFoundError:
+    pass
 
 import networkx
 import z3
@@ -1808,18 +1812,47 @@ def fol_debug_frames(_: Solver) -> None:
         with open(os.path.join(utils.args.log_dir, "trace.pickle"), 'rb') as f:
             trace = load_trace(f)
             # print(trace)
-            data = []
+            # data = []
             for ig_query in trace.descendants('IG'):
-                times: DefaultDict[int, float] = defaultdict(lambda: 0.0)
-                for prefix_query in ig_query.descendants('Pre'):
-                    times[prefix_query.data['category']] += prefix_query.duration
-                    # print(f"{prefix_query.data['category']} {prefix_query.duration:0.3f}")
-                badness = max(times.values())/ min(times.values())
-                data.append((ig_query.duration, badness, f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}"))
-                print(f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}", list(times.items()))
+                # print(ig_query, file = open('ig-query.txt', 'w'))
+                # return
+                if ig_query.data['rationale'] != 'learning':
+                    continue
+                solve_phase = next(ig_query.descendants('Solve'))
+                for prefix_query in solve_phase.descendants('Pre'):
+                    if 'sep' in prefix_query.data:
+                        t = 0.0
+                        for x in prefix_query.descendants('Sep'):
+                            t += x.duration
+                        print(f"{solve_phase.duration:0.3f} {prefix_query.duration:0.3f} {len(prefix_query.data['prefix'].linearize())} {t/prefix_query.duration:0.3f}")
+                        for x in prefix_query.descendants('SMT-tr'):
+                            print (f"{x.duration:0.3f}")
 
-            for (duration, badness, description) in sorted(data):
-                print(f"{description} {badness:0.2f}")
+            with open("smt-tr-times.csv", 'w') as f:        
+                for ig_query in trace.descendants('IG'):
+                    for x in ig_query.descendants('SMT-tr'):
+                        print(f"{x.duration:0.3f} {x.data['result'] if 'result' in x.data else 'unknown'}", file=f)
+
+            print ("\n\n\n")
+            with open("prefix-times-scatter.csv", 'w') as f:
+                for index, ig_query in enumerate(trace.descendants('IG')):
+                    if ig_query.data['rationale'] != 'learning':
+                        continue
+                    solve_phase = next(ig_query.descendants('Solve'))
+                    for prefix_query in solve_phase.descendants('Pre'):
+                        code = 1 if 'unsep' in prefix_query.data else 2 if 'sep' in prefix_query.data else 3
+                        print(f"{index}, {prefix_query.duration:0.3f}, {code}", file=f)
+
+                # times: DefaultDict[int, float] = defaultdict(lambda: 0.0)
+                # for prefix_query in ig_query.descendants('Pre'):
+                #     times[prefix_query.data['category']] += prefix_query.duration
+                #     # print(f"{prefix_query.data['category']} {prefix_query.duration:0.3f}")
+                # badness = max(times.values())/ min(times.values())
+                # data.append((ig_query.duration, badness, f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}"))
+                # print(f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}", list(times.items()))
+
+            # for (duration, badness, description) in sorted(data):
+                # print(f"{description} {badness:0.2f}")
 
             total = 0.0
             for push in trace.descendants('Push'):
@@ -1831,6 +1864,8 @@ def fol_debug_frames(_: Solver) -> None:
                 if ig.data['rationale'] == 'learning':
                     total += ig.duration
             print(f"Total learning time {total}")
+
+            
 
         def print_frames(lemmas: Dict, frames: Dict) -> None:
             frame_numbers, bad_lemmas, safeties, initial_conditions = frames['frame_numbers'], frames['bad_lemmas'], frames['safeties'], frames['initial_conditions']
