@@ -24,6 +24,7 @@ def process_trace(trace: Span, prefix: str ='') -> None:
         # return
         if ig_query.data['rationale'] != 'learning':
             continue
+        # print(ig_query, file = open('ig-query.txt', 'w'))
         solve_phase = next(ig_query.descendants('Solve'))
         total_solve += solve_phase.duration
         for prefix_query in solve_phase.descendants('Pre'):
@@ -35,8 +36,43 @@ def process_trace(trace: Span, prefix: str ='') -> None:
                 total_sep += prefix_query.duration
                 durations_remaining.append(solve_phase.duration - prefix_query.duration)
                 durations_sep.append(prefix_query.duration)
+                prefix_value = prefix_query.data['prefix']
+                pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in prefix_value.linearize())
+                print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp}")
                 # for x in prefix_query.descendants('SMT-tr'):
                     # print (f"{x.duration:0.3f}")
+                break
+        else:
+            durations_remaining.append(solve_phase.duration)
+            durations_sep.append(0)
+                
+    longest_queries = list(sorted([ig_query for ig_query in trace.descendants('IG') if ig_query.data['rationale'] == 'learning'], reverse=True, key = lambda q: q.duration)[:5])
+    for ig_query in longest_queries:
+        print(ig_query.instance, ig_query.duration)
+        solve_phase = next(ig_query.descendants('Solve'))
+        
+        if (solution := next((prefix_query for prefix_query in solve_phase.descendants('Pre') if 'sep' in prefix_query.data), None)) is not None:
+            for sep in solution.descendants('Sep'):
+                pass
+            pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in solution.data['prefix'].linearize())
+            print(f"Solution {solution.duration:0.3f} {sep.data['core']:> 4} {pre_pp}")
+            
+        longest_prefixes = list(sorted([p for p in solve_phase.descendants('Pre')], reverse=True, key = lambda q: q.duration)[:20])
+        for p in longest_prefixes:
+            pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in p.data['prefix'].linearize())
+            max_core = 0
+            t = 0.0
+            for sep in p.descendants('Sep'):
+                t += sep.duration
+                max_core = max(max_core, sep.data.get('core', 0))
+            print(f"{p.duration:> 10.3f} {max_core: >4} {100.0*t/p.duration:4.1f}% {pre_pp}")
+            longest_smt = list(sorted([s for s in p.descendants('SMT-tr')], reverse=True, key = lambda q: q.duration)[:10])
+            for smt in longest_smt:
+                print(f"    {smt.duration:> 10.3f} {smt.data.get('result', 'unknown')}")
+        
+            
+        
+    
 
     print(f"Total IG time: {total_solve:0.3f}, prefix queries (sep only): {total_sep:0.3f}, percent: {total_sep/total_solve*100.0:0.1f}%")
     total = 0.0
@@ -63,16 +99,34 @@ def process_trace(trace: Span, prefix: str ='') -> None:
     durations_unsat = []
     durations_unknown = []
     for ig_query in trace.descendants('IG'):
-        for x in ig_query.descendants('SMT-tr'):
-            if 'result' in x.data and str(x.data['result']) == 'sat':
-                durations_sat.append(x.duration)
-            elif 'result' in x.data and str(x.data['result']) == 'unsat':
-                durations_unsat.append(x.duration)
+        for sep in ig_query.descendants('SMT-tr'):
+            if 'result' in sep.data and str(sep.data['result']) == 'sat':
+                durations_sat.append(sep.duration)
+            elif 'result' in sep.data and str(sep.data['result']) == 'unsat':
+                durations_unsat.append(sep.duration)
             else:
-                durations_unknown.append(x.duration)
-    for ax, data, label in [(ax1, durations_sat, 'Sat'), (ax2, durations_unsat, 'Unsat'), (ax3, durations_unknown, 'Unk')]:
-        ax.hist(data, log=True, bins=50, range = (0, 350))
+                durations_unknown.append(sep.duration)
+    for ax, data, label in [(ax1, durations_sat, 'Sat'), (ax2, durations_unsat, 'Unsat'), (ax3, durations_unknown, 'Unknown')]:
+        bins = 50
+        accum = [0.0] * bins
+        spacing = 300/float(bins)
+        cutoffs = [i*spacing for i in range(bins)]
+        for d in data:
+            if d < cutoffs[0]:
+                accum[0] += d
+                continue
+            for i in range(1, bins):
+                if d < cutoffs[i]:
+                    accum[i-1] += d
+                    break
+            else:
+                accum[-1] += d
+
+        ax.bar(cutoffs, accum, width=spacing, align='edge')
+        # ax.hist(data, log=True, bins=50, range = (0, 350))
         ax.set_title(label)
+        ax.set_ylabel('Total time')
+        ax.set_xlabel('Query duration')
         for pos in ['right', 'top', 'bottom', 'left']:
             ax.spines[pos].set_visible(False)
     plt.tight_layout()
@@ -104,7 +158,7 @@ def process_trace(trace: Span, prefix: str ='') -> None:
     plt.gca().spines['bottom'].set_position('zero')
     plt.tight_layout()
     plt.savefig(prefix+"ig-queries-scatter.png")
-    simulate(trace)
+    # simulate(trace)
 
 def simulate(trace: Span) -> None:
     total_original_time = 0.0

@@ -58,7 +58,8 @@ class Logging:
         self._ig_log: TextIO = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
         self._lemmas_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'lemmas.pickle'), 'wb')
         self._frames_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'frames.pickle'), 'wb')
-
+        self._ig_queries_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'ig-queries.pickle'), 'wb')
+        self._ig_queries_pickler: pickle.Pickler = pickle.Pickler(self._ig_queries_log, protocol=pickle.HIGHEST_PROTOCOL)
 
 async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescriptor) -> None:
     sys.stdout = os.fdopen(log.id, 'w')
@@ -246,7 +247,7 @@ class PrefixQueue:
                 pcs = [
                     PrefixConstraints(Logic.Universal),
                     PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
-                    PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=1),
                     PrefixConstraints(Logic.EPR, max_alt=1, max_repeated_sorts=2),
                     PrefixConstraints(Logic.EPR, max_alt=2, max_repeated_sorts=2),
                     PrefixConstraints(Logic.EPR, max_alt=2)]
@@ -254,7 +255,7 @@ class PrefixQueue:
                 pcs = [
                     PrefixConstraints(Logic.Universal),
                     PrefixConstraints(Logic.Universal, max_repeated_sorts=2),
-                    PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
+                    PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=1),
                     PrefixConstraints(Logic.FOL, max_alt=1, max_repeated_sorts=2),
                     PrefixConstraints(Logic.FOL, max_alt=2, max_repeated_sorts=2),
                     PrefixConstraints(Logic.FOL, max_alt=2)]
@@ -350,12 +351,6 @@ class PrefixQueue:
         assert p in self._outstanding
         self._pcs_worked_on[self._outstanding[p]] -= 1
         del self._outstanding[p]
-
-def _log_ig_problem(name:str, rationale: str, block: Neg, pos: List[Constraint], states: Union[List[State], Dict[int, State]], prior_frame: List[Expr], golden: List[InvariantDecl]) -> None:
-    if utils.args.log_dir == '': return
-    with open(os.path.join(utils.args.log_dir, 'ig-problems', f'{name}.pickle'), 'wb') as f:
-        pickle.dump((rationale, block, pos, {i: states[i] for c in [block, *pos] for i in c.states()}, prior_frame, golden), f)
-
 
 class IGSolver:
     def __init__(self, state: State, positive: List[State], frame: List[Expr], logs: Logging, prog: Program, rationale: str, identity: int, prior_solver: Optional['IGSolver'] = None):
@@ -461,8 +456,6 @@ class IGSolver:
         self._necessary_constraints.add(Neg(i))
 
     async def solve(self, n_threads: int = 1, timeout: Optional[float] = None, span: Tracer.Span = Tracer.dummy_span()) -> Optional[Expr]:
-        _log_ig_problem(self._log_prefix, self._rationale, Neg(0), list(self._reachable_constraints), self._states, self._frame, [inv for inv in syntax.the_program.invs()])
-
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
         async def worker_controller() -> None:
@@ -1053,7 +1046,6 @@ class IC3Frames:
 class ParallelFolIc3:
     FrameNum = Optional[int]
     def __init__(self, span: Tracer.Span) -> None:
-
         # Logging, etc
         self._start_time: float = 0
         self._root_span = span
@@ -1062,11 +1054,18 @@ class ParallelFolIc3:
 
         self._sig = prog_to_sig(syntax.the_program, two_state=False)
 
-        thread_budget = utils.args.cpus if utils.args.cpus is not None else 10
-        self._threads_per_ig = max(1, thread_budget//2) if 'no-heuristic-pushing' not in utils.args.expt_flags else thread_budget
+        cpus = os.cpu_count()
+        thread_budget = utils.args.cpus if utils.args.cpus is not None else (cpus if cpus is not None else 1)
+        self._threads_per_ig_heuristic = 0 if 'no-heuristic-pushing' in utils.args.expt_flags else thread_budget // 2
+        self._threads_per_ig_learning = thread_budget - self._threads_per_ig_heuristic
+        self._threads_per_push = self._threads_per_ig_learning
 
+        if 'sequential' in utils.args.expt_flags:
+            self._threads_per_ig_learning = 1
+            self._threads_per_ig_heuristic = 1
+        
         self._current_push_heuristic_tasks: Set[Tuple[int,int]] = set() # Which (frame, state) pairs are being worked on by the push heuristic?
-        self._frames = IC3Frames(self._logs, self._root_span, self._threads_per_ig)
+        self._frames = IC3Frames(self._logs, self._root_span, self._threads_per_ig_learning)
 
     def print_frames(self) -> None:
         self._frames.print_lemmas()
@@ -1089,20 +1088,27 @@ class ParallelFolIc3:
                     i = await self._frames.add_lemma(inv_decl.expr)
                     self._frames._frame_numbers[i] = 1
 
-    async def parallel_inductive_generalize(self, b: Blocker, rationale: str = '', timeout: Optional[float] = None, prior_solver: Optional[IGSolver] = None) -> IGSolver:
+    async def parallel_inductive_generalize(self, b: Blocker, threads: int = 1, rationale: str = '', timeout: Optional[float] = None, prior_solver: Optional[IGSolver] = None) -> IGSolver:
         ig_frame = set(self._frames.frame_lemmas(b.frame-1))
         ig_solver = IGSolver(self._frames._states[b.state],
                                   [self._frames._states[x] for x in self._frames._useful_reachable | self._frames._initial_states],
                                   [self._frames._lemmas[x] for x in ig_frame],
                                   self._logs, syntax.the_program, rationale, self._next_ig_query_index, prior_solver)
         self._next_ig_query_index += 1
+        self._logs._ig_queries_pickler.dump({"log_prefix": ig_solver._log_prefix, 
+                                             "rationale": ig_solver._rationale, 
+                                             "necessary_constraints": list(ig_solver._necessary_constraints),
+                                             "reachable": list(ig_solver._reachable_constraints),
+                                             "states": ig_solver._states,
+                                             "frame": ig_solver._frame})
+        self._logs._ig_queries_log.flush()
 
         negative_states = set([b.state])
         sol: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
         async def frame_updater()-> None:
             while True:
-                current_frame = set(self._frames.frame_lemmas(b.frame-1))
+                current_frame = set(self._frames.frame_lemmas(b.frame - 1))
                 if ig_frame != current_frame:
                     for f in current_frame - ig_frame:
                         ig_solver.add_to_frame(self._frames._lemmas[f])
@@ -1121,7 +1127,7 @@ class ParallelFolIc3:
         async def solver(IG_span: Tracer.Span) -> None:
             with IG_span.span('Solve') as solve_span:
                 main_solve_start = time.perf_counter()
-                p = await ig_solver.solve(self._threads_per_ig, timeout = timeout, span = solve_span)
+                p = await ig_solver.solve(threads, timeout = timeout, span = solve_span)
                 main_solve_time = time.perf_counter() - main_solve_start
 
             if p is None:
@@ -1130,7 +1136,7 @@ class ParallelFolIc3:
                 return
 
             if 'no-multi-generalize' not in utils.args.expt_flags:
-                time_to_generalize = 1.5 * main_solve_time + 0.1
+                time_to_generalize = 1.0 * main_solve_time + 0.1
                 generalizations_found = 0
                 while True:
                     with IG_span.span('Gen') as solve_span:
@@ -1147,7 +1153,7 @@ class ParallelFolIc3:
                         negative_states.add(new_blocker.state)
                         ig_solver.add_negative_state(self._frames._states[new_blocker.state])
 
-                        new_p = await ig_solver.solve(self._threads_per_ig, timeout = time_to_generalize, span = solve_span)
+                        new_p = await ig_solver.solve(threads, timeout = time_to_generalize, span = solve_span)
 
                         if new_p is None:
                             print("Failed to find generalized lemma in time")
@@ -1177,12 +1183,13 @@ class ParallelFolIc3:
             return ig_solver
 
         print(f"Learned new lemma {final_p} blocking {b.state} in frame {b.frame} for {rationale}")
-        await self._frames.add_lemma(final_p, b.frame)
+        lemma = await self._frames.add_lemma(final_p, b.frame)
+        IG_span.data(lemma=lemma)
         await self._frames.push()
         self.print_frames()
         return ig_solver
 
-    def heuristic_priority(self, pred: int) -> Any:
+    def heuristic_priority(self, pred: int, frame_N: Optional[int] ) -> Any:
         def mat_size(e: Expr) -> int:
             if isinstance(e, QuantifierExpr): return mat_size(e.body)
             elif isinstance(e, UnaryExpr): return mat_size(e.arg)
@@ -1193,15 +1200,14 @@ class ParallelFolIc3:
 
     async def heuristic_pushing_to_the_top_worker(self) -> None:
         # print("Starting heuristics")
-        timeouts = [100.0, 500.0, 2000.0]
+        timeouts = [128.0, 256.0, 512.0, 1024.0]
+        # timeouts: List[float] = []
         timeout_index = 0
         current_timeout: Dict[Tuple[int, int], int] = {}
         while True:
-            priorities = sorted(range(len(self._frames._lemmas)), key=self.heuristic_priority)
-            # print("Checking for something to do")
             frame_N = min((self._frames._frame_numbers[s] for s in self._frames._safeties), key = IC3Frames.frame_key)
-            # print(f"Frame_N: {frame_N}")
-            # print(f"Finding task with index {timeout_index}")
+            priorities = sorted(range(len(self._frames._lemmas)), key=lambda p: self.heuristic_priority(p, frame_N))
+            
             for pred in priorities:
                 # Don't push anything past the earliest safety
                 if IC3Frames.frame_leq(frame_N, self._frames._frame_numbers[pred]):
@@ -1223,7 +1229,7 @@ class ParallelFolIc3:
                     self._current_push_heuristic_tasks.add((fn, st))
                     timeout = timeouts[timeout_index] if timeout_index < len(timeouts) else None
                     print(f"Heuristically blocking state {st} in frame {fn} timeout {timeout}")
-                    await self.parallel_inductive_generalize(blocker, 'heuristic-push', timeout=timeout)
+                    await self.parallel_inductive_generalize(blocker, self._threads_per_ig_heuristic, 'heuristic-push', timeout=timeout)
 
                     current_timeout[(fn, st)] = timeout_index + 1
                     timeout_index = 0
@@ -1248,7 +1254,7 @@ class ParallelFolIc3:
                 if blockable is None:
                     break # try again with new safety property (as by the time we call get_blocker() the safety property may have moved)
                     # we rely on cancellation (from await self._frames.wait_for_completion()) to stop this loop
-                new_solver = await self.parallel_inductive_generalize(blockable, rationale="learning", timeout = None, prior_solver = prior_solver)
+                new_solver = await self.parallel_inductive_generalize(blockable, self._threads_per_ig_learning, rationale="learning", timeout = None, prior_solver = prior_solver)
                 prior_solver = new_solver
                 break
             else:
@@ -1285,7 +1291,7 @@ def p_fol_ic3(_: Solver) -> None:
     # Redirect stdout if we have a log directory
     if utils.args.log_dir:
         os.makedirs(utils.args.log_dir, exist_ok=True)
-        for dir in ['smt-queries', 'ig-problems', 'sep-unsep', 'sep-problems', 'eval']:
+        for dir in ['smt-queries', 'eval']:
             os.makedirs(os.path.join(utils.args.log_dir, dir), exist_ok=True)
         sys.stdout = io.TextIOWrapper(open(os.path.join(utils.args.log_dir, "main.log"), "wb"), line_buffering=True, encoding='utf8')
 
