@@ -7442,7 +7442,7 @@ def primal_dual_houdini(solver: Solver) -> str:
                 return 'UNSAFE'
         return None
 
-    if hasattr(utils.args, 'restart_from'):
+    if hasattr(utils.args, 'restart_from') and utils.args.restart_from is not None:
         restart_from_file(utils.args.restart_from)
 
     first_iteration = True

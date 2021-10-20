@@ -8,11 +8,13 @@ export TIMEFORMAT
 
 PYTHON := python3.8 -u
 
-MYPYVY_OPTS := --seed=0 --log=info --timeout 60000 --print-cmdline
+MYPYVY_OPTS := --seed=0 --log=info --timeout 2000 --print-cmdline
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd-old pd sep
+
+test-ci: check check-imports unit typecheck verify trace updr pd-old pd sep
 
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true

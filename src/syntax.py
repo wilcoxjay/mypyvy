@@ -145,7 +145,7 @@ def symbols_used(scope: Scope, expr: Expr, state_index: int = 0) -> Set[Tuple[in
                     callee_symbols = symbols_used(scope, d.expr, state_index)
             return args | add_caller_span(callee_symbols)
         elif d.mutable:
-            return args | {(state_index, (expr.span,), expr.callee)}
+            return args | {(state_index + expr.n_new, (expr.span,), expr.callee)}
         else:
             return args
     elif isinstance(expr, QuantifierExpr):
@@ -157,10 +157,10 @@ def symbols_used(scope: Scope, expr: Expr, state_index: int = 0) -> Set[Tuple[in
         if isinstance(d, RelationDecl) or \
            isinstance(d, ConstantDecl) or \
            isinstance(d, FunctionDecl):
-            return {(state_index, (expr.span,), expr.name)} if d.mutable else set()
+            return {(state_index + expr.n_new, (expr.span,), expr.name)} if d.mutable else set()
         elif isinstance(d, DefinitionDecl):
             with scope.fresh_stack():
-                return add_caller_span(symbols_used(scope, d.expr, state_index))
+                return add_caller_span(symbols_used(scope, d.expr, state_index + expr.n_new))
         else:
             return set()
     elif isinstance(expr, IfThenElse):
@@ -682,6 +682,7 @@ def Apply(callee: str, args: Tuple[Expr, ...]) -> Expr:
 class AppExpr(AbstractExpr):
     callee: str
     args: Tuple[Expr, ...]
+    n_new: int = dataclasses.field(default=0)
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
     def __str__(self) -> str:
@@ -733,6 +734,7 @@ class QuantifierExpr(AbstractExpr):
 class Id(AbstractExpr):
     '''Unresolved symbol (might represent a constant or a nullary relation or a variable)'''
     name: str
+    n_new: int = dataclasses.field(default=0)
     span: Optional[Span] = dataclasses.field(default=None, compare=False)
 
     def __str__(self) -> str:
@@ -1330,8 +1332,8 @@ class Scope(Generic[B]):
         self.num_states: int = 0
         self.current_state_index: int = 0
 
-    def new_allowed(self) -> bool:
-        return self.current_state_index + 1 < self.num_states
+    def new_allowed(self, n: int = 1) -> bool:
+        return self.current_state_index + n < self.num_states
 
     def mutable_allowed(self) -> bool:
         return self.num_states > 0
@@ -1343,8 +1345,8 @@ class Scope(Generic[B]):
     #     current_state_index + (k - 1) < num_states
     # Also note that this correctly handles the case of calling a 0-state definition from a
     # 0-state context, since then current_state_index = 0 and num_states = 0, and -1 < 0.
-    def call_allowed(self, d: DefinitionDecl) -> bool:
-        return self.current_state_index + (d.num_states - 1) < self.num_states
+    def call_allowed(self, d: DefinitionDecl, n_new: int = 0) -> bool:
+        return self.new_allowed(d.num_states - 1 + n_new)
 
     def push(self, l: List[Tuple[str, B]]) -> None:
         self.stack.append(l)
@@ -1438,11 +1440,11 @@ class Scope(Generic[B]):
         self.stack = stack
 
     @contextmanager
-    def next_state_index(self) -> Iterator[None]:
-        if self.current_state_index + 1 < self.num_states:
-            self.current_state_index += 1
+    def next_state_index(self, n: int = 1) -> Iterator[None]:
+        if n == 0 or self.current_state_index + n < self.num_states:
+            self.current_state_index += n
             yield None
-            self.current_state_index -= 1
+            self.current_state_index -= n
         else:
             assert utils.error_count > 0, (self.current_state_index, self.num_states)
             yield None

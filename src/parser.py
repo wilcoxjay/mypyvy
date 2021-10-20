@@ -69,6 +69,7 @@ tokens = [
     'PLUS',
     'SUB',
     'COMMA',
+    'PRIME',
     'AMPERSAND',
     'STAR',
     'ANNOT',
@@ -113,6 +114,7 @@ t_LT = r'<'
 t_PLUS = r'\+'
 t_SUB = r'-'
 t_COMMA = r','
+t_PRIME = r'\''
 t_AMPERSAND = r'&'
 t_STAR = r'\*'
 t_ignore_COMMENT = r'\#.*'
@@ -151,7 +153,8 @@ precedence = (
     ('nonassoc', 'EQUAL', 'NOTEQ', 'NOTEQ2', 'GE', 'GT', 'LE', 'LT'),
     ('left', 'PLUS', 'SUB'),
     ('left', 'STAR'),
-    ('right', 'BANG', 'TILDE')
+    ('right', 'BANG', 'TILDE'),
+    ('right', 'PRIME'),
 )
 
 # NOTE: assumes list is sorted by lexpos
@@ -490,11 +493,20 @@ def p_expr_not(p: Any) -> None:
     expr: syntax.Expr = p[2]
     p[0] = syntax.UnaryExpr('NOT', expr, span=loc_join(p.slice[1], expr.span))
 
+def p_primes_empty(p: Any) -> None:
+    'primes : empty'
+    p[0] = 0
+
+def p_primes_prime(p: Any) -> None:
+    'primes : primes PRIME'
+    p[0] = p[1] + 1
+
 def p_expr_app(p: Any) -> None:
-    'expr : id LPAREN args RPAREN'
+    'expr : id primes LPAREN args RPAREN'
     callee_tok = p[1]
-    args: Tuple[syntax.Expr, ...] = p[3]
-    p[0] = syntax.AppExpr(callee_tok.value, args, span=loc_join(callee_tok, p.slice[4]))
+    primes = p[2]
+    args: Tuple[syntax.Expr, ...] = p[4]
+    p[0] = syntax.AppExpr(callee_tok.value, args, primes, span=loc_join(callee_tok, p.slice[5]))
 
 def p_expr_and1(p: Any) -> None:
     'expr : AMPERSAND expr'
@@ -629,9 +641,10 @@ def p_args1_more(p: Any) -> None:
     p[0] = p[1] + (p[3],)
 
 def p_expr_id(p: Any) -> None:
-    'expr : id'
+    'expr : id primes'
     id_tok: Token = p[1]
-    p[0] = syntax.Id(id_tok.value, span=span_from_tok(id_tok))
+    primes = p[2]
+    p[0] = syntax.Id(id_tok.value, primes, span=span_from_tok(id_tok))
 
 def p_expr_paren(p: Any) -> None:
     'expr : LPAREN expr RPAREN'

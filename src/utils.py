@@ -107,7 +107,7 @@ class MypyvyArgs:
     depth: int
     filename: str
     sharp: bool
-    restart_from: str
+    restart_from: Optional[str]
     clear_cache: bool
     clear_cache_memo: bool
     cache_only: bool
