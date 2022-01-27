@@ -361,10 +361,11 @@ class IGSolver:
         self._rationale = rationale
         self._identity = identity
         self._log_prefix = f"[{rationale[0].upper()}({identity})]"
-        self._sep_problem_index = 0
+        self._solve_index = 0
         self._total_constraints_found: int = 0
         self._total_prefixes_considered: int = 0
         self._total_skipped_prefixes: int = 0
+        self._smt_timeout = 300.0
 
         # A list of states local to this IG query. All constraints are w.r.t. this list
         self._states: List[State] = []
@@ -402,7 +403,7 @@ class IGSolver:
     async def check_candidate(self, checker: RobustChecker, p: Expr, span: Tracer.Span) -> Union[Constraint, SatResult]:
         # F_0 => p?
         with span.span('SMT-init') as s:
-            initial_state = await checker.check_implication([init.expr for init in syntax.the_program.inits()], p, parallelism=2, timeout=300)
+            initial_state = await checker.check_implication([init.expr for init in syntax.the_program.inits()], p, parallelism=1, timeout=self._smt_timeout)
             s.data(result=initial_state.result)
         if initial_state.result == SatResult.sat and isinstance(initial_state.trace, Trace):
             self._print("Adding initial state")
@@ -412,7 +413,7 @@ class IGSolver:
 
         # F_i-1 ^ p => wp(p)?
         with span.span('SMT-tr') as s:
-            edge = await checker.check_transition([p, *self._frame], p, parallelism=2, timeout=300)
+            edge = await checker.check_transition([p, *self._frame], p, parallelism=1, timeout=self._smt_timeout)
             s.data(result=edge.result)
         if edge.result == SatResult.sat and isinstance(edge.trace, Trace):
             self._print(f"Adding edge")
@@ -457,6 +458,7 @@ class IGSolver:
 
     async def solve(self, n_threads: int = 1, timeout: Optional[float] = None, span: Tracer.Span = Tracer.dummy_span()) -> Optional[Expr]:
         solution: asyncio.Future[Optional[Expr]] = asyncio.Future()
+        self._solve_index += 1
 
         async def worker_controller() -> None:
             worker_known_states: Set[int] = set()
@@ -513,10 +515,6 @@ class IGSolver:
                             next_constraints = list(self._necessary_constraints) + predict_useful_constraints(prefix, previous_solve_constraints)
 
                             start_time = time.perf_counter()
-                            # logged_problem = False
-                            # log_name = f"ig-{self._identity}-{self._sep_problem_index}"
-                            # self._sep_problem_index += 1
-
                             self._print(f"Trying: {pre_pp}")
                             # Loop for adding constraints for a particular prefix
                             while True:
@@ -569,6 +567,11 @@ class IGSolver:
                                             previous_constraints_used = len([c for c in sep_constraints if c in self._previous_constraints])
                                             self._print(f"SEP: {pre_pp} with core={len(sep_constraints)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
                                             self._print(f"Learned {p}")
+                                            if utils.args.log_dir != '':
+                                                with open(os.path.join(utils.args.log_dir, f'smt-queries/sep-prefix-{self._log_prefix}-{self._solve_index}.pickle'), 'wb') as output:
+                                                    pickler = pickle.Pickler(output, protocol=pickle.HIGHEST_PROTOCOL)
+                                                    for q in checker._all_queries:
+                                                        pickler.dump(q)
                                             prefix_span.data(sep=True)
                                             solution.set_result(p)
                                         return
@@ -647,6 +650,7 @@ class IC3Frames:
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
         self._bad_lemmas: Set[int] = set() # Predicates that violate a known reachable state
+        self._pushability_unknown_lemmas: Set[int] = set() # Predicates that violate a known reachable state
         self._redundant_lemmas: Set[int] = set() # Predicates that are implied by the conjunction of non-redundant F_inf lemmas
 
 
@@ -655,6 +659,7 @@ class IC3Frames:
         self._logs = logs
         self._span = span
         self._pushing_parallelism = parallelism
+        self._pushing_timeout = 300.0
 
         self._push_robust_checkers: Dict[int, RobustChecker] = {}
         self._predecessor_robust_checker: RobustChecker = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
@@ -722,6 +727,7 @@ class IC3Frames:
             code = '$' if index in self._safeties else \
                    'i' if index in self._initial_conditions else \
                    'b' if index in self._bad_lemmas else \
+                   'u' if index in self._pushability_unknown_lemmas else \
                    'r' if index in self._redundant_lemmas else ' '
             fn_str = f"{i:2}" if i is not None else ' +'
             print(f"[IC3] lemma {fn_str} {code} {p}")
@@ -733,6 +739,7 @@ class IC3Frames:
                 "initial_conditions": self._initial_conditions,
                 "bad_lemmas": self._bad_lemmas,
                 "redundant_lemmas": self._redundant_lemmas,
+                "pushability_unknown_lemmas": self._pushability_unknown_lemmas,
                 "elapsed": elapsed}
         self._logs._frames_log.write(pickle.dumps(data))
         self._logs._frames_log.flush()
@@ -827,13 +834,13 @@ class IC3Frames:
             return await self._blockable_state(new_blocker)
 
 
-    async def _push_lemma(self, index: int, span: Tracer.Span) -> bool:
+    async def _push_lemma(self, index: int, span: Tracer.Span) -> None:
         p, i = self._lemmas[index], self._frame_numbers[index]
         assert self._push_lock.locked()
 
         # No need to push things already in F_inf or bad lemmas
-        if i is None or index in self._bad_lemmas:
-            return False
+        if i is None or index in self._bad_lemmas or index in self._pushability_unknown_lemmas:
+            return
         with span.span("PushLemma") as span:
             span.data(lemma=index)
             with span.span("ImBlocker"):
@@ -842,12 +849,12 @@ class IC3Frames:
                     # Check if blocking state is reachable (thus we should never push)
                     if blocker in self._reachable:
                         assert index in self._bad_lemmas
-                        return False
+                        return
                     # Check if the blocker state is still in F_i
                     if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
                         blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
                         self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
-                        return False
+                        return
                     # The blocker is invalidated
                     self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
                     del self._immediate_pushing_blocker[index]
@@ -864,17 +871,17 @@ class IC3Frames:
                         self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
                 # We found a former one to use
                 if index in self._immediate_pushing_blocker:
-                    return False
+                    return
 
 
             # Check if any new blocker exists
-
             with span.span("SMTpush") as smt_span:
                 if index not in self._push_robust_checkers:
                     self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
 
                 fp = set(self.frame_lemmas(i))
-                cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism)
+                time_limit = 0.0 if index in self._safeties else self._pushing_timeout
+                cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism, timeout=time_limit)
                 assert fp == set(self.frame_lemmas(i))
 
                 if cex.result == SatResult.unsat:
@@ -883,7 +890,7 @@ class IC3Frames:
                     self._frame_numbers[index] = i + 1
                     self._event_frame_update.set()
                     self._event_frame_update.clear()
-                    return True
+                    return
                 elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
                     trace = cex.trace
                     # Add the blocker and the sucessor state. We need the successor state because
@@ -899,7 +906,11 @@ class IC3Frames:
                     # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
                     self._event_frame_update.set()
                     self._event_frame_update.clear()
-                    return False
+                    return
+                elif index not in self._safeties and cex.result == SatResult.unknown:
+                    print(f"Pushability unknown: {p}")
+                    self._pushability_unknown_lemmas.add(index)
+                    return
                 else:
                     print(f"cex {cex.result}")
                     assert False
@@ -1005,13 +1016,16 @@ class IC3Frames:
         if self._frame_numbers[lemm] != i:
             print("Didn't speculate because lemma has been pushed")
             return None
-
+        if lemm in self._bad_lemmas or lemm in self._pushability_unknown_lemmas:
+            print("Didn't speculate because lemma is bad or has unknown pushability")
+            return None
         while True:
             fp = set(self.frame_lemmas(i))
             if lemm not in self._push_robust_checkers:
                 self._push_robust_checkers[lemm] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
 
-            cex = await self._push_robust_checkers[lemm].check_transition([*(self._lemmas[j] for j in fp), l], p, parallelism=self._pushing_parallelism)
+            time_limit = 0.0 if lemm in self._safeties else self._pushing_timeout
+            cex = await self._push_robust_checkers[lemm].check_transition([*(self._lemmas[j] for j in fp), l], p, parallelism=self._pushing_parallelism, timeout=time_limit)
             if fp != set(self.frame_lemmas(i)):
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
                 continue
@@ -1036,9 +1050,14 @@ class IC3Frames:
                     print("Didn't speculate because blocker is reachable")
                     return None
                 if actual_blocker.frame != i:
-                    print("Speculating with actual blocker in another frame")
-                    # return None
+                    print("Didn't speculate because actual blocker in another frame")
+                    return None
                 return blocker_data
+            elif lemm not in self._safeties and cex.result == SatResult.unknown:
+                print(f"Pushability unknown: {p}")
+                print("Didn't speculate because pushability is unknown")
+                self._pushability_unknown_lemmas.add(lemm)
+                return None
             else:
                 print(f"cex {cex.result}")
                 assert False
@@ -1066,6 +1085,10 @@ class ParallelFolIc3:
         
         self._current_push_heuristic_tasks: Set[Tuple[int,int]] = set() # Which (frame, state) pairs are being worked on by the push heuristic?
         self._frames = IC3Frames(self._logs, self._root_span, self._threads_per_ig_learning)
+
+
+        if 'sequential' in utils.args.expt_flags:
+            self._frames._pushing_timeout = 6 * self._frames._pushing_timeout
 
     def print_frames(self) -> None:
         self._frames.print_lemmas()
@@ -1381,10 +1404,12 @@ def fol_extract(solver: Solver) -> None:
                 return 0
 
         conjuncts, quants = 0, 0
+        sizes = []
         for x in prog.invs():
             if x.is_safety: continue
             conjuncts += 1
             quants = max(quants, count_quantifiers(x.expr))
+            sizes.append(count_quantifiers(x.expr))
         sig = prog_to_sig(syntax.the_program)
 
         edges: Set[Tuple[str, str]] = set()
@@ -1407,7 +1432,7 @@ def fol_extract(solver: Solver) -> None:
         epr = 'Y' if networkx.is_directed_acyclic_graph(g) else ''
 
         print(f"{base_name}&{epr}&{conjuncts}&{quants}&{len(sig.sorts)}&{len(sig.relations) + len(sig.constants) + len(sig.functions)}")
-
+        # print(sizes)
     if 'epr' in utils.args.expt_flags:
         # Check EPR-ness
         edges2: Set[Tuple[str, str]] = set()
@@ -1566,67 +1591,72 @@ def fol_extract(solver: Solver) -> None:
                 prev = decl
 
 def fol_learn(solver: Solver) -> None:
-    raise NotImplementedError
-    # get_forkserver()
-    # async def main() -> None:
-    #     sig = prog_to_sig(syntax.the_program)
-    #     golden = list(syntax.the_program.invs())[utils.args.index].expr
-    #     print("Target:", golden)
-    #     def all_prefixes() -> Iterator[Prefix]:
-    #         for d in range(1000):
-    #             for alts in range(d):
-    #                 yield from generate_exclusive(len(sig.sort_indices), d, alts, 4, True)
-    #     pc = PrefixConstraints()
-    #     if utils.args.logic == 'epr':
-    #         pc.logic = Logic.EPR
-    #     else:
-    #         pc.logic = Logic.FOL
-    #     constraints: List[Union[Pos, Neg]] = []
-    #     states: List[State] = []
-    #     prefixes = all_prefixes()
-    #     while True:
-    #         prefix = next(prefixes)
-    #         print("Trying ", prefix.linearize())
-    #         sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix.linearize(), pc = pc, k_cubes=3)
-    #         to_sep = {}
-    #         current_constraints = set()
-    #         def add_constraint(c: Union[Neg, Pos]) -> None:
-    #             if c in current_constraints: return
-    #             if c.i not in to_sep:
-    #                 to_sep[c.i] = sep.add_model(state_to_model(states[c.i]))
-    #             sep.add_constraint(c.map(to_sep))
-    #             current_constraints.add(c)
-    #         while True:
-    #             p = sep.separate(minimize=True)
-    #             if p is None:
-    #                 break
-    #             with syntax.the_program.scope.n_states(1):
-    #                 pp = formula_to_predicate(p, syntax.the_program.scope)
-    #             print("Separator:", pp)
-    #             for c in constraints:
-    #                 if not satisifies_constraint(c, pp, states):
-    #                     add_constraint(c)
-    #                     break
-    #             else:
-    #                 query_r = await robust_check_implication([pp], golden)
-    #                 if isinstance(query_r, Trace):
-    #                     i = len(states)
-    #                     states.append(query_r.as_state(0))
-    #                     constraints.append(Neg(i))
-    #                     add_constraint(Neg(i))
-    #                     print("Added negative constraint")
-    #                     continue
-    #                 query_r = await robust_check_implication([golden], pp)
-    #                 if isinstance(query_r, Trace):
-    #                     i = len(states)
-    #                     states.append(query_r.as_state(0))
-    #                     constraints.append(Pos(i))
-    #                     add_constraint(Pos(i))
-    #                     print("Added positive constraint")
-    #                     continue
-    #                 print("Matches")
-    #                 return
-    # asyncio.run(main())
+    get_forkserver()
+    async def main() -> None:
+        sig = prog_to_sig(syntax.the_program)
+        golden = [inv for inv in syntax.the_program.invs() if not inv.is_safety][utils.args.index].expr
+        print("Target:", golden)
+
+        checker = AdvancedChecker(syntax.the_program)
+        
+
+        pc = PrefixConstraints()
+        if utils.args.logic == 'epr':
+            pc.logic = Logic.EPR
+        else:
+            pc.logic = Logic.FOL
+        constraints: List[Union[Pos, Neg]] = []
+        states: List[State] = []
+        prefixes = PrefixQueue(sig, pc.logic, True)
+
+        while True:
+            (prefix, prefix_index) = prefixes.get_prefix()
+            print("Trying ", prefix.linearize())
+            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix.linearize(), pc = pc, k_cubes=3)
+            to_sep = {}
+            current_constraints = set()
+            def add_constraint(c: Union[Neg, Pos]) -> None:
+                if c in current_constraints: return
+                if c.i not in to_sep:
+                    to_sep[c.i] = sep.add_model(state_to_model(states[c.i]))
+                sep.add_constraint(c.map(to_sep))
+                current_constraints.add(c)
+            while True:
+                p = sep.separate(minimize=True)
+                if p is None:
+                    prefixes.complete_prefix(prefix)
+                    break
+                with syntax.the_program.scope.n_states(1):
+                    pp = formula_to_predicate(p, syntax.the_program.scope)
+                print("Separator:", pp)
+                for c in constraints:
+                    if not satisifies_constraint(c, pp, states):
+                        add_constraint(c)
+                        break
+                else:
+                    query_r = await checker.check_implication([pp], golden, parallelism=2)
+                    if query_r.trace is not None:
+                        i = len(states)
+                        states.append(query_r.trace.as_state(0))
+                        constraints.append(Neg(i))
+                        add_constraint(Neg(i))
+                        print("Added negative constraint")
+                        continue
+                    query_s = await checker.check_implication([golden], pp, parallelism=2)
+                    if query_s.trace is not None:
+                        i = len(states)
+                        states.append(query_s.trace.as_state(0))
+                        constraints.append(Pos(i))
+                        add_constraint(Pos(i))
+                        print("Added positive constraint")
+                        continue
+                    if query_r.result == SatResult.unsat and query_s.result == SatResult.unsat:
+                        print("Matches")
+                        return
+                    else:
+                        print("Error, unknown")
+                        return
+    asyncio.run(main())
     pass
 
 def add_epr_edges(edges: Set[Tuple[str, str]], expr: z3.ExprRef, polarity: bool = True, univ_sorts: Set[str] = set()) -> None:
@@ -2202,14 +2232,15 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
     s.set_defaults(main=fol_learn)
     s.add_argument("--logic", choices=('fol', 'epr', 'universal'), default="fol", help="Restrict form of separators to given logic (fol is unrestricted)")
     s.add_argument("--index", dest="index", type=int, default=-1, help="Invariant index")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
-    s.add_argument("--inv", dest="inv", type=str, default="", help="Invariant name")
     result.append(s)
 
     s = subparsers.add_parser('fol-benchmark-solver', help='Test SMT solver backend')
     s.set_defaults(main=fol_benchmark_solver)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--epr-edges", dest="epr_edges", type=epr_edges, default=[], help="Allowed EPR edges in inferred formula")
     s.add_argument("--log-dir", dest="log_dir", type=str, default="", help="Log directory")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
     result.append(s)
