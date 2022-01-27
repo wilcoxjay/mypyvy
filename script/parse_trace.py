@@ -1,6 +1,6 @@
 
 from argparse import ArgumentParser
-import os, sys
+import os, sys, json
 from io import TextIOWrapper
 from typing import List, Tuple
 
@@ -11,14 +11,17 @@ from trace_tools import load_trace, Span
 from matplotlib import pyplot as plt
 
 def process_trace(trace: Span, prefix: str ='') -> None:
-    with open('out.txt', 'w') as f:
-        print(trace, file=f)
+    # with open(f'{prefix}out.txt', 'w') as f:
+    #     print(trace, file=f)
 
-    fig = plt.figure()
     durations_remaining = []
     durations_sep = []
+    n_smt = 0
     total_solve = 0.0
-    total_sep = 0.0
+    total_successful_prefix_time = 0.0
+    total_sep_query = 0.0
+    total_eval_query = 0.0
+    total_smt_query = 0.0
     for ig_query in trace.descendants('IG'):
         # print(ig_query, file = open('ig-query.txt', 'w'))
         # return
@@ -28,59 +31,90 @@ def process_trace(trace: Span, prefix: str ='') -> None:
         solve_phase = next(ig_query.descendants('Solve'))
         total_solve += solve_phase.duration
         for prefix_query in solve_phase.descendants('Pre'):
+
+            time_eval = 0.0
+            time_sep = 0.0
+            core = 0
+            for sep_query in prefix_query.descendants('Sep'):
+                if 'time_eval' in sep_query.data:
+                    time_eval = sep_query.data['time_eval']
+                if 'time_sep' in sep_query.data:
+                    time_sep = sep_query.data['time_sep']
+                if 'core' in sep_query.data:
+                    core = sep_query.data['core']
+
+            time_smt = sum(x.duration for x in prefix_query.descendants('SMT-tr'))
+            n_smt += sum(1 for x in prefix_query.descendants('SMT-tr'))
+
             if 'sep' in prefix_query.data:
+                total_sep_query += time_sep
+                total_eval_query += time_eval
+                total_smt_query += time_smt
+
+            if 'sep' in prefix_query.data:
+
                 # t = 0.0
                 # for x in prefix_query.descendants('Sep'):
                 #     t += x.duration
                 # print(f"{solve_phase.duration:0.3f} {prefix_query.duration:0.3f} {len(prefix_query.data['prefix'].linearize())} {t/prefix_query.duration:0.3f}")
-                total_sep += prefix_query.duration
+
+                
+                total_successful_prefix_time += prefix_query.duration
                 durations_remaining.append(solve_phase.duration - prefix_query.duration)
                 durations_sep.append(prefix_query.duration)
                 prefix_value = prefix_query.data['prefix']
                 pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in prefix_value.linearize())
-                print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp}")
-                # for x in prefix_query.descendants('SMT-tr'):
-                    # print (f"{x.duration:0.3f}")
+                print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp} {core}")
+                # print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp}")
                 break
         else:
             durations_remaining.append(solve_phase.duration)
             durations_sep.append(0)
                 
-    longest_queries = list(sorted([ig_query for ig_query in trace.descendants('IG') if ig_query.data['rationale'] == 'learning'], reverse=True, key = lambda q: q.duration)[:5])
-    for ig_query in longest_queries:
-        print(ig_query.instance, ig_query.duration)
-        solve_phase = next(ig_query.descendants('Solve'))
-        
-        if (solution := next((prefix_query for prefix_query in solve_phase.descendants('Pre') if 'sep' in prefix_query.data), None)) is not None:
-            for sep in solution.descendants('Sep'):
-                pass
-            pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in solution.data['prefix'].linearize())
-            print(f"Solution {solution.duration:0.3f} {sep.data['core']:> 4} {pre_pp}")
+    if True:
+        longest_queries = list(sorted([ig_query for ig_query in trace.descendants('IG') if ig_query.data['rationale'] == 'learning'], reverse=True, key = lambda q: q.duration)[:5])
+        for ig_query in longest_queries:
+            print(ig_query.instance, ig_query.duration)
+            solve_phase = next(ig_query.descendants('Solve'))
             
-        longest_prefixes = list(sorted([p for p in solve_phase.descendants('Pre')], reverse=True, key = lambda q: q.duration)[:20])
-        for p in longest_prefixes:
-            pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in p.data['prefix'].linearize())
-            max_core = 0
-            t = 0.0
-            for sep in p.descendants('Sep'):
-                t += sep.duration
-                max_core = max(max_core, sep.data.get('core', 0))
-            print(f"{p.duration:> 10.3f} {max_core: >4} {100.0*t/p.duration:4.1f}% {pre_pp}")
-            longest_smt = list(sorted([s for s in p.descendants('SMT-tr')], reverse=True, key = lambda q: q.duration)[:10])
-            for smt in longest_smt:
-                print(f"    {smt.duration:> 10.3f} {smt.data.get('result', 'unknown')}")
-        
-            
-        
-    
+            if (solution := next((prefix_query for prefix_query in solve_phase.descendants('Pre') if 'sep' in prefix_query.data), None)) is not None:
+                for sep in solution.descendants('Sep'):
+                    pass
+                pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in solution.data['prefix'].linearize())
+                print(f"Solution {solution.duration:0.3f} {sep.data['core']:> 4} {pre_pp}")
+                
+            longest_prefixes = list(sorted([p for p in solve_phase.descendants('Pre')], reverse=True, key = lambda q: q.duration)[:20])
+            for p in longest_prefixes:
+                pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in p.data['prefix'].linearize())
+                max_core = 0
+                t = 0.0
+                for sep in p.descendants('Sep'):
+                    t += sep.duration
+                    max_core = max(max_core, sep.data.get('core', 0))
+                print(f"{p.duration:> 10.3f} {max_core: >4} {100.0*t/p.duration:4.1f}% {pre_pp}")
+                longest_smt = list(sorted([s for s in p.descendants('SMT-tr')], reverse=True, key = lambda q: q.duration)[:10])
+                for smt in longest_smt:
+                    print(f"    {smt.duration:> 10.3f} {smt.data.get('result', 'unknown')}")
 
-    print(f"Total IG time: {total_solve:0.3f}, prefix queries (sep only): {total_sep:0.3f}, percent: {total_sep/total_solve*100.0:0.1f}%")
+    print(f"Total IG time: {total_solve:0.3f}, prefix queries (success only): {total_successful_prefix_time:0.3f}, percent: {total_successful_prefix_time/total_solve*100.0:0.1f}%")
     total = 0.0
     for push in trace.descendants('Push'):
         total += push.duration
     print(f"Total pushing time {total:0.3f}")
     print(f"Total time {trace.duration:0.3f}")
     
+    print(f"Total sep. algo time {total_sep_query:0.3f}")
+    print(f"Total eval time      {total_eval_query:0.3f}")
+    print(f"Total smt time       {total_smt_query:0.3f}")
+    
+    
+    print(json.dumps({
+        'n_queries': len(durations_remaining),
+        'total_sep': total_successful_prefix_time,
+        'total_smt': total_smt_query,
+        'n_smt': n_smt,        
+    }))
+    return
 
     plt.barh(range(len(durations_remaining)), durations_remaining, 0.8, label = 'Remaining')
     plt.barh(range(len(durations_remaining)), durations_sep, 0.8, label = 'Sep', left = durations_remaining)
@@ -101,7 +135,8 @@ def process_trace(trace: Span, prefix: str ='') -> None:
     for ig_query in trace.descendants('IG'):
         for sep in ig_query.descendants('SMT-tr'):
             if 'result' in sep.data and str(sep.data['result']) == 'sat':
-                durations_sat.append(sep.duration)
+                if sep.duration > 6:
+                    durations_sat.append(sep.duration)
             elif 'result' in sep.data and str(sep.data['result']) == 'unsat':
                 durations_unsat.append(sep.duration)
             else:
