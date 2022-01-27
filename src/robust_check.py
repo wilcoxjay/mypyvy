@@ -23,6 +23,7 @@ class RobustCheckResult:
     # time: float = 0.0
 
 class RobustChecker(Protocol):
+    _all_queries: List[Tuple[List[Expr], Expr]]
     async def check_implication(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult: ...
     async def check_transition(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult: ...
 
@@ -218,6 +219,7 @@ class AdvancedChecker(RobustChecker):
         self._last_successful: Dict[str, Tuple[str, float, float]] = {}
         self._log_id = _get_robust_id()
         self._query_id = 0
+        self._all_queries: List[Tuple[List[Expr], Expr]] = []
 
     def _get_log_prefix(self) -> str:
         prefix = f"[{self._log_id}-{self._query_id}]"
@@ -286,6 +288,7 @@ class AdvancedChecker(RobustChecker):
         trs_unsat: Dict[str, Set[int]] = {}
         attempts_started = {tr.name: 0 for tr in self._prog.transitions()}
         result: asyncio.Future[RobustCheckResult] = asyncio.Future()
+        self._all_queries.append((hyps, conc))
         # strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
         # strategies = [('cvc5-fancy', 100000.0)]
         strategies = [('cvc5-basic', 0.5, 0), ('z3-basic', 0.25, 0), ('cvc5-fancy', 20.0, 2), ('cvc5-fancy', 400.0, 16), ('cvc5-fancy', 1600.0, 64)]
@@ -542,9 +545,12 @@ def _robust_result_from_z3_or_trace(hyps: Iterable, r: Union[z3.CheckSatResult, 
 class ClassicChecker(RobustChecker):
     def __init__(self, log: TextIO = sys.stdout) -> None:
         self._log = log
+        self._all_queries: List[Tuple[List[Expr], Expr]] = []
     
     async def check_implication(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
         return _robust_result_from_z3_or_trace(hyps, await _robust_check_implication(hyps, conc, parallelism=parallelism, timeout=timeout, log=self._log))
     
-    async def check_transition(self, hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
+    async def check_transition(self, _hyps: Iterable[Expr], conc: Expr, parallelism: int = 1, timeout: float = 0.0) -> RobustCheckResult:
+        hyps = list(_hyps)
+        self._all_queries.append((hyps, conc))
         return _robust_result_from_z3_or_trace(hyps, await _robust_check_transition(hyps, conc, parallelism=parallelism, timeout=timeout, log=self._log))
