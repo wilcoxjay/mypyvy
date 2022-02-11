@@ -4,11 +4,11 @@ import re, itertools, random
 from typing import Any, ContextManager, Dict, Protocol, Set, Tuple, cast
 from dataclasses import dataclass, field
 from enum import Enum
-from semantics import FunctionInterp, RelationInterp, Trace, Universe
+from semantics import FunctionInterp, RelationInterp, Trace
 from syntax import AppExpr, BinaryExpr, ConstantDecl, Expr, FunctionDecl, Id, IfThenElse, Let, Bool, NaryExpr, New, Program, QuantifierExpr, RelationDecl, Sort, SortDecl, UnaryExpr, UninterpretedSort
 
 try:
-    import pycvc5
+    import cvc5
 except ModuleNotFoundError:
     pass
 
@@ -27,13 +27,13 @@ class SMTSolver(Protocol):
 
 @dataclass
 class _CVC5Context:
-    solver: pycvc5.Solver
-    sorts: Dict[str, pycvc5.Sort] = field(default_factory=dict)
+    solver: cvc5.Solver
+    sorts: Dict[str, cvc5.Sort] = field(default_factory=dict)
     state_indices: Set[int] = field(default_factory=set)
-    mutable_syms: Dict[Tuple[str, int], pycvc5.Term] = field(default_factory=dict)
-    immutable_syms: Dict[str, pycvc5.Term] = field(default_factory=dict)
+    mutable_syms: Dict[Tuple[str, int], cvc5.Term] = field(default_factory=dict)
+    immutable_syms: Dict[str, cvc5.Term] = field(default_factory=dict)
 
-    def _sort_of(self, s: Sort) -> pycvc5.Sort:
+    def _sort_of(self, s: Sort) -> cvc5.Sort:
         assert isinstance(s, UninterpretedSort)
         return self.sorts[s.name]
         
@@ -80,46 +80,45 @@ class _CVC5Context:
                 cvc5_sort = self.solver.mkFunctionSort(args, ret) if len(args) > 0 else ret
                 self.mutable_syms[(fun.name, state_i)] = self.solver.mkConst(cvc5_sort, fun.name)
             
-    def get_sym_term(self, sym: str, state_i: int = 0) -> pycvc5.Term:
+    def get_sym_term(self, sym: str, state_i: int = 0) -> cvc5.Term:
         if sym in self.immutable_syms:
             return self.immutable_syms[sym]
         elif (sym, state_i) in self.mutable_syms:
             return self.mutable_syms[(sym, state_i)]
         else:
-            print(f"Symbol {sym} not found")
-            assert False
+            assert False, f"Symbol {sym} not found"
 
-    def tr(self, e: Expr, state_i: int = 0, vars: Dict[str, pycvc5.Term] = {}) -> pycvc5.Term:
+    def tr(self, e: Expr, state_i: int = 0, vars: Dict[str, cvc5.Term] = {}) -> cvc5.Term:
         if isinstance(e, Bool):
             return self.solver.mkBoolean(e.val)
         elif isinstance(e, UnaryExpr):
             if e.op == 'NEW':
                 return self.tr(e.arg, state_i+1, vars)
             if e.op == 'NOT':
-                return self.solver.mkTerm(pycvc5.kinds.Not, self.tr(e.arg, state_i, vars))
+                return self.solver.mkTerm(cvc5.Kind.Not, self.tr(e.arg, state_i, vars))
         elif isinstance(e, BinaryExpr):
             x = self.tr(e.arg1, state_i, vars)
             y = self.tr(e.arg2, state_i, vars)
             if e.op == 'IMPLIES':
-                return self.solver.mkTerm(pycvc5.kinds.Implies, x, y)
+                return self.solver.mkTerm(cvc5.Kind.Implies, x, y)
             elif e.op == 'IFF':
-                return self.solver.mkTerm(pycvc5.kinds.Equal, x, y)
+                return self.solver.mkTerm(cvc5.Kind.Equal, x, y)
             elif e.op == 'EQUAL':
-                return self.solver.mkTerm(pycvc5.kinds.Equal, x, y)
+                return self.solver.mkTerm(cvc5.Kind.Equal, x, y)
             elif e.op == 'NOTEQ':
-                return self.solver.mkTerm(pycvc5.kinds.Not, self.solver.mkTerm(pycvc5.kinds.Equal, x, y))
+                return self.solver.mkTerm(cvc5.Kind.Not, self.solver.mkTerm(cvc5.Kind.Equal, x, y))
         elif isinstance(e, NaryExpr):
             if e.op == 'AND':
-                return self.solver.mkTerm(pycvc5.kinds.And, *(self.tr(a, state_i, vars) for a in e.args))
+                return self.solver.mkTerm(cvc5.Kind.And, *(self.tr(a, state_i, vars) for a in e.args))
             elif e.op == 'OR':
-                return self.solver.mkTerm(pycvc5.kinds.Or, *(self.tr(a, state_i, vars) for a in e.args))
+                return self.solver.mkTerm(cvc5.Kind.Or, *(self.tr(a, state_i, vars) for a in e.args))
             elif e.op == 'DISTINCT':
-                return self.solver.mkTerm(pycvc5.kinds.Distinct, *(self.tr(a, state_i, vars) for a in e.args))
+                return self.solver.mkTerm(cvc5.Kind.Distinct, *(self.tr(a, state_i, vars) for a in e.args))
         elif isinstance(e, AppExpr):
             callee = self.get_sym_term(e.callee, state_i)
             args = [self.tr(arg, state_i, vars) for arg in e.args]
             if len(args) > 0:
-                return self.solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *args)
+                return self.solver.mkTerm(cvc5.Kind.ApplyUf, callee, *args)
             else:
                 return callee # for func() with no args
         elif isinstance(e, Id):
@@ -129,25 +128,19 @@ class _CVC5Context:
         elif isinstance(e, QuantifierExpr):
             bvs = [(bv.name, self.solver.mkVar(self._sort_of(cast(Sort, bv.sort)), bv.name)) for bv in e.binder.vs]
             body = self.tr(e.body, state_i, {**vars, **{name: bv for name, bv in bvs}})
-            q_kind = pycvc5.kinds.Exists if e.quant =='EXISTS' else pycvc5.kinds.Forall
-            return self.solver.mkTerm(q_kind, self.solver.mkTerm(pycvc5.kinds.BoundVarList, *(v for (name, v) in bvs)), body)
+            q_kind = cvc5.Kind.Exists if e.quant =='EXISTS' else cvc5.Kind.Forall
+            return self.solver.mkTerm(q_kind, self.solver.mkTerm(cvc5.Kind.VariableList, *(v for (name, v) in bvs)), body)
         elif isinstance(e, IfThenElse):
-            return self.solver.mkTerm(pycvc5.kinds.Ite, self.tr(e.branch, state_i, vars), self.tr(e.then, state_i, vars), self.tr(e.els, state_i, vars))
-        elif isinstance(e, Let):
-            pass
+            return self.solver.mkTerm(cvc5.Kind.Ite, self.tr(e.branch, state_i, vars), self.tr(e.then, state_i, vars), self.tr(e.els, state_i, vars))
         else:
-            assert False, (type(e), e)
-        print(f"Couldn't translate: {e}")
-        print(f"Type: {type(e)}")
-        print(f"Repr: {repr(e)}")
-        assert False, e
+            assert False, (str(e), type(e), repr(e))
 
 class CVC5Solver(SMTSolver):
     def __init__(self, program: Program, timeout: int = 0) -> None:
         self._program = program
-        self._solver = pycvc5.Solver()
+        self._solver = cvc5.Solver()
         self._solver.setOption("produce-models", "true")
-        self._solver.setOption("fs-interleave", "true")
+        # self._solver.setOption("fs-interleave", "true")
         self._solver.setOption("finite-model-find", "true")
         self._solver.setOption("produce-unsat-cores", "true")
         self._solver.setOption("seed", str(random.randint(0,10000000)))
@@ -196,9 +189,7 @@ class CVC5Solver(SMTSolver):
                 self.add_expr(New(dr.derived_axiom, state_i))
 
     def add_expr(self, e: Expr) -> None:
-        # print("Adding", e)
         t = self._context.tr(e, 0, dict())
-        # print("Became: ", t)
         self._solver.assertFormula(t)
 
     def check(self) -> SatResult:
@@ -225,14 +216,14 @@ class CVC5Solver(SMTSolver):
             d = prog.scope.sorts[sort.name]
             return d
 
-        def name_of_term(t: pycvc5.Term) -> str:
+        def name_of_term(t: cvc5.Term) -> str:
             s = str(t)
-            m = re.match('\(as (.+) [^ ]+\)', s)
+            m = re.match('\(as (.+) ([^ ]+)\)', s)
             if m:
-                return m.group(1)
+                return m.group(2)+ "_" + m.group(1)
             return s
         def get_univ(sort: str) -> Tuple[str, ...]:
-            elems = self._solver.getDomainElements(self._context.sorts[sort])
+            elems = self._solver.getModelDomainElements(self._context.sorts[sort])
             return tuple(name_of_term(e) for e in elems)
 
         for sort in self._context.sorts.keys():
@@ -240,22 +231,22 @@ class CVC5Solver(SMTSolver):
 
         def _extract_rel(rel: RelationDecl, state: int) -> RelationInterp:
             callee = self._context.get_sym_term(rel.name, state)
-            args = [self._solver.getDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
+            args = [self._solver.getModelDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
             interp: Dict[Tuple[str, ...], bool] = {}
             if len(args) > 0:
                 for t in itertools.product(*args):
-                    interp[tuple(name_of_term(x) for x in t)] = str(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t))) == 'true'
+                    interp[tuple(name_of_term(x) for x in t)] = str(self._solver.getValue(self._solver.mkTerm(cvc5.Kind.ApplyUf, callee, *t))) == 'true'
             else:
                 interp[()] = str(self._solver.getValue(callee)) == 'true'
             return interp
 
         def _extract_func(rel: FunctionDecl, state: int) -> FunctionInterp:
             callee = self._context.get_sym_term(rel.name, state)
-            args = [self._solver.getDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
+            args = [self._solver.getModelDomainElements(self._context.sorts[sort_decl_of(sort).name]) for sort in rel.arity]
             interp: Dict[Tuple[str, ...], str] = {}
             if len(args) > 0:
                 for t in itertools.product(*args):
-                    interp[tuple(name_of_term(x) for x in t)] = name_of_term(self._solver.getValue(self._solver.mkTerm(pycvc5.kinds.ApplyUf, callee, *t)))
+                    interp[tuple(name_of_term(x) for x in t)] = name_of_term(self._solver.getValue(self._solver.mkTerm(cvc5.Kind.ApplyUf, callee, *t)))
             else:
                 interp[()] = name_of_term(self._solver.getValue(callee))
             return interp
@@ -283,6 +274,5 @@ class CVC5Solver(SMTSolver):
             else:
                 trace.immut_const_interps[const] = _extract_const(const, 0)
 
-        # print(trace)
         return trace
 
