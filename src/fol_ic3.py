@@ -635,7 +635,7 @@ class IC3Frames:
         self._transitions: Set[Tuple[int, int]] = set() # Set of transitions between states (s,t)
         self._successors: DefaultDict[int, Set[int]] = defaultdict(set) # Successors t of s in s -> t
         self._predecessors: DefaultDict[int, Set[int]] = defaultdict(set) # Predecessors s of t in s -> t
-        self._reachable: Set[int] = set() # Known reachable states (not necessarily including initial states)
+        self._reachable: Dict[int, int] = dict() # Known reachable states (not necessarily including initial states)
         self._useful_reachable: Set[int] = set() # Known reachable states that violate some lemma
 
         self._lemmas: List[Expr] = [] # List of predicates discovered
@@ -649,7 +649,7 @@ class IC3Frames:
         self._former_pushing_blockers: DefaultDict[int, Dict[int, None]] = defaultdict(dict) # Pushing blockers from prior frames
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
-        self._bad_lemmas: Set[int] = set() # Predicates that violate a known reachable state
+        self._bad_lemmas: Dict[int, int] = dict() # Predicates that violate a known reachable state
         self._pushability_unknown_lemmas: Set[int] = set() # Predicates that violate a known reachable state
         self._redundant_lemmas: Set[int] = set() # Predicates that are implied by the conjunction of non-redundant F_inf lemmas
 
@@ -722,16 +722,15 @@ class IC3Frames:
         # cnt = len([i for (i,fn) in enumerate(self._frame_numbers) if fn == 0 and i in self._bad_predicates])
         # print(f"[IC3] lemma  0 b ... (x{cnt})")
         for i, p, index in sorted(zip(self._frame_numbers, self._lemmas, range(len(self._lemmas))), key=lambda x: IC3Frames.frame_key(x[0])):
-            if i == 0 and index in self._bad_lemmas:
-                continue
             code = '$' if index in self._safeties else \
                    'i' if index in self._initial_conditions else \
-                   'b' if index in self._bad_lemmas else \
+                   'B' if index in self._bad_lemmas and IC3Frames.frame_leq(self._bad_lemmas[index], i) else \
                    'u' if index in self._pushability_unknown_lemmas else \
-                   'r' if index in self._redundant_lemmas else ' '
+                   'r' if index in self._redundant_lemmas else \
+                   'b' if index in self._bad_lemmas else ' '
             fn_str = f"{i:2}" if i is not None else ' +'
             print(f"[IC3] lemma {fn_str} {code} {p}")
-        print(f"[IC3] Reachable states: {len(self._reachable)}, initial states: {len(self._initial_states)}")
+        print(f"[IC3] Reachable states: {len(self._reachable)} ({len(self._useful_reachable)} useful), initial states: {len(self._initial_states)}")
         print("[IC3] ----")
     def log_frames(self, elapsed: Optional[float] = None) -> None:
         data = {"frame_numbers": self._frame_numbers,
@@ -788,26 +787,38 @@ class IC3Frames:
         else:
             assert False
 
-    def _saturate_reachability(self, state:int) -> None:
+    @staticmethod
+    def _set_min(d: dict, index: Any, v: Any) -> bool:
+        """Set d[index] = min(d[index], v), including when index is not in d. Returns True if a change was made."""
+        if index in d and d[index] <= v:
+                return False
+        d[index] = v
+        return True
+
+    def _saturate_reachability(self, state:int, frame: int) -> None:
         # Mark state reachable
-        if state in self._reachable:
+        if state in self._reachable and self._reachable[state] <= frame:
             return
-        self._reachable.add(state)
+        IC3Frames._set_min(self._reachable, state, frame)
+        # self._reachable[state] = min(self._reachable.get(state, frame), frame)
         _reachable_worklist = set([state])
 
         while len(_reachable_worklist) > 0:
             item = _reachable_worklist.pop()
-            if item not in self._reachable:
-                continue
+            assert item in self._reachable
+            base_frame = self._reachable[item]
             for b in self._successors[item]:
-                if b not in self._reachable:
-                    self._reachable.add(b)
+                if IC3Frames._set_min(self._reachable, b, base_frame + 1):
                     _reachable_worklist.add(b)
+                # if b not in self._reachable or self._reachable[b] > base_frame + 1:
+                #     _reachable_worklist.add(b)
+                # self._reachable[b] = min(self._reachable.get(b, base_frame + 1), base_frame + 1)
+        
 
     def _mark_reachable_and_bad(self, state: int) -> None:
-        initial_reachable = set(self._reachable)
-        self._saturate_reachability(state)
-        new = self._reachable - initial_reachable
+        initial_reachable = set(self._reachable.keys())
+        self._saturate_reachability(state, 0)
+        new = set(self._reachable.keys()) - initial_reachable
         if len(new) == 0:
             return
         print(f"Now have {len(self._reachable)} reachable states")
@@ -815,11 +826,12 @@ class IC3Frames:
         for new_r in new:
             print(f"New reachable state: {new_r}")
             st = self._states[new_r]
+            f = self._reachable[new_r] - 1 # frame before the frame that it is known reachable in
             for index, p in enumerate(self._lemmas):
-                if index not in self._bad_lemmas and not st.eval(p):
-                    print(f"Marked {p} as bad")
-                    self._bad_lemmas.add(index)
-                    self._useful_reachable.add(new_r)
+                if not st.eval(p):
+                    if IC3Frames._set_min(self._bad_lemmas, index, f):
+                        print(f"Marked {p} as bad in frame {f}")
+                        self._useful_reachable.add(new_r)
 
     async def _blockable_state(self, blocker: Blocker) -> Optional[Blocker]:
         if blocker.frame == 0:
@@ -833,13 +845,15 @@ class IC3Frames:
             new_blocker = Blocker(state=pred, frame = blocker.frame - 1, successor=blocker.state, type_is_predecessor=True)
             return await self._blockable_state(new_blocker)
 
+    def _is_bad_lemma(self, lemm: int) -> bool:
+        return (lemm in self._bad_lemmas and IC3Frames.frame_leq(self._bad_lemmas[lemm], self._frame_numbers[lemm]))
 
     async def _push_lemma(self, index: int, span: Tracer.Span) -> None:
         p, i = self._lemmas[index], self._frame_numbers[index]
         assert self._push_lock.locked()
 
         # No need to push things already in F_inf or bad lemmas
-        if i is None or index in self._bad_lemmas or index in self._pushability_unknown_lemmas:
+        if i is None or self._is_bad_lemma(index) or index in self._pushability_unknown_lemmas:
             return
         with span.span("PushLemma") as span:
             span.data(lemma=index)
@@ -970,7 +984,7 @@ class IC3Frames:
 
     async def get_blocker(self, lemm: int) -> Optional[Blocker]:
         async with self._push_lock:
-            if self._frame_numbers[lemm] is None or lemm in self._bad_lemmas:
+            if self._frame_numbers[lemm] is None or self._is_bad_lemma(lemm):
                 return None
             return self._ultimate_pushing_blocker[lemm]
 
@@ -1016,7 +1030,7 @@ class IC3Frames:
         if self._frame_numbers[lemm] != i:
             print("Didn't speculate because lemma has been pushed")
             return None
-        if lemm in self._bad_lemmas or lemm in self._pushability_unknown_lemmas:
+        if self._is_bad_lemma(lemm) or lemm in self._pushability_unknown_lemmas:
             print("Didn't speculate because lemma is bad or has unknown pushability")
             return None
         while True:
@@ -1217,6 +1231,7 @@ class ParallelFolIc3:
             if isinstance(e, QuantifierExpr): return mat_size(e.body)
             elif isinstance(e, UnaryExpr): return mat_size(e.arg)
             elif isinstance(e, NaryExpr): return sum(map(mat_size, e.args))
+            elif isinstance(e, BinaryExpr): return mat_size(e.arg1) + mat_size(e.arg2)
             else: return 1
         fn = self._frames._frame_numbers[pred]
         return (-fn if fn is not None else 0, mat_size(self._frames._lemmas[pred]) + random.random() * 0.5)
@@ -1229,15 +1244,17 @@ class ParallelFolIc3:
         current_timeout: Dict[Tuple[int, int], int] = {}
         while True:
             frame_N = min((self._frames._frame_numbers[s] for s in self._frames._safeties), key = IC3Frames.frame_key)
-            priorities = sorted(range(len(self._frames._lemmas)), key=lambda p: self.heuristic_priority(p, frame_N))
+            priorities = sorted(range(len(self._frames._lemmas)), key=lambda lemm: self.heuristic_priority(lemm, frame_N))
+            # print("Heuristic priorities:")
+            # for lemm in priorities:
+            #     print(f"     -> {self._frames._lemmas[lemm]}")
             
-            for pred in priorities:
+            for lemm in priorities:
                 # Don't push anything past the earliest safety
-                if IC3Frames.frame_leq(frame_N, self._frames._frame_numbers[pred]):
+                if IC3Frames.frame_leq(frame_N, self._frames._frame_numbers[lemm]):
                     continue
-                # if not self.heuristically_blockable(pred):
-                #     continue
-                blocker = await self._frames.get_blocker(pred)
+                
+                blocker = await self._frames.get_blocker(lemm)
                 if blocker is None:
                     continue
 
@@ -1251,7 +1268,7 @@ class ParallelFolIc3:
                 try:
                     self._current_push_heuristic_tasks.add((fn, st))
                     timeout = timeouts[timeout_index] if timeout_index < len(timeouts) else None
-                    print(f"Heuristically blocking state {st} in frame {fn} timeout {timeout}")
+                    print(f"Heuristically blocking state {st} in frame {fn} to push {self._frames._lemmas[lemm]} (timeout {timeout})")
                     await self.parallel_inductive_generalize(blocker, self._threads_per_ig_heuristic, 'heuristic-push', timeout=timeout)
 
                     current_timeout[(fn, st)] = timeout_index + 1
