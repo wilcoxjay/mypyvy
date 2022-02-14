@@ -646,7 +646,7 @@ class IC3Frames:
         self._eval_cache: Dict[Tuple[int, int], bool] = {} # Record eval for a (lemma, state)
         self._immediate_pushing_blocker: Dict[int, int] = {} # State for a lemma in F_i that prevents it pushing to F_i+1
         self._ultimate_pushing_blocker: Dict[int, Optional[Blocker]] = {} # (State, Frame) that prevents the lemma from pushing (may be an ancestor of the immediate pushing blocker, None if can't be pushed)
-        self._former_pushing_blockers: DefaultDict[int, Set[int]] = defaultdict(set) # Pushing blockers from prior frames
+        self._former_pushing_blockers: DefaultDict[int, Dict[int, None]] = defaultdict(dict) # Pushing blockers from prior frames
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
         self._bad_lemmas: Set[int] = set() # Predicates that violate a known reachable state
@@ -856,14 +856,14 @@ class IC3Frames:
                         self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
                         return
                     # The blocker is invalidated
-                    self._former_pushing_blockers[index].add(self._immediate_pushing_blocker[index])
+                    self._former_pushing_blockers[index][self._immediate_pushing_blocker[index]] = None
                     del self._immediate_pushing_blocker[index]
 
 
             # Either there is no known blocker or it was just invalidated by some new lemma in F_i
             # First check if any former blockers still work
             with span.span("Former"):
-                for former_blocker in self._former_pushing_blockers[index]:
+                for former_blocker in reversed(self._former_pushing_blockers[index].keys()):
                     if all(self.eval(lemma, former_blocker) for lemma in self.frame_lemmas(i)):
                         print(f"Using former blocker {former_blocker}")
                         self._immediate_pushing_blocker[index] = former_blocker
@@ -1043,7 +1043,7 @@ class IC3Frames:
 
                 # Add the state as a "former" blocker even though it hasn't been used as such. This means that
                 # if the speculative blocking fails, this blocker will be picked up as the blocking state next
-                self._former_pushing_blockers[lemm].add(blocker)
+                self._former_pushing_blockers[lemm][blocker] = None
                 blocker_data = Blocker(state=blocker, frame=i, lemma=lemm, type_is_predecessor=False)
                 actual_blocker = await self._blockable_state(blocker_data)
                 if actual_blocker is None:
@@ -1802,28 +1802,75 @@ def fol_benchmark_eval(_: Solver) -> None:
 
 def fol_debug_ig(_: Solver) -> None:
     get_forkserver()
+
+    async def find_minimal_addition(checker: RobustChecker, frame: List[Expr], inv: Expr) -> None:
+        candidate_core: List[Expr] = []
+        candidates = [human_inv.expr for human_inv in syntax.the_program.invs() if human_inv]
+        n = max(1, len(candidates) // 2)
+        model: Optional[Trace] = None
+        while len(candidates) > 0:
+            
+            # try without c
+            res = await checker.check_transition(frame + candidate_core + candidates[n:] + [inv], inv, parallelism=2, timeout=500)
+            if res.result == SatResult.unsat:
+                model = None
+                candidates = candidates[n:] # didn't need anything in candidates[:n]
+                n = max(1, len(candidates) // 2)
+                
+            elif res.result == SatResult.sat or res.result == SatResult.unknown:
+                if n == 1:
+                    model = res.trace
+                    candidate_core.append(candidates[0]) # we needed c after all
+                    candidates = candidates[n:]
+                else:
+                    n = max(1, n // 2)
+                    random.shuffle(candidates)
+        
+        print("Core is:")
+        for i in candidate_core:
+            print(" ", i)
+
     async def main() -> None:
         # if utils.args.output:
         #     sys.stdout = open(utils.args.output, "w")
         print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
-        data = pickle.load(open(utils.args.query, 'rb'))
-        (rationale, block, pos, states, prior_frame, golden) = data
+        data_stream = pickle.Unpickler(open(os.path.join(utils.args.log_dir, "ig-queries.pickle"), 'rb'))
+        data: Optional[dict] = None
+        while True:
+            try:
+                query_data = data_stream.load()
+                if query_data['rationale'] == 'learning':
+                    data = query_data
+            except EOFError:
+                break
+        if data is None:
+            print("No query")
+            return
 
-        print(f"Results for IG query {utils.args.query} {rationale}")
+        log_prefix: str = data['log_prefix']
+        rationale: str = data['rationale']
+        necessary_constraints: List[Constraint] = data['necessary_constraints']
+        states: List[State] = data['states']
+        frame: List[Expr] = data["frame"]
 
-        state_to_block: State = states[block.i]
+
+        print(f"Results for IG query {log_prefix} {rationale}")
+
+        state_to_block: State = states[cast(Neg, necessary_constraints[0]).i]
         for human_inv in syntax.the_program.invs():
             i = human_inv.expr
             if not state_to_block.eval(i):
-                print(f"{i} is a candidate solution")
-                checker = AdvancedChecker(syntax.the_program) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker()
-                res = await checker.check_transition(prior_frame + [i], i, parallelism=10, timeout=500)
+                print(f"{i} blocks the proof obligation")
+                checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w')) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker()
+                res = await checker.check_transition(frame + [i], i, parallelism=10, timeout=500)
                 if res.result == SatResult.unsat:
                     print("relatively inductive (solution)")
                 elif res.result == SatResult.unknown:
                     print("relative inductiveness unknown")
                 else:
-                    print("not relatively inductive (not solution)")
+                    print("not relatively inductive to frame (not solution)")
+                    await find_minimal_addition(checker, frame, i)
+                
     asyncio.run(main())
 
 def fol_debug_frames(_: Solver) -> None:
@@ -1845,61 +1892,61 @@ def fol_debug_frames(_: Solver) -> None:
                     frames.append(f)
             except EOFError:
                 pass
-        with open(os.path.join(utils.args.log_dir, "trace.pickle"), 'rb') as f:
-            trace = load_trace(f)
-            # print(trace)
-            # data = []
-            for ig_query in trace.descendants('IG'):
-                # print(ig_query, file = open('ig-query.txt', 'w'))
-                # return
-                if ig_query.data['rationale'] != 'learning':
-                    continue
-                solve_phase = next(ig_query.descendants('Solve'))
-                for prefix_query in solve_phase.descendants('Pre'):
-                    if 'sep' in prefix_query.data:
-                        t = 0.0
-                        for x in prefix_query.descendants('Sep'):
-                            t += x.duration
-                        print(f"{solve_phase.duration:0.3f} {prefix_query.duration:0.3f} {len(prefix_query.data['prefix'].linearize())} {t/prefix_query.duration:0.3f}")
-                        for x in prefix_query.descendants('SMT-tr'):
-                            print (f"{x.duration:0.3f}")
+        # with open(os.path.join(utils.args.log_dir, "trace.pickle"), 'rb') as f:
+        #     trace = load_trace(f)
+        #     # print(trace)
+        #     # data = []
+        #     for ig_query in trace.descendants('IG'):
+        #         # print(ig_query, file = open('ig-query.txt', 'w'))
+        #         # return
+        #         if ig_query.data['rationale'] != 'learning':
+        #             continue
+        #         solve_phase = next(ig_query.descendants('Solve'))
+        #         for prefix_query in solve_phase.descendants('Pre'):
+        #             if 'sep' in prefix_query.data:
+        #                 t = 0.0
+        #                 for x in prefix_query.descendants('Sep'):
+        #                     t += x.duration
+        #                 print(f"{solve_phase.duration:0.3f} {prefix_query.duration:0.3f} {len(prefix_query.data['prefix'].linearize())} {t/prefix_query.duration:0.3f}")
+        #                 for x in prefix_query.descendants('SMT-tr'):
+        #                     print (f"{x.duration:0.3f}")
 
-            with open("smt-tr-times.csv", 'w') as f:        
-                for ig_query in trace.descendants('IG'):
-                    for x in ig_query.descendants('SMT-tr'):
-                        print(f"{x.duration:0.3f} {x.data['result'] if 'result' in x.data else 'unknown'}", file=f)
+        #     with open("smt-tr-times.csv", 'w') as f:        
+        #         for ig_query in trace.descendants('IG'):
+        #             for x in ig_query.descendants('SMT-tr'):
+        #                 print(f"{x.duration:0.3f} {x.data['result'] if 'result' in x.data else 'unknown'}", file=f)
 
-            print ("\n\n\n")
-            with open("prefix-times-scatter.csv", 'w') as f:
-                for index, ig_query in enumerate(trace.descendants('IG')):
-                    if ig_query.data['rationale'] != 'learning':
-                        continue
-                    solve_phase = next(ig_query.descendants('Solve'))
-                    for prefix_query in solve_phase.descendants('Pre'):
-                        code = 1 if 'unsep' in prefix_query.data else 2 if 'sep' in prefix_query.data else 3
-                        print(f"{index}, {prefix_query.duration:0.3f}, {code}", file=f)
+        #     print ("\n\n\n")
+        #     with open("prefix-times-scatter.csv", 'w') as f:
+        #         for index, ig_query in enumerate(trace.descendants('IG')):
+        #             if ig_query.data['rationale'] != 'learning':
+        #                 continue
+        #             solve_phase = next(ig_query.descendants('Solve'))
+        #             for prefix_query in solve_phase.descendants('Pre'):
+        #                 code = 1 if 'unsep' in prefix_query.data else 2 if 'sep' in prefix_query.data else 3
+        #                 print(f"{index}, {prefix_query.duration:0.3f}, {code}", file=f)
 
-                # times: DefaultDict[int, float] = defaultdict(lambda: 0.0)
-                # for prefix_query in ig_query.descendants('Pre'):
-                #     times[prefix_query.data['category']] += prefix_query.duration
-                #     # print(f"{prefix_query.data['category']} {prefix_query.duration:0.3f}")
-                # badness = max(times.values())/ min(times.values())
-                # data.append((ig_query.duration, badness, f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}"))
-                # print(f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}", list(times.items()))
+        #         # times: DefaultDict[int, float] = defaultdict(lambda: 0.0)
+        #         # for prefix_query in ig_query.descendants('Pre'):
+        #         #     times[prefix_query.data['category']] += prefix_query.duration
+        #         #     # print(f"{prefix_query.data['category']} {prefix_query.duration:0.3f}")
+        #         # badness = max(times.values())/ min(times.values())
+        #         # data.append((ig_query.duration, badness, f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}"))
+        #         # print(f"{'L' if ig_query.data['rationale'] == 'learning' else 'H'} {ig_query.instance} {ig_query.duration:0.3f}", list(times.items()))
 
-            # for (duration, badness, description) in sorted(data):
-                # print(f"{description} {badness:0.2f}")
+        #     # for (duration, badness, description) in sorted(data):
+        #         # print(f"{description} {badness:0.2f}")
 
-            total = 0.0
-            for push in trace.descendants('Push'):
-                total += push.duration
-            print(f"Total pushing time {total}")
+        #     total = 0.0
+        #     for push in trace.descendants('Push'):
+        #         total += push.duration
+        #     print(f"Total pushing time {total}")
 
-            total = 0.0
-            for ig in trace.descendants('IG'):
-                if ig.data['rationale'] == 'learning':
-                    total += ig.duration
-            print(f"Total learning time {total}")
+        #     total = 0.0
+        #     for ig in trace.descendants('IG'):
+        #         if ig.data['rationale'] == 'learning':
+        #             total += ig.duration
+        #     print(f"Total learning time {total}")
 
             
 
@@ -1955,12 +2002,12 @@ def fol_debug_frames(_: Solver) -> None:
                 orig_frame = [i for i in range(len(frame_numbers)) if IC3Frames.frame_leq(frame_numbers[index], frame_numbers[i]) and i not in redundancy_frames]
                 result = await checker.check_implication([lemmas[j] for j in orig_frame if index != j], lemmas[index], parallelism=2, timeout=100)
                 if result.result == SatResult.unsat:
-                    print(lemmas[index], "is redundant")
+                    # print(lemmas[index], "is redundant")
                     redundancy_frames.add(index)
 
             for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
                 fn_str = f"{frame_num:2}" if frame_num is not None else ' +'
-                code = '$' if index in safeties else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else 'r' if index in redundancy_frames else ' '
+                code = '$' if index in safeties else 'r' if index in redundancy_frames else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else  ' '
                 print(f"lemma {fn_str} {code} {lemmas[index]}")
 
         async def check_golden_invariant(lemmas: Dict, frames: Dict) -> None:
@@ -1984,11 +2031,13 @@ def fol_debug_frames(_: Solver) -> None:
                     found = frame
             return found
 
-        # frame_of_interest = find_frame_by_time(4808)
+        frame_of_interest = find_frame_by_time(100000)
         # print_frames(lemmas, frame_of_interest)
-        # await check_frame_redundancy3(lemmas, frame_of_interest)
+        print("\nFrame redundancy:")
+        await check_frame_redundancy3(lemmas, frame_of_interest)
         # print("\nGolden invariant implication:")
-        # await check_golden_invariant(lemmas, frame_of_interest)
+        print("\nImplied by human invariant:")
+        await check_golden_invariant(lemmas, frame_of_interest)
     asyncio.run(main())
 
 def extract_vmt(_: Solver) -> None:
