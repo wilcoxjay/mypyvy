@@ -12,19 +12,20 @@ import asyncio
 import itertools
 import signal
 import tempfile
+import dataclasses
 
 from dataclasses import dataclass
 from collections import defaultdict
 
-from trace_tools import Tracer, load_trace, trace
+from trace_tools import Tracer, trace
 from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
 from robust_check import AdvancedChecker, ClassicChecker, RobustChecker
 from semantics import State
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import AppExpr, BinaryExpr, DefinitionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, Scope, TraceDecl, UnaryExpr
-from fol_trans import eval_predicate, formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
+from syntax import AppExpr, BinaryExpr, Binder, ConstantDecl, DefinitionDecl, FunctionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, RelationDecl, Scope, TraceDecl, UnaryExpr
+from fol_trans import formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 
 try:
     from separators.logic import Signature
@@ -37,22 +38,33 @@ import networkx
 import z3
 from solver_cvc5 import SatResult
 
+
+def eval_predicate(s: State, p: Expr) -> bool:
+    try:
+        fr = fast_eval(s,p)
+    except NotImplementedError as e:
+        r = s.eval(p)
+        print(f"NotImplemented fast_eval {e}", file=sys.stderr)
+        assert isinstance(r, bool)
+        return r
+    return fr
+
 def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State], List[State]]) -> bool:
     if isinstance(c, Pos):
-        if not states[c.i].eval(p):
+        if not eval_predicate(states[c.i], p):
             return False
     elif isinstance(c, Neg):
-        if states[c.i].eval(p):
+        if eval_predicate(states[c.i], p):
             return False
     elif isinstance(c, Imp):
-        if states[c.i].eval(p) and not states[c.j].eval(p):
+        if eval_predicate(states[c.i], p) and not eval_predicate(states[c.j], p):
             return False
     return True
 
 class Logging:
     def __init__(self, log_dir: str) -> None:
         self._log_dir = log_dir
-        supress_logs = True
+        supress_logs = 'full-logging' not in utils.args.expt_flags
         self._sep_log: TextIO = open('/dev/null', 'w') if log_dir == '' or supress_logs else open(os.path.join(utils.args.log_dir, 'sep.log'), 'w', buffering=1)
         self._smt_log: TextIO = open('/dev/null', 'w') if log_dir == '' or supress_logs else open(os.path.join(utils.args.log_dir, 'smt.log'), 'w', buffering=1)
         self._ig_log: TextIO = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
@@ -90,10 +102,11 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
         if 'prefix' in v:
             prefix, k_cubes, expt_flags, label = v['prefix'], v['k_cubes'], v['expt_flags'], v['label']
             del sep
+            debug = 'debug-sep' in expt_flags
             if 'sep-cnf' not in utils.args.expt_flags:
-                sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=False)
+                sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=debug)
             else:
-                sep = FixedImplicationSeparatorPyCryptoSatCNF(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=False)
+                sep = FixedImplicationSeparatorPyCryptoSatCNF(sig, prefix, pc=sep_pc, k_cubes=k_cubes, expt_flags=expt_flags, debug=debug)
             sep_constraints = set()
             sep_constraints_order = []
             mapping = {}
@@ -413,7 +426,7 @@ class IGSolver:
 
         # F_i-1 ^ p => wp(p)?
         with span.span('SMT-tr') as s:
-            edge = await checker.check_transition([p, *self._frame], p, parallelism=1, timeout=self._smt_timeout)
+            edge = await checker.check_transition([p, *self._frame], p, parallelism=2, timeout=self._smt_timeout)
             s.data(result=edge.result)
         if edge.result == SatResult.sat and isinstance(edge.trace, Trace):
             self._print(f"Adding edge")
@@ -714,8 +727,6 @@ class IC3Frames:
         return self._eval_cache[(lemm, state)]
     def frame_lemmas(self, i: FrameNum) -> Iterable[int]:
         yield from (index for index, f in enumerate(self._frame_numbers) if IC3Frames.frame_leq(i, f) and index not in self._redundant_lemmas)
-    def frame_transitions(self, i: FrameNum) -> Iterable[Tuple[int, int]]:
-        yield from ((a, b) for a, b in self._transitions if all(self.eval(p, a) for p in self.frame_lemmas(i)))
 
     def print_lemmas(self) -> None:
         print("[IC3] ---- Frame summary")
@@ -828,7 +839,7 @@ class IC3Frames:
             st = self._states[new_r]
             f = self._reachable[new_r] - 1 # frame before the frame that it is known reachable in
             for index, p in enumerate(self._lemmas):
-                if not st.eval(p):
+                if not eval_predicate(st, p):
                     if IC3Frames._set_min(self._bad_lemmas, index, f):
                         print(f"Marked {p} as bad in frame {f}")
                         self._useful_reachable.add(new_r)
@@ -1144,11 +1155,13 @@ class ParallelFolIc3:
         sol: asyncio.Future[Optional[Expr]] = asyncio.Future()
 
         async def frame_updater()-> None:
+            nonlocal ig_frame
             while True:
                 current_frame = set(self._frames.frame_lemmas(b.frame - 1))
                 if ig_frame != current_frame:
                     for f in current_frame - ig_frame:
                         ig_solver.add_to_frame(self._frames._lemmas[f])
+                    ig_frame = current_frame
                 await self._frames.wait_for_frame_update()
 
         async def concurrent_block()-> None:
@@ -1742,34 +1755,37 @@ def fol_benchmark_solver(_: Solver) -> None:
     if utils.args.output:
         sys.stdout = open(utils.args.output, "w")
     print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
-    data = pickle.load(open(utils.args.query, 'rb'))
-    if len(data) == 2:
-        (old_hyps, new_conc) = cast(Tuple[List[Expr], Expr], data)
-        states = 2
-    else:
-        assert False
+    input_file = open(utils.args.query, 'rb')
+    stream = pickle.Unpickler(input_file)
 
-    if True:
+    checker = AdvancedChecker(syntax.the_program) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker()
+    total_time = 0.0
+
+    while True:
+        try:
+            (old_hyps, new_conc) = stream.load()
+        except EOFError:
+            break
         for e in old_hyps:
             print("  ", e)
+        print("->")
         print("  ", new_conc)
         print("testing checker")
         start_time = time.perf_counter()
-        checker = AdvancedChecker(syntax.the_program) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker()
-        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
+        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, parallelism=2, timeout=1000000.0))
         end_time = time.perf_counter()
         print (r_r.result)
         print (f"=== Solution obtained in {end_time-start_time:0.3f}")
-
+        total_time += end_time-start_time
         # print(checker._last_successful)
         # print(checker._transitions)
 
-        start_time = time.perf_counter()
-        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
-        end_time = time.perf_counter()
-        print (r_r.result)
-        print (f"=== Solution obtained in {end_time-start_time:0.3f}")
-
+        # start_time = time.perf_counter()
+        # r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, 1, 1000000.0))
+        # end_time = time.perf_counter()
+        # print (r_r.result)
+        # print (f"=== Solution obtained in {end_time-start_time:0.3f}")
+    print(f"=== Overall time {total_time:0.3f}")
 
 def fol_benchmark_ig(_: Solver) -> None:
     tp = Tuple[str, Neg, List[Constraint], Dict[int, State], List[Expr], List[InvariantDecl]]
@@ -1797,25 +1813,248 @@ def fol_benchmark_ig(_: Solver) -> None:
     asyncio.run(run_query())
 
 
+def eval_atom(st: State, expr: Expr, vars: Dict[str, str]) -> Tuple[Union[bool, str], Set[str]]:
+    def get_rel(d: RelationDecl) -> Dict[Tuple[str, ...], bool]:
+        if d.mutable:
+            return st.trace.rel_interps[cast(int, st.index)][d]
+        else:
+            return st.trace.immut_rel_interps[d]
+
+    def get_const(d: ConstantDecl) -> str:
+        if d.mutable:
+            return st.trace.const_interps[cast(int, st.index)][d]
+        else:
+            return st.trace.immut_const_interps[d]
+
+    def get_func(d: FunctionDecl) -> Dict[Tuple[str, ...], str]:
+        if d.mutable:
+            return st.trace.func_interps[cast(int, st.index)][d]
+        else:
+            return st.trace.immut_func_interps[d]
+    
+    if isinstance(expr, syntax.Bool):
+        return (expr.val, set())
+    elif isinstance(expr, syntax.UnaryExpr):
+        if expr.op == 'NEW':
+            raise NotImplementedError("New not supported")
+        elif expr.op == 'NOT':
+            (val, vs) = eval_atom(st, expr.arg, vars)
+            return (not val, vs)
+        else:
+            assert False, f'eval unknown operation {expr.op}'
+    elif isinstance(expr, syntax.BinaryExpr):
+        (v1, s1), (v2, s2) = eval_atom(st, expr.arg1, vars), eval_atom(st, expr.arg2, vars)
+            
+        if expr.op == 'IMPLIES':
+            return (not v1 or v2, s1 if not v1 else s1 | s2)
+        elif expr.op in ['IFF', 'EQUAL']:
+            return (v1 == v2, s1 | s2)
+        elif expr.op == 'NOTEQ':
+            return (v1 != v2, s1 | s2)
+        else:
+            assert False, expr
+    elif isinstance(expr, syntax.NaryExpr):
+        raise NotImplementedError("No Nary ops supported in eval_atom")
+    elif isinstance(expr, syntax.AppExpr):
+        args = tuple(cast(Tuple[str, Set[str]], eval_atom(st, arg, vars)) for arg in expr.args)
+        d = syntax.the_program.scope.get(expr.callee)
+        if isinstance(d, RelationDecl):
+            return (get_rel(d)[tuple(a[0] for a in args)], set(x for a in args for x in a[1]))
+        elif isinstance(d, FunctionDecl):
+            return (get_func(d)[tuple(a[0] for a in args)], set(x for a in args for x in a[1]))
+        else:
+            assert False, f'{d}\n{expr}'
+    elif isinstance(expr, syntax.QuantifierExpr):
+        raise NotImplementedError("No quantifiers supported in eval_atom")
+    elif isinstance(expr, syntax.Id):
+        if expr.name in vars:
+            return (vars[expr.name], set([expr.name]))
+        a = syntax.the_program.scope.get(expr.name)
+        # definitions are not supported
+        assert (not isinstance(a, syntax.DefinitionDecl) and
+                not isinstance(a, syntax.FunctionDecl) and a is not None)
+        if isinstance(a, syntax.RelationDecl):
+            return (get_rel(a)[()], set())
+        elif isinstance(a, syntax.ConstantDecl):
+            return (get_const(a), set())
+        else:
+            assert isinstance(a, str) or isinstance(a, bool)
+            return (a, set())
+    elif isinstance(expr, syntax.IfThenElse):
+        raise NotImplementedError("If then else not supported")
+    elif isinstance(expr, syntax.Let):
+        raise NotImplementedError("Let not supported")
+    else:
+        assert False, expr
+
+@dataclass
+class FastExpr:
+    neg: bool = False
+    cached_values: List[Tuple[Tuple[str, ...], Tuple[str, ...], bool]] = dataclasses.field(default_factory=list)
+    def eval(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        for (match_vars, match_values, result) in self.cached_values:
+            if all(vars[mvar] == mval for mvar, mval in zip(match_vars, match_values)):
+                return (result != self.neg, set(match_vars))
+        (value, used_vars) = self.eval_self(vars)
+        assert isinstance(value, bool)
+        # print(vars, used_vars)
+        uv = tuple(used_vars)
+        self.cached_values.insert(0, (uv, tuple(vars[v] for v in uv), value))
+        return (value != self.neg, used_vars)
+
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        raise NotImplemented
+
+@dataclass
+class FastAtom(FastExpr):
+    a: Expr = syntax.Bool(True)
+    st: State = cast(State, None)
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        (v, used_vars) = eval_atom(self.st, self.a, vars)
+        assert isinstance(v, bool)
+        return (v, used_vars)
+
+@dataclass
+class FastForall(FastExpr):
+    var: str = ''
+    univ: List[str] = dataclasses.field(default_factory=list)
+    body: FastExpr = FastAtom()
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        used_vars: Set[str] = set()
+        for i, e in enumerate(self.univ):
+            vars[self.var] = e
+            # print("Forall", self.var, e)
+            (v, uv) = self.body.eval(vars)
+            del vars[self.var]
+            uv.discard(self.var)
+            if not v:
+                self.univ = [e, *self.univ[:i], *self.univ[i+1:]]
+                return (False, uv)
+            used_vars.update(uv)
+        return (True, used_vars)
+
+@dataclass
+class FastOr(FastExpr):
+    c: List[FastExpr] = dataclasses.field(default_factory=list)
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        used_vars: Set[str] = set()
+        for i, a in enumerate(self.c):
+            (v, uv) = a.eval(vars)
+            if v:
+                self.c = [a, *self.c[:i], *self.c[i+1:]]
+                return (True, uv)
+            used_vars.update(uv)
+        return (False, used_vars)
+
+def fast_eval(st: State, base_expr: Expr) -> bool:
+    # for sortdecl, elems in st.univs:
+    #     if len(elems) >= 255:
+    #         raise NotImplementedError("Universe too big for fast evaluation")
+    def convert(e: Expr) -> FastExpr:
+        if isinstance(e, QuantifierExpr):
+            assert len(e.binder.vs) > 0
+            if len(e.binder.vs) == 1:
+                sv = e.binder.vs[0]
+                fq = FastForall(var = sv.name,
+                                 univ = list(st.trace.univs[syntax.get_decl_from_sort(sv.sort)]),
+                                 body = convert(e.body) if e.quant == 'FORALL' else convert(Not(e.body)))
+                fq.neg = e.quant != 'FORALL'
+                return fq
+            return convert(QuantifierExpr(e.quant, e.binder.vs[:1], QuantifierExpr(e.quant, e.binder.vs[1:], e.body)))
+        elif isinstance(e, UnaryExpr) and e.op == 'NOT':
+            fe = convert(e.arg)
+            fe.neg = not fe.neg
+            return fe
+        elif isinstance(e, UnaryExpr) and e.op == 'NEW':
+            raise NotImplementedError("Fast eval does not support new")
+        elif isinstance(e, NaryExpr) and e.op == 'AND':
+            return FastOr(c = [convert(Not(a)) for a in e.args], neg = True)
+        elif isinstance(e, NaryExpr) and e.op == 'OR':
+            return FastOr(c = [convert(a) for a in e.args])
+        elif isinstance(e, BinaryExpr) and e.op == 'IMPLIES':
+            return FastOr(c = [convert(Not(e.arg1)), convert(e.arg2)])
+        else:
+            return FastAtom(a=e, st=st)
+    
+    fe = convert(base_expr)
+    (val, used_vars) = fe.eval({})
+    return val
+
 def fol_benchmark_eval(_: Solver) -> None:
-    total = 0.0
-    for input_fname in os.listdir(utils.args.query):
-        with open(os.path.join(utils.args.query, input_fname), 'rb') as f:
-            try:
-                data: Tuple[Dict[int, State], Expr] = pickle.load(f)
-            except EOFError:
-                continue
-            (states, p) = data
+    if os.path.isdir(utils.args.query):
+        import heapq
+        total = 0.0
+        @dataclass(order=True)
+        class PrioritizedItem:
+            priority: float
+            item: Any=dataclasses.field(compare=False)
+        most_expensive: List[PrioritizedItem] = []
+        random_subset: List[PrioritizedItem] = []
+        for input_fname in os.listdir(utils.args.query):
+            with open(os.path.join(utils.args.query, input_fname), 'rb') as f:
+                try:
+                    data: Tuple[Dict[int, State], Expr] = pickle.load(f)
+                except EOFError:
+                    continue
+                (states, p) = data
+                if len(states) == 0:
+                    continue
+                for key, st in states.items():
+                    start = time.perf_counter()
+                    fast_eval(st, p)
+                    end = time.perf_counter()
+                    assert st.eval(p) == fast_eval(st, p)
+                    total += end-start
+                    item = PrioritizedItem(end-start, (st, p))
+                    print(f"{(end-start)*1000.0:0.3f}")
+                    if len(most_expensive) < 1000:
+                        heapq.heappush(most_expensive, item)
+                    else:
+                        heapq.heappushpop(most_expensive, item)
+                    item = PrioritizedItem(random.random(), (st, p))
+                    if len(random_subset) < 1000:
+                        heapq.heappush(random_subset, item)
+                    else:
+                        heapq.heappushpop(random_subset, item)
+                # print(f"elapsed: {1000.0*(end-start)/len(states):0.3f} ms/eval {p}")
+                
+        print(f"overall: {total:0.3f}")
+        with open("hardest-evals.pickle", 'wb') as f:
+            pickler = pickle.Pickler(f)
+            for i in most_expensive:
+                pickler.dump(i.item)
+        with open("random-evals.pickle", 'wb') as f:
+            pickler = pickle.Pickler(f)
+            for i in random_subset:
+                pickler.dump(i.item)
+    else:
+        total = 0.0
+        ref_total = 0.0
+        with open(utils.args.query, 'rb') as f:
+            unpickler = pickle.Unpickler(f)
+            while True:
+                try:
+                    single_data: Tuple[State, Expr] = unpickler.load()
+                except EOFError:
+                    break
+                (st, p) = single_data
+                print(p)
+                
+                start = time.perf_counter()
+                value = fast_eval(st, p)
+                end = time.perf_counter()
+                total += end-start
 
-            start = time.perf_counter()
-            for key, st in states.items():
-                value = st.eval(p)
-                #print(st.eval(p), ','.join(f'{len(l)}' for l in st.univs.values()))
-            end = time.perf_counter()
-            print(f"elapsed: {1000.0*(end-start)/len(states):0.3f} ms/eval {p}")
-            total += end-start
-    print(f"overall: {total:0.3f}")
-
+                start = time.perf_counter()
+                ref_value = st.eval(p)
+                end = time.perf_counter()
+                ref_total += end-start
+                
+                print("Value", value, " Reference", ref_value)
+                assert value == ref_value
+                
+        print(f"overall: {total:0.3f}")
+        print(f"overall (ref): {ref_total:0.3f}")
 
 def fol_debug_ig(_: Solver) -> None:
     get_forkserver()

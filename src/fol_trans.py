@@ -12,10 +12,7 @@ try:
 except ModuleNotFoundError:
     raise NotImplementedError()
 
-def eval_predicate(s: State, p: Expr) -> bool:
-    r = s.eval(p)
-    assert isinstance(r, bool)
-    return r
+
 
 def prog_to_sig(prog: Program, two_state: bool = False) -> separators.logic.Signature:
     sig = separators.logic.Signature()
