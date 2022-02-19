@@ -1,7 +1,7 @@
 
 import re, itertools, random
 
-from typing import Any, ContextManager, Dict, Protocol, Set, Tuple, cast
+from typing import Any, ContextManager, Dict, List, Protocol, Set, Tuple, cast
 from dataclasses import dataclass, field
 from enum import Enum
 from semantics import FunctionInterp, RelationInterp, Trace
@@ -136,19 +136,23 @@ class _CVC5Context:
             assert False, (str(e), type(e), repr(e))
 
 class CVC5Solver(SMTSolver):
-    def __init__(self, program: Program, timeout: int = 0) -> None:
+    def __init__(self, program: Program, timeout: int = 0, rlimit: int = 0) -> None:
         self._program = program
         self._solver = cvc5.Solver()
         self._solver.setOption("produce-models", "true")
         # self._solver.setOption("fs-interleave", "true")
         self._solver.setOption("finite-model-find", "true")
         self._solver.setOption("produce-unsat-cores", "true")
+        if rlimit > 0:
+            self._solver.setOption("rlimit-per", str(rlimit))
         self._solver.setOption("seed", str(random.randint(0,10000000)))
         if timeout > 0:
             self._solver.setOption("tlimit-per", str(timeout))
         self._current_states = -1
         self._is_sat = False
         self._context = _CVC5Context(self._solver)
+        self._add_immutable()
+        self._named_exprs: Dict[str, cvc5.Term] = dict()
 
     @dataclass
     class ScopeContext:
@@ -172,7 +176,7 @@ class CVC5Solver(SMTSolver):
         assert new_states >= self._current_states
         for state_i in range(self._current_states, new_states):
             if state_i == -1:
-                self._add_immutable()
+                pass
             else:
                 self._add_state_index(state_i)
             self._current_states = state_i
@@ -188,9 +192,11 @@ class CVC5Solver(SMTSolver):
             if dr.derived_axiom is not None:
                 self.add_expr(New(dr.derived_axiom, state_i))
 
-    def add_expr(self, e: Expr) -> None:
+    def add_expr(self, e: Expr, name: str = '') -> None:
         t = self._context.tr(e, 0, dict())
         self._solver.assertFormula(t)
+        if name:
+            self._named_exprs[name] = t
 
     def check(self) -> SatResult:
         self._is_sat = False
@@ -202,8 +208,10 @@ class CVC5Solver(SMTSolver):
             return SatResult.unsat
         else:
             return SatResult.unknown
+    
     def is_true(self, e: Expr) -> bool:
         return str(self._solver.getValue(self._context.tr(e, 0, dict()))) != 'false'
+    
     def get_trace(self) -> Trace:
         assert self._is_sat
         N_states = self._current_states + 1
@@ -276,3 +284,10 @@ class CVC5Solver(SMTSolver):
 
         return trace
 
+    def get_core(self) -> List[str]:
+        core = self._solver.getUnsatCore()
+        r = []
+        for n, t in self._named_exprs.items():
+            if t in core:
+                r.append(n)
+        return r

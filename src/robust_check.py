@@ -154,12 +154,13 @@ async def _main_worker_advanced_transition(conn: AsyncConnection, stdout: FileDe
                 s5 = CVC5Solver(syntax.the_program, int(timeout * 1000))
                 with s5.new_scope(2):
                     for i in expr_ids:
-                        s5.add_expr(exprs[i])
+                        s5.add_expr(exprs[i], f"{i}")
                     s5.add_expr(tr)
                     s5.add_expr(New(Not(conc)))
                     raw_result5 = s5.check()
                     if raw_result5 == SatResult.unsat:
-                        await conn.send(RobustCheckResult(SatResult.unsat, core=set(range(len(expr_ids)))))
+                        core = set(int(x) for x in s5.get_core())
+                        await conn.send(RobustCheckResult(SatResult.unsat, core=core))
                     elif raw_result5 == SatResult.sat:
                         await conn.send(RobustCheckResult(SatResult.sat, s5.get_trace()))
                     else:
@@ -292,6 +293,7 @@ class AdvancedChecker(RobustChecker):
         # strategies = [('cvc5-basic', 0.5), ('z3-basic', 0.25), ('cvc5-fancy', 15.0), ('z3-basic', 5.0), ('cvc5-fancy', 30.0), ('z3-basic', 5.0), ('cvc5-fancy', 45.0)]
         # strategies = [('cvc5-fancy', 100000.0)]
         strategies = [('cvc5-basic', 0.5, 0), ('z3-basic', 0.25, 0), ('cvc5-fancy', 20.0, 2), ('cvc5-fancy', 400.0, 16), ('cvc5-fancy', 1600.0, 64)]
+        strategies = [('cvc5-basic', 0.5, 0), ('cvc5-fancy', 20.0, 2), ('cvc5-fancy', 400.0, 16), ('cvc5-fancy', 1600.0, 64)]
 
         def get_next_attempt() -> Iterable[Tuple[str, Tuple[str, float, float]]]:
             while True:
