@@ -1,5 +1,5 @@
 
-from typing import Any, BinaryIO, DefaultDict, Dict, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
+from typing import Any, BinaryIO, DefaultDict, Dict, FrozenSet, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import sys
@@ -12,9 +12,8 @@ import asyncio
 import itertools
 import signal
 import tempfile
-import dataclasses
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import defaultdict
 
 from trace_tools import Tracer, trace
@@ -24,7 +23,7 @@ from semantics import State
 import utils
 from logic import Diagram, Expr, Solver, Trace
 import syntax
-from syntax import AppExpr, BinaryExpr, Binder, ConstantDecl, DefinitionDecl, FunctionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, RelationDecl, Scope, TraceDecl, UnaryExpr
+from syntax import AppExpr, BinaryExpr, ConstantDecl, DefinitionDecl, FunctionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, RelationDecl, Scope, TraceDecl, UnaryExpr
 from fol_trans import formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 
 try:
@@ -36,7 +35,7 @@ except ModuleNotFoundError:
 
 import networkx
 import z3
-from solver_cvc5 import SatResult
+from solver_cvc5 import CVC5Solver, SatResult
 
 
 def eval_predicate(s: State, p: Expr) -> bool:
@@ -644,8 +643,10 @@ class IC3Frames:
     FrameNum = Optional[int]
     def __init__(self, logs: Logging, span: Tracer.Span, parallelism: int = 1) -> None:
         self._states: List[State] = [] # List of discovered states (excluding some internal cex edges)
+        self._states_sources: Dict[int, str] = dict() # Reasons for the discovery of each state
         self._initial_states: Set[int] = set() # States satisfying the initial conditions
         self._transitions: Set[Tuple[int, int]] = set() # Set of transitions between states (s,t)
+        self._not_transitions_cache: Set[Tuple[int, int]] = set() # Set of known non-transitions between states (s,t)
         self._successors: DefaultDict[int, Set[int]] = defaultdict(set) # Successors t of s in s -> t
         self._predecessors: DefaultDict[int, Set[int]] = defaultdict(set) # Predecessors s of t in s -> t
         self._reachable: Dict[int, int] = dict() # Known reachable states (not necessarily including initial states)
@@ -658,12 +659,13 @@ class IC3Frames:
 
         self._eval_cache: Dict[Tuple[int, int], bool] = {} # Record eval for a (lemma, state)
         self._immediate_pushing_blocker: Dict[int, int] = {} # State for a lemma in F_i that prevents it pushing to F_i+1
+        self._push_cores: Dict[int, Set[FrozenSet[int]]] = {} # Previously known pushing cores
         self._ultimate_pushing_blocker: Dict[int, Optional[Blocker]] = {} # (State, Frame) that prevents the lemma from pushing (may be an ancestor of the immediate pushing blocker, None if can't be pushed)
         self._former_pushing_blockers: DefaultDict[int, Dict[int, None]] = defaultdict(dict) # Pushing blockers from prior frames
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
-        self._bad_lemmas: Dict[int, int] = dict() # Predicates that violate a known reachable state
-        self._pushability_unknown_lemmas: Set[int] = set() # Predicates that violate a known reachable state
+        self._bad_lemmas: Dict[int, int] = dict() # Key: predicates that violate a known reachable state. Value(F): the highest frame they can be in (they violate a state in frame F+1)
+        self._pushability_unknown_lemmas: Set[int] = set() # Lemmas that gave an UNK timeout when attempting to push
         self._redundant_lemmas: Set[int] = set() # Predicates that are implied by the conjunction of non-redundant F_inf lemmas
 
 
@@ -704,12 +706,13 @@ class IC3Frames:
             self._logs._lemmas_log.write(pickle.dumps({i: p}))
             self._logs._lemmas_log.flush()
             return i
-    async def add_state(self, s: State) -> int:
+    async def add_state(self, s: State, source: str) -> int:
         i = len(self._states)
         self._states.append(s)
+        self._states_sources[i] = source
         # print(f"State {i} is {s[0].as_state(s[1])}")
         return i
-    async def add_transition(self, a: int, b: int) -> None:
+    def add_transition(self, a: int, b: int) -> None:
         if (a, b) in self._transitions:
             return
         self._transitions.add((a, b))
@@ -717,7 +720,7 @@ class IC3Frames:
         self._successors[a].add(b)
         # Warning: this method does not compute new reachability. In all current uses, the
         # state a is a new state that cannot be known to be reachable, so this is safe.
-        # If a method of determing new transitions between existing states is added, it must
+        # If a method of determining new transitions between existing states is added, it must
         # call push_reachable to update reachability information.
 
     # Evaluation and contents of frames
@@ -750,6 +753,8 @@ class IC3Frames:
                 "bad_lemmas": self._bad_lemmas,
                 "redundant_lemmas": self._redundant_lemmas,
                 "pushability_unknown_lemmas": self._pushability_unknown_lemmas,
+                "transitions": self._transitions,
+                "initial_states": self._initial_states,
                 "elapsed": elapsed}
         self._logs._frames_log.write(pickle.dumps(data))
         self._logs._frames_log.flush()
@@ -773,10 +778,31 @@ class IC3Frames:
             if all(self.eval(p, pred) for p in self.frame_lemmas(frame - 1)):
                 self._predecessor_cache[key] = pred
                 return pred
-
+        
         # We need to check for a predecessor
         s = self._states[state]
         formula_to_block = syntax.Not(s.as_onestate_formula() if utils.args.logic != "universal" else Diagram(s).to_ast())
+        
+        if 'check-existing-transitions' in utils.args.expt_flags:
+            for candidate, reachable_in_frame in list(self._reachable.items()):
+                if reachable_in_frame > frame - 1:
+                    continue
+                if (candidate, state) in self._not_transitions_cache:
+                    continue
+                if not all(self.eval(p, candidate) for p in self.frame_lemmas(frame - 1)):
+                    continue
+                edge = await self._predecessor_robust_checker.check_transition([self._states[candidate].as_onestate_formula()], formula_to_block, parallelism=self._pushing_parallelism)
+                if edge.result == SatResult.sat:
+                    print(f"Found existing state {candidate} in post-frame {frame}", file=sys.stderr)
+                    self.add_transition(candidate, state)
+                    self._mark_reachable_and_bad(candidate, reachable_in_frame)
+                    if not all(self.eval(p, candidate) for p in self.frame_lemmas(frame - 1)):
+                        continue
+                    self._predecessor_cache[key] = candidate
+                    return candidate
+                elif edge.result == SatResult.unsat:
+                    self._not_transitions_cache.add((candidate, state))
+
         # We do this in a loop to ensure that if someone concurrently modifies the frames, we still compute a correct
         # predecessor. This is only currently used to ensure that speculative_push() doesn't need to synchronize with push()
         while True:
@@ -788,8 +814,8 @@ class IC3Frames:
                 continue
             break
         if isinstance(edge.trace, Trace):
-            pred = await self.add_state(edge.trace.as_state(0))
-            await self.add_transition(pred, state)
+            pred = await self.add_state(edge.trace.as_state(0), f"_get_predecessor of {state}")
+            self.add_transition(pred, state)
             self._predecessor_cache[key] = pred
             return pred
         elif edge.result == SatResult.unsat:
@@ -806,34 +832,28 @@ class IC3Frames:
         d[index] = v
         return True
 
-    def _saturate_reachability(self, state:int, frame: int) -> None:
+    def _saturate_reachability(self, state:int, frame: int) -> List[int]:
         # Mark state reachable
-        if state in self._reachable and self._reachable[state] <= frame:
-            return
-        IC3Frames._set_min(self._reachable, state, frame)
-        # self._reachable[state] = min(self._reachable.get(state, frame), frame)
         _reachable_worklist = set([state])
-
+        _new_reachable: Dict[int, None] = {}
+        if IC3Frames._set_min(self._reachable, state, frame):
+            _new_reachable[state] = None
+        
         while len(_reachable_worklist) > 0:
             item = _reachable_worklist.pop()
-            assert item in self._reachable
             base_frame = self._reachable[item]
             for b in self._successors[item]:
                 if IC3Frames._set_min(self._reachable, b, base_frame + 1):
                     _reachable_worklist.add(b)
-                # if b not in self._reachable or self._reachable[b] > base_frame + 1:
-                #     _reachable_worklist.add(b)
-                # self._reachable[b] = min(self._reachable.get(b, base_frame + 1), base_frame + 1)
+                    _new_reachable[b] = None
+
+        return list(_new_reachable.keys())
         
 
-    def _mark_reachable_and_bad(self, state: int) -> None:
-        initial_reachable = set(self._reachable.keys())
-        self._saturate_reachability(state, 0)
-        new = set(self._reachable.keys()) - initial_reachable
-        if len(new) == 0:
-            return
-        print(f"Now have {len(self._reachable)} reachable states")
-        # Mark any predicates as bad that don't satisfy all the reachable states
+    def _mark_reachable_and_bad(self, state: int, frame: int) -> None:
+        if frame == 0:
+            self._initial_states.add(state)
+        new = self._saturate_reachability(state, frame)
         for new_r in new:
             print(f"New reachable state: {new_r}")
             st = self._states[new_r]
@@ -847,7 +867,7 @@ class IC3Frames:
     async def _blockable_state(self, blocker: Blocker) -> Optional[Blocker]:
         if blocker.frame == 0:
             assert all(self.eval(i, blocker.state) for i in self._initial_conditions)
-            self._mark_reachable_and_bad(blocker.state)
+            self._mark_reachable_and_bad(blocker.state, 0)
             return None
         pred = await self._get_predecessor(blocker.frame, blocker.state)
         if pred is None:
@@ -898,19 +918,32 @@ class IC3Frames:
                 if index in self._immediate_pushing_blocker:
                     return
 
+            # Check if we can push due to an existing push core
+            fl = frozenset(self.frame_lemmas(i))
+            if index in self._push_cores:
+                for core in sorted(self._push_cores[index], key=len):
+                    if core.issubset(fl):
+                        print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p} (prior core)")
+                        self._frame_numbers[index] = i + 1
+                        self._event_frame_update.set()
+                        self._event_frame_update.clear()
+                        return
 
             # Check if any new blocker exists
             with span.span("SMTpush") as smt_span:
                 if index not in self._push_robust_checkers:
                     self._push_robust_checkers[index] = AdvancedChecker(syntax.the_program, self._logs._smt_log) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker(self._logs._smt_log)
 
-                fp = set(self.frame_lemmas(i))
+                fp = list(self.frame_lemmas(i))
                 time_limit = 0.0 if index in self._safeties else self._pushing_timeout
                 cex = await self._push_robust_checkers[index].check_transition(list(self._lemmas[j] for j in fp), p, parallelism=self._pushing_parallelism, timeout=time_limit)
-                assert fp == set(self.frame_lemmas(i))
+                assert set(fp) == set(self.frame_lemmas(i))
 
                 if cex.result == SatResult.unsat:
                     print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame {i+1}: {p} (core size: {len(cex.core)}/{len(fp)})")
+                    if index not in self._push_cores:
+                        self._push_cores[index] = set()
+                    self._push_cores[index].add(frozenset(fp[j] for j in cex.core))
                     smt_span.data(pushed=True)
                     self._frame_numbers[index] = i + 1
                     self._event_frame_update.set()
@@ -921,9 +954,9 @@ class IC3Frames:
                     # Add the blocker and the sucessor state. We need the successor state because
                     # if we show the blocker is reachable, it is actually the successor that invalidates
                     # the lemma and is required to mark it as bad
-                    blocker = await self.add_state(trace.as_state(0))
-                    blocker_successor = await self.add_state(trace.as_state(1))
-                    await self.add_transition(blocker, blocker_successor)
+                    blocker = await self.add_state(trace.as_state(0), f"blocker of {index}")
+                    blocker_successor = await self.add_state(trace.as_state(1), f"blocker successor of {index}")
+                    self.add_transition(blocker, blocker_successor)
 
                     self._immediate_pushing_blocker[index] = blocker
                     blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
@@ -1022,8 +1055,8 @@ class IC3Frames:
                     continue
                 break
             if isinstance(edge.trace, Trace):
-                pred = await self.add_state(edge.trace.as_state(0))
-                await self.add_transition(pred, b.successor)
+                pred = await self.add_state(edge.trace.as_state(0), f'speculative push of {b.successor}')
+                self.add_transition(pred, b.successor)
                 blocker_data = Blocker(state=pred, frame=b.frame, successor=b.successor, type_is_predecessor=True)
                 return blocker_data
             elif edge.result == SatResult.unsat:
@@ -1055,16 +1088,16 @@ class IC3Frames:
                 # Set of predicates changed across the await call. To avoid breaking the meta-invariant, loop around for another iteration
                 continue
             if cex.result == SatResult.unsat:
-                print(f"speculatively pushed {p} to frame {i+1}")
+                print(f"Speculatively pushed {p} to frame {i+1}")
                 return None
             elif cex.result == SatResult.sat and isinstance(cex.trace, Trace):
                 trace = cex.trace
                 # Add the blocker and the sucessor state. We need the successor state because
                 # if we show the blocker is reachable, it is actually the successor that invalidates
                 # the lemma and is required to mark it as bad
-                blocker = await self.add_state(trace.as_state(0))
-                blocker_successor = await self.add_state(trace.as_state(1))
-                await self.add_transition(blocker, blocker_successor)
+                blocker = await self.add_state(trace.as_state(0), f"speculative blocker of {lemm}")
+                blocker_successor = await self.add_state(trace.as_state(1), f"speculative blocker successor of {lemm}")
+                self.add_transition(blocker, blocker_successor)
 
                 # Add the state as a "former" blocker even though it hasn't been used as such. This means that
                 # if the speculative blocking fails, this blocker will be picked up as the blocking state next
@@ -1758,6 +1791,34 @@ def fol_benchmark_solver(_: Solver) -> None:
     input_file = open(utils.args.query, 'rb')
     stream = pickle.Unpickler(input_file)
 
+    hyps, concs = [], []
+    while True:
+        try:
+            (old_hyps, new_conc) = stream.load()
+            hyps = old_hyps[1:]
+            concs.append(new_conc)
+        except EOFError:
+            break
+    solver = CVC5Solver(syntax.the_program, rlimit=50000)
+    for tr in syntax.the_program.transitions():
+        start = time.perf_counter()
+        with solver.new_scope(2):
+            print(f"Transition {tr.name}")
+            solver.add_expr(tr.as_twostate_formula(syntax.the_program.scope))
+            for h in hyps:
+                solver.add_expr(h)
+            for conc in concs:
+                with solver.new_scope(2):
+                    solver.add_expr(conc)
+                    solver.add_expr(New(Not(conc)))
+                    res = solver.check()
+                    print(res)
+        duration = time.perf_counter() - start
+        print(f"time: {duration:0.3f}")        
+    
+
+    input_file = open(utils.args.query, 'rb')
+    stream = pickle.Unpickler(input_file)
     checker = AdvancedChecker(syntax.the_program) if 'no-advanced-checker' not in utils.args.expt_flags else ClassicChecker()
     total_time = 0.0
 
@@ -1772,7 +1833,7 @@ def fol_benchmark_solver(_: Solver) -> None:
         print("  ", new_conc)
         print("testing checker")
         start_time = time.perf_counter()
-        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, parallelism=2, timeout=1000000.0))
+        r_r = asyncio.run(checker.check_transition(old_hyps, new_conc, parallelism=1, timeout=1000000.0))
         end_time = time.perf_counter()
         print (r_r.result)
         print (f"=== Solution obtained in {end_time-start_time:0.3f}")
@@ -1890,7 +1951,7 @@ def eval_atom(st: State, expr: Expr, vars: Dict[str, str]) -> Tuple[Union[bool, 
 @dataclass
 class FastExpr:
     neg: bool = False
-    cached_values: List[Tuple[Tuple[str, ...], Tuple[str, ...], bool]] = dataclasses.field(default_factory=list)
+    cached_values: List[Tuple[Tuple[str, ...], Tuple[str, ...], bool]] = field(default_factory=list)
     def eval(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
         for (match_vars, match_values, result) in self.cached_values:
             if all(vars[mvar] == mval for mvar, mval in zip(match_vars, match_values)):
@@ -1917,7 +1978,7 @@ class FastAtom(FastExpr):
 @dataclass
 class FastForall(FastExpr):
     var: str = ''
-    univ: List[str] = dataclasses.field(default_factory=list)
+    univ: List[str] = field(default_factory=list)
     body: FastExpr = FastAtom()
     def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
         used_vars: Set[str] = set()
@@ -1935,7 +1996,7 @@ class FastForall(FastExpr):
 
 @dataclass
 class FastOr(FastExpr):
-    c: List[FastExpr] = dataclasses.field(default_factory=list)
+    c: List[FastExpr] = field(default_factory=list)
     def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
         used_vars: Set[str] = set()
         for i, a in enumerate(self.c):
@@ -1987,7 +2048,7 @@ def fol_benchmark_eval(_: Solver) -> None:
         @dataclass(order=True)
         class PrioritizedItem:
             priority: float
-            item: Any=dataclasses.field(compare=False)
+            item: Any=field(compare=False)
         most_expensive: List[PrioritizedItem] = []
         random_subset: List[PrioritizedItem] = []
         for input_fname in os.listdir(utils.args.query):
@@ -2067,7 +2128,7 @@ def fol_debug_ig(_: Solver) -> None:
         while len(candidates) > 0:
             
             # try without c
-            res = await checker.check_transition(frame + candidate_core + candidates[n:] + [inv], inv, parallelism=2, timeout=500)
+            res = await checker.check_transition(frame + candidate_core + candidates[n:] + [inv], inv, parallelism=6, timeout=100)
             if res.result == SatResult.unsat:
                 model = None
                 candidates = candidates[n:] # didn't need anything in candidates[:n]
@@ -2256,10 +2317,11 @@ def fol_debug_frames(_: Solver) -> None:
 
             for index in sorted(range(len(frame_numbers)), key = lambda x: IC3Frames.frame_key(frame_numbers[x]), reverse=True):
                 orig_frame = [i for i in range(len(frame_numbers)) if IC3Frames.frame_leq(frame_numbers[index], frame_numbers[i]) and i not in redundancy_frames]
-                result = await checker.check_implication([lemmas[j] for j in orig_frame if index != j], lemmas[index], parallelism=2, timeout=100)
+                result = await checker.check_implication([lemmas[j] for j in orig_frame if index != j], lemmas[index], parallelism=6, timeout=10)
                 if result.result == SatResult.unsat:
                     # print(lemmas[index], "is redundant")
                     redundancy_frames.add(index)
+                print(result.result)
 
             for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
                 fn_str = f"{frame_num:2}" if frame_num is not None else ' +'
@@ -2286,14 +2348,25 @@ def fol_debug_frames(_: Solver) -> None:
                 if frame['elapsed'] is not None and frame['elapsed'] < time:
                     found = frame
             return found
+        def print_reachablity_graph(frames: Dict) -> None:
+            transitions, initial_states = frames['transitions'], frames['initial_states']
+            print("digraph {")
+            for i in initial_states:
+                print(f"init -> {i};")
+            for (a,b) in transitions:
+                print(f"{a} -> {b};")
+            print("}")
+            
 
         frame_of_interest = find_frame_by_time(100000)
         # print_frames(lemmas, frame_of_interest)
-        print("\nFrame redundancy:")
-        await check_frame_redundancy3(lemmas, frame_of_interest)
+        # print("\nFrame redundancy:")
+        #await check_frame_redundancy3(lemmas, frame_of_interest)
         # print("\nGolden invariant implication:")
         print("\nImplied by human invariant:")
         await check_golden_invariant(lemmas, frame_of_interest)
+        print("\nReachability:")
+        print_reachablity_graph(frame_of_interest)
     asyncio.run(main())
 
 def extract_vmt(_: Solver) -> None:
