@@ -97,17 +97,27 @@ def process_trace(trace: Span, prefix: str ='') -> None:
                     print(f"    {smt.duration:> 10.3f} {smt.data.get('result', 'unknown')}")
 
     print(f"Total IG time: {total_solve:0.3f}, prefix queries (success only): {total_successful_prefix_time:0.3f}, percent: {total_successful_prefix_time/total_solve*100.0:0.1f}%")
-    total = 0.0
-    for push in trace.descendants('Push'):
-        total += push.duration
-    print(f"Total pushing time {total:0.3f}")
     print(f"Total time {trace.duration:0.3f}")
     
     print(f"Total sep. algo time {total_sep_query:0.3f}")
     print(f"Total eval time      {total_eval_query:0.3f}")
     print(f"Total smt time       {total_smt_query:0.3f}")
     
+    total_push = 0.0
+    imblocker = 0.0
+    former = 0.0
+    smtpush = 0.0
+    for push in trace.descendants('Push'):
+        total_push += push.duration
+        imblocker += sum(d.duration for d in push.descendants("ImBlocker"))
+        former += sum(d.duration for d in push.descendants("Former"))
+        smtpush += sum(d.duration for d in push.descendants("SMTpush"))
+    print(f"Total pushing time {total_push:0.3f}")
+    print(f"imblocker {100.0 * imblocker / total_push:0.1f}%")
+    print(f"former {100.0 * former / total_push:0.1f}%")
+    print(f"smtpush {100.0 * smtpush / total_push:0.1f}%")
     
+
     print(json.dumps({
         'n_queries': len(durations_remaining),
         'total_sep': total_successful_prefix_time,
