@@ -1,10 +1,14 @@
 
 
 from contextlib import contextmanager
+import heapq
 from io import StringIO
+import io
+import math
+import random
 import time
 import pickle
-from typing import IO, Dict, Generator, Iterator, Optional, Any, List, Tuple, cast, Set
+from typing import IO, Callable, Dict, Generator, Generic, Iterable, Iterator, Optional, Any, List, Tuple, Type, TypeVar, cast, Set
 from dataclasses import dataclass, field
 
 class Tracer:
@@ -180,3 +184,67 @@ def load_trace(file: IO[bytes]) -> Span:
     for s in unclosed.values():
         s.duration = latest_time - s.start_time
     return get_span(root_tracer)
+
+_T = TypeVar("_T")
+class Sampler(Generic[_T]):
+    @dataclass(order=True)
+    class Item:
+        priority: float
+        weight: float
+        data: Any = field(compare=False, default=None)
+
+    def __init__(self, k: int, output: Optional[IO[bytes]] = None):
+        self._samples: List[Sampler.Item] = []
+        self._k = k
+        self._output = output
+
+    def sample(self, weight: float, data: Callable[[], _T]) -> bool:
+        """Provide an item. If included in the sample, data() will be called to produce the data, and returns True. Otherwise, returns False."""
+        assert weight > 0
+        r = -math.log(random.random()) / weight
+        new_item = Sampler.Item(r, weight)
+        if len(self._samples) < self._k:
+            heapq.heappush(self._samples, new_item)
+        else:
+            old_item = heapq.heappushpop(self._samples, new_item)
+            if old_item is new_item:
+                return False
+        new_item.data = data()
+        if self._output:
+            pickle.dump(new_item, self._output)
+            self._output.flush()
+        return True
+
+    @staticmethod
+    def load(k: int, file: IO[bytes]) -> 'Sampler[_T]':
+        self: Sampler[_T] = Sampler(k)
+        while True:
+            try: item = pickle.load(file)
+            except EOFError: break
+
+            if len(self._samples) < self._k:
+                heapq.heappush(self._samples, item)
+            else:
+                heapq.heappushpop(self._samples, item)
+        return self
+            
+    def merge(self, s: 'Sampler[_T]') -> None:
+        """Merge this sampler with the given one. Modifies `self` in place. For accurate results, k parameters must match."""
+        for item in s._samples:
+            if len(self._samples) < self._k:
+                heapq.heappush(self._samples, item)
+            else:
+                old_item = heapq.heappushpop(self._samples, item)
+                if old_item is item:
+                    continue
+            if self._output:
+                pickle.dump(item, self._output)
+        if self._output:
+            self._output.flush()
+        
+    def values(self) -> Iterable[_T]:
+        for i in self._samples:
+            yield i.data
+
+    def clear(self) -> None:
+        self._samples.clear()

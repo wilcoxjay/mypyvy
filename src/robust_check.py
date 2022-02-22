@@ -20,7 +20,7 @@ class RobustCheckResult:
     trace: Optional[Trace] = None
     core: Set[int] = field(default_factory=set)
     transition: Optional[str] = None
-    # time: float = 0.0
+    time: float = 0.0
 
 class RobustChecker(Protocol):
     _all_queries: List[Tuple[List[Expr], Expr]]
@@ -264,7 +264,7 @@ class AdvancedChecker(RobustChecker):
                     self._print(log_prefix, "Ran out of strategies")
 
         async def logger() -> None:
-            await asyncio.sleep(5)
+            await asyncio.sleep(50)
             if utils.args.log_dir != '':
                 fname = f'query-im-{log_prefix}.pickle'
                 with open(os.path.join(utils.args.log_dir, 'smt-queries', fname), 'wb') as f:
@@ -338,24 +338,27 @@ class AdvancedChecker(RobustChecker):
                     self._print(log_prefix, "Ran out of strategies")
 
         async def logger() -> None:
-            await asyncio.sleep(5)
+            await asyncio.sleep(50)
             if utils.args.log_dir != '':
                 fname = f'query-tr-{log_prefix}.pickle'
                 with open(os.path.join(utils.args.log_dir, 'smt-queries', fname), 'wb') as f:
                     pickle.dump((hyps, conc), f, protocol=pickle.HIGHEST_PROTOCOL)
 
         try:
+            start = time.perf_counter()
             async with ScopedTasks() as tasks:
-                start = time.perf_counter()
                 for i in range(parallelism):
                     tasks.add(worker())
                 tasks.add(logger())
                 rr = await asyncio.wait_for(result, timeout if timeout > 0 else None)
-                self._print(log_prefix, f"Completed transition {rr.result} in {time.perf_counter() - start:0.3f}")
+                query_duration = time.perf_counter() - start
+                self._print(log_prefix, f"Completed transition {rr.result} in {query_duration:0.3f}")
+                rr.time = query_duration
                 return rr
         except asyncio.TimeoutError:
+            query_duration = time.perf_counter() - start
             self._print(log_prefix, "Transition query timed out")
-            return RobustCheckResult(SatResult.unknown)
+            return RobustCheckResult(SatResult.unknown, time=query_duration)
 
 # This is a class designed to cache the result of pickling.
 # This helps the main process which needs to serialize lemmas many times in robust_check_implication

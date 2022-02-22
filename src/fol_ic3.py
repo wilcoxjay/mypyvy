@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, field
 from collections import defaultdict
 
-from trace_tools import Tracer, trace
+from trace_tools import Tracer, trace, Sampler
 from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
 from robust_check import AdvancedChecker, ClassicChecker, RobustChecker
 from semantics import State
@@ -69,13 +69,17 @@ class Logging:
         self._ig_log: TextIO = sys.stdout if log_dir == '' else open(os.path.join(utils.args.log_dir, 'ig.log'), 'w', buffering=1)
         self._lemmas_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'lemmas.pickle'), 'wb')
         self._frames_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'frames.pickle'), 'wb')
+        self._states_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'states.pickle'), 'wb')
         self._ig_queries_log: BinaryIO = open('/dev/null' if log_dir == '' else os.path.join(utils.args.log_dir, 'ig-queries.pickle'), 'wb')
-        self._ig_queries_pickler: pickle.Pickler = pickle.Pickler(self._ig_queries_log, protocol=pickle.HIGHEST_PROTOCOL)
+        self._sampler_eval: Sampler = Sampler(100, open('/dev/null' if log_dir == ''  or 'sample-eval' not in utils.args.expt_flags else os.path.join(utils.args.log_dir, 'sample-eval.pickle'), 'wb'))
+        self._sampler_smt: Sampler = Sampler(100, open('/dev/null' if log_dir == '' or 'sample-smt' not in utils.args.expt_flags else os.path.join(utils.args.log_dir, 'sample-smt.pickle'), 'wb'))
+        self._sampler_sep: Sampler = Sampler(100, open('/dev/null' if log_dir == '' or 'sample-sep' not in utils.args.expt_flags else os.path.join(utils.args.log_dir, 'sample-sep.pickle'), 'wb'))
 
 async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescriptor) -> None:
     sys.stdout = os.fdopen(log.id, 'w')
     sys.stdout.reconfigure(line_buffering=True)
     print("Started Worker")
+    eval_sampler = Sampler[Tuple[List[State], Expr]](5)
     prog = syntax.the_program
     sep: Separator = cast(Separator, None)
     label = '[?]'
@@ -126,7 +130,9 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
                 sep_time += time.perf_counter() - start
                 if sep_r is None:
                     print(label, f"UNSEP |core|={len(sep_constraints)} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
-                    await conn.send({'unsep': True, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
+                    a = {'eval_sampler': eval_sampler} if 'sample-eval' in utils.args.expt_flags else {}
+                    await conn.send({'unsep': True, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time), **a})
+                    eval_sampler.clear()
                     break
 
                 with prog.scope.n_states(1):
@@ -136,6 +142,7 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
                 evaled_constraints = []
                 for c in constraints:
                     if c in sep_constraints: continue
+                    evaled_constraints.append(c)
                     if not satisifies_constraint(c, p, states):
                         print(label, f"Adding internal constraint {c}")
                         for s in c.states():
@@ -147,8 +154,6 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
                         minimized = minimized_reset_value
                         eval_time += time.perf_counter() - start
                         break
-                    else:
-                        evaled_constraints.append(c)
                 else:
                     eval_time += time.perf_counter() - start
                     # All known constraints are satisfied
@@ -157,18 +162,31 @@ async def _main_IG2_worker(conn: AsyncConnection, sig: Signature, log: FileDescr
                         continue  # continue the loop, now asking for a minimized separator
                     else:
                         print(label, f"Satisfied with {p} in (sep {sep_time:0.3f}, eval {eval_time:0.3f})")
-                        await conn.send({'candidate': p, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time)})
+                        a = {'eval_sampler': eval_sampler} if 'sample-eval' in utils.args.expt_flags else {}
+                        await conn.send({'candidate': p, 'constraints': sep_constraints_order, 'times': (sep_time, eval_time), **a})
+                        eval_sampler.clear()
                         break
                 this_eval_time = time.perf_counter() - start
-                if 'log-long-eval' in utils.args.expt_flags and this_eval_time > 0.1:
-                    with tempfile.NamedTemporaryFile(prefix='eval-', suffix='.pickle', dir=os.path.join(utils.args.log_dir, 'eval'), delete=False) as temp:
-                        states_to_save = {}
+                if 'sample-eval' in utils.args.expt_flags and this_eval_time > 0.02:
+                    def get_eval_sample() -> Tuple[List[State], Expr]:
+                        states_to_save: Dict[int, State] = {}
                         for c in evaled_constraints:
-                            if c in sep_constraints: continue
                             for s in c.states():
                                 if s not in states_to_save:
                                     states_to_save[s] = states[s]
-                        pickle.dump((states_to_save, p), temp)
+                        sts = list(states_to_save.values())
+                        random.shuffle(sts)
+                        sts = sts[:10]
+                        return (sts, p)
+                    eval_sampler.sample(this_eval_time, get_eval_sample)
+                    # with tempfile.NamedTemporaryFile(prefix='eval-', suffix='.pickle', dir=os.path.join(utils.args.log_dir, 'eval'), delete=False) as temp:
+                    #     states_to_save = {}
+                    #     for c in evaled_constraints:
+                    #         if c in sep_constraints: continue
+                    #         for s in c.states():
+                    #             if s not in states_to_save:
+                    #                 states_to_save[s] = states[s]
+                    #     pickle.dump((states_to_save, p), temp)
 
 
 
@@ -426,6 +444,8 @@ class IGSolver:
         # F_i-1 ^ p => wp(p)?
         with span.span('SMT-tr') as s:
             edge = await checker.check_transition([p, *self._frame], p, parallelism=2, timeout=self._smt_timeout)
+            if 'sample-smt' in utils.args.expt_flags and edge.time > 0.05:
+                self._logs._sampler_smt.sample(edge.time, lambda: (True, [p, *self._frame], p))
             s.data(result=edge.result)
         if edge.result == SatResult.sat and isinstance(edge.trace, Trace):
             self._print(f"Adding edge")
@@ -537,13 +557,12 @@ class IGSolver:
                                     await conn.send({'constraints': send_constraints(next_constraints), 'sep': None,
                                                     **({'prefix': prefix.linearize(), 'k_cubes': k_cubes, 'expt_flags': utils.args.expt_flags, 'label': self._log_prefix} if not worker_prefix_sent else {})})
                                     worker_prefix_sent = True
-                                    # if not logged_problem and time.perf_counter() - start_time > 5:
-                                    #     _log_sep_problem(log_name, prefix.linearize(), next_constraints, self._states, self._frame)
-                                    #     logged_problem = True
                                     if debug_this_process:
-                                            self._print(f"Separating")
-
+                                        self._print(f"Separating")
                                     v = await conn.recv()
+                                
+                                if 'eval_sampler' in v:
+                                    self._logs._sampler_eval.merge(v['eval_sampler'])
                                 if 'candidate' in v:
                                     p, sep_constraints, (time_sep, time_eval) = cast(Expr, v['candidate']), cast(List[Constraint], v['constraints']), cast(Tuple[float, float], v['times'])
                                     sep_span.data(core=len(sep_constraints), time_sep=time_sep, time_eval=time_eval)
@@ -579,11 +598,14 @@ class IGSolver:
                                             previous_constraints_used = len([c for c in sep_constraints if c in self._previous_constraints])
                                             self._print(f"SEP: {pre_pp} with core={len(sep_constraints)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
                                             self._print(f"Learned {p}")
-                                            if utils.args.log_dir != '':
-                                                with open(os.path.join(utils.args.log_dir, f'smt-queries/sep-prefix-{self._log_prefix}-{self._solve_index}.pickle'), 'wb') as output:
-                                                    pickler = pickle.Pickler(output, protocol=pickle.HIGHEST_PROTOCOL)
-                                                    for q in checker._all_queries:
-                                                        pickler.dump(q)
+                                            if t > 0.05:
+                                                self._logs._sampler_sep.sample(t, lambda: get_sep_data(prefix, sep_constraints, p))
+
+                                            # if utils.args.log_dir != '':
+                                            #     with open(os.path.join(utils.args.log_dir, f'smt-queries/sep-prefix-{self._log_prefix}-{self._solve_index}.pickle'), 'wb') as output:
+                                            #         pickler = pickle.Pickler(output, protocol=pickle.HIGHEST_PROTOCOL)
+                                            #         for q in checker._all_queries:
+                                            #             pickler.dump(q)
                                             prefix_span.data(sep=True)
                                             solution.set_result(p)
                                         return
@@ -595,6 +617,8 @@ class IGSolver:
                                     sep_span.data(core=len(core), time_sep=time_sep, time_eval=time_eval)
                                     t = time.perf_counter() - start_time
                                     previous_constraints_used = len([c for c in core if c in self._previous_constraints])
+                                    if t > 0.05:
+                                        self._logs._sampler_sep.sample(t, lambda: get_sep_data(prefix, core, None))
                                     extra = ""
                                     self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}){extra}")
                                     self._unsep_cores[prefix] = core
@@ -607,6 +631,14 @@ class IGSolver:
                             self._prefix_queue.return_prefix(prefix)
                             prefix_span.data(cancelled=True)
                             raise
+
+        def get_sep_data(prefix: Prefix, sep_constraints: List[Constraint], solution: Optional[Expr]) -> dict:
+            states_needed = set(s for c in sep_constraints for s in c.states())
+            structs = dict((i, s) for i, s in enumerate(self._states) if i in states_needed)
+            return {'prefix': prefix,
+                    'states': structs,
+                    'constraints': sep_constraints,
+                    'original_solution': solution}
 
         async def logger() -> None:
             query_start = time.perf_counter()
@@ -660,7 +692,7 @@ class IC3Frames:
         self._eval_cache: Dict[Tuple[int, int], bool] = {} # Record eval for a (lemma, state)
         self._immediate_pushing_blocker: Dict[int, int] = {} # State for a lemma in F_i that prevents it pushing to F_i+1
         self._push_cores: Dict[int, Set[FrozenSet[int]]] = {} # Previously known pushing cores
-        self._ultimate_pushing_blocker: Dict[int, Optional[Blocker]] = {} # (State, Frame) that prevents the lemma from pushing (may be an ancestor of the immediate pushing blocker, None if can't be pushed)
+        self._proof_obligation: Dict[int, Optional[Blocker]] = {} # (State, Frame) that prevents the lemma from pushing (may be an ancestor of the immediate pushing blocker, None if can't be pushed)
         self._former_pushing_blockers: DefaultDict[int, Dict[int, None]] = defaultdict(dict) # Pushing blockers from prior frames
         self._predecessor_cache: Dict[Tuple[int, int], int] = {} # For (F_i, state) gives s such that s -> state is an edge and s in F_i
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
@@ -710,6 +742,8 @@ class IC3Frames:
         i = len(self._states)
         self._states.append(s)
         self._states_sources[i] = source
+        self._logs._states_log.write(pickle.dumps({i: s}))
+        self._logs._states_log.flush()
         # print(f"State {i} is {s[0].as_state(s[1])}")
         return i
     def add_transition(self, a: int, b: int) -> None:
@@ -807,8 +841,6 @@ class IC3Frames:
         # predecessor. This is only currently used to ensure that speculative_push() doesn't need to synchronize with push()
         while True:
             fp = set(self.frame_lemmas(frame-1))
-            # edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
-            #edge = await robust_check_transition([self._predicates[i] for i in fp], formula_to_block, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=2, log=self._logs._smt_log)
             edge = await self._predecessor_robust_checker.check_transition([self._lemmas[i] for i in fp], formula_to_block, parallelism=self._pushing_parallelism)
             if fp != set(self.frame_lemmas(frame-1)):
                 continue
@@ -898,7 +930,7 @@ class IC3Frames:
                     # Check if the blocker state is still in F_i
                     if all(self.eval(lemma, blocker) for lemma in self.frame_lemmas(i)):
                         blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
-                        self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+                        self._proof_obligation[index] = await self._blockable_state(blocker_data)
                         return
                     # The blocker is invalidated
                     self._former_pushing_blockers[index][self._immediate_pushing_blocker[index]] = None
@@ -913,7 +945,7 @@ class IC3Frames:
                         print(f"Using former blocker {former_blocker}")
                         self._immediate_pushing_blocker[index] = former_blocker
                         blocker_data = Blocker(state=former_blocker, frame=i, lemma=index, type_is_predecessor=False)
-                        self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+                        self._proof_obligation[index] = await self._blockable_state(blocker_data)
                 # We found a former one to use
                 if index in self._immediate_pushing_blocker:
                     return
@@ -960,7 +992,7 @@ class IC3Frames:
 
                     self._immediate_pushing_blocker[index] = blocker
                     blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
-                    self._ultimate_pushing_blocker[index] = await self._blockable_state(blocker_data)
+                    self._proof_obligation[index] = await self._blockable_state(blocker_data)
                     # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
                     self._event_frame_update.set()
                     self._event_frame_update.clear()
@@ -1030,7 +1062,7 @@ class IC3Frames:
         async with self._push_lock:
             if self._frame_numbers[lemm] is None or self._is_bad_lemma(lemm):
                 return None
-            return self._ultimate_pushing_blocker[lemm]
+            return self._proof_obligation[lemm]
 
     async def speculative_push(self, l: Expr, frame: int, b: Blocker) -> Optional[Blocker]:
         assert b.frame <= frame
@@ -1048,8 +1080,6 @@ class IC3Frames:
             # predecessor. This is only currently used to ensure that speculative_push() doesn't need to synchronize with push()
             while True:
                 fp = set(self.frame_lemmas(frame))
-                # edge = check_transition(self._solver, [self._predicates[i] for i in self.frame_predicates(frame-1)], formula_to_block, minimize=False)
-                #edge = await robust_check_transition([self._predicates[i] for i in fp], formula_to_block, minimize='no-minimize-block' not in utils.args.expt_flags, parallelism=2, log=self._logs._smt_log)
                 edge = await self._predecessor_robust_checker.check_transition([*(self._lemmas[i] for i in fp), l], formula_to_block, parallelism=self._pushing_parallelism)
                 if fp != set(self.frame_lemmas(frame)):
                     continue
@@ -1176,12 +1206,12 @@ class ParallelFolIc3:
                                   [self._frames._lemmas[x] for x in ig_frame],
                                   self._logs, syntax.the_program, rationale, self._next_ig_query_index, prior_solver)
         self._next_ig_query_index += 1
-        self._logs._ig_queries_pickler.dump({"log_prefix": ig_solver._log_prefix, 
-                                             "rationale": ig_solver._rationale, 
-                                             "necessary_constraints": list(ig_solver._necessary_constraints),
-                                             "reachable": list(ig_solver._reachable_constraints),
-                                             "states": ig_solver._states,
-                                             "frame": ig_solver._frame})
+        pickle.dump({"log_prefix": ig_solver._log_prefix, 
+                     "rationale": ig_solver._rationale, 
+                     "state_to_block": self._frames._states[b.state],
+                     "reachable": list(self._frames._useful_reachable | self._frames._initial_states),
+                     "frame": list(self._frames.frame_lemmas(b.frame-1)),
+                     "identity": ig_solver._identity}, self._logs._ig_queries_log)
         self._logs._ig_queries_log.flush()
 
         negative_states = set([b.state])
@@ -2152,6 +2182,15 @@ def fol_debug_ig(_: Solver) -> None:
         #     sys.stdout = open(utils.args.output, "w")
         print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
         data_stream = pickle.Unpickler(open(os.path.join(utils.args.log_dir, "ig-queries.pickle"), 'rb'))
+        lemmas: Dict[int, Expr] = {}
+        with open(os.path.join(utils.args.log_dir, "lemmas.pickle"), 'rb') as lemmas_pickle:
+            try:
+                while True:
+                    lemma = pickle.load(lemmas_pickle)
+                    lemmas.update(lemma)
+            except EOFError:
+                pass
+        
         data: Optional[dict] = None
         while True:
             try:
@@ -2166,14 +2205,12 @@ def fol_debug_ig(_: Solver) -> None:
 
         log_prefix: str = data['log_prefix']
         rationale: str = data['rationale']
-        necessary_constraints: List[Constraint] = data['necessary_constraints']
-        states: List[State] = data['states']
-        frame: List[Expr] = data["frame"]
+        frame: List[Expr] = [lemmas[i] for i in data["frame"]]
 
 
         print(f"Results for IG query {log_prefix} {rationale}")
 
-        state_to_block: State = states[cast(Neg, necessary_constraints[0]).i]
+        state_to_block: State = data['state_to_block']
         for human_inv in syntax.the_program.invs():
             i = human_inv.expr
             if not state_to_block.eval(i):
