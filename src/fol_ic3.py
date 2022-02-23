@@ -1,6 +1,4 @@
 
-from glob import glob
-from pyclbr import Function
 import re
 import tarfile
 from typing import Any, BinaryIO, Callable, DefaultDict, Dict, FrozenSet, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
@@ -19,7 +17,6 @@ import tempfile
 
 from dataclasses import dataclass, field
 from collections import defaultdict
-from separators.logic import Relation
 
 from trace_tools import Tracer, trace, Sampler
 from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
@@ -603,8 +600,8 @@ class IGSolver:
                                             previous_constraints_used = len([c for c in sep_constraints if c in self._previous_constraints])
                                             self._print(f"SEP: {pre_pp} with core={len(sep_constraints)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f})")
                                             self._print(f"Learned {p}")
-                                            if t > 0.05:
-                                                self._logs._sampler_sep.sample(t, lambda: get_sep_data(prefix, sep_constraints, p))
+                                            if time_sep > 0.05:
+                                                self._logs._sampler_sep.sample(time_sep, lambda: get_sep_data(prefix, sep_constraints, p))
 
                                             # if utils.args.log_dir != '':
                                             #     with open(os.path.join(utils.args.log_dir, f'smt-queries/sep-prefix-{self._log_prefix}-{self._solve_index}.pickle'), 'wb') as output:
@@ -622,8 +619,8 @@ class IGSolver:
                                     sep_span.data(core=len(core), time_sep=time_sep, time_eval=time_eval)
                                     t = time.perf_counter() - start_time
                                     previous_constraints_used = len([c for c in core if c in self._previous_constraints])
-                                    if t > 0.05:
-                                        self._logs._sampler_sep.sample(t, lambda: get_sep_data(prefix, core, None))
+                                    if time_sep > 0.05:
+                                        self._logs._sampler_sep.sample(time_sep, lambda: get_sep_data(prefix, core, None))
                                     extra = ""
                                     self._print(f"UNSEP: {pre_pp} with core={len(core)} ({n_discovered_constraints} novel, {previous_constraints_used} prev) time {t:0.3f} (sep {time_sep:0.3f}, eval {time_eval:0.3f}){extra}")
                                     self._unsep_cores[prefix] = core
@@ -2165,11 +2162,12 @@ def fol_benchmark_eval(_: Solver) -> None:
     # print(f"overall (ref): {ref_total:0.3f}")
 
 def fol_benchmark_merge(_: Solver) -> None:
-    K = 5000
+    K = 1000
     global_sampler: Sampler = Sampler(K)
-    kind = 'eval'
+    kind = 'sep'
     for input_fname in os.listdir(utils.args.query)[:]:
         with tarfile.open(os.path.join(utils.args.query, input_fname), 'r') as f:
+            print("processing", input_fname)
             main_log = f.extractfile("main.log")
             if main_log is None:
                 print("Error, main.log not found")
@@ -2282,6 +2280,65 @@ def fol_debug_ig(_: Solver) -> None:
                     await find_minimal_addition(checker, frame, i)
                 
     asyncio.run(main())
+
+def values_of_unpickler(u: pickle.Unpickler) -> Iterable[Any]:
+    while True:
+        try:
+            yield u.load()
+        except EOFError:
+            return
+
+
+def fol_benchmark_sep(_: Solver) -> None:
+    get_forkserver()
+
+    async def main() -> None:
+
+        print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
+        sig = prog_to_sig(syntax.the_program)
+        data_stream = pickle.Unpickler(open(utils.args.query, 'rb'))
+        total_time = 0.0
+        for d in values_of_unpickler(data_stream):
+            query_time = 0.0
+            prefix: Prefix = d['prefix']
+            states: Dict[int, State] = d['states']
+            constraints: List[Constraint] = d['constraints']
+            original_solution: Optional[Expr] = d['original_solution']
+            pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
+            print(f"\n\nprefix: {pre_pp}")
+            print(f"orig: {original_solution}")
+            print(f"# constraints: {len(constraints)}")
+
+            pc = PrefixConstraints()
+            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix.linearize(), pc = pc, k_cubes=(1 if all(fa for (fa, sort_i) in prefix.linearize()) else 3), expt_flags=set(utils.args.expt_flags))
+            constraint_map = {}
+            r: Any = None
+            for constraint in constraints:
+                for st in constraint.states():
+                    if st not in constraint_map:
+                        constraint_map[st] = sep.add_model(state_to_model(states[st]))
+                start = time.perf_counter()
+                sep.add_constraint(constraint.map(constraint_map))
+                r = sep.separate(False)
+                end = time.perf_counter()
+                query_time += end-start
+                if r is None:
+                    print("UNSEP")
+                    break
+                start = time.perf_counter()
+                r = sep.separate(True)
+                end = time.perf_counter()
+                query_time += end-start
+                print(r)
+            else:
+                print(f"SEP: {r}")
+            print(f"finished in: {query_time}")
+            total_time += query_time
+            assert (original_solution is None) == (r is None)           
+        print(f"overall: {total_time:0.5f}")
+           
+    asyncio.run(main())
+
 
 def fol_debug_frames(_: Solver) -> None:
     get_forkserver()
@@ -2728,6 +2785,13 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     s = subparsers.add_parser('fol-benchmark-eval', help='Test formula evaluation performance')
     s.set_defaults(main=fol_benchmark_eval)
+    s.add_argument("--query", type=str, help="Query to benchmark")
+    s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
+    result.append(s)
+
+    s = subparsers.add_parser('fol-benchmark-sep', help='Test formula evaluation performance')
+    s.set_defaults(main=fol_benchmark_sep)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
