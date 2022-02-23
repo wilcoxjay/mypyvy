@@ -1,5 +1,9 @@
 
-from typing import Any, BinaryIO, DefaultDict, Dict, FrozenSet, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
+from glob import glob
+from pyclbr import Function
+import re
+import tarfile
+from typing import Any, BinaryIO, Callable, DefaultDict, Dict, FrozenSet, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
 import sys
@@ -15,6 +19,7 @@ import tempfile
 
 from dataclasses import dataclass, field
 from collections import defaultdict
+from separators.logic import Relation
 
 from trace_tools import Tracer, trace, Sampler
 from async_tools import AsyncConnection, FileDescriptor, ScopedProcess, ScopedTasks, get_forkserver
@@ -1903,81 +1908,6 @@ def fol_benchmark_ig(_: Solver) -> None:
 
     asyncio.run(run_query())
 
-
-def eval_atom(st: State, expr: Expr, vars: Dict[str, str]) -> Tuple[Union[bool, str], Set[str]]:
-    def get_rel(d: RelationDecl) -> Dict[Tuple[str, ...], bool]:
-        if d.mutable:
-            return st.trace.rel_interps[cast(int, st.index)][d]
-        else:
-            return st.trace.immut_rel_interps[d]
-
-    def get_const(d: ConstantDecl) -> str:
-        if d.mutable:
-            return st.trace.const_interps[cast(int, st.index)][d]
-        else:
-            return st.trace.immut_const_interps[d]
-
-    def get_func(d: FunctionDecl) -> Dict[Tuple[str, ...], str]:
-        if d.mutable:
-            return st.trace.func_interps[cast(int, st.index)][d]
-        else:
-            return st.trace.immut_func_interps[d]
-    
-    if isinstance(expr, syntax.Bool):
-        return (expr.val, set())
-    elif isinstance(expr, syntax.UnaryExpr):
-        if expr.op == 'NEW':
-            raise NotImplementedError("New not supported")
-        elif expr.op == 'NOT':
-            (val, vs) = eval_atom(st, expr.arg, vars)
-            return (not val, vs)
-        else:
-            assert False, f'eval unknown operation {expr.op}'
-    elif isinstance(expr, syntax.BinaryExpr):
-        (v1, s1), (v2, s2) = eval_atom(st, expr.arg1, vars), eval_atom(st, expr.arg2, vars)
-            
-        if expr.op == 'IMPLIES':
-            return (not v1 or v2, s1 if not v1 else s1 | s2)
-        elif expr.op in ['IFF', 'EQUAL']:
-            return (v1 == v2, s1 | s2)
-        elif expr.op == 'NOTEQ':
-            return (v1 != v2, s1 | s2)
-        else:
-            assert False, expr
-    elif isinstance(expr, syntax.NaryExpr):
-        raise NotImplementedError("No Nary ops supported in eval_atom")
-    elif isinstance(expr, syntax.AppExpr):
-        args = tuple(cast(Tuple[str, Set[str]], eval_atom(st, arg, vars)) for arg in expr.args)
-        d = syntax.the_program.scope.get(expr.callee)
-        if isinstance(d, RelationDecl):
-            return (get_rel(d)[tuple(a[0] for a in args)], set(x for a in args for x in a[1]))
-        elif isinstance(d, FunctionDecl):
-            return (get_func(d)[tuple(a[0] for a in args)], set(x for a in args for x in a[1]))
-        else:
-            assert False, f'{d}\n{expr}'
-    elif isinstance(expr, syntax.QuantifierExpr):
-        raise NotImplementedError("No quantifiers supported in eval_atom")
-    elif isinstance(expr, syntax.Id):
-        if expr.name in vars:
-            return (vars[expr.name], set([expr.name]))
-        a = syntax.the_program.scope.get(expr.name)
-        # definitions are not supported
-        assert (not isinstance(a, syntax.DefinitionDecl) and
-                not isinstance(a, syntax.FunctionDecl) and a is not None)
-        if isinstance(a, syntax.RelationDecl):
-            return (get_rel(a)[()], set())
-        elif isinstance(a, syntax.ConstantDecl):
-            return (get_const(a), set())
-        else:
-            assert isinstance(a, str) or isinstance(a, bool)
-            return (a, set())
-    elif isinstance(expr, syntax.IfThenElse):
-        raise NotImplementedError("If then else not supported")
-    elif isinstance(expr, syntax.Let):
-        raise NotImplementedError("Let not supported")
-    else:
-        assert False, expr
-
 @dataclass
 class FastExpr:
     neg: bool = False
@@ -1987,8 +1917,7 @@ class FastExpr:
             if all(vars[mvar] == mval for mvar, mval in zip(match_vars, match_values)):
                 return (result != self.neg, set(match_vars))
         (value, used_vars) = self.eval_self(vars)
-        assert isinstance(value, bool)
-        # print(vars, used_vars)
+        # print(value, type(self), self.neg, vars, used_vars)
         uv = tuple(used_vars)
         self.cached_values.insert(0, (uv, tuple(vars[v] for v in uv), value))
         return (value != self.neg, used_vars)
@@ -1997,32 +1926,50 @@ class FastExpr:
         raise NotImplemented
 
 @dataclass
-class FastAtom(FastExpr):
-    a: Expr = syntax.Bool(True)
-    st: State = cast(State, None)
-    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
-        (v, used_vars) = eval_atom(self.st, self.a, vars)
-        assert isinstance(v, bool)
-        return (v, used_vars)
+class FastTerm:
+    def eval_atom(self, vars: Dict[str, str]) -> str:
+        raise NotImplemented
 
 @dataclass
-class FastForall(FastExpr):
-    var: str = ''
-    univ: List[str] = field(default_factory=list)
-    body: FastExpr = FastAtom()
+class FastId(FastTerm):
+    v: str = ''
+    def eval_atom(self, vars: Dict[str, str]) -> str:
+        return vars[self.v]
+
+@dataclass
+class FastConst(FastTerm):
+    e: str = ''
+    def eval_atom(self, vars: Dict[str, str]) -> str:
+        return self.e
+
+@dataclass
+class FastFuncApp(FastTerm):
+    callee: Dict[Tuple[str, ...], str] = field(default_factory=dict)
+    args: Tuple[FastTerm, ...] = ()
+    def eval_atom(self, vars: Dict[str, str]) -> str:
+        arguments = tuple(a.eval_atom(vars) for a in self.args)
+        v = self.callee[arguments]
+        # print("FastFuncApp", self.f, v)
+        return v
+
+@dataclass
+class FastRelApp(FastExpr):
+    callee: Dict[Tuple[str, ...], bool] = field(default_factory=dict)
+    args: List[FastTerm] = field(default_factory=list)
+    used: Set[str] = field(default_factory=set)
     def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
-        used_vars: Set[str] = set()
-        for i, e in enumerate(self.univ):
-            vars[self.var] = e
-            # print("Forall", self.var, e)
-            (v, uv) = self.body.eval(vars)
-            del vars[self.var]
-            uv.discard(self.var)
-            if not v:
-                self.univ = [e, *self.univ[:i], *self.univ[i+1:]]
-                return (False, uv)
-            used_vars.update(uv)
-        return (True, used_vars)
+        arguments = tuple(a.eval_atom(vars) for a in self.args)
+        return (self.callee[arguments], self.used)
+
+@dataclass
+class FastEq(FastExpr):
+    a1: FastTerm = FastConst()
+    a2: FastTerm = FastConst()
+    used: Set[str] = field(default_factory=set)
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        v1 = self.a1.eval_atom(vars)
+        v2 = self.a2.eval_atom(vars)
+        return (v1 == v2, self.used)
 
 @dataclass
 class FastOr(FastExpr):
@@ -2037,21 +1984,92 @@ class FastOr(FastExpr):
             used_vars.update(uv)
         return (False, used_vars)
 
+@dataclass
+class FastForall(FastExpr):
+    var: str = ''
+    univ: List[str] = field(default_factory=list)
+    body: FastExpr = FastOr()
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        used_vars: Set[str] = set()
+        for i, e in enumerate(self.univ):
+            vars[self.var] = e
+            # print("Forall", self.var, e)
+            (v, uv) = self.body.eval(vars)
+            del vars[self.var]
+            if not v:
+                self.univ = [e, *self.univ[:i], *self.univ[i+1:]]
+                uv = set(uv)
+                uv.discard(self.var)
+                return (False, uv)
+            used_vars.update(uv)
+            used_vars.discard(self.var)
+        return (True, used_vars)
+
+@dataclass
+class FastIff(FastExpr):
+    a1: FastExpr = FastOr()
+    a2: FastExpr = FastOr()
+    def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
+        (v1, used1) = self.a1.eval(vars)
+        (v2, used2) = self.a2.eval(vars)
+        return (v1 == v2, used1 | used2)
+
 def fast_eval(st: State, base_expr: Expr) -> bool:
     # for sortdecl, elems in st.univs:
     #     if len(elems) >= 255:
     #         raise NotImplementedError("Universe too big for fast evaluation")
+    bound_vars: Set[str] = set()
+    rel_cache: Dict[str, Dict] = {}
+    func_cache: Dict[str, Dict] = {}
+    used_vars: Set[str] = set()
+    
+    def convert_term(e: Expr) -> FastTerm:
+        if isinstance(e, syntax.AppExpr):
+            if e.callee not in func_cache:
+                d = syntax.the_program.scope.get(e.callee)
+                assert isinstance(d, FunctionDecl)
+                if d.mutable:
+                    callee = st.trace.func_interps[cast(int, st.index)][d]
+                else:
+                    callee = st.trace.immut_func_interps[d]
+                func_cache[e.callee] = callee
+            else:
+                callee = func_cache[e.callee]
+            args = tuple(convert_term(arg) for arg in e.args)
+            if len(args) == 0:
+                return FastConst(e = callee[()])
+            else:
+                return FastFuncApp(callee, args)
+        elif isinstance(e, syntax.Id):
+            if e.name in bound_vars:
+                used_vars.add(e.name)
+                return FastId(v=e.name)
+            d = syntax.the_program.scope.get(e.name)
+            if isinstance(d, ConstantDecl):
+                if d.mutable:
+                    const = st.trace.const_interps[cast(int, st.index)][d]
+                else:
+                    const = st.trace.immut_const_interps[d]
+                return FastConst(e=const)
+            else:
+                assert False
+        else:
+            assert False
+    
     def convert(e: Expr) -> FastExpr:
+        nonlocal used_vars
         if isinstance(e, QuantifierExpr):
-            assert len(e.binder.vs) > 0
-            if len(e.binder.vs) == 1:
-                sv = e.binder.vs[0]
-                fq = FastForall(var = sv.name,
-                                 univ = list(st.trace.univs[syntax.get_decl_from_sort(sv.sort)]),
-                                 body = convert(e.body) if e.quant == 'FORALL' else convert(Not(e.body)))
-                fq.neg = e.quant != 'FORALL'
-                return fq
-            return convert(QuantifierExpr(e.quant, e.binder.vs[:1], QuantifierExpr(e.quant, e.binder.vs[1:], e.body)))
+            bound_vars.update(sv.name for sv in e.binder.vs)
+            r = convert(e.body)
+            bound_vars.difference_update(sv.name for sv in e.binder.vs)
+            forall = e.quant == 'FORALL'
+            for sv in reversed(e.binder.vs):
+                r.neg = r.neg != (not forall)
+                r = FastForall(var = sv.name,
+                                univ = list(st.trace.univs[syntax.get_decl_from_sort(sv.sort)]),
+                                body = r)
+                r.neg = not forall
+            return r
         elif isinstance(e, UnaryExpr) and e.op == 'NOT':
             fe = convert(e.arg)
             fe.neg = not fe.neg
@@ -2064,89 +2082,127 @@ def fast_eval(st: State, base_expr: Expr) -> bool:
             return FastOr(c = [convert(a) for a in e.args])
         elif isinstance(e, BinaryExpr) and e.op == 'IMPLIES':
             return FastOr(c = [convert(Not(e.arg1)), convert(e.arg2)])
+        elif isinstance(e, BinaryExpr) and e.op == 'IFF':
+            return FastIff(a1 = convert(e.arg1), a2 = convert(e.arg2))
+        elif isinstance(e, BinaryExpr) and e.op == 'EQUAL':
+            used_vars = set()
+            a1 = convert_term(e.arg1)
+            a2 = convert_term(e.arg2)
+            return FastEq(a1 = a1, a2 = a2, used = used_vars)
+        elif isinstance(e, BinaryExpr) and e.op == 'NOTEQ':
+            used_vars = set()
+            a1 = convert_term(e.arg1)
+            a2 = convert_term(e.arg2)
+            return FastEq(a1 = a1, a2 = a2, used = used_vars, neg=True)
+        elif isinstance(e, AppExpr):
+            if e.callee not in rel_cache:
+                d = syntax.the_program.scope.get(e.callee)
+                if isinstance(d, RelationDecl):
+                    if d.mutable:
+                        callee = st.trace.rel_interps[cast(int, st.index)][d]
+                    else:
+                        callee = st.trace.immut_rel_interps[d]
+                else:
+                    assert False, f'{d}\n{e}'
+                rel_cache[e.callee] = callee
+            else:
+                callee = rel_cache[e.callee]
+            used_vars = set()
+            args = [convert_term(a) for a in e.args]
+            return FastRelApp(callee=callee, args=args, used = used_vars)
+        elif isinstance(e, syntax.Id):
+            a = syntax.the_program.scope.get(e.name)
+            if isinstance(a, RelationDecl):
+                if a.mutable:
+                    callee = st.trace.rel_interps[cast(int, st.index)][a]
+                else:
+                    callee = st.trace.immut_rel_interps[a]
+                v = callee[()]
+                return FastOr(neg = v)
+            else:
+                assert False, e
+        elif isinstance(e, syntax.Bool):
+            return FastOr(neg = e.val)
         else:
-            return FastAtom(a=e, st=st)
+            assert False, e
     
+    # print("base_expr:", base_expr)
     fe = convert(base_expr)
+    # print("converted:", fe)
     (val, used_vars) = fe.eval({})
+    # print("final val:", val)
     return val
 
 def fol_benchmark_eval(_: Solver) -> None:
-    if os.path.isdir(utils.args.query):
-        import heapq
-        total = 0.0
-        @dataclass(order=True)
-        class PrioritizedItem:
-            priority: float
-            item: Any=field(compare=False)
-        most_expensive: List[PrioritizedItem] = []
-        random_subset: List[PrioritizedItem] = []
-        for input_fname in os.listdir(utils.args.query):
-            with open(os.path.join(utils.args.query, input_fname), 'rb') as f:
-                try:
-                    data: Tuple[Dict[int, State], Expr] = pickle.load(f)
-                except EOFError:
-                    continue
-                (states, p) = data
-                if len(states) == 0:
-                    continue
-                for key, st in states.items():
-                    start = time.perf_counter()
-                    fast_eval(st, p)
-                    end = time.perf_counter()
-                    assert st.eval(p) == fast_eval(st, p)
-                    total += end-start
-                    item = PrioritizedItem(end-start, (st, p))
-                    print(f"{(end-start)*1000.0:0.3f}")
-                    if len(most_expensive) < 1000:
-                        heapq.heappush(most_expensive, item)
-                    else:
-                        heapq.heappushpop(most_expensive, item)
-                    item = PrioritizedItem(random.random(), (st, p))
-                    if len(random_subset) < 1000:
-                        heapq.heappush(random_subset, item)
-                    else:
-                        heapq.heappushpop(random_subset, item)
-                # print(f"elapsed: {1000.0*(end-start)/len(states):0.3f} ms/eval {p}")
-                
-        print(f"overall: {total:0.3f}")
-        with open("hardest-evals.pickle", 'wb') as f:
-            pickler = pickle.Pickler(f)
-            for i in most_expensive:
-                pickler.dump(i.item)
-        with open("random-evals.pickle", 'wb') as f:
-            pickler = pickle.Pickler(f)
-            for i in random_subset:
-                pickler.dump(i.item)
+    total = 0.0
+    if "fast-eval" in utils.args.expt_flags:
+        eval_func: Callable[[State, Expr], Any] = fast_eval
+    elif "baseline-eval" in utils.args.expt_flags:
+        eval_func = lambda st, p: st.eval(p)
     else:
-        total = 0.0
-        ref_total = 0.0
+        eval_func = cast(Callable[[State, Expr], Any], None)
+    for i in range(1):
         with open(utils.args.query, 'rb') as f:
             unpickler = pickle.Unpickler(f)
             while True:
                 try:
-                    single_data: Tuple[State, Expr] = unpickler.load()
+                    single_data: Tuple[List[State], Expr] = unpickler.load()
                 except EOFError:
                     break
-                (st, p) = single_data
-                print(p)
-                
-                start = time.perf_counter()
-                value = fast_eval(st, p)
-                end = time.perf_counter()
-                total += end-start
+                (sts, p) = single_data
+                print(" ===>  ", p)
+                for i, st in enumerate(sts):
+                    print(f"st[{i}]")
+                    start = time.perf_counter()
+                    value = eval_func(st, p)
+                    end = time.perf_counter()
+                    total += end-start
 
-                start = time.perf_counter()
-                ref_value = st.eval(p)
-                end = time.perf_counter()
-                ref_total += end-start
-                
-                print("Value", value, " Reference", ref_value)
-                assert value == ref_value
-                
-        print(f"overall: {total:0.3f}")
-        print(f"overall (ref): {ref_total:0.3f}")
+                    ref_value = st.eval(p)
+                    assert value == ref_value
 
+    print(f"overall: {total:0.5f}")
+    # print(f"overall (ref): {ref_total:0.3f}")
+
+def fol_benchmark_merge(_: Solver) -> None:
+    K = 5000
+    global_sampler: Sampler = Sampler(K)
+    kind = 'eval'
+    for input_fname in os.listdir(utils.args.query)[:]:
+        with tarfile.open(os.path.join(utils.args.query, input_fname), 'r') as f:
+            main_log = f.extractfile("main.log")
+            if main_log is None:
+                print("Error, main.log not found")
+                continue
+            ml = io.TextIOWrapper(main_log)
+            header = ml.readline()
+            m = re.match('ParallelFolIC3 log for ([^ ]+).pyv\n', header)
+            if not m:
+                print("Error, header is not correct")
+                continue
+            original_input_name = m.group(1)
+            sample = f.extractfile(f"sample-{kind}.pickle")
+            if sample is None:
+                print("Error, could not load sample")
+                continue
+            s: Sampler = Sampler.load(K, sample)
+            # Label each sample with the original file it came from. We need this because the interpretation depends on syntax.the_program
+            for item in s._samples:
+                item.data = (original_input_name, item.data)
+            global_sampler.merge(s)
+    
+    items_by_input = defaultdict(list)
+    for item in global_sampler._samples:
+        items_by_input[item.data[0]].append(item.data[1])
+    os.makedirs(utils.args.output, exist_ok=True)
+    for input, items in items_by_input.items():
+        print(input, len(items))
+        
+        with open(os.path.join(utils.args.output, f"{kind}-{input}.pickle"), 'wb') as outputfile:
+            p = pickle.Pickler(outputfile)
+            for i in items:
+                p.dump(i)
+        
 def fol_debug_ig(_: Solver) -> None:
     get_forkserver()
 
@@ -2672,6 +2728,13 @@ def add_argparsers(subparsers: argparse._SubParsersAction) -> Iterable[argparse.
 
     s = subparsers.add_parser('fol-benchmark-eval', help='Test formula evaluation performance')
     s.set_defaults(main=fol_benchmark_eval)
+    s.add_argument("--query", type=str, help="Query to benchmark")
+    s.add_argument("--output", type=str, help="Output to file")
+    s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
+    result.append(s)
+    
+    s = subparsers.add_parser('fol-benchmark-merge', help='Merge multiple samples into one combined sample')
+    s.set_defaults(main=fol_benchmark_merge)
     s.add_argument("--query", type=str, help="Query to benchmark")
     s.add_argument("--output", type=str, help="Output to file")
     s.add_argument("--expt-flags", dest="expt_flags", type=lambda x: x.split(','), default=[], action='extend', help="Experimental flags")
