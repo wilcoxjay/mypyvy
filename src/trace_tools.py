@@ -201,7 +201,7 @@ class Sampler(Generic[_T]):
     def sample(self, weight: float, data: Callable[[], _T]) -> bool:
         """Provide an item. If included in the sample, data() will be called to produce the data, and returns True. Otherwise, returns False."""
         assert weight > 0
-        r = -math.log(random.random()) / weight
+        r = math.log(random.random()) / weight
         new_item = Sampler.Item(r, weight)
         if len(self._samples) < self._k:
             heapq.heappush(self._samples, new_item)
