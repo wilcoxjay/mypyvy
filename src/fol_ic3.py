@@ -1,6 +1,4 @@
 
-import re
-import tarfile
 from typing import Any, BinaryIO, Callable, DefaultDict, Dict, FrozenSet, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
@@ -13,7 +11,8 @@ import pickle
 import asyncio
 import itertools
 import signal
-import tempfile
+import re
+import tarfile
 
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -27,6 +26,9 @@ from logic import Diagram, Expr, Solver, Trace
 import syntax
 from syntax import AppExpr, BinaryExpr, ConstantDecl, DefinitionDecl, FunctionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, RelationDecl, Scope, TraceDecl, UnaryExpr
 from fol_trans import formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
+import networkx
+import z3
+from solver_cvc5 import CVC5Solver, SatResult
 
 try:
     from separators.logic import Signature
@@ -35,9 +37,6 @@ try:
 except ModuleNotFoundError:
     pass
 
-import networkx
-import z3
-from solver_cvc5 import CVC5Solver, SatResult
 
 
 def eval_predicate(s: State, p: Expr) -> bool:
@@ -1988,7 +1987,8 @@ class FastForall(FastExpr):
     body: FastExpr = FastOr()
     def eval_self(self, vars: Dict[str, str]) -> Tuple[bool, Set[str]]:
         used_vars: Set[str] = set()
-        for i, e in enumerate(self.univ):
+        i = 0
+        for e in self.univ:
             vars[self.var] = e
             # print("Forall", self.var, e)
             (v, uv) = self.body.eval(vars)
@@ -2000,6 +2000,7 @@ class FastForall(FastExpr):
                 return (False, uv)
             used_vars.update(uv)
             used_vars.discard(self.var)
+            i += 1
         return (True, used_vars)
 
 @dataclass
@@ -2063,8 +2064,8 @@ def fast_eval(st: State, base_expr: Expr) -> bool:
             for sv in reversed(e.binder.vs):
                 r.neg = r.neg != (not forall)
                 r = FastForall(var = sv.name,
-                                univ = list(st.trace.univs[syntax.get_decl_from_sort(sv.sort)]),
-                                body = r)
+                               univ = list(st.trace.univs[syntax.get_decl_from_sort(sv.sort)]),
+                               body = r)
                 r.neg = not forall
             return r
         elif isinstance(e, UnaryExpr) and e.op == 'NOT':
@@ -2162,7 +2163,7 @@ def fol_benchmark_eval(_: Solver) -> None:
     # print(f"overall (ref): {ref_total:0.3f}")
 
 def fol_benchmark_merge(_: Solver) -> None:
-    K = 1000
+    K = 100
     global_sampler: Sampler = Sampler(K)
     kind = 'sep'
     for input_fname in os.listdir(utils.args.query)[:]:
@@ -2235,7 +2236,6 @@ def fol_debug_ig(_: Solver) -> None:
         # if utils.args.output:
         #     sys.stdout = open(utils.args.output, "w")
         print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
-        data_stream = pickle.Unpickler(open(os.path.join(utils.args.log_dir, "ig-queries.pickle"), 'rb'))
         lemmas: Dict[int, Expr] = {}
         with open(os.path.join(utils.args.log_dir, "lemmas.pickle"), 'rb') as lemmas_pickle:
             try:
@@ -2245,10 +2245,11 @@ def fol_debug_ig(_: Solver) -> None:
             except EOFError:
                 pass
         
+        file_stream = open(os.path.join(utils.args.log_dir, "ig-queries.pickle"), 'rb')
         data: Optional[dict] = None
         while True:
             try:
-                query_data = data_stream.load()
+                query_data = pickle.load(file_stream)
                 if query_data['rationale'] == 'learning':
                     data = query_data
             except EOFError:
@@ -2277,7 +2278,7 @@ def fol_debug_ig(_: Solver) -> None:
                     print("relative inductiveness unknown")
                 else:
                     print("not relatively inductive to frame (not solution)")
-                    await find_minimal_addition(checker, frame, i)
+                    # await find_minimal_addition(checker, frame, i)
                 
     asyncio.run(main())
 
@@ -2291,9 +2292,7 @@ def values_of_unpickler(u: pickle.Unpickler) -> Iterable[Any]:
 
 def fol_benchmark_sep(_: Solver) -> None:
     get_forkserver()
-
     async def main() -> None:
-
         print(f"Benchmarking {utils.args.query} ({utils.args.filename})")
         sig = prog_to_sig(syntax.the_program)
         data_stream = pickle.Unpickler(open(utils.args.query, 'rb'))
@@ -2305,36 +2304,41 @@ def fol_benchmark_sep(_: Solver) -> None:
             constraints: List[Constraint] = d['constraints']
             original_solution: Optional[Expr] = d['original_solution']
             pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + sig.sort_names[sort_i] + '.' for (fa, sort_i) in prefix.linearize())
+            # if pre_pp != "Anode. Anode. Aquorum. Around. Around. Around. Avotemap.": continue
             print(f"\n\nprefix: {pre_pp}")
             print(f"orig: {original_solution}")
             print(f"# constraints: {len(constraints)}")
 
             pc = PrefixConstraints()
-            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix.linearize(), pc = pc, k_cubes=(1 if all(fa for (fa, sort_i) in prefix.linearize()) else 3), expt_flags=set(utils.args.expt_flags))
+            sep = FixedImplicationSeparatorPyCryptoSat(sig, prefix.linearize(), pc = pc, k_cubes=(1 if all(fa for (fa, sort_i) in prefix.linearize()) else 3), expt_flags=set(utils.args.expt_flags), debug=True)
             constraint_map = {}
             r: Any = None
-            for constraint in constraints:
+            for constraint_index, constraint in enumerate(constraints):
+                print(f'\nconstraint {constraint_index}/{len(constraints)}')
                 for st in constraint.states():
                     if st not in constraint_map:
                         constraint_map[st] = sep.add_model(state_to_model(states[st]))
                 start = time.perf_counter()
                 sep.add_constraint(constraint.map(constraint_map))
-                r = sep.separate(False)
+                r = sep.separate(minimize=False)
                 end = time.perf_counter()
+                print(f"Query: {end-start}")
                 query_time += end-start
                 if r is None:
                     print("UNSEP")
                     break
-                start = time.perf_counter()
-                r = sep.separate(True)
-                end = time.perf_counter()
-                query_time += end-start
+                if 'no-minimize' not in utils.args.expt_flags:
+                    start = time.perf_counter()
+                    r = sep.separate(minimize=True)
+                    end = time.perf_counter()
+                    query_time += end-start
+                    print(f"Query: {end-start}")
                 print(r)
             else:
                 print(f"SEP: {r}")
             print(f"finished in: {query_time}")
             total_time += query_time
-            assert (original_solution is None) == (r is None)           
+            # assert (original_solution is None) == (r is None)           
         print(f"overall: {total_time:0.5f}")
            
     asyncio.run(main())
@@ -2460,11 +2464,9 @@ def fol_debug_frames(_: Solver) -> None:
                 print(lemmas[i])
             print(f"trimmed {len(orig_frame) - len(frame)} lemmas of {len(orig_frame)}")
 
-        async def check_frame_redundancy3(lemmas: Dict, frames: Dict) -> None:
+        async def check_frame_redundancy3(lemmas: Dict, frames: Dict, redundancy_frames: Set[int]) -> None:
             frame_numbers, bad_lemmas, safeties, initial_conditions = frames['frame_numbers'], frames['bad_lemmas'], frames['safeties'], frames['initial_conditions']
-            redundancy_frames = set()
             checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w'))
-
             for index in sorted(range(len(frame_numbers)), key = lambda x: IC3Frames.frame_key(frame_numbers[x]), reverse=True):
                 orig_frame = [i for i in range(len(frame_numbers)) if IC3Frames.frame_leq(frame_numbers[index], frame_numbers[i]) and i not in redundancy_frames]
                 result = await checker.check_implication([lemmas[j] for j in orig_frame if index != j], lemmas[index], parallelism=6, timeout=10)
@@ -2478,7 +2480,7 @@ def fol_debug_frames(_: Solver) -> None:
                 code = '$' if index in safeties else 'r' if index in redundancy_frames else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else  ' '
                 print(f"lemma {fn_str} {code} {lemmas[index]}")
 
-        async def check_golden_invariant(lemmas: Dict, frames: Dict) -> None:
+        async def check_golden_invariant(lemmas: Dict, frames: Dict, redundancy: Set[int]) -> None:
             golden_invariant = [e.expr for e in syntax.the_program.invs()]
             checker = AdvancedChecker(syntax.the_program, log=open("/dev/null", 'w'))
 
@@ -2486,10 +2488,13 @@ def fol_debug_frames(_: Solver) -> None:
             for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
                 if frame_num == 0 and index in bad_lemmas:
                     continue
-                code = '$' if index in safeties else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else ' '
+                code = '$' if index in safeties else 'r' if index in redundancy else 'i' if index in initial_conditions else 'b' if index in bad_lemmas else  ' '
                 fn_str = f"{frame_num:2}" if frame_num is not None else ' +'
-                result = await checker.check_implication(golden_invariant, lemmas[index], parallelism=5, timeout=100)
-                imp = ">>" if result.result == SatResult.unsat else '  '
+                if index not in redundancy:
+                    result = await checker.check_implication(golden_invariant, lemmas[index], parallelism=5, timeout=100)
+                    imp = ">>" if result.result == SatResult.unsat else '  '
+                else:
+                    imp = '  '
                 print(f"lemma {fn_str} {code} {imp} {lemmas[index]}")
 
         def find_frame_by_time(time: float) -> Dict:
@@ -2510,13 +2515,14 @@ def fol_debug_frames(_: Solver) -> None:
 
         frame_of_interest = find_frame_by_time(100000)
         # print_frames(lemmas, frame_of_interest)
-        # print("\nFrame redundancy:")
-        #await check_frame_redundancy3(lemmas, frame_of_interest)
+        print("\nFrame redundancy:")
+        redundancy: Set[int] = set()
+        await check_frame_redundancy3(lemmas, frame_of_interest, redundancy)
         # print("\nGolden invariant implication:")
         print("\nImplied by human invariant:")
-        await check_golden_invariant(lemmas, frame_of_interest)
-        print("\nReachability:")
-        print_reachablity_graph(frame_of_interest)
+        await check_golden_invariant(lemmas, frame_of_interest, redundancy)
+        # print("\nReachability:")
+        # print_reachablity_graph(frame_of_interest)
     asyncio.run(main())
 
 def extract_vmt(_: Solver) -> None:
