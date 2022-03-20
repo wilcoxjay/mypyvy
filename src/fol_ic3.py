@@ -1,4 +1,5 @@
 
+import math
 from typing import Any, BinaryIO, Callable, DefaultDict, Dict, FrozenSet, Iterable, Iterator, Sequence, TextIO, List, Optional, Set, Tuple, Union, cast
 
 import argparse
@@ -27,10 +28,10 @@ import syntax
 from syntax import AppExpr, BinaryExpr, ConstantDecl, DefinitionDecl, FunctionDecl, IfThenElse, InvariantDecl, Let, NaryExpr, New, Not, Program, QuantifierExpr, RelationDecl, Scope, TraceDecl, UnaryExpr
 from fol_trans import formula_to_predicate, predicate_to_formula, prog_to_sig, state_to_model
 import networkx
-import z3
-from solver_cvc5 import CVC5Solver, SatResult
 
 try:
+    import z3
+    from solver_cvc5 import CVC5Solver, SatResult
     from separators.logic import Signature
     from separators import Constraint, Neg, Pos, Imp
     from separators.separate import FixedImplicationSeparatorPyCryptoSat, FixedImplicationSeparatorPyCryptoSatCNF, Logic, PrefixConstraints, Separator
@@ -47,6 +48,11 @@ def eval_predicate(s: State, p: Expr) -> bool:
         print(f"NotImplemented fast_eval {e}", file=sys.stderr)
         assert isinstance(r, bool)
         return r
+    except Exception as e:
+        print(f"Error in fast_eval {e}", file=sys.stderr)
+        print(s, file=sys.stderr)
+        print(p, file=sys.stderr)
+        raise
     return fr
 
 def satisifies_constraint(c: Constraint, p: Expr, states: Union[Dict[int, State], List[State]]) -> bool:
@@ -468,7 +474,7 @@ class IGSolver:
         if isinstance(c, Imp):
             if c not in self._constraints_mapping:
                 pre_state = self._previous_states[c.i]
-                if all(pre_state.eval(f) for f in self._frame):
+                if all(eval_predicate(pre_state,f) for f in self._frame):
                     if c.i not in self._previous_to_current_states:
                         self._previous_to_current_states[c.i] = self.add_local_state(self._previous_states[c.i])
                     if c.j not in self._previous_to_current_states:
@@ -643,7 +649,8 @@ class IGSolver:
 
         async def logger() -> None:
             query_start = time.perf_counter()
-            self._print(f"Starting IG query with timeout {timeout}")
+            timeout_str = f"{timeout:0.3f}" if timeout is not None else "inf"
+            self._print(f"Starting IG query with timeout {timeout_str}")
             try:
                 while True:
                     await asyncio.sleep(30)
@@ -699,7 +706,8 @@ class IC3Frames:
         self._no_predecessors: Dict[int, Set[int]] = {} # Gives the set of predicates that block all predecessors of a state
         self._bad_lemmas: Dict[int, int] = dict() # Key: predicates that violate a known reachable state. Value(F): the highest frame they can be in (they violate a state in frame F+1)
         self._pushability_unknown_lemmas: Set[int] = set() # Lemmas that gave an UNK timeout when attempting to push
-        self._redundant_lemmas: Set[int] = set() # Predicates that are implied by the conjunction of non-redundant F_inf lemmas
+        self._redundant_lemmas: Dict[int, IC3Frames.FrameNum] = dict() # Predicates that are implied by the conjunction of non-redundant F_inf lemmas
+        self._redundant_lemma_cex: Dict[int, int] = dict() # State that shows lemma is not redundant
 
 
         self._push_lock = asyncio.Lock()
@@ -721,9 +729,10 @@ class IC3Frames:
         return max(a, b)
     @staticmethod
     def frame_leq(a: FrameNum, b: FrameNum) -> bool:
-        if b is None: return True
-        if a is None: return False
-        return a <= b
+        return float("inf" if a is None else a) <= float("inf" if b is None else b)
+    @staticmethod
+    def frame_lt(a: FrameNum, b: FrameNum) -> bool:
+        return float("inf" if a is None else a) < float("inf" if b is None else b)
     @staticmethod
     def frame_key(a: FrameNum) -> Tuple[int, int]:
         if a is None: return (1, 0)
@@ -763,8 +772,15 @@ class IC3Frames:
         if (lemm, state) not in self._eval_cache:
             self._eval_cache[(lemm, state)] = eval_predicate(self._states[state], self._lemmas[lemm])
         return self._eval_cache[(lemm, state)]
+
     def frame_lemmas(self, i: FrameNum) -> Iterable[int]:
-        yield from (index for index, f in enumerate(self._frame_numbers) if IC3Frames.frame_leq(i, f) and index not in self._redundant_lemmas)
+        for lemm, f in enumerate(self._frame_numbers):
+            if not IC3Frames.frame_leq(i, f): continue
+            if lemm in self._redundant_lemmas:
+                if IC3Frames.frame_leq(f, self._redundant_lemmas[lemm]):
+                    continue
+            yield lemm
+        # yield from (index for index, f in enumerate(self._frame_numbers) if IC3Frames.frame_leq(i, f) and index not in self._redundant_lemmas)
 
     def print_lemmas(self) -> None:
         print("[IC3] ---- Frame summary")
@@ -775,12 +791,13 @@ class IC3Frames:
                    'i' if index in self._initial_conditions else \
                    'B' if index in self._bad_lemmas and IC3Frames.frame_leq(self._bad_lemmas[index], i) else \
                    'u' if index in self._pushability_unknown_lemmas else \
-                   'r' if index in self._redundant_lemmas else \
+                   'r' if index in self._redundant_lemmas and IC3Frames.frame_leq(i, self._redundant_lemmas[index]) else \
                    'b' if index in self._bad_lemmas else ' '
             fn_str = f"{i:2}" if i is not None else ' +'
             print(f"[IC3] lemma {fn_str} {code} {p}")
         print(f"[IC3] Reachable states: {len(self._reachable)} ({len(self._useful_reachable)} useful), initial states: {len(self._initial_states)}")
         print("[IC3] ----")
+
     def log_frames(self, elapsed: Optional[float] = None) -> None:
         data = {"frame_numbers": self._frame_numbers,
                 "safeties": self._safeties,
@@ -790,6 +807,7 @@ class IC3Frames:
                 "pushability_unknown_lemmas": self._pushability_unknown_lemmas,
                 "transitions": self._transitions,
                 "initial_states": self._initial_states,
+                "proof_obligation": self._proof_obligation,
                 "elapsed": elapsed}
         self._logs._frames_log.write(pickle.dumps(data))
         self._logs._frames_log.flush()
@@ -826,7 +844,7 @@ class IC3Frames:
                     continue
                 if not all(self.eval(p, candidate) for p in self.frame_lemmas(frame - 1)):
                     continue
-                edge = await self._predecessor_robust_checker.check_transition([self._states[candidate].as_onestate_formula()], formula_to_block, parallelism=self._pushing_parallelism)
+                edge = await self._predecessor_robust_checker.check_transition([self._states[candidate].as_onestate_formula()], formula_to_block, parallelism=1)
                 if edge.result == SatResult.sat:
                     print(f"Found existing state {candidate} in post-frame {frame}", file=sys.stderr)
                     self.add_transition(candidate, state)
@@ -842,7 +860,7 @@ class IC3Frames:
         # predecessor. This is only currently used to ensure that speculative_push() doesn't need to synchronize with push()
         while True:
             fp = set(self.frame_lemmas(frame-1))
-            edge = await self._predecessor_robust_checker.check_transition([self._lemmas[i] for i in fp], formula_to_block, parallelism=self._pushing_parallelism)
+            edge = await self._predecessor_robust_checker.check_transition([self._lemmas[i] for i in fp], formula_to_block, parallelism=1)
             if fp != set(self.frame_lemmas(frame-1)):
                 continue
             break
@@ -917,8 +935,13 @@ class IC3Frames:
         assert self._push_lock.locked()
 
         # No need to push things already in F_inf or bad lemmas
-        if i is None or self._is_bad_lemma(index) or index in self._pushability_unknown_lemmas:
+        if i is None or self._is_bad_lemma(index):
+            self._proof_obligation.pop(index, None)
+            self._immediate_pushing_blocker.pop(index, None)
             return
+        if index in self._pushability_unknown_lemmas:
+            return
+
         with span.span("PushLemma") as span:
             span.data(lemma=index)
             with span.span("ImBlocker"):
@@ -990,10 +1013,12 @@ class IC3Frames:
                     blocker = await self.add_state(trace.as_state(0), f"blocker of {index}")
                     blocker_successor = await self.add_state(trace.as_state(1), f"blocker successor of {index}")
                     self.add_transition(blocker, blocker_successor)
-
+                    
                     self._immediate_pushing_blocker[index] = blocker
                     blocker_data = Blocker(state=blocker, frame=i, lemma=index, type_is_predecessor=False)
                     self._proof_obligation[index] = await self._blockable_state(blocker_data)
+                    print(f"Generated new blocker {blocker}")
+                    
                     # Signal here so that heuristic tasks waiting on a pushing_blocker can be woken
                     self._event_frame_update.set()
                     self._event_frame_update.clear()
@@ -1016,8 +1041,31 @@ class IC3Frames:
                 result = await self._redundancy_checker.check_implication([self._lemmas[j] for j in self.frame_lemmas(None) if i != j], self._lemmas[i], parallelism=self._pushing_parallelism, timeout=10)
                 if result.result == SatResult.unsat:
                     print(f"Redundant lemma: {self._lemmas[i]}")
-                    self._redundant_lemmas.add(i)
+                    self._redundant_lemmas[i] = None
 
+            print(f"Checked redundancy in {time.perf_counter() - start:0.3f} sec")
+
+    async def _check_full_redundancy(self, push_span: Tracer.Span) -> None:
+        with push_span.span('Redundancy'):
+            
+            start = time.perf_counter()
+
+            for fn, lemm in sorted(zip(self._frame_numbers, range(len(self._frame_numbers))), key = lambda x: (IC3Frames.frame_key(x[0]), x[1])):
+                if lemm in self._safeties: continue # don't mark safety properties as redundant
+                if lemm in self._redundant_lemmas and IC3Frames.frame_leq(fn, self._redundant_lemmas[lemm]): continue
+                if lemm in self._redundant_lemma_cex:
+                    if all(self.eval(l, self._redundant_lemma_cex[lemm]) for l in self.frame_lemmas(fn) if l != lemm):
+                        continue
+                    del self._redundant_lemma_cex[lemm] # invalidate the cached state
+
+                result = await self._redundancy_checker.check_implication([self._lemmas[j] for j in self.frame_lemmas(fn) if lemm != j], self._lemmas[lemm], parallelism=self._pushing_parallelism, timeout=10)
+                if result.result == SatResult.unsat:
+                    print(f"Redundant lemma: {self._lemmas[lemm]}")
+                    self._redundant_lemmas[lemm] = fn
+                elif result.result == SatResult.sat:
+                    assert result.trace is not None
+                    st = await self.add_state(result.trace.as_state(0), "redundancy checking")
+                    self._redundant_lemma_cex[lemm] = st
             print(f"Checked redundancy in {time.perf_counter() - start:0.3f} sec")
 
     async def push(self) -> None:
@@ -1033,17 +1081,23 @@ class IC3Frames:
 
                     if frame_num > 0 and not any(fn == frame_num for fn in self._frame_numbers):
                         # frame is empty, sweep all greater finite frames to f_inf
-                        swept_to_f_inf = 0
+                        # swept_to_f_inf = 0
                         for index in range(len(self._lemmas)):
                             fn = self._frame_numbers[index]
                             if fn is not None and frame_num <= fn:
                                 print(f"Pushed {'lemma' if index not in self._safeties else 'safety'} to frame inf: {self._lemmas[index]}")
                                 self._frame_numbers[index] = None
-                                swept_to_f_inf += 1
-                        if swept_to_f_inf > 0:
-                            await self._check_f_inf_redundancy(push_span)
+                                # also invalidate proof obligations/immediate blockers
+                                self._proof_obligation.pop(index, None)
+                                self._immediate_pushing_blocker.pop(index, None)
+            
+                                # swept_to_f_inf += 1
+                        # if swept_to_f_inf > 0:
+                        #     await self._check_f_inf_redundancy(push_span)
                         break
                     frame_num += 1
+
+                await self._check_full_redundancy(push_span)
                 print(f"Pushing completed in {time.perf_counter() - start:0.3f} sec")
 
     async def wait_for_frame_update(self) -> None:
@@ -1203,14 +1257,14 @@ class ParallelFolIc3:
     async def parallel_inductive_generalize(self, b: Blocker, threads: int = 1, rationale: str = '', timeout: Optional[float] = None, prior_solver: Optional[IGSolver] = None) -> IGSolver:
         ig_frame = set(self._frames.frame_lemmas(b.frame-1))
         ig_solver = IGSolver(self._frames._states[b.state],
-                                  [self._frames._states[x] for x in self._frames._useful_reachable | self._frames._initial_states],
+                                  [self._frames._states[x] for x in self._frames._useful_reachable],
                                   [self._frames._lemmas[x] for x in ig_frame],
                                   self._logs, syntax.the_program, rationale, self._next_ig_query_index, prior_solver)
         self._next_ig_query_index += 1
         pickle.dump({"log_prefix": ig_solver._log_prefix, 
                      "rationale": ig_solver._rationale, 
                      "state_to_block": self._frames._states[b.state],
-                     "reachable": list(self._frames._useful_reachable | self._frames._initial_states),
+                     "reachable": list(self._frames._useful_reachable),
                      "frame": list(self._frames.frame_lemmas(b.frame-1)),
                      "identity": ig_solver._identity}, self._logs._ig_queries_log)
         self._logs._ig_queries_log.flush()
@@ -1304,14 +1358,27 @@ class ParallelFolIc3:
         return ig_solver
 
     def heuristic_priority(self, pred: int, frame_N: Optional[int] ) -> Any:
-        def mat_size(e: Expr) -> int:
-            if isinstance(e, QuantifierExpr): return mat_size(e.body)
-            elif isinstance(e, UnaryExpr): return mat_size(e.arg)
-            elif isinstance(e, NaryExpr): return sum(map(mat_size, e.args))
-            elif isinstance(e, BinaryExpr): return mat_size(e.arg1) + mat_size(e.arg2)
-            else: return 1
+        # def mat_size(e: Expr) -> int:
+        #     if isinstance(e, QuantifierExpr): return mat_size(e.body)
+        #     elif isinstance(e, UnaryExpr): return mat_size(e.arg)
+        #     elif isinstance(e, NaryExpr): return sum(map(mat_size, e.args))
+        #     elif isinstance(e, BinaryExpr): return mat_size(e.arg1) + mat_size(e.arg2)
+        #     else: return 1
+        # fn = self._frames._frame_numbers[pred]
+        # return (-fn if fn is not None else 0, mat_size(self._frames._lemmas[pred]) + random.random() * 0.5)
+        
+        # n_blocked = len([po for l, po in self._frames._proof_obligation.items() if po is not None and not po.type_is_predecessor and not self._frames.eval(pred, po.state) and l not in self._frames._safeties and IC3Frames.frame_lt(self._frames._frame_numbers[l], frame_N)])
+        # n_blocked_safety = len([po for l, po in self._frames._proof_obligation.items() if po is not None and not po.type_is_predecessor and not self._frames.eval(pred, po.state) and l in self._frames._safeties])
         fn = self._frames._frame_numbers[pred]
-        return (-fn if fn is not None else 0, mat_size(self._frames._lemmas[pred]) + random.random() * 0.5)
+        if fn is None:
+            fn = 0
+        assert fn is not None
+        safety_obligations = [po for l, po in self._frames._proof_obligation.items() if l in self._frames._safeties and po is not None and not self._frames.eval(pred, po.state)]
+        other_obligations = [po for l, po in self._frames._proof_obligation.items() if l not in self._frames._safeties and po is not None and not self._frames.eval(pred, po.state)]
+        safety_push_score = sum([math.exp(-0.5*(po.frame - fn)) for po in safety_obligations])
+        other_push_score = sum([math.exp(-0.5*(po.frame - fn)) for po in other_obligations])
+        return (safety_push_score, other_push_score, -pred)
+        
 
     async def heuristic_pushing_to_the_top_worker(self) -> None:
         # print("Starting heuristics")
@@ -1321,15 +1388,18 @@ class ParallelFolIc3:
         current_timeout: Dict[Tuple[int, int], int] = {}
         while True:
             frame_N = min((self._frames._frame_numbers[s] for s in self._frames._safeties), key = IC3Frames.frame_key)
-            priorities = sorted(range(len(self._frames._lemmas)), key=lambda lemm: self.heuristic_priority(lemm, frame_N))
-            # print("Heuristic priorities:")
-            # for lemm in priorities:
-            #     print(f"     -> {self._frames._lemmas[lemm]}")
+            priorities = [x for x in range(len(self._frames._lemmas)) if not IC3Frames.frame_leq(frame_N, self._frames._frame_numbers[x]) and not self._frames._is_bad_lemma(x)]
+            priorities.sort(key=lambda lemm: self.heuristic_priority(lemm, frame_N), reverse=True)
+            print("Heuristic priorities:")
+            for lemm in priorities:
+                print(f"     -> {self._frames._lemmas[lemm]}")
             
             for lemm in priorities:
                 # Don't push anything past the earliest safety
                 if IC3Frames.frame_leq(frame_N, self._frames._frame_numbers[lemm]):
                     continue
+                # if lemm in self._frames._redundant_lemmas and IC3Frames.frame_leq(self._frames._frame_numbers[lemm], self._frames._redundant_lemmas[lemm]):
+                #     continue
                 
                 blocker = await self._frames.get_blocker(lemm)
                 if blocker is None:
@@ -1380,7 +1450,7 @@ class ParallelFolIc3:
     async def flush_trace(self) -> None:
         while True:
             self._root_span.flush()
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
 
     async def run(self) -> None:
         self._start_time = time.perf_counter()
@@ -1391,7 +1461,6 @@ class ParallelFolIc3:
             tasks.add(self.flush_trace())
             if 'no-heuristic-pushing' not in utils.args.expt_flags:
                 tasks.add(self.heuristic_pushing_to_the_top_worker())
-            # tasks.add(self.inexpensive_reachability())
             tasks.add(self.learn())
             await self._frames.wait_for_completion()
 
@@ -2250,7 +2319,7 @@ def fol_debug_ig(_: Solver) -> None:
         while True:
             try:
                 query_data = pickle.load(file_stream)
-                if query_data['rationale'] == 'learning':
+                if query_data['rationale'] != 'learning':
                     data = query_data
             except EOFError:
                 break
@@ -2353,6 +2422,14 @@ def fol_debug_frames(_: Solver) -> None:
                 while True:
                     lemma = pickle.load(lemmas_pickle)
                     lemmas.update(lemma)
+            except EOFError:
+                pass
+        states = {}
+        with open(os.path.join(utils.args.log_dir, "states.pickle"), 'rb') as states_pickle:
+            try:
+                while True:
+                    state = pickle.load(states_pickle)
+                    states.update(state)
             except EOFError:
                 pass
         frames = []
@@ -2512,15 +2589,45 @@ def fol_debug_frames(_: Solver) -> None:
                 print(f"{a} -> {b};")
             print("}")
             
+        async def measure_goodness() -> None:
+            final_frame: Dict = find_frame_by_time(10000000)
+            time_of_last_frame = final_frame['elapsed']
+            frame = find_frame_by_time(time_of_last_frame)
+            final_f_inf = set(l for l in range(len(final_frame['frame_numbers'])) if final_frame['frame_numbers'][l] is None)
+            print(final_frame['frame_numbers'])
+            
+            print(IC3Frames.frame_lt(9, 10))
+            
+            proof_obligations: Dict[int, Optional[Blocker]] = frame['proof_obligation']
+            frame_numbers, bad_lemmas, safeties, initial_conditions = frame['frame_numbers'], frame['bad_lemmas'], frame['safeties'], frame['initial_conditions']
+            
+            frame_N = min((frame_numbers[s] for s in safeties), key = IC3Frames.frame_key)
+            
+            print(frame_N)
+            for frame_num, index in sorted(zip(frame_numbers, range(len(lemmas))), key = lambda x: IC3Frames.frame_key(x[0])):
+                if frame_num == 0 and index in bad_lemmas:
+                    continue
+                is_redundant = index in frame['redundant_lemmas'] and IC3Frames.frame_leq(frame['redundant_lemmas'][index], frame_num)
+                is_bad = index in bad_lemmas and IC3Frames.frame_leq(bad_lemmas[index], frame_num)
+                code = '$' if index in safeties else 'B' if is_bad else 'i' if index in initial_conditions else 'r' if is_redundant else 'b' if index in bad_lemmas else ' '
+                fn_str = f"{frame_num:2}" if frame_num is not None else ' +'
+                n_blocked = len([po for l, po in proof_obligations.items() if po is not None and not po.type_is_predecessor and not eval_predicate(states[po.state], lemmas[index]) and IC3Frames.frame_lt(frame_numbers[l], frame_N)])
+                n_blocked_safety = len([po for l, po in proof_obligations.items() if po is not None and not po.type_is_predecessor and not eval_predicate(states[po.state], lemmas[index]) and l in safeties])
+                fn_final_str = f'{final_frame["frame_numbers"][index]:>2}' if final_frame["frame_numbers"][index] is not None else ' +'
+                print(f"lemma {fn_str} {fn_final_str} {code} {n_blocked:>3} {n_blocked_safety:>1} {lemmas[index]}")
+                
+                
+
 
         frame_of_interest = find_frame_by_time(100000)
         # print_frames(lemmas, frame_of_interest)
         print("\nFrame redundancy:")
         redundancy: Set[int] = set()
-        await check_frame_redundancy3(lemmas, frame_of_interest, redundancy)
+        # await check_frame_redundancy3(lemmas, frame_of_interest, redundancy)
         # print("\nGolden invariant implication:")
-        print("\nImplied by human invariant:")
-        await check_golden_invariant(lemmas, frame_of_interest, redundancy)
+        # print("\nImplied by human invariant:")
+        # await check_golden_invariant(lemmas, frame_of_interest, redundancy)
+        await measure_goodness()
         # print("\nReachability:")
         # print_reachablity_graph(frame_of_interest)
     asyncio.run(main())
