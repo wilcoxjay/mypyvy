@@ -64,14 +64,14 @@ def process_trace(trace: Span, prefix: str ='') -> None:
                 durations_sep.append(prefix_query.duration)
                 prefix_value = prefix_query.data['prefix']
                 pre_pp = " ".join(('A' if fa == True else 'E' if fa == False else 'Q') + f'{sort_i}.' for (fa, sort_i) in prefix_value.linearize())
-                print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp} {core}")
+                # print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp} {core}")
                 # print(f"{ig_query.instance}, {ig_query.duration:> 10.3f}, {prefix_query.data['category']}, {pre_pp}")
                 break
         else:
             durations_remaining.append(solve_phase.duration)
             durations_sep.append(0)
                 
-    if True:
+    if False:
         longest_queries = list(sorted([ig_query for ig_query in trace.descendants('IG') if ig_query.data['rationale'] == 'learning'], reverse=True, key = lambda q: q.duration)[:5])
         for ig_query in longest_queries:
             print(ig_query.instance, ig_query.duration)
@@ -96,34 +96,40 @@ def process_trace(trace: Span, prefix: str ='') -> None:
                 for smt in longest_smt:
                     print(f"    {smt.duration:> 10.3f} {smt.data.get('result', 'unknown')}")
 
-    print(f"Total IG time: {total_solve:0.3f}, prefix queries (success only): {total_successful_prefix_time:0.3f}, percent: {total_successful_prefix_time/total_solve*100.0:0.1f}%")
     print(f"Total time {trace.duration:0.3f}")
-    
-    print(f"Total sep. algo time {total_sep_query:0.3f}")
-    print(f"Total eval time      {total_eval_query:0.3f}")
-    print(f"Total smt time       {total_smt_query:0.3f}")
+    print(f"Total learning IG time: {total_solve:0.3f}")
+    print(f"Learning prefix queries (success only): {total_successful_prefix_time:0.3f} {total_successful_prefix_time/total_solve*100.0:>4.1f}%")
+    print(f"Total sep. algo time {total_sep_query:0.3f}\t{100.0*total_sep_query/total_successful_prefix_time:>4.1f}%")
+    print(f"Total eval time      {total_eval_query:0.3f}\t{100.0*total_eval_query/total_successful_prefix_time:>4.1f}%")
+    print(f"Total smt time       {total_smt_query:0.3f}\t{100.0*total_smt_query/total_successful_prefix_time:>4.1f}%")
+    total_overhead = total_successful_prefix_time - (total_sep_query + total_eval_query + total_smt_query)
+    print(f"Total overhead time  {total_overhead:0.3f}\t{100.0*total_overhead/total_successful_prefix_time:>4.1f}%")
     
     total_push = 0.0
     imblocker = 0.0
     former = 0.0
     smtpush = 0.0
+    redundancy = 0.0
     for push in trace.descendants('Push'):
         total_push += push.duration
         imblocker += sum(d.duration for d in push.descendants("ImBlocker"))
         former += sum(d.duration for d in push.descendants("Former"))
         smtpush += sum(d.duration for d in push.descendants("SMTpush"))
+        redundancy += sum(d.duration for d in push.descendants("Redundancy"))
     print(f"Total pushing time {total_push:0.3f}")
-    print(f"imblocker {100.0 * imblocker / total_push:0.1f}%")
-    print(f"former {100.0 * former / total_push:0.1f}%")
-    print(f"smtpush {100.0 * smtpush / total_push:0.1f}%")
+    print(f"  ImBlocker  {100.0 * imblocker / total_push:>4.1f}%")
+    print(f"  Former     {100.0 * former / total_push:>4.1f}%")
+    print(f"  SMTPush    {100.0 * smtpush / total_push:>4.1f}%")
+    print(f"  Redundancy {100.0 * redundancy / total_push:>4.1f}%")
+    print(f"  Overhead   {100.0 * (total_push - (imblocker + former + smtpush + redundancy)) / total_push:>4.1f}%")
     
 
-    print(json.dumps({
-        'n_queries': len(durations_remaining),
-        'total_sep': total_successful_prefix_time,
-        'total_smt': total_smt_query,
-        'n_smt': n_smt,        
-    }))
+    # print(json.dumps({
+    #     'n_queries': len(durations_remaining),
+    #     'total_sep': total_successful_prefix_time,
+    #     'total_smt': total_smt_query,
+    #     'n_smt': n_smt,        
+    # }))
     return
 
     plt.barh(range(len(durations_remaining)), durations_remaining, 0.8, label = 'Remaining')
