@@ -1,0 +1,38 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11"]
+    env:
+      Z3_VERSION: "4.11.2"
+      CVC4_BINARY_URL: "https://github.com/CVC4/CVC4/releases/download/1.8/cvc4-1.8-x86_64-linux-opt"
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Install Z3
+        run: |
+          wget -nv https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/z3-${Z3_VERSION}-x64-glibc-2.31.zip
+          unzip z3-${Z3_VERSION}-x64-glibc-2.31.zip
+          echo `pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin >> $GITHUB_PATH
+      - run: z3 --version  # make sure z3 is installed
+      - name: Install CVC4
+        run: |
+          mkdir cvc4
+          wget -nv -O cvc4/cvc4 ${CVC4_BINARY_URL}
+          chmod +x cvc4/cvc4
+          echo `pwd`/cvc4 >> $GITHUB_PATH
+      - run: cvc4 --version  # make sure cvc4 is installed
+      - run: make test

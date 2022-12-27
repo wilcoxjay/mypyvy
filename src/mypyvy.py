@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3
 
 from __future__ import annotations
 import argparse
@@ -637,11 +637,6 @@ def parse_program(input: str, forbid_rebuild: bool = False, filename: Optional[s
     return prog
 
 def main() -> None:
-    # limit RAM usage to 45 GB
-    # TODO: make this a command line argument
-    # TODO: not sure if this is actually the right way to do this (also, what about child processes?)
-    resource.setrlimit(resource.RLIMIT_AS, (90 * 10**9, 90 * 10**9))
-
     utils.args = parse_args(sys.argv[1:])
 
     if utils.args.log_xml:
