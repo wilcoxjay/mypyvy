@@ -210,8 +210,8 @@ class MonotoneFunctionTests(unittest.TestCase):
         assert v is not None
         k = v[0]
         self.assertIsInstance(k, int)
-        self.assertLessEqual(100, k)
-        self.assertLess(k, 200)
+        self.assertLessEqual(100, k)  # type: ignore
+        self.assertLess(k, 200)  # type: ignore
         self.assertIsNone(mf.seed([(5,5)]))
         self.assertEqual(mf.seed([(5,6)]), (5,))
         mf[5,] = False

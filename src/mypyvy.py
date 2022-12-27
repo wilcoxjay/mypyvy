@@ -654,7 +654,7 @@ def main() -> None:
     if 'json' in utils.args and utils.args.json:
         utils.args.log = 'critical'
 
-    utils.logger.setLevel(getattr(logging, utils.args.log.upper(), None))
+    utils.logger.setLevel(getattr(logging, utils.args.log.upper(), None))  # type: ignore
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.terminator = ''
     handler.setFormatter(MyFormatter(fmt))

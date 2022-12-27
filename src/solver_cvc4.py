@@ -13,7 +13,7 @@ TODO: respect timeout
 
 '''
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import dataclasses
 import sexp
 import subprocess
@@ -164,13 +164,13 @@ class CVC4VarDecl:
 @dataclass
 class CVC4FuncDecl:
     name: str
-    var_decls: dataclasses.InitVar[sexp.SList]
+    var_decls_init: dataclasses.InitVar[sexp.SList]
     return_sort: str
     body: sexp.Sexp
 
-    def __post_init__(self, var_decls: sexp.SList) -> None:
+    def __post_init__(self, var_decls_init: sexp.SList) -> None:
         self.var_decls: List[CVC4VarDecl] = []
-        for d in var_decls:
+        for d in var_decls_init:
             assert isinstance(d, sexp.SList), d
             assert len(d) == 2
             var_name, var_sort = d
