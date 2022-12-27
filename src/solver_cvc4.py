@@ -74,7 +74,7 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
                 if line == '':
                     assert False, 'unexpected underlying EOF'
                 else:
-                    line = line.strip()
+                    # line = line.strip()
                     # print(f'got new data line: {line}')
                     parser.add_input(line)
             else:
