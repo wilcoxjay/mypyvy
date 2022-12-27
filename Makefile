@@ -6,7 +6,7 @@ define TIMEFORMAT
 endef
 export TIMEFORMAT
 
-PYTHON := python3.8 -u
+PYTHON := python3 -u
 
 MYPYVY_OPTS := --seed=0 --log=info --timeout 2000 --print-cmdline
 

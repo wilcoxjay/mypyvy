@@ -137,7 +137,7 @@ class JobRunner:
              open(job_dir / (logfile_basename + '.log'), 'w') as f_log:
 
             self.log(f'worker thread {threading.current_thread().name}', f_log)
-            cmd = ['python3.8', '-u', str(args.mypyvy_path / 'src' / 'mypyvy.py')] + job.mypyvy_cmdline_args
+            cmd = ['python3', '-u', str(args.mypyvy_path / 'src' / 'mypyvy.py')] + job.mypyvy_cmdline_args
             self.log(f'running command {" ".join(cmd)}', f_log)
             proc_start_time = datetime.now()
             try:

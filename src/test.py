@@ -113,7 +113,7 @@ class SyntaxTests(unittest.TestCase):
         self.assertEqual(s1, s2)
 
 def build_python_cmd() -> List[str]:
-    python = os.getenv('PYTHON') or 'python3.8'
+    python = os.getenv('PYTHON') or 'python3'
     return [python, str((utils.PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
 
 class RegressionTests(unittest.TestCase):

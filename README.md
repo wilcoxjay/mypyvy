@@ -4,27 +4,26 @@ A language for symbolic transition systems, inspired by Ivy.
 
 ## Dependencies
 
-You need python version 3.8 because we like to use shiny things. 
-Any version of the form 3.8.X should work.
+You need python version 3.8 or higher.
 
 ```
-python3.8 --version
+python3 --version
 Python 3.8.2
 ```
 
 Make sure z3 is installed and on your `PYTHONPATH`. Basic functionality should
 work with any version from the past few years, but for best results, use a recent
-release, such as 4.8.8.
+release, such as 4.11.2.
 
 ```
 z3 --version
-Z3 version 4.8.8 - 64 bit
+Z3 version 4.11.2 - 64 bit
 ```
 
 Importing z3 should work (not report any errors) as follows.
 
 ```
-python3.8
+python3
 ...
 >>> import z3
 >>>
@@ -34,7 +33,7 @@ You need all the python packages given in `requirements.txt`, which you can
 do by running the following:
 
 ```
-python3.8 -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 You may wish to set up a virtual environment if you're into that.
@@ -57,7 +56,7 @@ a description of all command line options to a particular mode.
 - `verify`: verifies that the invariants given in the file are inductive.
   For example, we can verify the lock service:
 ```
-python3.8 src/mypyvy.py verify examples/lockserv.pyv
+python3 src/mypyvy.py verify examples/lockserv.pyv
 checking init:
   implies invariant mutex... ok. (0:00:00.000176)
   ...
@@ -76,7 +75,7 @@ all ok!
   example, we can ask it to strengthen the mutex property of the lock service:
 
 ```
-python3.8 src/mypyvy.py updr examples/lockserv.pyv
+python3 src/mypyvy.py updr examples/lockserv.pyv
 checking init:
   implies invariant mutex... ok. (0:00:00.000234)
 frame is safe and inductive. done!
@@ -102,7 +101,7 @@ frame is safe and inductive. done!
   flag for a property given by the `--safety=NAME` flag. For example, we can check
   that `mutex` property is true for 5 steps as follows:
 ```
-python3.8 src/mypyvy.py bmc --depth=5 --safety=mutex examples/lockserv.pyv
+python3 src/mypyvy.py bmc --depth=5 --safety=mutex examples/lockserv.pyv
 bmc checking the following property to depth 5
   forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
 ok. (0:00:00.062531)
@@ -119,7 +118,7 @@ invariant [bad] !holds_lock(N)
   `--minimize-models` to find the trace with the fewest client nodes.)
 
 ```
-python3.8 src/mypyvy.py bmc --depth=5 --safety=bad --minimize-models examples/lockserv.pyv
+python3 src/mypyvy.py bmc --depth=5 --safety=bad --minimize-models examples/lockserv.pyv
 bmc checking the following property to depth 5
   forall N:node. !holds_lock(N)
 
