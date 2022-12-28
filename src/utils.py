@@ -137,7 +137,7 @@ class MypyvyArgs:
     def main(self, solver: Any) -> None:
         ...
 
-    def __contains__(self, key: str) -> bool:
+    def __contains__(self, key: str) -> bool:  # type: ignore
         ...
 
 args: MypyvyArgs = cast(MypyvyArgs, None)  # ensure that args is always defined

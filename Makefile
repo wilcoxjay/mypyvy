@@ -6,15 +6,13 @@ define TIMEFORMAT
 endef
 export TIMEFORMAT
 
-PYTHON := python3.8 -u
+PYTHON := python3 -u
 
 MYPYVY_OPTS := --seed=0 --log=info --timeout 2000 --print-cmdline
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd-old pd sep
-
-test-ci: check check-imports unit typecheck verify trace updr pd-old pd sep
 
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
@@ -82,7 +80,7 @@ pd-old: prelude
 	pd-forward-explore-inv --clear-cache, \
 	examples/pd/lockserv_cnf.pyv, \
 	examples/pd/lockserv_cnf.forward-explore-inv, \
-	-P "  [VX]  ")
+	-E "  [VX]  ")
 #	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/pd/lockserv_cnf.pyv > lockserv_cnf_only_discovered.out  # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
 
 # forward-explore-inv with unrolling
@@ -90,33 +88,33 @@ pd-old: prelude
 	pd-forward-explore-inv --clear-cache --unroll-to-depth=1, \
 	examples/pd/lockserv.pyv, \
 	examples/pd/lockserv.forward-explore-inv.1, \
-	-P "  [VX]  ")
+	-E "  [VX]  ")
 	$(call runmypyvy_grep, \
 	pd-forward-explore-inv --clear-cache --unroll-to-depth=2, \
 	examples/pd/lockserv.pyv, \
 	examples/pd/lockserv.forward-explore-inv.2, \
-	-P "  [VX]  ")
+	-E "  [VX]  ")
 	$(call runmypyvy_grep, \
 	pd-forward-explore-inv --clear-cache --unroll-to-depth=3, \
 	examples/pd/lockserv.pyv, \
 	examples/pd/lockserv.forward-explore-inv.3, \
-	-P "  [VX]  ")
+	-E "  [VX]  ")
 
 	$(call runmypyvy_grep, \
 	pd-forward-explore-inv --clear-cache --unroll-to-depth=1, \
 	examples/pd/paxos_forall.pyv, \
 	examples/pd/paxos_forall.forward-explore-inv.1, \
-	-P "  [VX]  ")
+	-E "  [VX]  ")
 	$(call runmypyvy_grep, \
 	pd-forward-explore-inv --clear-cache --unroll-to-depth=2, \
 	examples/pd/paxos_forall.pyv, \
 	examples/pd/paxos_forall.forward-explore-inv.2, \
-	-P "  [VX]  ")
+	-E "  [VX]  ")
 #	$(call runmypyvy_grep, \
 #	pd-forward-explore-inv --clear-cache --unroll-to-depth=3, \
 #	examples/pd/paxos_forall.pyv, \
 #	examples/pd/paxos_forall.forward-explore-inv.3, \
-#	-P "  [VX]  ")
+#	-E "  [VX]  ")
 
 # repeated-houdini --sharp
 	$(call runmypyvy_grep, \
@@ -183,7 +181,7 @@ pd-long: prelude
 	pd-primal-dual-houdini --clear-cache --no-restarts --no-all-subclauses --induction-width=1 --cpus 2, \
 	examples/pd/lockserv.pyv, \
 	examples/pd/lockserv.primal-dual-houdini, \
-	-P "Proved safety\!$$|Fixed point of induction width reached without a safety proof\!$$")
+	-E "Proved safety!$|Fixed point of induction width reached without a safety proof!$")
 
 sep: \
 	examples/pd/ring.sep \

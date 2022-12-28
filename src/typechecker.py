@@ -213,7 +213,7 @@ def typecheck_expr(scope: syntax.Scope, e: syntax.Expr, sort: InferenceSort) -> 
                     if e.n_new == 1:
                         utils.print_error(e.span, f'{d.name} cannot be primed here')
                     else:
-                        utils.print_error(e.span, f'{d.name} is primed too many timed here')
+                        utils.print_error(e.span, f'{d.name} is primed too many times here')
 
         if isinstance(d, RelationDecl):
             if d.arity:
