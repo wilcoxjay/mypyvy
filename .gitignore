@@ -8,3 +8,4 @@ parsetab.py
 lextab.py
 regression/*.output
 *.cache
+.python-version
