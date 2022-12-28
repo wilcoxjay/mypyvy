@@ -84,6 +84,7 @@ class Z3Translator:
     def translate_expr(self, expr: Expr) -> z3.ExprRef:
         assert self.scope.num_states == 0, self.scope.num_states
         assert self.scope.current_state_index == 0, self.scope.current_state_index
+        expr = syntax.expand_macros(self.scope, expr)
         with self.scope.n_states(self.num_states):
             return self.__translate_expr(expr)
 
@@ -115,17 +116,8 @@ class Z3Translator:
         elif isinstance(expr, AppExpr):
             d = self.scope.get(expr.callee)
 
-            # TODO: handling definitions should be refactored out of Z3Translator
             if isinstance(d, DefinitionDecl):
-                # checked by typechecker; see NOTE(calling-stateful-definitions)
-                assert self.scope.current_state_index + d.num_states + expr.n_new <= self.scope.num_states, \
-                    f'{d}\n{expr}'
-                # now translate args in the scope of caller
-                translated_args = [self.__translate_expr(arg) for arg in expr.args]
-                with self.scope.fresh_stack():
-                    with self.scope.in_scope(d.binder, translated_args):
-                        with self.scope.next_state_index(expr.n_new):
-                            return self.__translate_expr(d.expr)  # translate body of def in fresh scope
+                assert False, 'impossible: definitions are macro expanded before z3 translation'
             elif isinstance(d, (RelationDecl, FunctionDecl)):
                 callee = self._decl_to_z3(d, expr.n_new)
                 assert isinstance(callee, z3.FuncDeclRef), f'{callee}\n{expr}'
@@ -147,12 +139,8 @@ class Z3Translator:
                 z3sym = self._decl_to_z3(d, expr.n_new)
                 assert isinstance(z3sym, z3.ExprRef)
                 return z3sym
-            elif isinstance(d, DefinitionDecl):  # TODO: handling definitions should be refactored out of Z3Translator
-                # checked in typechecker; see NOTE(calling-stateful-definitions)
-                assert self.scope.current_state_index + d.num_states + expr.n_new <= self.scope.num_states
-                with self.scope.fresh_stack():
-                    with self.scope.next_state_index(expr.n_new):
-                        return self.__translate_expr(d.expr)
+            elif isinstance(d, DefinitionDecl):
+                assert False, 'impossible: definitions are macro expanded before z3 translation'
             else:
                 assert not isinstance(d, FunctionDecl)  # impossible since functions have arity > 0
                 e, = d
