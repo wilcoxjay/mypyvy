@@ -1,4 +1,4 @@
-# mypyvy [![Build Status](https://travis-ci.com/wilcoxjay/mypyvy.svg?branch=master)](https://travis-ci.com/wilcoxjay/mypyvy)
+# mypyvy [![Build Status](https://github.com/wilcoxjay/mypyvy/actions/workflows/build.yml/badge.svg)](https://github.com/wilcoxjay/mypyvy/actions)
 
 A language for symbolic transition systems, inspired by Ivy.
 
