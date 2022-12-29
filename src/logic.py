@@ -25,6 +25,9 @@ import solver
 from solver import Solver
 import parser
 
+class SolverReturnedUnknown(Exception):
+    def __init__(self, message: Optional[str] = None) -> None:
+        super().__init__(message)
 
 def check_solver(s: Solver, num_states: int, minimize: Optional[bool] = None) -> Optional[Trace]:
     res = s.check()
@@ -34,8 +37,9 @@ def check_solver(s: Solver, num_states: int, minimize: Optional[bool] = None) ->
         if res != solver.sat:
             assert res == solver.unknown
             utils.logger.always_print('unknown!')
-            utils.logger.always_print('reason unknown: ' + s.reason_unknown())
-            assert False, 'unexpected unknown from z3!'
+            reason = s.reason_unknown()
+            utils.logger.always_print('reason unknown: ' + reason)
+            raise SolverReturnedUnknown(reason)
 
         assert res == solver.sat
         m = Z3Translator.model_to_trace(s.model(minimize=minimize), num_states)
@@ -215,7 +219,9 @@ def check_implication(
         for e in concs:
             with s.new_frame():
                 s.add(t.translate_expr(Not(e)))
-                if s.check() != solver.unsat:
+                res = s.check()
+                assert res in (solver.sat, solver.unsat), res
+                if res != solver.unsat:
                     return s.model(minimize=minimize)
 
     return None

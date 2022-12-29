@@ -290,6 +290,7 @@ class Frames:
             uc = self.solver.unsat_core()
 
             res = self.solver.check([diag.trackers[i] for i in core])
+            assert res in (sat, unsat), res
             if res == unsat:
                 return
 
@@ -353,6 +354,7 @@ class Frames:
                             # carefully retrieve the unsat core before calling check again
                             uc = solver.unsat_core()
                             res = solver.check([diag_or_expr.trackers[i] for i in core])
+                            assert res in (sat, unsat), res
                             if res == unsat:
                                 continue
                             for x in sorted(uc, key=lambda y: y.decl().name()):

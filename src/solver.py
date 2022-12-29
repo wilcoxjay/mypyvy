@@ -32,15 +32,10 @@ from translator import Z3Translator, TRANSITION_INDICATOR
 from solver_cvc4 import CVC4Model, new_cvc4_process, check_with_cvc4
 
 CheckSatResult = z3.CheckSatResult
-# TODO: use something like this (unfortunately mypy doesn't help here)
-#
-# class CheckSatResult(Enum):
-#     sat = 'CheckSatResult.sat'
-#     unsat = 'CheckSatResult.unsat'
-#     unknown = CheckSatResult.unknown'
-sat = z3.sat # CheckSatResult.sat
-unsat = z3.unsat # CheckSatResult.unsat
-unknown = z3.unknown #CheckSatResult.unknown
+
+sat = z3.sat
+unsat = z3.unsat
+unknown = z3.unknown
 
 
 def result_from_z3(res: z3.CheckSatResult) -> CheckSatResult:
@@ -187,8 +182,9 @@ class Solver:
 
         if self.use_cvc4:
             assert assumptions is None or len(assumptions) == 0, 'assumptions not supported in cvc4'
-            self.cvc4_model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
-            return unsat if self.cvc4_model is None else sat
+            cvc4_result, model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
+            self.cvc4_model = model
+            return cvc4_result
 
         def luby() -> Iterable[int]:
             l: List[int] = [1]
@@ -253,12 +249,11 @@ class Solver:
 
                 if assumptions is None or len(assumptions) == 0:
                     print(f'[{datetime.now()}] Solver.check: trying cvc4')
-                    self.cvc4_model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
-                    res = z3.unsat if self.cvc4_model is None else z3.sat
-                    print(f'[{datetime.now()}] Solver.check: cvc4 result: {res}')
+                    cvc4_result, model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
+                    self.cvc4_model = model
+                    print(f'[{datetime.now()}] Solver.check: cvc4 result: {cvc4_result}')
+                    res = cvc4_result
 
-            assert res in (z3.sat, z3.unsat), (res, self.z3solver.reason_unknown()
-                                               if res == z3.unknown else None)
             return result_from_z3(res)
 
         unit = 600000
@@ -372,6 +367,7 @@ class Solver:
                     with self.new_frame():
                         self.add(self._cardinality_constraint(x, n))
                         res = self.check(assumptions)
+                        assert res in (sat, unsat), res
                         if res == z3.sat:
                             break
                 self.add(self._cardinality_constraint(x, n))
@@ -388,18 +384,3 @@ class Solver:
 
     def reason_unknown(self) -> str:
         return self.z3solver.reason_unknown()
-
-
-# TODO: the following isn't used, can we delete it?
-# # useful for debugging
-# def verbose_print_z3_model(m: z3.ModelRef) -> None:
-#     utils.logger.always_print('')
-#     out = io.StringIO()
-#     fmt = z3.Formatter()  # type: ignore
-#     fmt.max_args = 10000
-#     utils.logger.always_print(str(fmt.max_args))
-#     pp = z3.PP()  # type: ignore
-#     pp.max_lines = 10000
-#     pp(out, fmt(m))
-#     utils.logger.always_print(out.getvalue())
-#     assert False

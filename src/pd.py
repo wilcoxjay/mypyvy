@@ -217,7 +217,9 @@ def cheap_check_implication(
         for e in concs:
             with s.new_frame():
                 s.add(z3.Not(t.translate_expr(e)))
-                if s.check() != z3.unsat:
+                res = s.check()
+                assert res in (solver.sat, solver.unsat), res
+                if res != z3.unsat:
                     return False
     return True
 
@@ -1921,7 +1923,9 @@ class MapSolver:
             Returns:
             A seed as an array of 0-based constraint indexes.
         """
-        if self.solver.check() == z3.unsat:
+        res = self.solver.check()
+        assert res in (z3.unsat, z3.sat)
+        if res == z3.unsat:
             return None
         seed = self.all_n.copy()  # default to all True for "high bias"
         model = self.solver.model()

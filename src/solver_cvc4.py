@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import dataclasses
 import sexp
 import subprocess
-from typing import List, Optional, Union, Dict, Sequence, cast
+from typing import List, Optional, Union, Dict, Sequence, cast, Tuple
 
 import z3
 
@@ -27,8 +27,12 @@ CVC4EXEC = str(utils.PROJECT_ROOT / 'script' / 'run_cvc4.sh')
 
 
 def new_cvc4_process() -> subprocess.Popen:
+    cmd = [CVC4EXEC]
+    if utils.args.timeout is not None:
+        cmd += [f"--tlimit-per={utils.args.timeout}"]
+        cmd += [f"--seed={utils.args.seed}"]
     return subprocess.Popen(
-        [CVC4EXEC],
+        cmd,
         bufsize=1,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -41,7 +45,7 @@ _cvc4_last_query: str = ''
 _cvc4_last_model_response: str = ''
 
 
-def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Model]:
+def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Tuple[z3.CheckSatResult, Optional[CVC4Model]]:
     global _cvc4_last_query
     global _cvc4_last_model_response
     cvc4script = cvc4_preprocess(smt2)
@@ -60,7 +64,7 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
     assert ans[-1] == '\n', repr(ans)
     ans = ans.strip()
     if ans == 'unsat':
-        return None
+        return z3.unsat, None
     elif ans == 'sat':
         # get model
         print('(get-model)', file=cvc4_proc.stdin)
@@ -85,9 +89,11 @@ def check_with_cvc4(cvc4_proc: subprocess.Popen, smt2: str) -> Optional[CVC4Mode
                 assert isinstance(s, sexp.SList), s
                 # for sub in s:
                 #     print(sub, end='' if isinstance(sub, sexp.Comment) else '\n')
-                return CVC4Model(s)
+                return z3.sat, CVC4Model(s)
         else:
             assert False
+    elif ans == 'unknown':
+        return z3.unknown, None
     else:
         assert False, (f'cvc4 returned unexpected answer to (check-sat): {ans!r}'
                        f'\n\nQUERY:\n{_cvc4_last_query}\n\n')

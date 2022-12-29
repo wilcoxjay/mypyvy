@@ -21,5 +21,4 @@ $CVC4CMD \
     --fs-interleave \
     --nl-ext-tplanes \
     --produce-models \
-    --seed=$RANDOM \
     "$@"
