@@ -17,7 +17,7 @@ lockserv_path = utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv'
 
 class SyntaxTests(unittest.TestCase):
     def setUp(self) -> None:
-        utils.args = mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
+        mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
 
     def test_as_clauses_basic(self) -> None:
         ios = [
@@ -142,7 +142,7 @@ class RegressionTests(unittest.TestCase):
 
 class MonotoneFunctionTests(unittest.TestCase):
     def setUp(self) -> None:
-        utils.args = mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
+        mypyvy.parse_args(['typecheck', 'MOCK_FILENAME.pyv'])
 
     def test_mononte_function(self) -> None:
         from pd import MonotoneFunction

@@ -178,7 +178,7 @@ def json_verify_result(res: Union[Tuple[InvariantDecl, logic.Trace],
         obj['counterexample'] = json_cex
         json.dump(obj, sys.stdout, indent=4)
 
-def verify(s: Solver) -> None:
+def verify(s: Solver) -> bool:
     old_count = utils.error_count
     init_res = logic.check_init(s)
     tr_res = logic.check_transitions(s)
@@ -186,7 +186,16 @@ def verify(s: Solver) -> None:
     if res is not None and utils.args.json:
         json_verify_result(res)
 
-    if utils.error_count == old_count:
+    return utils.error_count == old_count
+
+def verify_cli(s: Solver) -> None:
+    try:
+        result = verify(s)
+    except logic.SolverReturnedUnknown as e:
+        utils.logger.always_print('unknown.')
+        return
+
+    if result:
         utils.logger.always_print('all ok!')
     else:
         utils.logger.always_print('program has errors.')
@@ -459,14 +468,14 @@ def check_one_bounded_width_invariant(s: Solver) -> None:
 def relax(s: Solver) -> None:
     print(relaxed_traces.relaxed_program(syntax.the_program))
 
-def parse_args(args: List[str]) -> utils.MypyvyArgs:
+def parse_args(args: List[str]) -> None:
     argparser = argparse.ArgumentParser()
 
     subparsers = argparser.add_subparsers(title='subcommands', dest='subcommand')
     all_subparsers = []
 
     verify_subparser = subparsers.add_parser('verify', help='verify that the invariants are inductive')
-    verify_subparser.set_defaults(main=verify)
+    verify_subparser.set_defaults(main=verify_cli)
     all_subparsers.append(verify_subparser)
 
     updr_subparser = subparsers.add_parser(
@@ -612,7 +621,8 @@ def parse_args(args: List[str]) -> utils.MypyvyArgs:
 
     argparser.add_argument('filename')
 
-    return cast(utils.MypyvyArgs, argparser.parse_args(args))
+    utils.args = cast(utils.MypyvyArgs, argparser.parse_args(args))
+    init_from_args()
 
 class MyFormatter(logging.Formatter):
     def __init__(self, fmt: str) -> None:
@@ -636,9 +646,7 @@ def parse_program(input: str, forbid_rebuild: bool = False, filename: Optional[s
     prog.input = input
     return prog
 
-def main() -> None:
-    utils.args = parse_args(sys.argv[1:])
-
+def init_from_args() -> None:
     if utils.args.log_xml:
         fmt = '%(message)s'
     elif utils.args.log_time:
@@ -672,13 +680,31 @@ def main() -> None:
         utils.logger.info('setting z3 timeout to %s' % utils.args.timeout)
         z3.set_param('timeout', utils.args.timeout)
 
+def parse_file(filename: str) -> Optional[Program]:
     pre_parse_error_count = utils.error_count
-
-    with open(utils.args.filename) as f:
+    with open(filename) as f:
         prog = parse_program(f.read(), forbid_rebuild=utils.args.forbid_parser_rebuild,
-                             filename=utils.args.filename)
+                             filename=filename)
 
     if utils.error_count > pre_parse_error_count:
+        return None
+
+    return prog
+
+def typecheck_program(prog: Program) -> bool:
+    pre_typecheck_error_count = utils.error_count
+
+    typechecker.typecheck_program(prog)
+    if utils.error_count > pre_typecheck_error_count:
+        return False
+
+    return True
+
+def main() -> None:
+    parse_args(sys.argv[1:])
+
+    prog = parse_file(utils.args.filename)
+    if prog is None:
         utils.logger.always_print('program has syntax errors.')
         utils.exit(1)
 
@@ -702,10 +728,7 @@ def main() -> None:
 
         utils.logger.always_print(to_str(prog), end=end)
 
-    pre_typecheck_error_count = utils.error_count
-
-    typechecker.typecheck_program(prog)
-    if utils.error_count > pre_typecheck_error_count:
+    if not typecheck_program(prog):
         utils.logger.always_print('program has resolution errors.')
         utils.exit(1)
 

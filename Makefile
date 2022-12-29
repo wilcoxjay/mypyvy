@@ -54,9 +54,11 @@ runmypyvy_grep = time ( $(PYTHON) src/mypyvy.py $(1) $(MYPYVY_OPTS) $(2) > $(3).
 
 %.typecheck: %.pyv prelude
 	$(PYTHON) src/mypyvy.py typecheck $(MYPYVY_OPTS) $< > $@.out
+	@#curl -s -H 'Content-Type: application/json' -X POST -d "{\"filename\": \"$<\"}" http://localhost:5000/typecheck | jq -e .success
 
 %.verify: %.pyv prelude
 	$(call runmypyvy, verify --exit-0, $<, $@)
+	@# curl -s -H 'Content-Type: application/json' -X POST -d "{\"filename\": \"$<\", \"options\": [\"--seed=0\", \"--timeout=2000\"]}" http://localhost:5000/verify | jq -e '.success or (has("reason") and (.reason == "Verification error" or .reason == "Verification returned unknown"))'
 
 %.verify.cvc4: %.pyv prelude
 	$(call runmypyvy, verify --exit-0 --cvc4, $<, $@)
