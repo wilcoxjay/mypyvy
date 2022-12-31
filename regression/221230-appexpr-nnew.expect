@@ -1,0 +1,17 @@
+checking init:
+  implies invariant on line 29... ok.
+  implies invariant on line 30... ok.
+  implies invariant on line 31... ok.
+  implies invariant on line 32... ok.
+checking transition vote:
+  preserves invariant on line 29... ok.
+  preserves invariant on line 30... ok.
+  preserves invariant on line 31... ok.
+  preserves invariant on line 32... ok.
+checking transition decide:
+  preserves invariant on line 29... ok.
+  preserves invariant on line 30... ok.
+  preserves invariant on line 31... ok.
+  preserves invariant on line 32... ok.
+all ok!
+mypyvy exiting with status 0

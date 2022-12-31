@@ -1589,11 +1589,11 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
     if isinstance(e, (Bool, Int)):
         return e
     elif isinstance(e, UnaryExpr):
-        return UnaryExpr(e.op, expand_macros(scope, e.arg))
+        return UnaryExpr(e.op, expand_macros(scope, e.arg), span=e.span)
     elif isinstance(e, BinaryExpr):
-        return BinaryExpr(e.op, expand_macros(scope, e.arg1), expand_macros(scope, e.arg2))
+        return BinaryExpr(e.op, expand_macros(scope, e.arg1), expand_macros(scope, e.arg2), span=e.span)
     elif isinstance(e, NaryExpr):
-        return NaryExpr(e.op, tuple(expand_macros(scope, arg) for arg in e.args))
+        return NaryExpr(e.op, tuple(expand_macros(scope, arg) for arg in e.args), span=e.span)
     elif isinstance(e, AppExpr):
         new_args = tuple(expand_macros(scope, arg) for arg in e.args)
         d = scope.get(e.callee)
@@ -1606,11 +1606,11 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
             # recaptured by the current scope
             return expand_macros(scope, subst(scope, d.expr, gamma))
         else:
-            return AppExpr(e.callee, new_args)
+            return AppExpr(e.callee, new_args, e.n_new, span=e.span)
     elif isinstance(e, QuantifierExpr):
         with scope.in_scope(e.binder, [() for v in e.binder.vs]):
             new_body = expand_macros(scope, e.body)
-        return QuantifierExpr(e.quant, e.binder.vs, new_body)
+        return QuantifierExpr(e.quant, e.binder.vs, new_body, span=e.span)
     elif isinstance(e, Id):
         d = scope.get(e.name)
         if isinstance(d, DefinitionDecl):
@@ -1618,13 +1618,13 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
         else:
             return e
     elif isinstance(e, IfThenElse):
-        return IfThenElse(expand_macros(scope, e.branch), expand_macros(scope, e.then), expand_macros(scope, e.els))
+        return IfThenElse(expand_macros(scope, e.branch), expand_macros(scope, e.then), expand_macros(scope, e.els), span=e.span)
     elif isinstance(e, Let):
         assert len(e.binder.vs) == 1
         new_val = expand_macros(scope, e.val)
         with scope.in_scope(e.binder, [()]):
             new_body = expand_macros(scope, e.body)
-        return Let(e.binder.vs[0], new_val, new_body)
+        return Let(e.binder.vs[0], new_val, new_body, span=e.span)
     else:
         assert False, (type(e), e)
 

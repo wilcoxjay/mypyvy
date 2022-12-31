@@ -173,7 +173,7 @@ class Solver:
         self.z3solver.add(e)
 
     def check(self, assumptions: Optional[Sequence[z3.ExprRef]] = None) -> CheckSatResult:
-        # logger.debug('solver.check')
+        # utils.logger.debug('solver.check')
         self.cvc4_model = None
         if assumptions is None:
             assert not self.assumptions_necessary
