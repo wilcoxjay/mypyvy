@@ -1678,6 +1678,7 @@ def _pretty(e: Expr, buf: Optional[List[str]] = None, prec: int = PREC_TOP, side
 
     return buf
 
+__print_new_as_prime = False  # This is a little hack to print "(e)'" instead of "new(e)"
 def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
     if isinstance(e, Bool):
         buf.append('true' if e.val else 'false')
@@ -1688,9 +1689,9 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
             buf.append('!')
             _pretty(e.arg, buf, PREC_NOT, 'NONE')
         elif e.op == 'NEW':
-            buf.append('new(')
+            buf.append('new(' if not __print_new_as_prime else '(')
             _pretty(e.arg, buf, PREC_TOP, 'NONE')
-            buf.append(')')
+            buf.append(')' if not __print_new_as_prime else ')\'')
         else:
             assert False
     elif isinstance(e, BinaryExpr):

@@ -545,7 +545,7 @@ def parse_args(args: List[str]) -> None:
                        help='log in XML format')
         s.add_argument('--seed', type=int, default=0, help="value for z3's smt.random_seed")
         s.add_argument('--print-program',
-                       choices=['str', 'repr', 'faithful', 'without-invariants'],
+                       choices=['str', 'repr', 'faithful', 'without-invariants', 'fly'],
                        help='print program after parsing using given strategy')
         s.add_argument('--key-prefix',
                        help='additional string to use in front of names sent to z3')
@@ -700,6 +700,55 @@ def typecheck_program(prog: Program) -> bool:
 
     return True
 
+def to_fly(prog: Program) -> str:
+    __print_new_as_prime = syntax.__print_new_as_prime
+    syntax.__print_new_as_prime = True
+    try:
+        result = ''
+        result += '# sorts:\n'
+        result += '\n'.join(
+            f'sort {s.name}'
+            for s in prog.sorts()
+        )
+        result += '\n\n# constants:\n'
+        result += '\n'.join(
+            str(c).replace(' constant ', ' ')
+            for c in prog.constants()
+        )
+        result += '\n\n# functions:\n'
+        result += '\n'.join(
+            str(f).replace(' function ', ' ').replace('()', '')
+            for f in prog.functions()
+        )
+        result += '\n\n# relations:\n'
+        result += '\n'.join(
+            str(r).replace(' relation ', ' ').replace('()', '') + ': bool'
+            for r in prog.relations()
+        )
+        result += '\n\n# init:\n'
+        result += 'assume ' + ' & '.join(
+            '(' + str(init.expr) + ')'
+            for init in prog.inits()
+        )
+        result += '\n\n# transitions:\n'
+        result += 'assume always ' + ' | '.join(
+            '(' + str(ition.as_twostate_formula(prog.scope)) + ')'
+            for ition in prog.transitions()
+        )
+        result += '\n\n# safety:\n'
+        result += 'assert always ' + ' & '.join(
+            '(' + str(inv.expr) + ')'
+            for inv in prog.safeties()
+        )
+        result += '\nproof {\n' + '\n'.join(
+            '    invariant ' + str(inv.expr)
+            for inv in prog.invs()
+        )
+        result += '\n}\n'
+        return result
+    finally:
+        syntax.__print_new_as_prime = __print_new_as_prime
+
 def main() -> None:
     parse_args(sys.argv[1:])
 
@@ -708,7 +757,7 @@ def main() -> None:
         utils.logger.always_print('program has syntax errors.')
         utils.exit(1)
 
-    if utils.args.print_program is not None:
+    if utils.args.print_program is not None and utils.args.print_program != 'fly':
         if utils.args.print_program == 'str':
             to_str: Callable[[Program], str] = str
             end = '\n'
@@ -731,6 +780,10 @@ def main() -> None:
     if not typecheck_program(prog):
         utils.logger.always_print('program has resolution errors.')
         utils.exit(1)
+
+    # fly printing is done after typechecking
+    if utils.args.print_program == 'fly':
+        utils.logger.always_print(to_fly(prog))
 
     syntax.the_program = prog
 

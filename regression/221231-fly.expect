@@ -1,0 +1,43 @@
+# sorts:
+sort s1
+sort s2
+sort node
+
+# constants:
+immutable c1: s1
+mutable c2: s2
+
+# functions:
+immutable f1(s1, s1): s2
+mutable f2(s2, s2): s1
+
+# relations:
+immutable r1(s1, s2): bool
+mutable r2(s1, s2): bool
+mutable lock_msg(node): bool
+mutable grant_msg(node): bool
+mutable unlock_msg(node): bool
+mutable holds_lock(node): bool
+mutable server_holds_lock: bool
+
+# init:
+assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node. !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
+
+# transitions:
+assume always (exists n:node. (forall N:node. (lock_msg(N))' <-> lock_msg(N) | N = n) & (forall x0:s1, x1:s2. (r2(x0, x1))' = r2(x0, x1)) & (forall x0:node. (grant_msg(x0))' = grant_msg(x0)) & (forall x0:node. (unlock_msg(x0))' = unlock_msg(x0)) & (forall x0:node. (holds_lock(x0))' = holds_lock(x0)) & (server_holds_lock)' = server_holds_lock & (c2)' = c2 & (forall x0:s2, x1:s2. (f2(x0, x1))' = f2(x0, x1))) | (exists n:node. (forall N:node. server_holds_lock & lock_msg(n) & !(server_holds_lock)' & ((lock_msg(N))' <-> lock_msg(N) & N != n) & ((grant_msg(N))' <-> grant_msg(N) | N = n)) & (forall x0:s1, x1:s2. (r2(x0, x1))' = r2(x0, x1)) & (forall x0:node. (unlock_msg(x0))' = unlock_msg(x0)) & (forall x0:node. (holds_lock(x0))' = holds_lock(x0)) & (c2)' = c2 & (forall x0:s2, x1:s2. (f2(x0, x1))' = f2(x0, x1))) | (exists n:node. (forall N:node. grant_msg(n) & ((grant_msg(N))' <-> grant_msg(N) & N != n) & ((holds_lock(N))' <-> holds_lock(N) | N = n)) & (forall x0:s1, x1:s2. (r2(x0, x1))' = r2(x0, x1)) & (forall x0:node. (lock_msg(x0))' = lock_msg(x0)) & (forall x0:node. (unlock_msg(x0))' = unlock_msg(x0)) & (server_holds_lock)' = server_holds_lock & (c2)' = c2 & (forall x0:s2, x1:s2. (f2(x0, x1))' = f2(x0, x1))) | (exists n:node. (forall N:node. holds_lock(n) & ((holds_lock(N))' <-> holds_lock(N) & N != n) & ((unlock_msg(N))' <-> unlock_msg(N) | N = n)) & (forall x0:s1, x1:s2. (r2(x0, x1))' = r2(x0, x1)) & (forall x0:node. (lock_msg(x0))' = lock_msg(x0)) & (forall x0:node. (grant_msg(x0))' = grant_msg(x0)) & (server_holds_lock)' = server_holds_lock & (c2)' = c2 & (forall x0:s2, x1:s2. (f2(x0, x1))' = f2(x0, x1))) | (exists n:node. (forall N:node. unlock_msg(n) & ((unlock_msg(N))' <-> unlock_msg(N) & N != n) & (server_holds_lock)') & (forall x0:s1, x1:s2. (r2(x0, x1))' = r2(x0, x1)) & (forall x0:node. (lock_msg(x0))' = lock_msg(x0)) & (forall x0:node. (grant_msg(x0))' = grant_msg(x0)) & (forall x0:node. (holds_lock(x0))' = holds_lock(x0)) & (c2)' = c2 & (forall x0:s2, x1:s2. (f2(x0, x1))' = f2(x0, x1)))
+
+# safety:
+assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+proof {
+    invariant forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    invariant forall N1:node, N2:node. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+    invariant forall N1:node, N2:node. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+    invariant forall N1:node, N2:node. !(holds_lock(N1) & grant_msg(N2))
+    invariant forall N1:node, N2:node. !(holds_lock(N1) & unlock_msg(N2))
+    invariant forall N1:node, N2:node. !(grant_msg(N1) & unlock_msg(N2))
+    invariant forall N:node. !(grant_msg(N) & server_holds_lock)
+    invariant forall N:node. !(holds_lock(N) & server_holds_lock)
+    invariant forall N:node. !(unlock_msg(N) & server_holds_lock)
+}
+
+mypyvy exiting with status 0
