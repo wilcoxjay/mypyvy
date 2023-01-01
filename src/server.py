@@ -16,8 +16,6 @@
 #         -d "{\"filename\": \"examples/lockserv.pyv\", \"options\": [\"--timeout=2000\"]}" \
 #         http://localhost:5000/verify
 
-# type: ignore
-
 import logic
 import mypyvy
 import syntax
