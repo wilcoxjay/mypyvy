@@ -56,3 +56,13 @@ invariant !(grant_msg(N1) & unlock_msg(N2))
 invariant !(grant_msg(N) & server_holds_lock)
 invariant !(holds_lock(N) & server_holds_lock)
 invariant !(unlock_msg(N) & server_holds_lock)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists N. holds_lock(N)
+  any transition
+  any transition
+  assert server_holds_lock
+}
