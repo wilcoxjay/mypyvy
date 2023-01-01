@@ -42,3 +42,11 @@ invariant !(transfer_msg(N1, K, V) & owner(N2, K))
 invariant transfer_msg(N1, K, V1) & transfer_msg(N2, K, V2) -> N1 = N2 & V1 = V2
 
 # invariant forall K. (exists N. owner(N, K)) | (exists N, V. transfer_msg(N, K, V))
+
+sat trace {
+  put
+  reshard
+  recv_transfer_msg
+  put
+  assert forall X, Y: node. X = Y
+}

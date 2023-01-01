@@ -37,3 +37,13 @@ safety le(backup, primary)
 invariant msg(D) -> le(D, primary)
 invariant le(backup, primary)
 
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists one. le(zero, one) & zero != one & (forall D. le(zero, D) & le(D, one) -> D = zero | D = one) & primary = one & backup = one
+  any transition
+  any transition
+  any transition
+  assert exists one, two. le(zero, one) & zero != one & le(one, two) & one != two & primary = two & backup = two
+}

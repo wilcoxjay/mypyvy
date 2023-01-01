@@ -32,3 +32,9 @@ transition loop_body()
 
 safety le(n, x) -> y = n
 invariant if le(x, m) then y = m else y = x
+
+sat trace {
+  loop_body
+  loop_body
+  loop_body
+}

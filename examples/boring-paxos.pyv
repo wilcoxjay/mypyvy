@@ -181,3 +181,12 @@ transition ext_protocol_send_1b(n:node,r:round,maxr:round,maxv:value)
 # invariant !(exists node0, round1, round2, round3, value0. round_lt(round2, round1) & !abs_left_rnd(node0, round2) & protocol_one_b(node0, round1, round3, value0))
 
 # jrw: one interesting thing to note about this invariant is that it does not mention the quorum sort at all
+
+sat trace {
+  any transition
+  ext_protocol_send_1b
+  ext_protocol_propose
+  any transition
+  any transition
+  assert exists N, R, V. abs_decision(N, R, V)
+}

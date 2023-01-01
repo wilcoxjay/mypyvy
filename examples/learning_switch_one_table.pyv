@@ -33,4 +33,9 @@ safety table(X,Y) & table(X,Z) -> table(Y,Z) | table(Z,Y)
 invariant pending(PD,S,D) & ps != S -> exists W. table(S,W) & W != S
 invariant table(X,Y) & ps != Y & X != Y -> exists W. table(Y,W) & W != Y
 
-
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists X, Y. X != Y & table(X, Y) 
+}

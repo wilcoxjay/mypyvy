@@ -37,3 +37,9 @@ transition loop_body()
 
 safety x >= n -> y = n
 invariant if x <= m then y = m else y = x
+
+sat trace {
+  loop_body
+  loop_body
+  loop_body
+}

@@ -32,3 +32,10 @@ invariant pending(PS,PD,S,D) & PS != S -> table(PS,S,PS)
 invariant table(T,X,Y) & T != Y & X != Y -> table(T,Y,T)
 # invariant pending(PS,PD,S,D) & PS != S -> exists W. table(PS,S,W) & W != S
 # invariant table(T,X,Y) & T != Y & X != Y -> exists W. table(T,Y,W) & W != Y
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists T, X, Y. X != Y & table(T, X, Y) 
+}

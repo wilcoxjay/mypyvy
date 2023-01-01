@@ -13,3 +13,30 @@ transition south_east()
   & new(y) = y - 1
 
 safety x * x + y * y > 9
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  assert y < 0
+}
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  assert x > 5 & y > 5
+}

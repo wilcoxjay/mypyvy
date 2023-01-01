@@ -61,3 +61,12 @@ invariant vote_msg(N, N1) & vote_msg(N, N2) -> N1 = N2
 invariant vote_msg(N, N1) -> voted(N)
 invariant leader(N) & member(N1, voting_quorum) -> votes(N, N1)
 invariant decided(N, V) -> leader(N)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  assert exists N, V. decided(N, V)
+}

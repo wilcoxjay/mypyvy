@@ -43,3 +43,6 @@ transition step()
   (exists K. K = new(i) & (nrtc(i, K) & i != K & forall Z. nrtc(i, Z) & i != Z -> nrtc(K, Z))) &
   new(j) = i
 
+sat trace {
+  step
+}

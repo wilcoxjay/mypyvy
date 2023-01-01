@@ -50,3 +50,10 @@ transition recv(sender: node, n: node, next: node)
 safety [leader_max] leader(L) -> le(N, L)
 invariant pending(S, D) & btw(S, N, D) -> le(N, S)
 invariant pending(L, L) -> le(N, L)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists L. leader(L)
+}

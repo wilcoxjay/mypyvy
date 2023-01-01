@@ -35,3 +35,14 @@ transition increment(current: data, next: data)
   (forall X. new(primary(X)) <-> X = next)
 
 safety exists X, Y. primary(X) & backup(Y) & le(Y, X)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists one. le(zero, one) & zero != one & (forall D. le(zero, D) & le(D, one) -> D = zero | D = one) & primary(one) & backup(one)
+  any transition
+  any transition
+  any transition
+  assert exists one, two. le(zero, one) & zero != one & le(one, two) & one != two & primary(two) & backup(two)
+}

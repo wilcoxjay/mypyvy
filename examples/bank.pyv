@@ -15,3 +15,11 @@ transition withdraw(a: account, amount: int)
   & (forall A. new(balance(A)) = if A = a then balance(a) - amount else balance(A))
 
 safety balance(A) >= 0
+
+sat trace {
+  assert init
+  any transition
+  assert exists A. balance(A) > 0 & forall B. A != B -> balance(B) = 0
+  any transition
+  assert exists A, B. A != B & balance(A) > 0 & balance(B) > balance(A)
+}

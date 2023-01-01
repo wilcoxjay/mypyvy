@@ -24,3 +24,9 @@ transition follow_edge(x: node)
 safety current != destination
 
 invariant cut
+
+sat trace {
+  follow_edge
+  follow_edge  
+  follow_edge
+}

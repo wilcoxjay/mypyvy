@@ -54,3 +54,10 @@ transition recv(sender: node, n: node, next: node)
 safety [leader_highest_id] leader(L) -> le(id(N), id(L))
 invariant [self_pending_highest_id] pending(L, L) -> le(id(N), id(L))
 invariant [no_bypass] pending(S, D) & btw(S, N, D) -> le(id(N), id(S))
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists L. leader(L)
+}

@@ -117,3 +117,17 @@ invariant
 # invariant seqnum_recvd(DST, SRC, S) -> seqnum_sent(SRC, S)
 # invariant transfer_msg(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
 # invariant unacked(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
+
+sat trace {
+  put
+  reshard
+  drop_transfer_msg
+  retransmit
+  recv_transfer_msg
+  send_ack
+  drop_ack_msg
+  send_ack  
+  recv_ack_msg
+  put
+  assert forall X, Y: node. X = Y
+}

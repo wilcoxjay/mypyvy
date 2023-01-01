@@ -15,3 +15,31 @@ transition south_east()
 safety x * x + y * y > 9
 
 invariant x + y >= 5
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  assert y < 0
+}
+
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  assert x > 5 & y > 5
+}

@@ -65,3 +65,7 @@ invariant !hreachx | ireachx
 
 # safety i = x & x != h -> n(j, x)
 safety !ix | xh | jnx
+
+# sat trace {
+#   step  # this query is hard for z3
+# }

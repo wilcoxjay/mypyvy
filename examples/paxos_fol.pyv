@@ -100,3 +100,25 @@ invariant [oneb_never_vote_current_round]
   one_b_never_voted(N,R1) -> le(R1, current_round(N))
 invariant [oneb_vote_current_round]
   one_b_with_max_vote(N,R1,R2,V) -> le(R1, current_round(N))
+
+sat trace {
+  send_1a
+  join_round_never_voted
+  propose_without_votes
+  cast_vote
+  decide
+  assert exists R, V. decision(R, V) 
+}
+
+sat trace {
+  send_1a
+  join_round_never_voted
+  propose_without_votes
+  cast_vote
+  send_1a
+  join_round_with_max_vote
+  propose_with_votes
+  cast_vote
+  decide
+  assert exists R, V. decision(R, V) 
+}

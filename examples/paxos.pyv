@@ -113,3 +113,11 @@ invariant
 #       forall N. member(N, Q) -> vote(N, R, V)
 
 
+sat trace {
+  send_1a
+  join_round
+  propose
+  cast_vote
+  decide
+  assert exists R, V. decision(R, V) 
+}

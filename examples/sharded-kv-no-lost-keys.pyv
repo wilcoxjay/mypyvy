@@ -36,3 +36,11 @@ transition put(n: node, k: key, v: value)
 safety (exists N,K,V. transfer_msg(N,K,V)) | (forall K. exists N. owner(N,K))
 
 invariant forall K. (exists N. owner(N, K)) | (exists N, V. transfer_msg(N, K, V))
+
+sat trace {
+  put
+  reshard
+  recv_transfer_msg
+  put
+  assert forall X, Y: node. X = Y
+}

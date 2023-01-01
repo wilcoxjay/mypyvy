@@ -1,3 +1,5 @@
+# just the leader election phase of consensus.pyv
+
 sort node
 sort quorum
 
@@ -50,3 +52,11 @@ invariant votes(N, N1) -> vote_msg(N1, N)
 invariant vote_msg(N, N1) & vote_msg(N, N2) -> N1 = N2
 invariant vote_msg(N, N1) -> voted(N)
 invariant leader(N) & member(N1, voting_quorum) -> votes(N, N1)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  assert exists N. leader(N)
+}
