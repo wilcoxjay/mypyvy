@@ -334,3 +334,6 @@ def exit(returncode: int) -> NoReturn:
 def generator_element(gen: Iterator[T], index: int) -> T:
     # https://stackoverflow.com/questions/2300756/get-the-nth-item-of-a-generator-in-python
     return next(itertools.islice(gen, index, None))
+
+def indent(s: str) -> str:
+    return '  ' + s.replace('\n', '\n  ')

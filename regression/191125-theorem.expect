@@ -1,6 +1,6 @@
 checking theorems:
  theorem MyTrueTheorem... ok.
- theorem MyFalseTheorem... 
+ theorem MyFalseTheorem... no!
 error 191125-theorem.pyv:19:1: theorem MyFalseTheorem does not hold
  theorem MyZerostateTrueTheorem... ok.
 mypyvy exiting with status 1

@@ -220,8 +220,8 @@ def bmc(s: Solver) -> None:
     for k in range(0, n + 1):
         if (m := bmcer(k)) is not None:
             if utils.args.print_counterexample:
-                print('found violation')
-                print(str(m))
+                print('found violation:')
+                print(utils.indent(str(m)))
             break
     else:
         print('no violation found.')

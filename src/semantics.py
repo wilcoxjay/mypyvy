@@ -141,13 +141,19 @@ class Trace:
     def __str__(self) -> str:
         l = []
         dummy_state = State(self, None)
-        l.extend(_univ_str(dummy_state))
-        l.append(_struct_str(dummy_state))
+        univs = _univ_str(dummy_state)
+        if len(univs) != 0:
+            l.append('universes:')
+            l.extend(('  ' + x) for x in univs)
+        immuts = _struct_str(dummy_state)
+        if len(immuts) != 0:
+            l.append('\nimmutable:')
+            l.extend(('  ' + x) for x in immuts)
         for i in range(self.num_states):
             if i > 0 and self.transitions[i - 1] != '':
                 l.append('\ntransition %s' % (self.transitions[i - 1],))
             l.append('\nstate %s:' % (i,))
-            l.append(_struct_str(State(self, i), print_immutable=False))
+            l.extend(('  ' + x) for x in _struct_str(State(self, i), print_immutable=False))
 
         return '\n'.join(l)
 
@@ -374,10 +380,10 @@ class State(FirstOrderStructure):
         return {**self.immut_func_interps, **self.mut_func_interps}
 
     def __repr__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_struct_str(self, print_negative_tuples=True, print_immutable=True)])
+        return '\n'.join(_univ_str(self) + _struct_str(self, print_negative_tuples=True, print_immutable=True))
 
     def __str__(self) -> str:
-        return '\n'.join(_univ_str(self) + [_struct_str(self, print_immutable=True)])
+        return '\n'.join(_univ_str(self) + _struct_str(self, print_immutable=True))
 
     def eval(self, e: Expr) -> Union[str, bool]:
         # TODO: assert that e is a single vocabulary formula
@@ -519,7 +525,7 @@ def _struct_str(
         struct: FirstOrderStructure,
         print_immutable: bool = True,
         print_negative_tuples: Optional[bool] = None,
-) -> str:
+) -> List[str]:
     if print_negative_tuples is None:
         print_negative_tuples = utils.args.print_negative_tuples
 
@@ -548,4 +554,4 @@ def _struct_str(
             l.append('%s(%s) = %s' % (F.name, print_tuple(struct, F.arity, tup),
                                       print_element(struct, F.sort, res)))
 
-    return '\n'.join(l)
+    return l

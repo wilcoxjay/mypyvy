@@ -60,9 +60,12 @@ def check_unsat(
 
     if (m := check_solver(s, num_states, minimize=minimize)) is not None:
         if verbose:
-            utils.logger.always_print('')
+            utils.logger.always_print('no!')
             if utils.args.print_counterexample:
-                utils.logger.always_print(str(m))
+                utils.logger.always_print('\ncounterexample:')
+                utils.logger.always_print(utils.indent(str(m)))
+                if len(errmsgs) > 0:
+                    utils.logger.always_print('')
 
             for span, msg in errmsgs:
                 utils.print_error(span, msg)
@@ -177,8 +180,8 @@ def check_transitions(
 
                         res = check_unsat([(inv.span, 'invariant%s is not preserved by transition %s'
                                             % (msg, ition.name)),
-                                           (ition.span, 'this transition does not preserve invariant%s'
-                                            % (msg,))],
+                                           (ition.span, 'transition %s does not preserve invariant%s'
+                                            % (ition.name, msg))],
                                           s, 2, minimize=minimize, verbose=verbose)
                         if res is not None:
                             if utils.args.smoke_test_solver:
