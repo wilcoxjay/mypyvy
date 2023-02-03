@@ -355,7 +355,7 @@ def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> 
 
     # TODO: consider supporting a visitor pattern
     def go(e: Expr) -> Expr:
-        if isinstance(e, Bool):
+        if isinstance(e, (Bool, Int)):
             return e
         elif isinstance(e, UnaryExpr):
             return UnaryExpr(e.op, go(e.arg))
@@ -364,7 +364,7 @@ def relativize_quantifiers(guards: Mapping[SortDecl, RelationDecl], e: Expr) -> 
         elif isinstance(e, NaryExpr):
             return NaryExpr(e.op, tuple(go(arg) for arg in e.args))
         elif isinstance(e, AppExpr):
-            return AppExpr(e.callee, tuple(go(arg) for arg in e.args))
+            return AppExpr(e.callee, tuple(go(arg) for arg in e.args), n_new=e.n_new)
         elif isinstance(e, QuantifierExpr):
             guard = relativization_guard_for_binder(guards, e.binder)
             return QuantifierExpr(e.quant, e.binder.vs,
@@ -1092,10 +1092,28 @@ class DefinitionDecl(Decl):
             self.mods, repr(self.expr))
 
     def __str__(self) -> str:
-        return 'transition %s(%s)\n  modifies %s\n  %s' % \
-            (self.name,
+        if self.is_public_transition:
+            prefix = 'transition'
+        else:
+            if self.num_states == 0:
+                kstate = 'zerostate'
+            elif self.num_states == 1:
+                kstate = 'onestate'
+            else:
+                kstate = 'twostate'
+
+            prefix = '%s definition' % (kstate,)
+
+        if len(self.mods) > 0:
+            mods = '\n  modifies %s\n' % (', '.join([str(m) for m in self.mods],))
+        else:
+            mods = ' =\n'
+
+        return '%s %s(%s)%s  %s' % \
+            (prefix,
+             self.name,
              ', '.join([str(v) for v in self.binder.vs]),
-             ', '.join([str(m) for m in self.mods]),
+             mods,
              self.expr)
 
     @staticmethod
@@ -1749,6 +1767,7 @@ def pretty_no_parens(e: Expr, buf: List[str], prec: int, side: str) -> None:
             buf.append(')')
     elif isinstance(e, AppExpr):
         buf.append(e.callee)
+        buf.append("'" * e.n_new)
         buf.append('(')
         started = False
         for arg in e.args:

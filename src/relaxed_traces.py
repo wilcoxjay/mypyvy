@@ -59,6 +59,8 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
             expr = syntax.relativize_quantifiers(actives, d.expr)
             new_decls.append(syntax.InvariantDecl(d.name, expr=expr,
                                                   is_safety=d.is_safety, is_sketch=d.is_sketch))
+        elif isinstance(d, (syntax.TheoremDecl, syntax.TraceDecl)):
+            pass  # ignore these declarations and remove them from the relaxed version
         else:
             assert False, d
 
@@ -129,7 +131,7 @@ def relaxation_action_def(
     # (relativized) axioms hold after relaxation
     for axiom in prog.axioms():
         if not syntax.is_universal(axiom.expr):
-            conjs.append(syntax.relativize_quantifiers(actives, axiom.expr))
+            conjs.append(syntax.New(syntax.relativize_quantifiers(actives, axiom.expr)))
 
     # derived relations have the same interpretation on the active domain
     for rel in prog.derived_relations():
