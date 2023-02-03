@@ -1086,7 +1086,9 @@ class DefinitionDecl(Decl):
         return (self.is_public_transition, self.num_states, self.name, self.binder, self.mods, self.expr)
 
     def __repr__(self) -> str:
-        return 'TransitionDecl(name=%s, params=%s, mods=%s, expr=%s)' % (
+        return 'DefinitionDecl(is_public_transition=%s, num_states=%s, name=%s, params=%s, mods=%s, expr=%s)' % (
+            self.is_public_transition,
+            self.num_states,
             repr(self.name),
             self.binder.vs,
             self.mods, repr(self.expr))
@@ -1283,6 +1285,10 @@ class TraceTransitionDecl(Denotable):
     def __str__(self) -> str:
         return str(self.transition)
 
+    def __repr__(self) -> str:
+        return 'TraceTransitionDecl(transition=%s)' % (repr(self.transition),)
+
+
 class AssertDecl(Denotable):
     # expr may only be None in first step, where it means "init"
     def __init__(self, expr: Optional[Expr], *, span: Optional[Span] = None) -> None:
@@ -1295,6 +1301,9 @@ class AssertDecl(Denotable):
 
     def __str__(self) -> str:
         return 'assert %s' % (str(self.expr),)
+
+    def __repr__(self) -> str:
+        return 'AssertDecl(expr=%s)' % (repr(self.expr),)
 
 TraceComponent = Union[TraceTransitionDecl, AssertDecl]  # , AxiomDecl, ConstantDecl]
 
@@ -1311,6 +1320,12 @@ class TraceDecl(Decl):
     def __str__(self) -> str:
         return 'trace {%s\n}' % (
             '\n  '.join([''] + [str(c) for c in self.components])
+        )
+
+    def __repr__(self) -> str:
+        return 'TraceDecl(components=%s, sat=%s)' % (
+            repr(self.components),
+            repr(self.sat)
         )
 
     def transitions(self) -> Iterator[TraceTransitionDecl]:
