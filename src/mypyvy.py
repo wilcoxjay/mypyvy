@@ -725,6 +725,11 @@ def to_fly(prog: Program) -> str:
             str(r).replace(' relation ', ' ').replace('()', '') + ': bool'
             for r in prog.relations()
         )
+        result += '\n\n# axioms:\n'
+        result += 'assume ' + ' & '.join(
+            '(' + str(axiom.expr) + ')'
+            for axiom in prog.axioms()
+        )
         result += '\n\n# init:\n'
         result += 'assume ' + ' & '.join(
             '(' + str(init.expr) + ')'
