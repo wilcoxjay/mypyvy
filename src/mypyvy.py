@@ -727,7 +727,7 @@ def to_fly(prog: Program) -> str:
         )
         if len(list(prog.axioms())) != 0:
             result += '\n\n# axioms:\n'
-            result += 'assume ' + ' & '.join(
+            result += 'assume always ' + ' & '.join(
                 '(' + str(axiom.expr) + ')'
                 for axiom in prog.axioms()
             )
