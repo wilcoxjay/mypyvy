@@ -46,6 +46,8 @@ def pre_typecheck_binder(scope: syntax.Scope, binder: syntax.Binder) -> None:
                 thing = 'relation'
             elif isinstance(existing, FunctionDecl):
                 thing = 'function'
+            elif isinstance(existing, DefinitionDecl):
+                thing = 'definition'
             else:
                 assert False
             utils.print_error(sv.span, f'{sv.name} is already globally declared as a {thing}. '

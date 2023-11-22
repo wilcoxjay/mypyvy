@@ -1,0 +1,3 @@
+error 231122-definition-shadowing.pyv:5:26: foo is already globally declared as a definition. shadowing global declarations is not allowed.
+program has resolution errors.
+mypyvy exiting with status 1
