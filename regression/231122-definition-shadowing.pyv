@@ -1,0 +1,5 @@
+# MYPYVY: verify --seed=0 --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+sort S
+
+zerostate definition foo(foo: S) = (foo = foo)
