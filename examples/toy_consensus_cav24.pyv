@@ -1,0 +1,65 @@
+# Adapted from toy_consensus_epr.pyv for the purposes of illustrating
+# many different features of mypyvy with a single example.
+#
+# Original description of toy_consensus_epr.pyv below:
+#
+# Toy example illustrating majority-based consensus modeled in EPR
+# using quorum intersection axiom, inspired by the Paxos models from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+
+sort node
+sort value
+sort quorum
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N.
+         member(N, Q1) & member(N, Q2)
+
+mutable relation v(node, value)
+mutable relation b(node)
+mutable relation d(value)
+
+init forall N, V. !v(N,V)
+init forall N. !b(N)
+init forall V. !d(V)
+
+transition vote(n: node, x: value)
+  modifies v, b
+  !b(n) &
+  (forall N, V.
+    v'(N, V) <-> v(N, V) | (N = n & V = x)) &
+  (forall N. b'(N) <-> b(N) | N = n)
+
+transition decide(x: value)
+  modifies d
+  (exists Q. forall N. member(N, Q) -> v(N, x)) &
+  (forall V. d'(V) <-> d(V) | V = x)
+
+safety [agreement] forall X, Y. d(X) & d(Y) -> X = Y
+invariant [decision_quorums] forall X. d(X) ->
+  exists Q. forall N. member(N, Q) -> v(N, X)
+invariant [unique_votes] forall N, X, Y. v(N, X) & v(N, Y) -> X = Y
+invariant [voting_bit] forall N, X. v(N, X) -> b(N)
+
+zerostate theorem forall Q. exists N. member(N, Q)
+onestate theorem unique_votes & decision_quorums -> agreement
+twostate theorem forall N, X. voting_bit & vote(N, X) -> voting_bit'
+
+unsat trace {
+  vote
+  vote
+  vote
+  decide
+  decide
+  assert !safety
+}
+
+sat trace {
+  any transition
+  assert exists N, V. v(N,V)
+  decide
+  assert exists V. d(V)
+}
