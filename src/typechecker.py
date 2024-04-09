@@ -434,6 +434,18 @@ def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
             assert False
 
 
+def add_named_macro(prog: syntax.Program, name: Optional[str], expr: syntax.Expr) -> None:
+    if name is not None:
+        prog.decls.append(DefinitionDecl(
+            is_public_transition=False,
+            num_states=1,
+            name=name,
+            params=(),
+            mods=(),
+            expr=expr,
+        ))
+
+
 def typecheck_program_vocab(prog: syntax.Program) -> None:
     prog.scope = scope = syntax.Scope[InferenceSort]()
 
@@ -442,6 +454,18 @@ def typecheck_program_vocab(prog: syntax.Program) -> None:
 
     for rcf in prog.relations_constants_and_functions():
         typecheck_statedecl(scope, rcf)
+
+    for n in prog.inits():
+        add_named_macro(prog, n.name, n.expr)
+
+    for i in prog.invs():
+        add_named_macro(prog, i.name, i.expr)
+
+    for a in prog.axioms():
+        add_named_macro(prog, a.name, a.expr)
+
+    for t in prog.theorems():
+        add_named_macro(prog, t.name, t.expr)
 
     for d in prog.definitions():
         scope.add_definition(d)
