@@ -1,0 +1,45 @@
+# Simple model of a hole-punching firewall, inspired by the firewall
+# example of:
+#
+# Yotam M. Y. Feldman, Oded Padon, Neil Immerman, Mooly Sagiv, and
+# Sharon Shoham. Bounded Quantifier Instantiation for Checking
+# Inductive Invariants. TACAS 2017, LMCS 2019.
+# https://doi.org/10.1007/978-3-662-54577-5_5
+# https://doi.org/10.23638/LMCS-15(3:18)2019
+#
+# Note that the safety property and the invariant use forall-exists
+# (and there is only one sort), so this example is not in EPR.
+
+sort node
+
+immutable relation internal(node)
+
+mutable relation sent(node, node)
+mutable relation allowed_in(node)
+
+init !sent(S,D)
+init !allowed_in(N)
+
+transition send_from_internal(src: node, dst: node)
+  modifies sent, allowed_in
+  & internal(src)
+  & !internal(dst)
+  & (forall S,D. new(sent(S,D)) <-> sent(S,D) | S = src & D = dst)
+  & (forall N. new(allowed_in(N)) <-> allowed_in(N) | N = dst)
+
+transition send_to_internal(src: node, dst: node)
+  modifies sent
+  & !internal(src)
+  & internal(dst)
+  & allowed_in(src)
+  & (forall S,D. new(sent(S,D)) <-> sent(S,D) | S = src & D = dst)
+
+safety sent(S,D) & internal(D) -> exists I. internal(I) & sent(I,S)
+
+invariant allowed_in(D) -> exists I. internal(I) & sent(I,D)
+
+sat trace {
+  any transition
+  any transition
+  assert exists S, D. !internal(S) & sent(S, D)
+}

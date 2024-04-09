@@ -1,0 +1,79 @@
+# A toy version of leader-based consensus, modeled in EPR, ispired by
+# the running example of:
+#
+# Marcelo Taube, Giuliano Losa, Kenneth L. McMillan, Oded Padon, Mooly
+# Sagiv, Sharon Shoham, James R. Wilcox, and Doug Woos. Modularity for
+# Decidability of Deductive Verification with Applications to
+# Distributed Systems. PLDI 2018.
+# https://doi.org/10.1145/3192366.3192414
+#
+# In this protocol, nodes propose themselves and then receive votes
+# from other nodes. When a quorum of votes for a node is obtained, it
+# becomes the leader and decides on a value. Safety requires that
+# decided values are unique.
+
+sort quorum
+sort node
+sort value
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation vote_request_msg(node, node)
+mutable relation voted(node)
+mutable relation vote_msg(node, node)
+mutable relation votes(node, node)
+mutable relation leader(node)
+mutable relation decided(node, value)
+
+init !vote_request_msg(N1, N2)
+init !voted(N)
+init !vote_msg(N1, N2)
+init !votes(N1, N2)
+init !leader(N1)
+init !decided(N, V)
+
+transition send_request_vote(src: node, dst: node)
+	modifies vote_request_msg
+	new(vote_request_msg(N1, N2)) <-> (vote_request_msg(N1, N2) | (N1=src & N2=dst))
+
+transition send_vote(src: node, dst: node)
+  modifies vote_msg, voted, vote_request_msg
+  (!voted(src) & (vote_request_msg(dst, src))) &
+  (new(vote_msg(N1, N2)) <-> vote_msg(N1, N2) | N1 = src & N2 = dst) &
+  (new(voted(N)) <-> voted(N) | N=src) &
+  ((!(N1=dst & N2=src)) -> (new(vote_request_msg(N1, N2)) <-> vote_request_msg(N1, N2)))
+
+
+transition recv_vote(n: node, sender: node)
+  modifies votes
+  vote_msg(sender, n) &
+  (new(votes(N1, N2)) <-> votes(N1, N2) | N1 = n & N2 = sender)
+
+transition become_leader(n: node, q: quorum)
+  modifies leader
+  (member(N, q) -> votes(n, N)) &
+  (new(leader(N)) <-> leader(N) | N = n)
+
+transition decide(n: node, v: value)
+  modifies decided
+  (leader(n) & !decided(n, V)) &
+  (new(decided(N,V)) <-> (decided(N, V) | (N=n & V=v)))
+
+safety decided(N1, V1) & decided(N2, V2) -> V1 = V2
+
+invariant leader(N1) & leader(N2) -> N1 = N2
+invariant votes(N, N1) -> vote_msg(N1, N)
+invariant vote_msg(N, N1) & vote_msg(N, N2) -> N1 = N2
+invariant vote_msg(N, N1) -> voted(N)
+invariant exists Q. forall N, M. leader(N) & member(M, Q) -> votes(N, M)
+invariant decided(N, V) -> leader(N)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  any transition
+  any transition
+  assert exists N, V. decided(N, V)
+}

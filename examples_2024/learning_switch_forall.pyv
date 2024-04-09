@@ -1,0 +1,54 @@
+# Simple model of a learning switch network routing protocol, inspired
+# by the learning switch example of:
+#
+# Yotam M. Y. Feldman, Oded Padon, Neil Immerman, Mooly Sagiv, and
+# Sharon Shoham. Bounded Quantifier Instantiation for Checking
+# Inductive Invariants. TACAS 2017, LMCS 2019.
+# https://doi.org/10.1007/978-3-662-54577-5_5
+# https://doi.org/10.23638/LMCS-15(3:18)2019
+#
+# This example has two alternative invariants: a universally
+# quantified one and one that uses quantifier alternation.
+#
+# This file contains the universally quantified invariant.
+
+sort node
+
+mutable relation table(node, node, node)
+mutable relation pending(node, node, node, node)
+
+init table(T, N1, N2) <-> N1 = N2
+init !pending(PS, PD, S, D)
+
+transition new_packet(ps: node, pd: node)
+  modifies pending
+  new(pending(PS, PD, S, D)) <-> pending(PS, PD, S, D) | PS = ps & PD = pd & S = ps & D = ps
+
+transition forward(ps: node, pd: node, sw0: node, sw1: node, nondet: node)
+  modifies pending, table
+  pending(ps, pd, sw0, sw1) &
+  (forall PS,PD,S,D.
+    new(pending(PS,PD,S,D)) <-> pending(PS,PD,S,D) & PS = nondet | (PS = ps & PD = pd & S = sw1)) &
+  (forall T,N1,N2.
+    new(table(T,N1,N2)) <->
+      table(T,N1,N2) |
+      T = ps & ps != sw1 &
+      (forall W. W != sw1 -> !table(T, sw1, W)) &
+      table(T, N1, sw1) &
+      table(T, sw0, N2))
+
+safety table(T,X,X)
+safety table(T,X,Y) & table(T,Y,Z) -> table(T,X,Z)
+safety table(T,X,Y) & table(T,Y,X) -> X = Y
+safety table(T,X,Y) & table(T,X,Z) -> table(T,Y,Z) | table(T,Z,Y)
+
+# invariant which is purely universally quantified:
+invariant pending(PS,PD,S,D) & PS != S -> table(PS,S,PS)
+invariant table(T,X,Y) & T != Y & X != Y -> table(T,Y,T)
+
+sat trace {
+  any transition
+  any transition
+  any transition
+  assert exists T, X, Y. X != Y & table(T, X, Y)
+}

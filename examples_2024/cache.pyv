@@ -1,0 +1,345 @@
+# Model of a classic MESI cache coherence protocol in EPR, from:
+#
+# Yotam M. Y. Feldman, James R. Wilcox, Sharon Shoham, and Mooly
+# Sagiv. Inferring Inductive Invariants from Phase Structures. CAV
+# 2019. https://doi.org/10.1007/978-3-030-25543-5_23
+#
+
+sort address
+sort core
+sort value
+
+mutable function memory(address) : value
+
+mutable function cache(core, address) : value
+
+mutable relation modified(core, address)
+mutable relation exclusive(core, address)
+mutable relation shared(core, address)
+mutable relation invalid(core, address)
+
+mutable relation proc_read(core, address)
+mutable relation proc_write(core, address, value)
+
+mutable relation bus_in_use()
+
+mutable relation bus_read(core, address)
+mutable relation bus_read_for_ownership(core, address)
+mutable relation bus_upgrade(core, address)
+
+mutable relation bus_transfer(value)
+
+init !modified(C, A)
+init !exclusive(C, A)
+init !shared(C, A)
+init invalid(C, A)
+init !proc_read(C, A)
+init !proc_write(C, A, V)
+init !bus_in_use
+init !bus_read(C, A)
+init !bus_read_for_ownership(C, A)
+init !bus_upgrade(C, A)
+init !bus_transfer(V)
+
+transition issue_proc_read_invalid(c: core, a: address)
+  modifies bus_in_use, proc_read, bus_read
+  invalid(c, a) &
+  !bus_in_use &
+  new(bus_in_use) &
+  (forall C, A. new(proc_read(C, A)) <-> proc_read(C, A) | C = c & A = a) &
+  (forall C, A. new(bus_read(C, A)) <-> bus_read(C,A) | C != c & A = a)
+
+transition do_bus_read_invalid(c: core, a: address)
+  modifies bus_read
+  bus_read(c, a) &
+  invalid(c, a) &
+  (forall C, A. new(bus_read(C, A)) <-> bus_read(C, A) & !(C = c & A = a))
+
+transition do_bus_read_valid(c: core, a: address, v: value)
+  modifies bus_read, modified, exclusive, shared, bus_transfer, memory
+  bus_read(c, a) &
+  !invalid(c, a) &
+  cache(c, a) = v &
+  (forall C, A. new(bus_read(C, A)) <-> bus_read(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) | C = c & A = a) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (modified(c, a) ->  # write back
+    (forall A.
+       (A != a ->
+         (new(memory(A)) = memory(A)))) &
+     (new(memory(a)) = v)) &
+  (!modified(c, a) ->
+    (forall A. new(memory(A)) = memory(A))) &
+  (forall V. new(bus_transfer(V)) <-> bus_transfer(V) | V = v)
+
+transition complete_proc_read_invalid_shared(c: core, a: address, v: value)
+  modifies invalid, shared, bus_transfer, cache, bus_in_use, proc_read
+  invalid(c, a) &
+  proc_read(c, a) &
+  bus_transfer(v) &
+  (forall C, A. !bus_read(C, A)) &
+  (forall V. !new(bus_transfer(V))) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) | C = c & A = a) &
+  (forall C, A.
+     !(C = c & A = a) ->
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  !new(bus_in_use) &
+  (forall C, A. new(proc_read(C, A)) <-> proc_read(C, A) & !(C = c & A = a))
+
+transition complete_proc_read_invalid_exclusive(c: core, a: address, v: value)
+  modifies invalid, exclusive, cache, bus_in_use, proc_read
+  invalid(c, a) &
+  proc_read(c, a) &
+  (forall V. !bus_transfer(V)) &
+  (forall C, A. !bus_read(C, A)) &
+  memory(a) = v &
+
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) | C = c & A = a) &
+  (forall C, A.
+     !(C = c & A = a) ->
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  !new(bus_in_use) &
+  (forall C, A. new(proc_read(C, A)) <-> proc_read(C, A) & !(C = c & A = a))
+
+transition issue_proc_write_invalid(c: core, a: address, v: value)
+  modifies bus_in_use, proc_write, bus_read_for_ownership
+  invalid(c, a) &
+  !bus_in_use &
+  new(bus_in_use) &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) | C = c & A = a & V = v) &
+  (forall C, A. new(bus_read_for_ownership(C, A)) <-> bus_read_for_ownership(C,A) | C != c & A = a)
+
+transition do_bus_read_for_ownership_invalid(c: core, a: address)
+  modifies bus_read_for_ownership
+  bus_read_for_ownership(c, a) &
+  invalid(c, a) &
+  (forall C, A. new(bus_read_for_ownership(C, A)) <-> bus_read_for_ownership(C, A) & !(C = c & A = a))
+
+transition do_bus_read_for_ownership_valid(c: core, a: address, v: value)
+  modifies bus_read_for_ownership, modified, exclusive, shared, invalid, bus_transfer, memory
+  bus_read_for_ownership(c, a) &
+  !invalid(c, a) &
+  cache(c, a) = v &
+  (forall C, A. new(bus_read_for_ownership(C, A)) <-> bus_read_for_ownership(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (modified(c, a) ->  # write back
+    (forall A.
+       (A != a ->
+         (new(memory(A)) = memory(A)))) &
+     (new(memory(a)) = v)) &
+  (!modified(c, a) ->
+    (forall A. new(memory(A)) = memory(A))) &
+  (forall V. new(bus_transfer(V)) <-> bus_transfer(V) | V = v)
+
+transition complete_proc_write_invalid(c: core, a: address, v: value)
+  modifies invalid, modified, bus_transfer, cache, bus_in_use, proc_write
+  invalid(c, a) &
+  proc_write(c, a, v) &
+  (forall C, A. !bus_read_for_ownership(C, A)) &
+  (forall V. !new(bus_transfer(V))) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) | C = c & A = a) &
+  (forall C, A.
+     !(C = c & A = a) ->
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  !new(bus_in_use) &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) & !(C = c & A = a & V = v))
+
+transition proc_write_exclusive(c: core, a: address, v: value)
+  modifies exclusive, modified, cache
+  exclusive(c, a) &
+  !bus_in_use &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) | C = c & A = a) &
+  (forall C, A.
+     !(C = c & A = a) ->
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v
+
+transition issue_proc_write_shared(c: core, a: address, v: value)
+  modifies bus_in_use, proc_write, bus_upgrade
+  shared(c, a) &
+  !bus_in_use &
+  new(bus_in_use) &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) | C = c & A = a & V = v) &
+  (forall C, A. new(bus_upgrade(C, A)) <-> bus_upgrade(C,A) | C != c & A = a)
+
+transition do_bus_upgrade(c: core, a: address)
+  modifies bus_upgrade, shared, invalid
+  bus_upgrade(c, a) &
+  (forall C, A. new(bus_upgrade(C, A)) <-> bus_upgrade(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a))
+
+transition complete_proc_write_shared(c: core, a: address, v: value)
+  modifies bus_in_use, proc_write, cache, shared, modified
+  shared(c, a) &
+  proc_write(c, a, v) &
+  (forall C, A. !bus_upgrade(C, A)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) | C = c & A = a) &
+  (forall C, A.
+     !(C = c & A = a) ->
+     (new(cache(C, A)) = cache(C, A))) &
+  new(cache(c, a)) = v &
+  (forall C, A, V. new(proc_write(C, A, V)) <-> proc_write(C, A, V) & !(C = c & A = a & V = v)) &
+  !new(bus_in_use)
+
+transition evict_modified(c: core, a: address)
+  modifies memory, modified, invalid
+  !bus_in_use &
+  modified(c, a) &
+  (forall A.
+    (A != a ->
+     (new(memory(A)) = memory(A)))) &
+  new(memory(a)) = cache(c, a) &  # write back
+  (forall C, A. new(modified(C, A)) <-> modified(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a)
+
+transition evict_exclusive_or_shared(c: core, a: address)
+  modifies exclusive, shared, invalid
+  !bus_in_use &
+  (exclusive(c, a) | shared(c, a)) &
+  (forall C, A. new(exclusive(C, A)) <-> exclusive(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(shared(C, A)) <-> shared(C, A) & !(C = c & A = a)) &
+  (forall C, A. new(invalid(C, A)) <-> invalid(C, A) | C = c & A = a)
+
+safety !invalid(C, A) & !modified(C, A) -> cache(C, A) = memory(A)
+
+# each cache line is in at most one state
+invariant !(invalid(C, A) & modified(C, A))
+invariant !(invalid(C, A) & exclusive(C, A))
+invariant !(invalid(C, A) & shared(C, A))
+invariant !(modified(C, A) & exclusive(C, A))
+invariant !(modified(C, A) & shared(C, A))
+invariant !(exclusive(C, A) & shared(C, A))
+
+invariant exclusive(C1, A) & C1 != C2 -> invalid(C2, A)
+invariant modified(C1, A) & C1 != C2 -> invalid(C2, A)
+
+invariant bus_read(C, A) -> bus_in_use
+invariant bus_read_for_ownership(C, A) -> bus_in_use
+invariant bus_upgrade(C, A) -> bus_in_use
+invariant bus_transfer(V) -> bus_in_use
+
+invariant proc_read(C, A) -> bus_in_use
+invariant proc_write(C, A, V) -> bus_in_use
+
+invariant proc_write(C1, A, V) & bus_read_for_ownership(C2, A) -> invalid(C1, A)
+invariant proc_write(C1, A, V) & bus_upgrade(C2, A) -> shared(C1, A)
+
+invariant !(proc_write(C, A, V) & bus_upgrade(C, A))
+
+invariant proc_write(C, A, V1) & shared(C, A) -> !bus_transfer(V2)
+
+invariant proc_read(C1, A1) & proc_read(C2, A2) -> C1 = C2 & A1 = A2
+invariant proc_write(C1, A1, V1) & proc_write(C2, A2, V2) -> C1 = C2 & A1 = A2 & V1 = V2
+invariant !(proc_read(C1, A1) & proc_write(C2, A2, V))
+
+invariant !(proc_read(C1, A1) & bus_read_for_ownership(C2, A2))
+invariant !(proc_read(C1, A1) & bus_upgrade(C2, A2))
+invariant !(proc_write(C1, A1, V) & bus_read(C2, A2))
+
+invariant proc_read(C1, A1) & bus_read(C2, A2) -> A1 = A2
+invariant proc_write(C1, A1, V) & bus_read_for_ownership(C2, A2) -> A1 = A2
+invariant proc_write(C1, A1, V) & bus_upgrade(C2, A2) -> A1 = A2
+
+invariant proc_read(C1, A) & !bus_read(C2, A) & C1 != C2 -> shared(C2, A) | invalid(C2, A)
+invariant proc_read(C1, A) & !bus_read(C2, A) & C1 != C2 & shared(C2, A) -> bus_transfer(cache(C2, A))
+
+invariant proc_read(C, A) & bus_transfer(V) -> memory(A) = V
+invariant proc_read(C1, A) & bus_transfer(V) & !invalid(C2, A) -> cache(C2, A) = V
+
+invariant proc_write(C1, A, V) & invalid(C1, A) & !bus_read_for_ownership(C2, A) & C1 != C2 -> invalid(C2, A)
+
+invariant proc_write(C1, A, V) & shared(C1, A) & !bus_upgrade(C2, A) & C1 != C2 -> invalid(C2, A)
+
+invariant !(bus_transfer(V) & modified(C1, A) & (proc_read(C2, A) | proc_write(C2, A, V2)))
+
+invariant !(bus_upgrade(C1, A) & exclusive(C2, A))
+invariant !(bus_upgrade(C1, A) & modified(C2, A))
+
+# incorrect invariant to demonstrate BMC:
+# invariant [bmc] !(exists C, A. modified(C, A))
+
+# sat trace checks
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_read_invalid
+    do_bus_read_valid
+    complete_proc_read_invalid_shared
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_write_invalid
+    do_bus_read_for_ownership_valid
+    do_bus_read_for_ownership_invalid
+    complete_proc_write_invalid
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_read_invalid
+    do_bus_read_valid
+    complete_proc_read_invalid_shared
+
+    issue_proc_write_shared
+    do_bus_upgrade
+    complete_proc_write_shared
+
+    evict_modified
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    proc_write_exclusive
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    evict_exclusive_or_shared
+}
+
+sat trace {
+    issue_proc_read_invalid
+    do_bus_read_invalid
+    complete_proc_read_invalid_exclusive
+
+    issue_proc_read_invalid
+    do_bus_read_valid
+    complete_proc_read_invalid_shared
+
+    evict_exclusive_or_shared
+}

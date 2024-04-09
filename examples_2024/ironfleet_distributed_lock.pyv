@@ -1,0 +1,63 @@
+# A mypyvy model of IronFleet's distributed lock service toy example,
+# adapted from:
+#
+# Chris Hawblitzel, Jon Howell, Manos Kapritsos, Jacob R. Lorch, Bryan
+# Parno, Michael L. Roberts, Srinath Setty, and Brian Zill. IronFleet:
+# Proving Practical Distributed Systems Correct. SOSP 2015.
+# https://doi.org/10.1145/2815400.2815428
+
+sort host
+sort epoch
+
+# immutable epoch structure
+immutable constant zero: epoch
+immutable relation le(epoch, epoch)
+
+# le is a total order
+axiom forall X. le(X, X)
+axiom forall X, Y, Z. le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom forall X, Y. le(X, Y) & le(Y, X) -> X = Y
+axiom forall X, Y. le(X, Y) | le(Y, X)
+
+# zero is the smallest element
+axiom forall X. le(zero, X)
+
+# mutable network state
+mutable relation sent_msgs(host, epoch)  # (dst, e)
+
+# mutable host state
+mutable function host_epoch(host): epoch # current epoch of the host
+mutable relation holds_lock(host)
+
+init forall H, E. !sent_msgs(H, E)
+init exists H0. forall H. (holds_lock(H) <-> H = H0) & (host_epoch(H) = zero <-> H != H0)
+
+transition do_grant(h: host, d: host, e: epoch)
+  modifies holds_lock, sent_msgs
+  & holds_lock(h)
+  & ~le(e, host_epoch(h))
+  & (forall H. holds_lock'(H) <-> (holds_lock(H) & H != h))
+  & (forall D, E. sent_msgs'(D, E) <-> (sent_msgs(D, E) | (D = d & E = e)))
+
+transition do_accept(h: host, e: epoch)
+  modifies holds_lock, host_epoch
+  & sent_msgs(h, e)
+  & ~le(e, host_epoch(h))
+  & (forall H. holds_lock'(H) <-> (holds_lock(H) | H = h))
+  & (forall H. host_epoch'(H) = if H = h then e else host_epoch(H))
+
+# safety property
+safety [mutual_exclusion] forall H1, H2. holds_lock(H1) & holds_lock(H2) -> H1 = H2
+
+# There are never two messages in flight.
+invariant [unique_msg_in_flight] forall D1, E1, D2, E2.
+    sent_msgs(D1, E1) & ~le(E1, host_epoch(D1)) &
+    sent_msgs(D2, E2) & ~le(E2, host_epoch(D2))
+    -> (D1 = D2 & E1 = E2)
+
+# If a message is flight, no client holds the lock, and vice versa
+invariant [in_flight_precludes_lock_held] forall D, E, H. sent_msgs(D, E) & ~le(E, host_epoch(D)) -> !holds_lock(H)
+
+# Whoever holds the lock (host or in-flight message) has the freshest epoch number.
+invariant [loc_holder_has_freshest_epoch] forall H1, H2. holds_lock(H1) & H1 != H2 -> ~le(host_epoch(H1), host_epoch(H2))
+invariant [in_flight_has_freshest_epoch] forall D, E, H. sent_msgs(D, E) & ~le(E, host_epoch(D)) -> ~le(E, host_epoch(H))

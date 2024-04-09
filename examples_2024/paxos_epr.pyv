@@ -1,0 +1,98 @@
+# Model of single decree Paxos in EPR, based on the Ivy model from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+
+sort round
+sort value
+sort quorum
+sort node
+
+immutable constant none: round
+immutable relation le(round, round) @no_minimize
+
+# le is a total order
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation one_a(round)
+mutable relation one_b(node, round)
+mutable relation left_round(node, round)
+mutable relation proposal(round, value)
+mutable relation vote(node, round, value)
+mutable relation decision(round, value)
+
+init !one_a(R)
+init !one_b(N, R)
+init !left_round(N, R)
+init !proposal(R, V)
+init !vote(N, R, V)
+init !decision(R, V)
+
+
+transition send_1a(r: round)
+  modifies one_a
+  r != none &
+  (forall R. new(one_a(R)) <-> one_a(R) | R = r)
+
+
+transition join_round(n: node, r: round)
+  modifies one_b, left_round
+  r != none &
+  one_a(r) &
+  !left_round(n, r) &
+  (forall N, R. new(one_b(N, R)) <-> one_b(N,R) | N = n & R = r) &
+  (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(r, R))
+
+
+transition propose(r: round, q: quorum, maxr: round, v: value)
+  modifies proposal
+  r != none &
+  (forall V. !proposal(r, V)) &
+  (forall N. member(N, q) -> one_b(N, r)) &
+  ((maxr = none & forall N,MAXR,V. !(member(N, q) & !le(r,MAXR) & vote(N,MAXR,V))) |
+   (maxr != none &
+    (exists N. member(N, q) & !le(r,maxr) & vote(N,maxr,v)) &
+    (forall N,MAXR,V. (member(N, q) & !le(r,MAXR) & vote(N,MAXR,V)) -> le(MAXR,maxr)))) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
+
+
+transition cast_vote(n: node, v: value, r: round)
+  modifies vote
+  r != none &
+  !left_round(n, r) &
+  proposal(r, v) &
+  (forall N, R, V. new(vote(N, R, V)) <-> vote(N, R, V) | N = n & R = r & V = v)
+
+
+transition decide(r: round, v: value, q: quorum)
+  modifies decision
+  r != none &
+  (forall N. member(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = r & V = v)
+
+
+# safety property
+safety decision(R1, V1) & decision(R2, V2) -> V1 = V2
+
+# proposals are unique per round
+invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
+
+# only vote for proposed values
+invariant vote(N,R,V) -> proposal(R,V)
+
+# decisions come from quorums of votes
+invariant forall R,V. decision(R, V) -> exists Q. forall N. member(N, Q) -> vote(N, R, V)
+
+# properties of one_b, left_round
+invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
+
+# choosable invariant
+invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2,R1) & proposal(R2,V2) & V1 != V2 ->
+    exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,R1,V1)

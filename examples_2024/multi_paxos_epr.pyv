@@ -1,0 +1,140 @@
+# Model of Multi Paxos in EPR, based on the Ivy model from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+
+sort inst
+sort votemap
+sort round
+sort value
+sort quorum
+sort node
+
+immutable constant none: round
+immutable relation le(round, round) @no_minimize
+
+
+# le is a total order
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation member(node, quorum)
+axiom forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2)
+
+
+mutable relation one_a(round)
+mutable relation one_b_msg(node, round, votemap)
+mutable relation left_round(node, round)
+mutable relation joined_round(node, round)
+mutable relation proposal(inst, round, value) # 2a
+mutable relation active(round)  # round R has received a quorum of 1b and can now propose new values
+mutable relation vote(node, inst, round, value) # 2b
+mutable relation decision(node, inst, round, value) # got 2b from a quorum
+immutable function maxr(votemap, inst) : round
+immutable function maxv(votemap, inst) : value
+
+init !one_a(R)
+init !one_b_msg(N,R1,M)
+init !left_round(N,R)
+init !joined_round(N,R)
+init !proposal(I,R,V)
+init !vote(N,I,R,V)
+init !decision(N,I,R,V)
+init !active(R)
+
+transition send_1a(r: round)
+  modifies one_a
+  r != none &
+  (forall R. new(one_a(R)) <-> one_a(R) | R = r)
+
+transition join_round(n: node, r: round, m: votemap)
+  modifies one_b_msg, left_round, joined_round
+  r != none &
+  one_a(r) &
+  !left_round(n, r) &
+  (forall I:inst. (
+        ( maxr(m,I) = none & forall R,V. !(vote(n,I,R,V) & !le(r,R)) ) |
+        ( vote(n,I,maxr(m,I),maxv(m,I)) & !le(r,maxr(m,I)) &
+          forall R,V. vote(n,I,R,V) & !le(r,R) -> le(R,maxr(m,I)) )
+    )) &
+  (forall N, R, M. new(one_b_msg(N, R, M)) <-> one_b_msg(N,R,M) | N = n & R = r & M = m) &
+  (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(r, R)) &
+  (forall N, R. new(joined_round(N, R)) <-> joined_round(N, R) | N = n & R = r)
+
+transition receive_join_acks(r: round, q: quorum, m:votemap)
+  modifies active, proposal
+  r != none &
+  !active(r) &
+  (forall N. member(N, q) -> joined_round(N, r)) &
+  (forall I:inst. (
+        ( maxr(m,I) = none &
+          forall N,R,V. !(member(N, q) & !le(r,R) & vote(N,I,R,V)) ) |
+        ( (exists N,R,V.  member(N, q) & !le(r,R) & vote(N,I,R,V) & R = maxr(m,I) & V = maxv(m,I)) &
+          (forall N,R,V.  member(N, q) & !le(r,R) & vote(N,I,R,V) -> le(R,maxr(m,I))) )
+  )) &
+
+  (forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | (R = r & (maxr(m,I) != none & V = maxv(m,I)))) &
+  (forall R. new(active(R)) <-> active(R) | R = r)
+
+
+transition propose(r: round, i: inst, v: value)
+  modifies proposal
+  r != none &
+  active(r) &
+  (forall V. !proposal(i, r, V)) &
+  (forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | (I = i & R = r & V = v))
+
+transition cast_vote(n: node, v: value, r: round, i:inst)
+  modifies vote
+  r != none &
+  !left_round(n, r) &
+  proposal(i, r, v) &
+  (forall N, I, R, V. new(vote(N, I, R, V)) <-> vote(N, I, R, V) | N = n & I = i & R = r & V = v)
+
+
+transition decide(n: node, r: round, v: value, q: quorum, i:inst)
+  modifies decision
+  r != none &
+  (forall N. member(N, q) -> vote(N, i, r, v)) &
+  (forall N, I, R, V. new(decision(N, I, R, V)) <-> decision(N, I, R, V) | N = n & I = i & R = r & V = v)
+
+
+# safety property:
+safety (
+    decision(N1,I,R1,V1) &
+    decision(N2,I,R2,V2)
+) -> V1 = V2
+
+# only propose in active rounds
+invariant proposal(I,R,V) -> active(R)
+
+# proposals are unique per round
+invariant proposal(I,R,V1) & proposal(I,R,V2) -> V1 = V2
+
+# only vote for proposed values
+invariant vote(N,I,R,V) -> proposal(I,R,V)
+
+# decisions come from quorums of votes:
+invariant forall R:round, V:value. (exists N:node. decision(N,I,R,V)) -> exists Q:quorum. forall N:node. member(N, Q) -> vote(N,I,R,V)
+
+# properties of one_b_msg (used for the rewrite to EPR, see OOPSLA'17 paper, but not needed for safety proof of this model)
+# invariant one_b_msg(N,R,M) -> joined_round(N,R)
+# invariant one_b_msg(N,R2,M) & maxr(M,I) = none & !le(R2,R1) -> !vote(N,I,R1,V2)
+# invariant one_b_msg(N,R, M) & maxr(M,I) != none -> !le(R,maxr(M,I)) & vote(N,I,maxr(M,I),maxv(M,I))
+# invariant one_b_msg(N,R, M) & maxr(M,I) != none & !le(R,ROTHER) & !le(ROTHER,maxr(M,I)) -> !vote(N,I,ROTHER,VOTHER)
+
+# properties of none
+invariant !vote(N,I,none,V)
+
+# property of choosable and active: if R2>R1 is active and V is not proposed at I, then it's not choosable at R1
+invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum. (
+    !le(R2,R1) & active(R2) & !proposal(I,R2,V) -> (
+        exists N:node. member(N,Q) & left_round(N,R1) & !vote(N,I,R1,V)
+    )
+)
+
+# properties of joined_round, left_round
+invariant joined_round(N,R2) & !le(R2,R1) -> left_round(N,R1)

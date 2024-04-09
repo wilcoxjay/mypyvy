@@ -1,0 +1,158 @@
+# Model of Fast Paxos in EPR, based on the Ivy model from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+
+sort round
+sort value
+sort quorum_c
+sort quorum_f
+sort node
+
+immutable constant none: round
+immutable relation le(round, round) @no_minimize
+
+# le is a total order
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation fast(round)
+
+immutable relation member_c(node, quorum_c)
+immutable relation member_f(node, quorum_f)
+axiom forall Q1, Q2. exists N. member_c(N, Q1) & member_c(N, Q2)
+axiom forall Q1, Q2, Q3. exists N. member_c(N, Q1) & member_f(N, Q2) & member_f(N, Q3)
+
+mutable relation one_a(round)
+mutable relation one_b(node, round)
+mutable relation left_round(node, round)
+mutable relation proposal(round, value)
+mutable relation vote(node, round, value)
+mutable relation decision(round, value)
+mutable relation any_msg(round)
+
+init !one_a(R)
+init !one_b(N, R)
+init !left_round(N, R)
+init !proposal(R, V)
+init !vote(N, R, V)
+init !decision(R, V)
+init !any_msg(R)
+
+
+transition send_1a(r: round)
+  modifies one_a
+  r != none &
+  (forall R. new(one_a(R)) <-> one_a(R) | R = r)
+
+
+transition join_round(n: node, r: round)
+  modifies one_b, left_round
+  r != none &
+  one_a(r) &
+  !left_round(n, r) &
+  (forall N, R. new(one_b(N, R)) <-> one_b(N,R) | N = n & R = r) &
+  (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(r, R))
+
+
+transition propose_1(r: round, q: quorum_c, maxr: round, v: value, v2: value)
+  modifies proposal
+  r != none &
+  (forall V. !proposal(r, V)) &
+  ~any_msg(r) &
+  (forall N. member_c(N, q) -> one_b(N, r)) &
+  maxr != none &
+  (exists N. member_c(N, q) & !le(r,maxr) & vote(N,maxr,v)) &
+  (forall N,MAXR,V. (member_c(N, q) & !le(r,MAXR) & vote(N,MAXR,V)) -> le(MAXR,maxr)) &
+  (exists F:quorum_f. forall N:node. !(member_f(N,F) & member_c(N,q) & !vote(N,maxr,v2))) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v2))
+
+transition propose_2(r: round, q: quorum_c, maxr: round, v: value)
+  modifies proposal
+  r != none &
+  (forall V. !proposal(r, V)) &
+  ~any_msg(r) &
+  (forall N. member_c(N, q) -> one_b(N, r)) &
+  maxr != none &
+  (exists N. member_c(N, q) & !le(r,maxr) & vote(N,maxr,v)) &
+  (forall N,MAXR,V. (member_c(N, q) & !le(r,MAXR) & vote(N,MAXR,V)) -> le(MAXR,maxr)) &
+  (forall V2:value, F:quorum_f. exists N:node. member_f(N,F) & member_c(N,q) & !vote(N,maxr,V2)) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
+
+transition propose_3(r: round, q: quorum_c, v: value)
+  modifies any_msg
+  r != none &
+  (forall V. !proposal(r, V)) &
+  ~any_msg(r) &
+  (forall N. member_c(N, q) -> one_b(N, r)) &
+  (forall N,MAXR,V. !(member_c(N, q) & !le(r,MAXR) & vote(N,MAXR,V))) &
+  fast(r) &
+  (forall R. new(any_msg(R)) <-> any_msg(R) | R = r)
+
+transition propose_4(r: round, q: quorum_c, v: value)
+  modifies proposal
+  r != none &
+  (forall V. !proposal(r, V)) &
+  ~any_msg(r) &
+  (forall N. member_c(N, q) -> one_b(N, r)) &
+  (forall N,MAXR,V. !(member_c(N, q) & !le(r,MAXR) & vote(N,MAXR,V))) &
+  ~fast(r) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
+
+transition cast_vote(n: node, v: value, r: round)
+  modifies vote
+  r != none &
+  !left_round(n, r) &
+  (forall V. !vote(n, r, V)) &
+  (proposal(r, v) | any_msg(r)) &
+  (forall N, R, V. new(vote(N, R, V)) <-> vote(N, R, V) | N = n & R = r & V = v)
+
+transition decide_c(r: round, v: value, q: quorum_c)
+  modifies decision
+  r != none &
+  !fast(r) &
+  (forall N. member_c(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = r & V = v)
+
+transition decide_f(r: round, v: value, q: quorum_f)
+  modifies decision
+  r != none &
+  fast(r) &
+  (forall N. member_f(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = r & V = v)
+
+
+# safety property
+safety decision(R1, V1) & decision(R2, V2) -> V1 = V2
+
+# proposals are unique per round
+invariant proposal(R,V1) & proposal(R,V2) -> V1 = V2
+
+# any messages are sent only in fast rounds
+invariant any_msg(R) -> fast(R)
+
+# only vote for proposed values in classic rounds
+invariant !fast(R) & vote(N,R,V) -> proposal(R,V)
+
+# votes in fast rounds
+invariant fast(R) & vote(N,R,V) -> (proposal(R,V) | any_msg(R))
+invariant !(any_msg(R) & proposal(R,V))
+invariant fast(R) & vote(N,R,V1) & vote(N,R,V2) -> V1 = V2
+
+# decisions come from quorums of votes
+invariant forall R,V. !fast(R) & decision(R, V) -> exists Q. forall N. member_c(N, Q) -> vote(N, R, V)
+invariant forall R,V.  fast(R) & decision(R, V) -> exists Q. forall N. member_f(N, Q) -> vote(N, R, V)
+
+# properties of one_b, left_round
+invariant one_b(N,R2) & !le(R2,R1) -> left_round(N,R1)
+
+# choosable invariant classic round
+invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum_c. !fast(R1) & !le(R2,R1) & ((proposal(R2,V2) & V1 != V2) | any_msg(R2)) ->
+    exists N:node. member_c(N,Q) & left_round(N,R1) & !vote(N,R1,V1)
+
+# choosable invariant fast round
+invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum_f. fast(R1) & !le(R2,R1) & ((proposal(R2,V2) & V1 != V2) | any_msg(R2)) ->
+    exists N:node. member_f(N,Q) & left_round(N,R1) & !vote(N,R1,V1)

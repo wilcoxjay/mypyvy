@@ -1,0 +1,44 @@
+# Toy example illustrating majority-based consensus modeled in EPR
+# with a universal invariant, using quorum intersection axiom and
+# ghost state, inspired by the Paxos models from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+#
+# Compared to toy_consensus_epr.pyv, this file is modified to have a
+# universally quantified invariant by adding ghost state (history
+# variable) to record the quorum used to make a decision.
+
+sort quorum
+sort node
+sort value
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation voted(node)
+mutable relation vote(node, value)
+mutable relation decided(value)
+mutable constant voting_quorum: quorum
+
+init !voted(N)
+init !vote(N, V)
+init !decided(V)
+
+transition cast_vote(n: node, v: value)
+   modifies voted, vote
+   & !voted(n)
+   & (new(vote(N, V)) <-> vote(N, V) | N = n & V = v)
+   & (new(voted(N)) <-> voted(N) | N=n)
+
+transition decide(v: value, q: quorum)
+  modifies decided, voting_quorum
+  & (member(N,q) -> vote(N,v))
+  & (new(decided(V)) <-> (decided(V) | V=v))
+  & (new(voting_quorum) = q)
+
+safety decided(V1) & decided(V2) -> V1 = V2
+invariant vote(N,V) -> voted(N)
+invariant vote(N, V1) & vote(N, V2) -> V1 = V2
+invariant decided(V) & member(N, voting_quorum) -> vote(N, V)

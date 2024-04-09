@@ -1,0 +1,146 @@
+# Model of sharded key-value store with retransmission, from:
+#
+# Yotam M. Y. Feldman, James R. Wilcox, Sharon Shoham, and Mooly
+# Sagiv. Inferring Inductive Invariants from Phase Structures. CAV
+# 2019. https://doi.org/10.1007/978-3-030-25543-5_23
+#
+# Inspired by the sharded key value store from:
+#
+# Chris Hawblitzel, Jon Howell, Manos Kapritsos, Jacob R. Lorch, Bryan
+# Parno, Michael L. Roberts, Srinath Setty, and Brian Zill. IronFleet:
+# Proving Practical Distributed Systems Correct. SOSP 2015.
+# https://doi.org/10.1145/2815400.2815428
+#
+# This file has message retransmission, which makes the protocol more
+# complicated and interesting.
+
+sort key
+sort node
+sort value
+sort seqnum
+
+mutable relation table(node, key, value)
+mutable relation unacked(node, node, key, value, seqnum)
+mutable relation owner(node, key)
+mutable relation transfer_msg(node, node, key, value, seqnum)
+mutable relation ack_msg(node, node, seqnum)
+mutable relation seqnum_sent(node, seqnum)
+mutable relation seqnum_recvd(node, node, seqnum)
+
+init !table(N, K, V)
+init !transfer_msg(SRC, DST, K, V, S)
+init owner(N1, K) & owner(N2, K) -> N1 = N2
+# init forall K. exists N. owner(N, K)
+
+init !unacked(SRC, DST, K, V, S)
+init !ack_msg(SRC, DST, S)
+init !seqnum_sent(N, S)
+init !seqnum_recvd(N, SENDER, S)
+
+transition reshard(n_old: node, n_new: node, k: key, v: value, s: seqnum)
+  modifies table, owner, seqnum_sent, transfer_msg, unacked
+  table(n_old, k, v) &
+  !seqnum_sent(n_old, s) &
+  (new(seqnum_sent(N, S)) <-> seqnum_sent(N, S) | N = n_old & S = s) &
+  (new(table(N, K, V)) <-> table(N, K, V) & !(N = n_old & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) & !(N = n_old & K = k)) &
+  (new(transfer_msg(N1, N2, K, V, S)) <-> transfer_msg(N1, N2, K, V, S) | N1 = n_old & N2 = n_new & K = k & V = v & S = s) &
+  (new(unacked(N1, N2, K, V, S)) <-> unacked(N1, N2, K, V, S) | N1 = n_old & N2 = n_new & K = k & V = v & S = s)
+
+transition drop_transfer_msg(src: node, dst: node, k: key, v: value, s: seqnum)
+  modifies transfer_msg
+  transfer_msg(src, dst, k, v, s) &
+  (new(transfer_msg(N1, N2, K, V, S)) <-> transfer_msg(N1, N2, K, V, S) & !(N1 = src & N2 = dst & K = k & V = v & S = s))
+
+transition retransmit(src: node, dst: node, k: key, v: value, s: seqnum)
+  modifies transfer_msg
+  unacked(src, dst, k, v, s) &
+  (new(transfer_msg(N1, N2, K, V, S)) <-> transfer_msg(N1, N2, K, V, S) | N1 = src & N2 = dst & K = k & V = v & S = s)
+
+transition recv_transfer_msg(src: node, n: node, k: key, v: value, s: seqnum)
+  modifies seqnum_recvd, table, owner
+  transfer_msg(src, n, k, v, s) &
+  !seqnum_recvd(n, src, s) &
+  (new(seqnum_recvd(N1, N2, S)) <-> seqnum_recvd(N1, N2, S) | N1 = n & N2 = src & S = s) &
+  (new(table(N, K, V)) <-> table(N, K, V) | (N = n & K = k & V = v)) &
+  (new(owner(N, K)) <-> owner(N, K) | N = n & K = k)
+
+transition send_ack(src: node, n: node, k: key, v: value, s: seqnum)
+  modifies ack_msg
+  transfer_msg(src, n, k, v, s) &
+  seqnum_recvd(n, src, s) &
+  (new(ack_msg(N1, N2, S)) <-> ack_msg(N1, N2, S) | N1 = src & N2 = n & S = s)
+
+transition drop_ack_msg(src: node, dst:node, s: seqnum)
+  modifies ack_msg
+  ack_msg(src, dst, s) &
+  (new(ack_msg(N1, N2, S)) <-> ack_msg(N1, N2, S) & !(N1 = src & N2 = dst & S = s))
+
+transition recv_ack_msg(src: node, dst: node, s: seqnum)
+  modifies unacked
+  ack_msg(src, dst, s) &
+  (!(N1 = src & N2 = dst & S = s) -> (new(unacked(N1, N2, K, V, S)) <-> unacked(N1, N2, K, V, S))) &
+  (!new(unacked(src, dst, K, V, s)))
+
+transition put(n: node, k: key, v: value)
+  modifies table
+  owner(n, k) &
+  (!(N = n & K = k) -> (new(table(N, K, V)) <-> table(N, K, V))) &
+  (new(table(n, k, V)) <-> V = v)
+
+safety [keys_unique] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
+
+invariant owner(N1, K) & owner(N2, K) -> N1 = N2
+invariant table(N, K, V) -> owner(N, K)
+
+invariant !(transfer_msg(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S) & owner(N, K))
+invariant !(unacked(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S) & owner(N, K))
+
+invariant
+  transfer_msg(SRC1, DST1, K, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) &
+  transfer_msg(SRC2, DST2, K, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) ->
+  SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
+
+invariant
+  unacked(SRC1, DST1, K, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) &
+  unacked(SRC2, DST2, K, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) ->
+  SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
+
+invariant
+  unacked(SRC1, DST1, K, V1, S1) & !seqnum_recvd(DST1, SRC1, S1) &
+  transfer_msg(SRC2, DST2, K, V2, S2) & !seqnum_recvd(DST2, SRC2, S2) ->
+  SRC1 = SRC2 & DST1 = DST2 & V1 = V2 & S1 = S2
+
+
+# safety [no_lost_keys]
+#     forall K.
+#         (exists N. owner(N, K)) |
+#         (exists SRC, DST, V, S. unacked(SRC, DST, K, V, S) & !seqnum_recvd(DST, SRC, S))
+# invariant ack_msg(SRC, DST, S) -> seqnum_recvd(DST, SRC, S)
+
+# invariant transfer_msg(SRC, DST1, K1, V1, S) & transfer_msg(SRC, DST2, K2, V2, S) ->
+#     DST1 = DST2 & K1 = K2 & V1 = V2
+
+# invariant unacked(SRC, DST1, K1, V1, S) & unacked(SRC, DST2, K2, V2, S) ->
+#     DST1 = DST2 & K1 = K2 & V1 = V2
+
+# invariant transfer_msg(SRC, DST1, K1, V1, S) & unacked(SRC, DST2, K2, V2, S) ->
+#     DST1 = DST2 & K1 = K2 & V1 = V2
+
+# invariant seqnum_recvd(DST, SRC, S) -> seqnum_sent(SRC, S)
+# invariant transfer_msg(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
+# invariant unacked(SRC, DST, K, V, S) -> seqnum_sent(SRC, S)
+
+sat trace {
+  put
+  reshard
+  drop_transfer_msg
+  retransmit
+  recv_transfer_msg
+  send_ack
+  drop_ack_msg
+  send_ack
+  recv_ack_msg
+  put
+  assert forall X, Y: node. X = Y
+}

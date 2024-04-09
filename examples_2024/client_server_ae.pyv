@@ -1,0 +1,42 @@
+# A simple example of a system where a forall-exists invariant is
+# required, adapted from client_server_ae.ivy from the code examples
+# of:
+#
+# Yotam M. Y. Feldman, Oded Padon, Neil Immerman, Mooly Sagiv, and
+# Sharon Shoham. Bounded Quantifier Instantiation for Checking
+# Inductive Invariants. TACAS 2017, LMCS 2019.
+# https://doi.org/10.1007/978-3-662-54577-5_5
+# https://doi.org/10.23638/LMCS-15(3:18)2019
+
+sort node
+sort response
+sort request
+
+immutable relation match(request, response)
+
+mutable relation request_sent(node, request)
+mutable relation response_sent(node, response)
+mutable relation response_received(node, response)
+
+init !request_sent(N,R)
+init !response_sent(N,P)
+init !response_received(N,P)
+
+transition new_request(n:node, r:request)
+  modifies request_sent
+  & forall N,R. new(request_sent(N,R)) <-> (request_sent(N,R) | (N = n & R = r))
+
+transition respond(n:node, r:request, p:response)
+  modifies response_sent
+  & request_sent(n,r)
+  & match(r,p)
+  & (forall N,P. new(response_sent(N,P)) <-> (response_sent(N,P) | (N = n & P = p)))
+
+transition receive_response(n:node, p:response)
+  modifies response_received
+  & response_sent(n,p)
+  & (forall N,P. new(response_received(N,P)) <-> (response_received(N,P) | (N = n & P = p)))
+
+
+safety forall N,P. response_received(N,P) -> exists R. request_sent(N,R) & match(R,P)
+invariant forall N,P. response_sent(N,P) -> exists R. request_sent(N,R) & match(R,P)

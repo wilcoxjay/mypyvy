@@ -1,0 +1,207 @@
+# Model of Stoppable Paxos in EPR with universal invariant, based on
+# the Ivy model from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+#
+# Compared to stoppable_paxos_epr.pyv, this file is modified to have a
+# universally quantified invariant by adding a ghost function
+# decision_quorum, and a derived relation choosable
+
+sort inst
+sort votemap
+sort round
+sort value
+sort quorum
+sort node
+
+immutable constant none: round
+immutable relation le(round, round)
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+
+immutable relation inst_le(inst, inst)
+axiom inst_le(X,X)
+axiom inst_le(X, Y) & inst_le(Y, Z) -> inst_le(X, Z)
+axiom inst_le(X, Y) & inst_le(Y, X) -> X = Y
+axiom inst_le(X, Y) | inst_le(Y, X)
+
+# proposers can propose the stop value to stop the algorithm
+immutable constant stop: value
+
+immutable relation member(node, quorum)
+axiom forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2)
+
+immutable function maxr(votemap,inst): round
+immutable function maxv(votemap,inst): value
+
+
+mutable relation one_a(round)
+mutable relation one_b_msg(node, round, votemap)
+mutable relation left_round(node, round)
+mutable relation joined_round(node, round)
+mutable relation proposal(inst, round, value) # 2a
+mutable relation active(round) # round R has received a quorum of 1b and can now propose new values
+mutable relation vote(node, inst, round, value) # 2b
+mutable relation decision(node, inst, round, value) # got 2b from a quorum
+
+# the ghost functions
+mutable function decision_quorum(inst, round, value): quorum
+derived relation choosable(inst, round, value, quorum):
+    (choosable(I, R, V, Q) <-> ((forall N. (member(N, Q) -> (!left_round(N, R) | vote(N, I, R, V))))))
+
+
+init !one_a(R)
+init !one_b_msg(N,R1,M)
+init !left_round(N,R)
+init !joined_round(N,R)
+init !proposal(I,R,V)
+init !active(R)
+init !vote(N,I,R,V)
+init !decision(N,I,R,V)
+
+
+transition send_1a(r:round)
+  modifies one_a
+    # a proposer selects a round and sends a message asking nodes to join the round
+    & r != none
+    & (forall R. new(one_a(R)) <-> one_a(R) | R = r)
+
+transition join_round(n:node, r:round, m:votemap)
+  modifies one_b_msg, left_round, joined_round
+    # receive 1a and answer with 1b
+    & r != none
+    & one_a(r)
+    & !left_round(n,r)
+
+    # find the maximal vote in a round less than r, for all instances
+    & (forall I:inst.
+        ( maxr(m,I) = none & forall R,V. !(vote(n,I,R,V) & !le(r,R)) ) |
+        ( vote(n,I,maxr(m,I),maxv(m,I)) & !le(r,maxr(m,I)) &
+          forall R,V. vote(n,I,R,V) & !le(r,R) -> le(R,maxr(m,I)) ))
+
+    # send the 1b message
+    & (forall N, R, M. new(one_b_msg(N,R,M)) <-> one_b_msg(N,R,M) | N = n & R = r & M = m)
+    # update code:
+    & (forall N, R. new(left_round(N, R)) <-> left_round(N, R) | N = n & !le(r, R))
+    & (forall N, R. new(joined_round(N, R)) <-> joined_round(N, R) | N = n & R = r)
+
+
+
+transition receive_join_acks(r:round, q:quorum, m:votemap, im:inst)
+  modifies active, proposal
+    # receive a quorum of 1b's, activate round and propose for instances that have choosable values at lower rounds
+    & r != none
+    & !active(r) # this happens only once
+    & (forall N:node. member(N, q) -> joined_round(N,r))
+
+    # find the maximal vote in the quorum for each instance, according to votes themselves
+    & (forall I:inst. (
+        ( maxr(m,I) = none &
+          forall N,R,V. !(member(N, q) & !le(r,R) & vote(N,I,R,V)) ) |
+        ( (exists N,R,V.  member(N, q) & !le(r,R) & vote(N,I,R,V) & R = maxr(m,I) & V = maxv(m,I)) &
+          (forall N,R,V.  member(N, q) & !le(r,R) & vote(N,I,R,V) -> le(R,maxr(m,I))) )
+    ))
+    # activate round
+    & (forall R. new(active(R)) <-> active(R) | R = r)
+    # propose according to the overapproximating rule
+    # check if there are stops
+    & if (forall I . !(maxr(m,I) != none & maxv(m,I) = stop)) then
+        # if there are no stops, propose according to m
+        forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | R = r & maxr(m, I) != none & V = maxv(m, I)
+    else
+        # if there are stops, find the stop with the maximal round
+        & (
+            maxr(m,im) != none & maxv(m,im) = stop &
+            forall I . maxr(m,I) != none & maxv(m,I) = stop -> le(maxr(m,I),maxr(m,im))
+        )
+        # check if the stop at im is voided
+        & if (exists I . !inst_le(I,im) & maxr(m,I) != none & !le(maxr(m,I), maxr(m,im))) then
+            # the stop at im is voided. void all stops, and also all
+            # proposals at instances greater than im and lower
+            # rounds. this is needed to be an overapproximation of
+            # Lamport's version.
+            forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | (R = r & maxr(m,I) != none & V = maxv(m,I) &
+                !(maxv(m,I) = stop | (!inst_le(I,im) & !le(maxr(m,im),maxr(m,I))))
+            )
+        else
+            # the stop at im is not voided. void all other stops and
+            # all proposals at instances larger than im
+            forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | (R = r & maxr(m,I) != none & V = maxv(m,I) &
+                !((I != im & maxv(m,I) = stop) | !inst_le(I,im))
+            )
+
+
+transition propose(r:round, i:inst, v:value)
+  modifies proposal
+    # propose a new arbitrary value an available instance in an active round
+    & r != none
+    & active(r)
+    & !proposal(i, r, V)
+    & !(!inst_le(i,I) & proposal(I, r, stop))
+    & !((!inst_le(I,i) & proposal(I,r,V) & v = stop))
+    & (forall I, R, V. new(proposal(I, R, V)) <-> proposal(I, R, V) | I = i & R = r & V = v)
+
+transition cast_vote(n:node, v:value, r:round, i:inst)
+  modifies vote
+    # receive a 2a and send 2b
+    & r != none
+    & !left_round(n,r)
+    & proposal(i, r, v)
+    & (forall N, I, R, V. new(vote(N, I, R, V)) <-> vote(N, I, R, V) | N = n & I = i & R = r & V = v)
+
+
+transition decide(n:node, r:round, v:value, q:quorum, i:inst)
+  modifies decision, decision_quorum
+    # get 2b from a quorum
+    & r != none
+    & (member(N, q) -> vote(N, i, r, v))
+    & (forall N, I, R, V. new(decision(N, I, R, V)) <-> decision(N, I, R, V) | N = n & I = i & R = r & V = v)
+    & (forall I, R, V. !(I = i & R = r & V = v) -> new(decision_quorum(I, R, V)) = decision_quorum(I, R, V))
+    & new(decision_quorum(i, r, v)) = q
+
+
+# safety property 1
+safety forall N1,N2,I,R1,R2,V1,V2. decision(N1,I,R1,V1) & decision(N2,I,R2,V2) -> V1 = V2
+
+# safety property 2
+safety forall N1,N2,I1,I2,R1,R2. decision(N1,I1,R1,stop) & !inst_le(I2,I1) -> !decision(N2,I2,R2,V)
+
+# only propose in active rounds
+invariant proposal(I,R,V) -> active(R)
+
+# proposals are unique per round
+invariant proposal(I,R,V1) & proposal(I,R,V2) -> V1 = V2
+
+# only vote for proposed values
+invariant vote(N,I,R,V) -> proposal(I,R,V)
+
+# decisions come from quorums of votes
+invariant forall I:inst, R:round, V:value, N:node, M:node, Q:quorum. Q = decision_quorum(I,R,V) & decision(N,I,R,V) & member(M,Q) -> vote(M,I,R,V)
+
+# properties of one_b_msg
+invariant one_b_msg(N,R2,M) & maxr(M,I) = none & !le(R2,R1) -> !vote(N,I,R1,V2)
+invariant one_b_msg(N,R, M) & maxr(M,I) != none -> !le(R,maxr(M,I)) & vote(N,I,maxr(M,I),maxv(M,I))
+invariant one_b_msg(N,R, M) & maxr(M,I) != none & !le(R,ROTHER) & !le(ROTHER,maxr(M,I)) -> !vote(N,I,ROTHER,VOTHER)
+
+# properties of none
+invariant !proposal(I,none,V)
+invariant !vote(N,I,none,V)
+invariant !decision(N,I,none,V)
+invariant !one_b_msg(N,none,M)
+invariant !active(none)
+
+# property of choosable and active: if R2>R1 is active and V is not proposed at I, then it's not choosable at R1
+invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum. (
+    !le(R2,R1) & active(R2) & !proposal(I,R2,V) -> !choosable(I,R1,V,Q)
+)
+
+# property of stop values for the same round
+invariant proposal(I1,R,stop) & !inst_le(I2,I1) -> !proposal(I2,R,V)
+
+# properties of joined_round, left_round
+invariant joined_round(N,R2) & !le(R2,R1) -> left_round(N,R1)
+invariant one_b_msg(N,R,M) -> joined_round(N,R)
