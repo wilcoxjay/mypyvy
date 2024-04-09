@@ -417,7 +417,7 @@ invariant [CI_zero_until_commit] commit_index != index_zero -> committed(commit_
 invariant [any_committed_commit_index_committed]
     committed(I, V) -> committed(commit_index, commit_value)
 
-invariant [commit_quorum] committed(commit_index, commit_value) ->
+invariant [commit_quorum_inv] committed(commit_index, commit_value) ->
     forall N. member(N, commit_quorum) ->
         append_reply_msg(N, commit_term, commit_index, commit_term)
 
