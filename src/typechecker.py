@@ -434,11 +434,16 @@ def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
             assert False
 
 
-def add_named_macro(prog: syntax.Program, name: Optional[str], expr: syntax.Expr) -> None:
+def add_named_macro(
+        prog: syntax.Program,
+        name: Optional[str],
+        expr: syntax.Expr,
+        num_states: int = 1,
+) -> None:
     if name is not None:
         prog.decls.append(DefinitionDecl(
             is_public_transition=False,
-            num_states=1,
+            num_states=num_states,
             name=name,
             params=(),
             mods=(),
@@ -465,7 +470,7 @@ def typecheck_program_vocab(prog: syntax.Program) -> None:
         add_named_macro(prog, a.name, a.expr)
 
     for t in prog.theorems():
-        add_named_macro(prog, t.name, t.expr)
+        add_named_macro(prog, t.name, t.expr, num_states=t.num_states)
 
     add_named_macro(prog, 'safety', syntax.And(*(s.expr for s in prog.safeties())))
 
