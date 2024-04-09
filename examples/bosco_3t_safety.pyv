@@ -183,15 +183,15 @@ safety [validity2] forall V1, V2. (forall N:node. !member_f(N) -> input(N,V1)) &
 ################################################################################
 
 # properties of projections
-invariant [lemma] sent_msg(N1,N2,V) -> sent_msg_proj(N1,N2)
-invariant [lemma] rcv_msg(N1,N2,V) -> rcv_msg_proj(N1,N2)
-invariant [lemma] !member_f(N1) & !member_f(N2) & sent_msg(N1,N2,V) & rcv_msg_proj(N1,N2) -> rcv_msg(N1,N2,V)
+invariant [lemma1] sent_msg(N1,N2,V) -> sent_msg_proj(N1,N2)
+invariant [lemma2] rcv_msg(N1,N2,V) -> rcv_msg_proj(N1,N2)
+invariant [lemma3] !member_f(N1) & !member_f(N2) & sent_msg(N1,N2,V) & rcv_msg_proj(N1,N2) -> rcv_msg(N1,N2,V)
 
 # simple universal properties
-invariant [lemma] !member_f(N1) -> (sent_msg(N1,N2,V) <-> input(N1,V))
-invariant [lemma] !member_f(N) & und_cons(N,V1) & und_cons(N,V2) -> V1 = V2
-invariant [lemma] !member_f(N) & und_cons(N,V) -> done(N)
-invariant [lemma] !member_f(N2) & rcv_msg(N1,N2,V) -> sent_msg(N1,N2,V)
+invariant [lemma4] !member_f(N1) -> (sent_msg(N1,N2,V) <-> input(N1,V))
+invariant [lemma5] !member_f(N) & und_cons(N,V1) & und_cons(N,V2) -> V1 = V2
+invariant [lemma6] !member_f(N) & und_cons(N,V) -> done(N)
+invariant [lemma7] !member_f(N2) & rcv_msg(N1,N2,V) -> sent_msg(N1,N2,V)
 
 # "choosable"
 # invariant [free_lemma] (exists N. !member_f(N) & dec(N,V)) -> (exists B. forall M. member_b(M,B) & !member_f(M) -> sent_msg(M,M,V))
@@ -199,7 +199,7 @@ invariant forall V. (forall N. member_f(N) | !dec(N,V)) | (exists B. forall M. !
 invariant forall V. (exists N. !member_f(N) & done(N) & !und_cons(N,V)) -> !(exists B. forall M. member_b(M,B) & !member_f(M) -> sent_msg(M,M,V))
 
 # property of und_cons_dec
-invariant [lemma] (forall V. und_cons_dec(V) -> exists N. !member_f(N) & und_cons(N,V)) |
+invariant [lemma8] (forall V. und_cons_dec(V) -> exists N. !member_f(N) & und_cons(N,V)) |
           (exists N1,N2,V1,V2. !member_f(N1) & !member_f(N2) & und_cons(N1,V1) & und_cons(N2,V2) & V1 != V2)
 
 ################################################################################
