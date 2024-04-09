@@ -29,4 +29,4 @@ jobs:
           echo PYTHONPATH=`pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin/python >> $GITHUB_ENV
       - run: z3 --version  # make sure z3 is installed
       - run: python3 -c 'import z3'  # make sure z3 can be imported from python
-      - run: make test
+      - run: make gh-test
