@@ -51,7 +51,8 @@ def check_unsat(
         s: Solver,
         num_states: int,
         minimize: Optional[bool] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        print_no: bool = True,
 ) -> Optional[Trace]:
     start = datetime.now()
     # if logger.isEnabledFor(logging.DEBUG):
@@ -60,7 +61,8 @@ def check_unsat(
 
     if (m := check_solver(s, num_states, minimize=minimize)) is not None:
         if verbose:
-            utils.logger.always_print('no!')
+            if print_no:
+                utils.logger.always_print('no!')
             if utils.args.print_counterexample:
                 utils.logger.always_print('\ncounterexample:')
                 utils.logger.always_print(utils.indent(str(m)))

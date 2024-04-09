@@ -319,7 +319,8 @@ def trace(s: Solver) -> None:
         return
 
     for trace in traces:
-        res = bmc_trace(prog, trace, s, lambda s, n: logic.check_unsat([], s, n), log=True)
+        res = bmc_trace(prog, trace, s, lambda s, n: logic.check_unsat([], s, n, print_no=False),
+                        log=True)
         if (res is not None) != trace.sat:
             def bool_to_sat(b: bool) -> str:
                 return 'sat' if b else 'unsat'
