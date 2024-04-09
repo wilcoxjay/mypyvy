@@ -11,7 +11,6 @@ jobs:
         python-version: ["3.8"]
     env:
       Z3_VERSION: "4.11.2"
-      CVC4_BINARY_URL: "https://github.com/CVC4/CVC4/releases/download/1.8/cvc4-1.8-x86_64-linux-opt"
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -30,11 +29,4 @@ jobs:
           echo PYTHONPATH=`pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin/python >> $GITHUB_ENV
       - run: z3 --version  # make sure z3 is installed
       - run: python3 -c 'import z3'  # make sure z3 can be imported from python
-      - name: Install CVC4
-        run: |
-          mkdir cvc4
-          wget -nv -O cvc4/cvc4 ${CVC4_BINARY_URL}
-          chmod +x cvc4/cvc4
-          echo `pwd`/cvc4 >> $GITHUB_PATH
-      - run: cvc4 --version  # make sure cvc4 is installed
       - run: make test
