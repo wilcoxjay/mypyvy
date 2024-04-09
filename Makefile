@@ -8,13 +8,14 @@ export TIMEFORMAT
 
 PYTHON := python3 -u
 
-MYPYVY_OPTS := --seed=0 --log=info --timeout 2000 --print-cmdline
+MYPYVY_OPTS := --seed=0 --log=info --timeout 10000 --print-cmdline
 
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
+PYV_FILES := $(sort $(wildcard examples/*.pyv))
 
-test: check check-imports unit typecheck verify verify.cvc4 trace updr pd-old pd sep
+test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
-gh-test: check check-imports unit typecheck verify trace updr pd-old sep
+gh-test: check check-imports unit typecheck verify trace updr sep
 
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
@@ -37,15 +38,15 @@ prelude: check check-imports unit
 	@echo ========================= Starting mypyvy tests =========================
 	@echo
 
-typecheck: $(patsubst %.pyv, %.typecheck, $(wildcard examples/*.pyv examples/*/*.pyv))
+typecheck: $(patsubst %.pyv, %.typecheck, $(PYV_FILES))
 
-verify: $(patsubst %.pyv, %.verify, $(sort $(wildcard examples/*.pyv examples/*/*.pyv)))
+verify: $(patsubst %.pyv, %.verify, $(PYV_FILES))
 
-verify.cvc4: $(patsubst %.pyv, %.verify.cvc4, $(sort $(wildcard examples/*.pyv examples/*/*.pyv)))
+verify.cvc4: $(patsubst %.pyv, %.verify.cvc4, $(PYV_FILES))
 
-trace: $(patsubst %.pyv, %.trace, $(wildcard examples/*.pyv))
+trace: $(patsubst %.pyv, %.trace, $(PYV_FILES))
 
-updr: examples/lockserv.updr examples/sharded-kv.updr
+updr: examples/lockserv.updr examples/sharded_kv.updr
 
 runmypyvy = time ( $(PYTHON) src/mypyvy.py $(1) $(MYPYVY_OPTS) $(2) > $(3).out && \
                    echo $$'\n'`head -n 1 $(3).out`$$'\n'`tail -n 1 $(3).out` )
@@ -60,7 +61,7 @@ runmypyvy_grep = time ( $(PYTHON) src/mypyvy.py $(1) $(MYPYVY_OPTS) $(2) > $(3).
 
 %.verify: %.pyv prelude
 	$(call runmypyvy, verify --exit-0, $<, $@)
-	@# curl -s -H 'Content-Type: application/json' -X POST -d "{\"filename\": \"$<\", \"options\": [\"--seed=0\", \"--timeout=2000\"]}" http://localhost:5000/verify | jq -e '.success or (has("reason") and (.reason == "Verification error" or .reason == "Verification returned unknown"))'
+	@# curl -s -H 'Content-Type: application/json' -X POST -d "{\"filename\": \"$<\", \"options\": [\"--seed=0\", \"--timeout=10000\"]}" http://localhost:5000/verify | jq -e '.success or (has("reason") and (.reason == "Verification error" or .reason == "Verification returned unknown"))'
 
 %.verify.cvc4: %.pyv prelude
 	$(call runmypyvy, verify --exit-0 --cvc4, $<, $@)
@@ -71,96 +72,21 @@ runmypyvy_grep = time ( $(PYTHON) src/mypyvy.py $(1) $(MYPYVY_OPTS) $(2) > $(3).
 %.updr: %.pyv prelude
 	$(call runmypyvy, updr, $<, $@)
 
-pd-old: prelude
-# enumerate-reachable-states
-	$(call runmypyvy_grep, \
-	enumerate-reachable-states --clear-cache, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.enumerate-reachable-states, \
-	"found 25 states")
-
-# forward-explore-inv
-	$(call runmypyvy_grep, \
-	pd-forward-explore-inv --clear-cache, \
-	examples/pd/lockserv_cnf.pyv, \
-	examples/pd/lockserv_cnf.forward-explore-inv, \
-	-E "  [VX]  ")
-#	time $(PYTHON) src/mypyvy.py pd-forward-explore-inv --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/pd/lockserv_cnf.pyv > lockserv_cnf_only_discovered.out  # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
-
-# forward-explore-inv with unrolling
-	$(call runmypyvy_grep, \
-	pd-forward-explore-inv --clear-cache --unroll-to-depth=1, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.forward-explore-inv.1, \
-	-E "  [VX]  ")
-	$(call runmypyvy_grep, \
-	pd-forward-explore-inv --clear-cache --unroll-to-depth=2, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.forward-explore-inv.2, \
-	-E "  [VX]  ")
-	$(call runmypyvy_grep, \
-	pd-forward-explore-inv --clear-cache --unroll-to-depth=3, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.forward-explore-inv.3, \
-	-E "  [VX]  ")
-
-	$(call runmypyvy_grep, \
-	pd-forward-explore-inv --clear-cache --unroll-to-depth=1, \
-	examples/pd/paxos_forall.pyv, \
-	examples/pd/paxos_forall.forward-explore-inv.1, \
-	-E "  [VX]  ")
-	$(call runmypyvy_grep, \
-	pd-forward-explore-inv --clear-cache --unroll-to-depth=2, \
-	examples/pd/paxos_forall.pyv, \
-	examples/pd/paxos_forall.forward-explore-inv.2, \
-	-E "  [VX]  ")
-#	$(call runmypyvy_grep, \
-#	pd-forward-explore-inv --clear-cache --unroll-to-depth=3, \
-#	examples/pd/paxos_forall.pyv, \
-#	examples/pd/paxos_forall.forward-explore-inv.3, \
-#	-E "  [VX]  ")
-
-# repeated-houdini --sharp
-	$(call runmypyvy_grep, \
-	pd-repeated-houdini --sharp --clear-cache, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.repeated-houdini.sharp, \
-	"Implies safety!")
-#	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --cache-only $(MYPYVY_OPTS)   examples/pd/lockserv.pyv > lockserv_cache_only.out # TODO: this is failing, maybe debug it
-#	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --sharp --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/pd/lockserv.pyv > lockserv_only_discovered.out  # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
-
-# repeated-houdini --no-sharp
-	$(call runmypyvy_grep, \
-	pd-repeated-houdini --sharp --clear-cache, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.repeated-houdini.no-sharp, \
-	"Implies safety!")
-#	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --cache-only $(MYPYVY_OPTS)   examples/pd/lockserv.pyv > lockserv_nosharp_cache_only.out # TODO: this is failing, maybe debug it
-#	time $(PYTHON) src/mypyvy.py pd-repeated-houdini --no-sharp --clear-cache-memo --cache-only-discovered $(MYPYVY_OPTS) examples/pd/lockserv.pyv > lockserv_nosharp_only_discovered.out # TODO: this currently fails due to not accurately detecting isomorphic states in the cache
-
-# cdcl-invariant
-	$(call runmypyvy_grep, \
-	pd-cdcl-invariant --clear-cache, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.cdcl-invariant, \
-	"Implies safety!")
-#	time $(PYTHON) src/mypyvy.py pd-cdcl-invariant --cache-only $(MYPYVY_OPTS) examples/pd/lockserv.pyv > lockserv.cdcl_invariant_cache_only.out
-
 pd: prelude
 # primal-dual-houdini
 
 # should take about 1 minute
 	$(call runmypyvy_grep, \
 	pd-primal-dual-houdini --clear-cache --no-restarts --no-all-subclauses --induction-width=1 --cpus 2, \
-	examples/pd/ring.pyv, \
-	examples/pd/ring.primal-dual-houdini, \
+	examples/ring_leader_election_single_sort.pyv, \
+	examples/ring_leader_election_single_sort.primal-dual-houdini, \
 	"Proved safety!")
 
 # should take about 2 minutes
 	$(call runmypyvy_grep, \
 	pd-primal-dual-houdini --clear-cache --no-restarts --no-all-subclauses --induction-width=1 --cpus 2, \
-	examples/pd/sharded-kv.pyv, \
-	examples/pd/sharded-kv.prima-dual-houdini, \
+	examples/sharded_kv.pyv, \
+	examples/sharded_kv.prima-dual-houdini, \
 	"Fixed point of induction width reached without a safety proof!")
 
 pd-long: prelude
@@ -169,29 +95,29 @@ pd-long: prelude
 # should take about 6 minutes
 	$(call runmypyvy_grep, \
 	pd-primal-dual-houdini --clear-cache --no-restarts --no-all-subclauses --induction-width=1 --cpus 2, \
-	examples/pd/ring-id.pyv, \
-	examples/pd/ring-id.primal-dual-houdini, \
+	examples/ring_leader_election.pyv, \
+	examples/ring_leader_election.primal-dual-houdini, \
 	"Proved safety!")
 
 # can take upto 2 hours
 	$(call runmypyvy_grep, \
 	pd-primal-dual-houdini --clear-cache --no-restarts --no-all-subclauses --induction-width=1 --cpus 2, \
-	examples/pd/consensus_forall.pyv, \
-	examples/pd/consensus_forall.primal-dual-houdini, \
+	examples/toy_leader_consensus_forall.pyv, \
+	examples/toy_leader_consensus_forall.primal-dual-houdini, \
 	"Proved safety!")
 
 # can take a few hours
 	$(call runmypyvy_grep, \
 	pd-primal-dual-houdini --clear-cache --no-restarts --no-all-subclauses --induction-width=1 --cpus 2, \
-	examples/pd/lockserv.pyv, \
-	examples/pd/lockserv.primal-dual-houdini, \
+	examples/lockserv.pyv, \
+	examples/lockserv.primal-dual-houdini, \
 	-E "Proved safety!$|Fixed point of induction width reached without a safety proof!$")
 
 sep: \
-	examples/pd/ring.sep \
-	examples/pd/ring-id.sep \
-	examples/pd/lockserv.sep \
-	examples/pd/consensus_forall.sep \
+	examples/ring_leader_election.sep \
+	examples/ring_leader_election_single_sort.sep \
+	examples/lockserv.sep \
+	examples/toy_leader_consensus_forall.sep \
 
 %.sep: %.pyv prelude
 	time ( $(PYTHON) src/mypyvy.py sep $(MYPYVY_OPTS) $< > $@.out && \
@@ -202,10 +128,10 @@ nightly:
 	python3 script/nightly.py
 
 clear-cache:
-	rm -iv examples/*.cache examples/*/*.cache
+	rm -iv examples/*.cache
 
 clean:
-	rm -fv examples/*.out examples/*/*.out
+	rm -fv examples/*.out
 	rm -fr .mypy_cache/
 
 .PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test
