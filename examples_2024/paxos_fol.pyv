@@ -1,3 +1,13 @@
+# Model of single decree Paxos in first-order logic, based on the Ivy
+# model from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+#
+# This file is without the rewrites used to bring the model into EPR,
+# so the invariant is outside of EPR.
+
 sort round
 sort value
 sort quorum
@@ -6,7 +16,7 @@ sort node
 immutable relation le(round, round)
 immutable constant round_zero: round
 
-# instantiate total_order(round, le)
+# le is a total order
 axiom le(X,X)
 axiom le(X, Y) & le(Y, Z) -> le(X, Z)
 axiom le(X, Y) & le(Y, X) -> X = Y
