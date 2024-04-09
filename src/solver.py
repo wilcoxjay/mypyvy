@@ -254,7 +254,7 @@ class Solver:
                         self.cvc4_model = model
                         print(f'[{datetime.now()}] Solver.check: cvc4 result: {cvc4_result}')
                         res = cvc4_result
-                    except AssertionError:  # perhaps because cvc4 is not installed
+                    except (AssertionError, ValueError):  # perhaps because cvc4 is not installed
                         pass
 
             return result_from_z3(res)
