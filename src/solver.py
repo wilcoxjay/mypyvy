@@ -249,10 +249,13 @@ class Solver:
 
                 if assumptions is None or len(assumptions) == 0:
                     print(f'[{datetime.now()}] Solver.check: trying cvc4')
-                    cvc4_result, model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
-                    self.cvc4_model = model
-                    print(f'[{datetime.now()}] Solver.check: cvc4 result: {cvc4_result}')
-                    res = cvc4_result
+                    try:
+                        cvc4_result, model = check_with_cvc4(self.get_cvc4_proc(), self.z3solver.to_smt2())
+                        self.cvc4_model = model
+                        print(f'[{datetime.now()}] Solver.check: cvc4 result: {cvc4_result}')
+                        res = cvc4_result
+                    except AssertionError:  # perhaps because cvc4 is not installed
+                        pass
 
             return result_from_z3(res)
 
