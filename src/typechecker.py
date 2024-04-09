@@ -467,6 +467,8 @@ def typecheck_program_vocab(prog: syntax.Program) -> None:
     for t in prog.theorems():
         add_named_macro(prog, t.name, t.expr)
 
+    add_named_macro(prog, 'safety', syntax.And(*(s.expr for s in prog.safeties())))
+
     for d in prog.definitions():
         scope.add_definition(d)
 

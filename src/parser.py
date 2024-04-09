@@ -646,6 +646,11 @@ def p_expr_id(p: Any) -> None:
     primes = p[2]
     p[0] = syntax.Id(id_tok.value, primes, span=span_from_tok(id_tok))
 
+def p_expr_safety(p: Any) -> None:
+    'expr : SAFETY primes'
+    primes = p[2]
+    p[0] = syntax.Id('safety', primes, span=None)
+
 def p_expr_paren(p: Any) -> None:
     'expr : LPAREN expr RPAREN'
     p[0] = p[2]
