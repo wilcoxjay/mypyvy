@@ -15,7 +15,7 @@ PYV_FILES := $(sort $(wildcard examples/*.pyv))
 
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
-gh-test: check check-imports unit typecheck verify trace updr sep pd
+gh-test: check check-imports unit typecheck verify trace updr sep
 
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
