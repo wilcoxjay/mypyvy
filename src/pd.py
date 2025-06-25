@@ -24,12 +24,13 @@ from datetime import datetime, timedelta
 from hashlib import sha1
 from dataclasses import dataclass
 import gzip
+import time
 
 from syntax import *
 from logic import *
 from translator import Z3Translator
 
-from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet
+from typing import TypeVar, Iterable, FrozenSet, Union, Callable, Generator, Set, Optional, cast, Type, Collection, TYPE_CHECKING, AbstractSet, Sequence
 
 A = TypeVar('A')
 # form: https://docs.python.org/3/library/itertools.html#itertools-recipes
