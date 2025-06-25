@@ -2895,7 +2895,7 @@ class SubclausesMapTurbo:
             assert self.optimize
             self.solver.push()
             for c in soft:
-                self.solver.add_soft(c)
+                self.solver.add_soft(c)  # type: ignore
         res = self.solver.check(*sep)
         assert res in (z3.unsat, z3.sat)
         if res == z3.unsat:
@@ -3142,7 +3142,7 @@ class MultiSubclausesMapICE:
             self.solver.add(c)
         if self.optimize:
             for c in soft:
-                self.solver.add_soft(c)
+                self.solver.add_soft(c)  # type: ignore
         print(f'[{datetime.now()}] Checking MultiSubclausesMapICE.solver... ')
         t_start = datetime.now()
         res = self.solver.check()
@@ -3151,7 +3151,7 @@ class MultiSubclausesMapICE:
         assert res in (z3.unsat, z3.sat)
         if (t_end - t_start).total_seconds() > 3600:
             # TODO: Optimize does not have to_smt2, is sexpr the same?
-            smt2 = self.solver.sexpr()
+            smt2 = self.solver.sexpr()  # type: ignore
             fn = f'{sha1(smt2.encode()).hexdigest()}.sexpr'
             print(f'[{datetime.now()}] MultiSubclausesMapICE.separate: that took very long, saving saving query to {fn} ({len(smt2)} bytes)')
             open(fn, 'w').write(smt2)

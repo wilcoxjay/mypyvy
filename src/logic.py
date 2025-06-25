@@ -2,15 +2,12 @@ from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from datetime import datetime
-import time
 import itertools
 import math
 import random
-import io
-import subprocess
 import sys
-from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
-from typing import cast, Callable
+from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Iterator
+from typing import Callable
 
 import z3
 

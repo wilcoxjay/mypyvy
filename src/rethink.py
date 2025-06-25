@@ -21,9 +21,13 @@ def get_cti(s: Solver, candidate: Expr) -> Optional[Tuple[Diagram, Diagram]]:
 def bmc_upto_bound(s: Solver, post: Expr, bound: int, preconds: Optional[Iterable[Expr]] = None,
                    minimize: Optional[bool] = None, relaxed_semantics: bool = False) -> Optional[logic.Trace]:
     if not relaxed_semantics:
-        bmcer = lambda bound: logic.check_bmc(s, post, bound, preconds, minimize)
+        def normal_bmcer(bound: int) -> Optional[logic.Trace]:
+            return logic.check_bmc(s, post, bound, preconds, minimize)
+        bmcer = normal_bmcer
     else:
-        bmcer = lambda bound: relaxed_traces.check_relaxed_bmc(post, bound, preconds, minimize)
+        def relaxed_bmcer(bound: int) -> Optional[logic.Trace]:
+            return relaxed_traces.check_relaxed_bmc(post, bound, preconds, minimize)
+        bmcer = relaxed_bmcer
 
     for k in range(0, bound + 1):
         if (m := bmcer(k)) is not None:

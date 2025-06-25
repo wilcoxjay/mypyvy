@@ -1651,7 +1651,12 @@ def expand_macros(scope: Scope, e: Expr) -> Expr:
         else:
             return e
     elif isinstance(e, IfThenElse):
-        return IfThenElse(expand_macros(scope, e.branch), expand_macros(scope, e.then), expand_macros(scope, e.els), span=e.span)
+        return IfThenElse(
+            expand_macros(scope, e.branch),
+            expand_macros(scope, e.then),
+            expand_macros(scope, e.els),
+            span=e.span
+        )
     elif isinstance(e, Let):
         assert len(e.binder.vs) == 1
         new_val = expand_macros(scope, e.val)

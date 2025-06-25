@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from itertools import chain, product, combinations
 from collections import defaultdict
 import re
-from typing import List, Optional, Tuple, Union, Dict, cast, TypeVar, Any, FrozenSet
+from typing import List, Optional, Tuple, Union, Dict, cast, TypeVar, FrozenSet
 from abc import ABC, abstractmethod
 
 import utils
@@ -27,7 +27,11 @@ def histogram(d: Dict[K, V]) -> Dict[V, int]:
 
 
 Element = str
-Universe = Dict[SortDecl, Tuple[Element, ...]]  # ODED: I think this should be Sort or str, rather than SortDecl. The universe does not interpret sorts like Int or Bool (I think).
+
+# ODED: I think this should be Sort or str, rather than SortDecl.
+# The universe does not interpret sorts like Int or Bool (I think).
+Universe = Dict[SortDecl, Tuple[Element, ...]]
+
 RelationInterp = Dict[Tuple[Element, ...], bool]
 FunctionInterp = Dict[Tuple[Element, ...], Element]
 RelationInterps = Dict[RelationDecl, RelationInterp]
@@ -126,7 +130,8 @@ class Trace:
 
     def _as_trace(self, indices: Tuple[int, ...]) -> Trace:
         assert all(0 <= i < self.num_states for i in indices)
-        assert indices in [(1, 0), (1,), tuple(reversed(range(len(indices))))], 'should only be used in legacy pd.py code'
+        assert indices in [(1, 0), (1,), tuple(reversed(range(len(indices))))], \
+            'should only be used in legacy pd.py code'
         t = Trace(len(indices))
         t.univs = self.univs.copy()
         t.immut_rel_interps = self.immut_rel_interps.copy()
@@ -400,10 +405,10 @@ class State(FirstOrderStructure):
         return matching_sorts[0]
 
     Fingerprint = Tuple[
-            FrozenSet[Tuple[str, int]],
-            FrozenSet[Tuple[str, Tuple[int, int]]],
-            FrozenSet[Tuple[str, Tuple[int, ...]]],
-            FrozenSet[Tuple[Tuple[str, str], bool]],
+        FrozenSet[Tuple[str, int]],
+        FrozenSet[Tuple[str, Tuple[int, int]]],
+        FrozenSet[Tuple[str, Tuple[int, ...]]],
+        FrozenSet[Tuple[Tuple[str, str], bool]],
     ]
 
     @property

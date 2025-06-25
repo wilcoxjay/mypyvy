@@ -8,14 +8,13 @@ import logging
 import sys
 from typing import Any, cast, Dict, List, Optional, Tuple, TypeVar, Callable, Union, Sequence, Set
 import z3
-import resource
 
 import logic
 from logic import Solver, Trace
 import parser
 import typechecker
 import syntax
-from syntax import Expr, Program, InvariantDecl, Not
+from syntax import Expr, Program, InvariantDecl
 from semantics import RelationInterps, ConstantInterps, FunctionInterps
 import updr
 import utils
@@ -191,7 +190,7 @@ def verify(s: Solver) -> bool:
 def verify_cli(s: Solver) -> None:
     try:
         result = verify(s)
-    except logic.SolverReturnedUnknown as e:
+    except logic.SolverReturnedUnknown:
         utils.logger.always_print('unknown.')
         return
 
@@ -258,7 +257,7 @@ def load_relaxed_trace_from_updr_cex(prog: Program, s: Solver) -> logic.Trace:
 
     components: List[syntax.TraceComponent] = []
 
-    xml_decls = reversed(collection.childNodes)
+    xml_decls = reversed(collection.childNodes)  # type: ignore
     seen_first = False
 
     for elm in xml_decls:

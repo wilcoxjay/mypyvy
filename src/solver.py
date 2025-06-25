@@ -6,29 +6,20 @@ solver_z3.py.
 
 '''
 from __future__ import annotations
-from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from datetime import datetime
 import time
 import itertools
-import math
-import random
-import io
 import subprocess
-import sys
-from enum import Enum
-from typing import List, Optional, Set, Tuple, Union, Iterable, Dict, Sequence, Iterator
+from typing import List, Optional, Tuple, Union, Iterable, Sequence, Iterator
 from typing import cast, Callable
 
 import z3
 
 import utils
-import typechecker
 import syntax
-from syntax import Expr, Scope, ConstantDecl, RelationDecl, SortDecl
-from syntax import FunctionDecl, DefinitionDecl, Not, New
-from semantics import Trace, State, FirstOrderStructure
-from translator import Z3Translator, TRANSITION_INDICATOR
+from syntax import Expr, Scope, New
+from translator import Z3Translator
 from solver_cvc4 import CVC4Model, new_cvc4_process, check_with_cvc4
 
 CheckSatResult = z3.CheckSatResult

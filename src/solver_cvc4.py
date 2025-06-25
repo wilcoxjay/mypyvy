@@ -13,7 +13,7 @@ TODO: respect timeout
 
 '''
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import dataclasses
 import sexp
 import subprocess
@@ -214,7 +214,9 @@ class CVC4Model:
                 ans.append(cast(z3.SortRef, CVC4Sort(name)))
         return ans
 
-    def eval_in_scope(self, scope: Dict[str, CVC4UniverseElement], e: sexp.Sexp) -> Union[bool, CVC4UniverseElement, CVC4Int]:
+    def eval_in_scope(
+            self, scope: Dict[str, CVC4UniverseElement], e: sexp.Sexp
+    ) -> Union[bool, CVC4UniverseElement, CVC4Int]:
         # print(scope)
         # print(e)
 
