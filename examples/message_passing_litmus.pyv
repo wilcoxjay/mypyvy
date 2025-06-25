@@ -1,0 +1,91 @@
+#   T1   |    T2
+# x := 1 |  a := y
+# y := 1 |  b := x
+#
+# after termination, a -> b
+
+
+sort pc @printed_by(ordered_by_printer, pc_le)
+
+immutable constant pc0 : pc
+immutable constant pc1 : pc
+immutable constant pc2 : pc
+
+axiom distinct(pc0, pc1, pc2)
+axiom forall PC. PC = pc0 | PC = pc1 | PC = pc2
+
+immutable relation pc_le(pc, pc) @no_print
+axiom pc_le(T,T)
+axiom pc_le(T1,T2) & pc_le(T2,T3) -> pc_le(T1,T3)
+axiom pc_le(T1,T2) & pc_le(T2,T1) -> T1 = T2
+axiom pc_le(T1,T2) | pc_le(T2,T1)
+axiom pc_le(pc0, pc1)
+axiom pc_le(pc1, pc2)
+
+sort proc @printed_by(ordered_by_printer, proc_le)
+
+immutable constant t1 : proc
+immutable constant t2 : proc
+
+axiom t1 != t2
+axiom forall P:proc. P = t1 | P = t2
+
+immutable relation proc_le(proc, proc) @no_print
+axiom proc_le(T,T)
+axiom proc_le(T1,T2) & proc_le(T2,T3) -> proc_le(T1,T3)
+axiom proc_le(T1,T2) & proc_le(T2,T1) -> T1 = T2
+axiom proc_le(T1,T2) | proc_le(T2,T1)
+axiom proc_le(t1, t2)
+
+
+mutable function current_pc(proc): pc
+mutable relation x
+mutable relation y
+mutable relation a
+mutable relation b
+
+init current_pc(T) = pc0
+init !x
+init !y
+init !a
+init !b
+
+transition t1_x()
+  modifies current_pc, x
+  & current_pc(t1) = pc0
+  & new(current_pc(t1)) = pc1
+  & new(current_pc(t2)) = current_pc(t2)
+  & new(x)
+
+transition t1_y()
+  modifies current_pc, y
+  & current_pc(t1) = pc1
+  & new(current_pc(t1)) = pc2
+  & new(current_pc(t2)) = current_pc(t2)
+  & new(y)
+
+transition t2_a()
+  modifies current_pc, a
+  & current_pc(t2) = pc0
+  & new(current_pc(t2)) = pc1
+  & new(current_pc(t1)) = current_pc(t1)
+  & new(a) = y
+
+transition t2_b()
+  modifies current_pc, b
+  & current_pc(t2) = pc1
+  & new(current_pc(t2)) = pc2
+  & new(current_pc(t1)) = current_pc(t1)
+  & new(b) = x
+
+
+safety
+  & current_pc(t1) = pc2
+  & current_pc(t2) = pc2
+  & a
+  ->
+  b
+
+invariant a -> y
+invariant current_pc(t1) = pc0 | current_pc(t1) = pc1 <-> !y
+invariant current_pc(t1) = pc0 <-> !x
