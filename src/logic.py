@@ -387,7 +387,13 @@ class Diagram:
                 e = e if ans else syntax.Not(e)
                 rels[R].append(e)
         for C, c in struct.const_interps.items():
-            e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
+            # There are two cases, c is either another Id or a constant
+            # Constants are produced as dicts of the form {(): bool(ans)}
+            # in translator.py:Z3Translator:_old_model_to_trace
+            if isinstance(c, dict) and () in c:
+                e = syntax.Eq(syntax.Id(C.name), syntax.Bool(c[()]))
+            else:
+                e = syntax.Eq(syntax.Id(C.name), syntax.Id(c))
             consts[C] = e
         for F, fl in struct.func_interps.items():
             funcs[F] = []
@@ -434,8 +440,14 @@ class Diagram:
         ans = {}
         for c, e in self.consts.items():
             assert isinstance(e, syntax.BinaryExpr) and e.op == 'EQUAL' and \
-                isinstance(e.arg1, syntax.Id) and isinstance(e.arg2, syntax.Id)
-            ans[e.arg2] = e.arg1
+                isinstance(e.arg1, syntax.Id)
+            if isinstance(e.arg2, syntax.Id):
+                ans[e.arg2] = e.arg1
+            else:
+                # Sometimes we get a boolean on the RHS of the equality,
+                # and there is no need to substitute it.
+                # TODO: should we then do ans[e.arg1] = e.arg2?
+                pass
         return ans
 
     def conjuncts(self) -> Iterable[Tuple[_RelevantDecl, int, Expr]]:
