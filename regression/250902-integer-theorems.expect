@@ -1,0 +1,6 @@
+error 250902-integer-theorems.pyv:3:22: Interpreted sort bool not supported as argument to relation
+error 250902-integer-theorems.pyv:3:28: Interpreted sort int not supported as argument to relation
+error 250902-integer-theorems.pyv:4:22: Interpreted sort bool not supported as argument to function
+error 250902-integer-theorems.pyv:4:28: Interpreted sort int not supported as argument to function
+program has resolution errors.
+mypyvy exiting with status 1

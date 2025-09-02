@@ -1,0 +1,19 @@
+# MYPYVY: theorem --seed=0 --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+immutable relation r(bool, int)
+immutable function g(bool, int): bool
+
+axiom r(false, 1)
+axiom g(true, 0)
+
+zerostate theorem (0 != 0)
+
+# previous versions mypyvy would crash when trying to construct a counterexample
+# for this (false) theorem, because the counterexample represents
+# functions/relations as finite maps from tuples of argument values to return
+# values, and the code assumed all arguments were uninterpreted sorts. recent
+# versions of mypyvy forbid declaring functions/relations with arguments of
+# interpreted sort (bool and int). (bool could technically be supported with a
+# bit more work, but the int limitation is more fundamental to the
+# representation as finite maps.)
+

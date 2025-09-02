@@ -282,6 +282,9 @@ def typecheck_sort(scope: syntax.Scope, s: Sort) -> None:
 def typecheck_statedecl(scope: syntax.Scope, d: syntax.StateDecl) -> None:
     if isinstance(d, RelationDecl):
         for sort in d.arity:
+            if isinstance(sort, (syntax._BoolSort, syntax._IntSort)):
+                msg = f'Interpreted sort {sort} not supported as argument to relation'
+                utils.print_error(sort.span, msg)
             typecheck_sort(scope, sort)
 
         scope.add_relation(d)
@@ -296,6 +299,9 @@ def typecheck_statedecl(scope: syntax.Scope, d: syntax.StateDecl) -> None:
     else:
         assert isinstance(d, FunctionDecl)
         for sort in d.arity:
+            if isinstance(sort, (syntax._BoolSort, syntax._IntSort)):
+                msg = f'Interpreted sort {sort} not supported as argument to function'
+                utils.print_error(sort.span, msg)
             typecheck_sort(scope, sort)
 
         typecheck_sort(scope, d.sort)
