@@ -1156,30 +1156,27 @@ class DefinitionDecl(Decl):
 
 class InvariantDecl(Decl):
     def __init__(
-            self, name: Optional[str], expr: Expr, is_safety: bool, is_sketch: bool, *, span: Optional[Span] = None
+            self, name: Optional[str], expr: Expr, is_safety: bool, *, span: Optional[Span] = None
     ) -> None:
         super().__init__(span)
         self.span = span
         self.name = name
         self.expr = expr
         self.is_safety = is_safety
-        self.is_sketch = is_sketch
 
     def _denote(self) -> Tuple:
         return (self.name, self.expr)
 
     def __repr__(self) -> str:
-        return 'InvariantDecl(name=%s, expr=%s, is_safety=%s, is_sketch=%s)' % (
+        return 'InvariantDecl(name=%s, expr=%s, is_safety=%s)' % (
             repr(self.name) if self.name is not None else 'None',
             repr(self.expr),
             repr(self.is_safety),
-            repr(self.is_sketch)
         )
 
     def __str__(self) -> str:
         kwd = 'safety' if self.is_safety else 'invariant'
-        pre = '' if not self.is_sketch else 'sketch '
-        return '%s %s%s' % (pre + kwd,
+        return '%s %s%s' % (kwd,
                             ('[%s] ' % self.name) if self.name is not None else '',
                             self.expr)
 

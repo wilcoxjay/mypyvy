@@ -100,7 +100,6 @@ class MypyvyArgs:
     diagrams_subclause_complete: bool
     use_z3_unsat_cores: bool
     smoke_test_solver: bool
-    sketch: bool
     check_transition: Sequence[str]
     check_invariant: Sequence[str]
     safety: str

@@ -58,7 +58,7 @@ def relaxed_program(prog: syntax.Program) -> syntax.Program:
         elif isinstance(d, syntax.InvariantDecl):
             expr = syntax.relativize_quantifiers(actives, d.expr)
             new_decls.append(syntax.InvariantDecl(d.name, expr=expr,
-                                                  is_safety=d.is_safety, is_sketch=d.is_sketch))
+                                                  is_safety=d.is_safety))
         elif isinstance(d, (syntax.TheoremDecl, syntax.TraceDecl)):
             pass  # ignore these declarations and remove them from the relaxed version
         else:

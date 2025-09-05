@@ -17,7 +17,6 @@ reserved = {
     'init': 'INIT',
     'transition': 'TRANSITION',
     'invariant': 'INVARIANT',
-    'sketch': 'SKETCH',
     'axiom': 'AXIOM',
     'new': 'NEW',
     'forall': 'FORALL',
@@ -402,26 +401,21 @@ def p_decl_init(p: Any) -> None:
 
 def p_safety_or_invariant_keyword_safety(p: Any) -> None:
     'safety_or_invariant_keyword : SAFETY'
-    p[0] = (p.slice[1], True, False)
+    p[0] = (p.slice[1], True)
 
 def p_safety_or_invariant_keyword_invariant(p: Any) -> None:
     'safety_or_invariant_keyword : INVARIANT'
-    p[0] = (p.slice[1], False, False)
-
-def p_safety_or_invariant_keyword_sketch_invariant(p: Any) -> None:
-    'safety_or_invariant_keyword : SKETCH INVARIANT'
-    p[0] = (p.slice[1], False, True)
+    p[0] = (p.slice[1], False)
 
 def p_invariant_decl(p: Any) -> None:
     'invariant_decl : safety_or_invariant_keyword opt_name expr'
     tok: Token
     is_safety: bool
-    is_sketch: bool
-    tok, is_safety, is_sketch = p[1]
+    tok, is_safety = p[1]
     opt_name: Optional[str] = p[2]
     expr: syntax.Expr = p[3]
     span = loc_join(tok, expr.span)
-    p[0] = syntax.InvariantDecl(opt_name, expr, is_safety, is_sketch, span=span)
+    p[0] = syntax.InvariantDecl(opt_name, expr, is_safety, span=span)
 
 def p_decl_invariant(p: Any) -> None:
     'decl : invariant_decl'
