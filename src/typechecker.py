@@ -440,6 +440,70 @@ def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
             assert False
 
 
+def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
+    RESERVED_FBII = ('__INV_P', '__M_P')
+    for step in fbii.steps:
+        binder = syntax.Binder(step.params)
+
+        # Check params and infer sorts (like transition parameters)
+        pre_typecheck_binder(scope, binder)
+
+        # Declare params as bound variables (with their inferred sorts) for typechecking body
+        param_sorts = [v.sort for v in binder.vs]
+
+        with scope.in_scope(binder, param_sorts):
+            with scope.n_states(1):
+                for inv in step.body:
+                    # __M_P and __INV_P are forbidden in step bodies
+                    for reserved_name in RESERVED_FBII:
+                        if reserved_name in syntax.free_ids(inv.expr):
+                            utils.print_error(inv.span,
+                                              f'{reserved_name} is only valid in a prophecy block, not in a step body')
+                    inv.expr = syntax.close_free_vars(inv.expr,
+                                                      in_scope=[v.name for v in binder.vs],
+                                                      span=inv.span)
+                    typecheck_expr(scope, inv.expr, BoolSort)
+
+        post_typecheck_binder(binder)
+
+        # Typecheck prophecy block if present
+        if step.prophecy is not None:
+            # Temporarily add __INV_P (immutable) and __M_P (mutable) relations with param arity
+            param_actual_sorts = tuple(
+                syntax.safe_cast_sort(v.sort) for v in binder.vs
+            )
+            inv_p_decl = syntax.RelationDecl('__INV_P', param_actual_sorts, mutable=False)
+            m_p_decl = syntax.RelationDecl('__M_P', param_actual_sorts, mutable=True)
+            assert '__INV_P' not in scope.relations
+            assert '__M_P' not in scope.relations
+            scope.relations['__INV_P'] = inv_p_decl
+            scope.relations['__M_P'] = m_p_decl
+
+            with scope.n_states(1):
+                for item in step.prophecy:
+                    if isinstance(item, syntax.FbiiHeuristicDecl):
+                        if item.name == 'proph_select':
+                            # theta doesn't use __INV_P/__M_P; typecheck as a plain expr
+                            assert item.arg is not None
+                            item.arg = syntax.close_free_vars(item.arg, span=item.span)
+                            typecheck_expr(scope, item.arg, BoolSort)
+                        # 'proph_default' has no expression to typecheck
+                    else:
+                        inv = item
+                        inv.expr = syntax.close_free_vars(inv.expr, span=inv.span)
+                        typecheck_expr(scope, inv.expr, BoolSort)
+
+            del scope.relations['__INV_P']
+            del scope.relations['__M_P']
+
+        # After checking this step, promote params to immutable constants in scope
+        # so that subsequent steps can reference them
+        for sv in binder.vs:
+            actual_sort = syntax.safe_cast_sort(sv.sort)
+            const_decl = syntax.ConstantDecl(sv.name, actual_sort, mutable=False)
+            scope.add_constant(const_decl)
+
+
 def add_named_macro(
         prog: syntax.Program,
         name: Optional[str],
@@ -491,5 +555,8 @@ def typecheck_program(prog: syntax.Program) -> None:
 
     for tr in prog.traces():
         typecheck_tracedecl(prog.scope, tr)
+
+    for fbii in prog.fbii_decls():
+        typecheck_fbii_decl(prog.scope, fbii)
 
     assert len(prog.scope.stack) == 0

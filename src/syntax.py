@@ -1330,6 +1330,81 @@ class TraceDecl(Decl):
             if isinstance(c, TraceTransitionDecl):
                 yield c
 
+
+class FbiiHeuristicDecl:
+    '''A heuristic shorthand in a prophecy block (e.g. "proph_select EXPR" or "proph_default").'''
+    def __init__(self, name: str, arg: Optional['Expr'] = None, *, span: Optional[Span] = None) -> None:
+        assert name in ('proph_select', 'proph_default')
+        self.name = name
+        self.arg = arg   # present for 'proph_select', None for 'proph_default'
+        self.span = span
+
+    def __repr__(self) -> str:
+        if self.arg is not None:
+            return 'FbiiHeuristicDecl(%r, %r)' % (self.name, self.arg)
+        return 'FbiiHeuristicDecl(%r)' % self.name
+
+    def __str__(self) -> str:
+        if self.arg is not None:
+            return '%s %s' % (self.name, self.arg)
+        return self.name
+
+
+class FbiiStepDecl:
+    def __init__(
+            self,
+            direction: str,
+            name: Optional[str],
+            params: Tuple[SortedVar, ...],
+            body: List[InvariantDecl],
+            has_prophecy: bool,
+            prophecy: Optional[List[Union[InvariantDecl, FbiiHeuristicDecl]]],
+            *,
+            span: Optional[Span] = None
+    ) -> None:
+        assert direction in ('forward', 'backward')
+        self.span = span
+        self.direction = direction
+        self.name = name
+        self.params = params
+        self.body = body
+        self.has_prophecy = has_prophecy
+        self.prophecy = prophecy
+
+    def __repr__(self) -> str:
+        return 'FbiiStepDecl(direction=%s, name=%s, has_prophecy=%s, params=%s, body=%s, prophecy=%s)' % (
+            repr(self.direction), repr(self.name), self.has_prophecy, self.params, self.body, self.prophecy)
+
+    def __str__(self) -> str:
+        name_str = (' [%s]' % self.name) if self.name is not None else ''
+        body_str = '\n    '.join(str(inv) for inv in self.body)
+        if not self.has_prophecy:
+            return '%s%s {\n    %s\n}' % (self.direction, name_str, body_str)
+        params_str = (' %s' % ', '.join(str(p) for p in self.params)) if self.params else ''
+        s = '%s%s prophecy%s {\n    %s\n}' % (self.direction, name_str, params_str, body_str)
+        if self.prophecy is not None:
+            proph_str = '\n    '.join(str(item) for item in self.prophecy)
+            s += ' by {\n    %s\n}' % proph_str
+        return s
+
+
+class FbiiDecl(Decl):
+    def __init__(self, steps: List[FbiiStepDecl], *, span: Optional[Span] = None) -> None:
+        super().__init__(span)
+        self.span = span
+        self.steps = steps
+
+    def _denote(self) -> Tuple:
+        return tuple(str(s) for s in self.steps)
+
+    def __repr__(self) -> str:
+        return 'FbiiDecl(steps=%s)' % (self.steps,)
+
+    def __str__(self) -> str:
+        steps_str = '\n  '.join(str(step) for step in self.steps)
+        return 'fbii {\n  %s\n}' % steps_str
+
+
 @dataclass
 class Annotation:
     span: Optional[Span]
@@ -1596,6 +1671,11 @@ class Program:
     def traces(self) -> Iterator[TraceDecl]:
         for d in self.decls:
             if isinstance(d, TraceDecl):
+                yield d
+
+    def fbii_decls(self) -> Iterator[FbiiDecl]:
+        for d in self.decls:
+            if isinstance(d, FbiiDecl):
                 yield d
 
     def __repr__(self) -> str:
