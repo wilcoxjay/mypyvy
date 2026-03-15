@@ -1,0 +1,47 @@
+# A time-reversed version of dealer_proph.pyv, included to demonstrate backward prophecy.
+#
+# The setup is the same (teams, activity, tokens), but the direction is reversed: initially
+# every dealer is missing at least one token, the transition undeal(x, y) allows the active
+# dealer of team x to regain its token for y, and the safety property asserts that no inactive
+# team holds all tokens. The proof structure mirrors dealer_proph.pyv, but uses a backward
+# prophecy instead of a forward one: w names the inactive witness from the safety-violating
+# end rather than from the initial state. Accordingly, the auxiliary existence invariant uses
+# !__M_P(W) instead of __M_P(W) to reflect the backward direction.
+
+sort T
+
+immutable relation a(T)
+mutable relation d(T, T)
+
+init forall X. exists Y. !d(X,Y)
+
+transition undeal(x: T, y: T)
+    modifies d
+    a(x) &
+    (forall X, Y. new(d(X, Y)) <-> d(X, Y) | (X = x & Y = y))
+
+safety forall X. !a(X) -> exists X, Y. !d(X, Y)
+
+invariant forall X. !a(X) -> exists Y. !d(X, Y)
+
+fbii {
+  backward prophecy w: T {
+    invariant !a(w)
+  }
+  # The soundness of the prophecy above is verified using the default soundness invariant,
+  # which can be stated explicitly either via:
+  #
+  #   (1) An explicit "by" block with the default soundness invariant:
+  #         by {
+  #           invariant exists W. !__M_P(W) & __INV_P(W)
+  #         }
+  #
+  #   (2) A "by" block using the proph_default heuristic:
+  #         by {
+  #           proph_default
+  #         }
+
+  forward {
+    invariant exists Y. !d(w, Y)
+  }
+}

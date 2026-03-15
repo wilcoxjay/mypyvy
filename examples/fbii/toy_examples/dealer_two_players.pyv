@@ -1,0 +1,63 @@
+# A toy example to demonstrate forward-backward incremental induction without prophecy.
+#
+# Elements of the uninterpreted sort represent teams, each with a dealer and two players.
+# The immutable relation a(X) specifies whether team X is active. The mutable relations d(X),
+# p1(X), and p2(X) track whether the dealer of team X holds the token, and whether the first
+# or second player of team X holds the token, respectively.
+#
+# Initially no second player holds a token. The dealer and first-player holdings are
+# unconstrained. Three transitions are possible: active_pass(x, y) allows the active dealer
+# of team x to pass its token to the first player of team y; player_pass(x) allows the first
+# player of team x to pass the token on to the second player; and inactive_deal(x) allows
+# the inactive dealer of team x to (re)acquire a token.
+#
+# The safety property asserts that if any dealer holds a token, then no team simultaneously
+# has both a first and a second player holding tokens. It is supported by the invariant that
+# either some active dealer does not hold a token, or no team has players at both stages.
+#
+# The FBII proof uses two phases without prophecy. The backward invariant establishes that
+# every active dealer holds a token in any state that can reach a safety violation (since in
+# a violating state, all dealers hold a token, and backward transitions cannot remove an active
+# dealer's token). The forward invariant establishes that no team ever has both players holding
+# tokens simultaneously, which is provable from the initial condition given that all active dealers
+# always hold tokens. Together, these two invariants suffice to prove the safety property.
+
+sort T
+
+immutable relation a(T)
+mutable relation d(T)
+mutable relation p1(T)
+mutable relation p2(T)
+
+init !p2(X)
+
+transition active_pass(x: T, y: T)
+    modifies d, p1
+    a(x) & d(x) &
+    (forall X. new(d(X)) <-> d(X) & X != x) &
+    (forall Y. new(p1(Y)) <-> p1(Y) | Y = y)
+
+transition player_pass(x: T)
+    modifies p1, p2
+    p1(x) &
+    (forall X. new(p1(X)) <-> p1(X) & X != x) &
+    (forall X. new(p2(X)) <-> p2(X) | X = x)
+
+transition inactive_deal(x: T)
+    modifies d
+    !a(x) &
+    (forall X. new(d(X)) <-> d(X) | X = x)
+
+safety exists X. d(X) -> forall Y. !p1(Y) | !p2(Y)
+
+invariant (exists X. a(X) & !d(X)) | (forall X. !p1(X) | !p2(X))
+
+fbii {
+  backward {
+    invariant forall X. !a(X) | d(X)
+  }
+
+  forward {
+    invariant forall X. !p1(X) | !p2(X)
+  }
+}

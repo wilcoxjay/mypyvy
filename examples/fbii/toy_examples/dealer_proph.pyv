@@ -1,0 +1,64 @@
+# A toy example to demonstrate forward-backward incremental induction with prophecy.
+#
+# Elements of the uninterpreted sort represent teams, each consisting of a dealer and players.
+# The relation a(X) specifies whether team X is active (which remains unchanged); and the relation
+# d(X, Y) specifies whether the dealer of team X still holds a token that it can pass to team Y.
+#
+# Initially, at least one team is inactive and every dealer holds a token for every team.
+# The transition deal(x, y) allows the active dealer of team x to pass its token for team y,
+# removing d(x, y); only active teams can perform deals (a is immutable, so inactive teams
+# remain inactive forever and can never lose any of their tokens).
+#
+# The safety property asserts that some dealer still holds a token for every team. It is
+# supported by the invariant that identifies an always-inactive team as the witness: since
+# such a team can never execute deal, and it starts with all tokens held, it retains all
+# tokens throughout every execution.
+#
+# The FBII proof introduces a forward prophecy to name the inactive witness w explicitly via
+# the prophecy invariant !a(w). The soundness of adding this prophecy is justified using the
+# auxiliary invariant "exists W. __M_P(W) & __INV_P(W)". In the backward phase, the invariant
+# "exists Y. !d(w, Y)" captures that in any backward trace from a safety-violating state,
+# the prophesied witness w must have lost at least one token. This backward invariant is
+# inconsistent with any initial state, completing the proof that no execution can reach a
+# safety violation.
+
+sort T
+
+immutable relation a(T)
+mutable relation d(T, T)
+
+init exists X. !a(X)
+init forall X, Y. d(X, Y)
+
+transition deal(x: T, y: T)
+    modifies d
+    a(x) &
+    (forall X, Y. new(d(X, Y)) <-> d(X, Y) & (X != x | Y != y))
+
+safety exists X. forall Y. d(X,Y)
+
+invariant exists X. !a(X) & forall Y. d(X, Y)
+
+# Forward-backward incremental induction proof with prophecy.
+# Step and invariant names in [...] brackets are optional.
+fbii {
+  forward [first_step] prophecy w: T {
+    invariant [inactive_invariant] !a(w)
+  }
+  # The soundness of the prophecy above is verified using the default soundness invariant,
+  # which can be stated explicitly either via:
+  #
+  #   (1) An explicit "by" block with the default soundness invariant:
+  #         by {
+  #           invariant [soundness_invariant] exists W. __M_P(W) & __INV_P(W)
+  #         }
+  #
+  #   (2) A "by" block using the proph_default heuristic:
+  #         by {
+  #           proph_default
+  #         }
+
+  backward [second_step] {
+    invariant exists Y. !d(w, Y)
+  }
+}
