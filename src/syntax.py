@@ -1335,9 +1335,12 @@ class FbiiHeuristicDecl(Denotable):
     '''A heuristic shorthand in a prophecy block (e.g. "proph_select EXPR" or "proph_default").'''
     def __init__(self, name: str, arg: Optional['Expr'] = None, *, span: Optional[Span] = None) -> None:
         super().__init__()
+        # Enforced by the parser: name is one of the known heuristics,
+        # and arg is present iff the heuristic takes an expression argument.
         assert name in ('proph_select', 'proph_default')
+        assert (arg is not None) == (name == 'proph_select')
         self.name = name
-        self.arg = arg   # present for 'proph_select', None for 'proph_default'
+        self.arg = arg
         self.span = span
 
     def _denote(self) -> Tuple:

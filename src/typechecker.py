@@ -449,10 +449,10 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
         step = steps[0]
         binder = syntax.Binder(step.params)
 
-        # Check params and infer sorts (like transition parameters)
+        old_error_count = utils.error_count
+
         pre_typecheck_binder(scope, binder)
 
-        # Declare params as bound variables (with their inferred sorts) for typechecking body
         param_sorts = [v.sort for v in binder.vs]
 
         with scope.in_scope(binder, param_sorts):
@@ -470,6 +470,9 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
 
         post_typecheck_binder(binder)
 
+        if utils.error_count > old_error_count:
+            return
+
         # Typecheck prophecy block if present
         if step.prophecy is not None:
             # Temporarily add __INV_P (immutable) and __M_P (mutable) relations with param arity
@@ -483,15 +486,13 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
                 for item in step.prophecy:
                     if isinstance(item, syntax.FbiiHeuristicDecl):
                         if item.name == 'proph_select':
-                            # theta doesn't use __INV_P/__M_P; typecheck as a plain expr
-                            assert item.arg is not None
+                            # item.arg is not None by the FbiiHeuristicDecl class invariant
                             item.arg = syntax.close_free_vars(item.arg, span=item.span)
                             typecheck_expr(scope, item.arg, BoolSort)
-                        # 'proph_default' has no expression to typecheck
+                        # proph_default has no expression to typecheck
                     else:
-                        inv = item
-                        inv.expr = syntax.close_free_vars(inv.expr, span=inv.span)
-                        typecheck_expr(scope, inv.expr, BoolSort)
+                        item.expr = syntax.close_free_vars(item.expr, span=item.span)
+                        typecheck_expr(scope, item.expr, BoolSort)
 
         # Promote this step's params to immutable constants in scope for subsequent steps,
         # then recurse. temp_constants ensures they are removed when we unwind, so that

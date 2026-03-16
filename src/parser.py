@@ -849,7 +849,7 @@ def p_fbii_steps_step(p: Any) -> None:
 def p_fbii_direction_forward(p: Any) -> None:
     'fbii_direction : ID'
     if p[1] not in ('forward', 'backward'):
-        p_error(p.slice[1])
+        utils.print_error(p.slice[1], f"syntax error: expected 'forward' or 'backward', got '{p[1]}'")
         return
     p[0] = p.slice[1]
 
@@ -923,14 +923,14 @@ def p_fbii_prophecy_item_inv(p: Any) -> None:
 def p_fbii_prophecy_item_select(p: Any) -> None:
     'fbii_prophecy_item : ID expr'
     if p[1] != 'proph_select':
-        p_error(p.slice[1])
+        utils.print_error(p.slice[1], f"syntax error: expected an invariant declaration or a prophecy heuristic ('proph_select' or 'proph_default'), got '{p[1]}'")
         return
     p[0] = syntax.FbiiHeuristicDecl('proph_select', p[2], span=p.slice[1])
 
 def p_fbii_prophecy_item_preserve(p: Any) -> None:
     'fbii_prophecy_item : ID'
     if p[1] != 'proph_default':
-        p_error(p.slice[1])
+        utils.print_error(p.slice[1], f"syntax error: expected an invariant declaration or a prophecy heuristic ('proph_select' or 'proph_default'), got '{p[1]}'")
         return
     p[0] = syntax.FbiiHeuristicDecl('proph_default', span=p.slice[1])
 
