@@ -1555,6 +1555,16 @@ class Scope(Generic[B]):
             del self.relations[decl.name]
 
     @contextmanager
+    def temp_constants(self, *decls: ConstantDecl) -> Iterator[None]:
+        for decl in decls:
+            assert decl.name not in self.constants, \
+                f'temp_constants: {decl.name} already in scope'
+            self.constants[decl.name] = decl
+        yield None
+        for decl in decls:
+            del self.constants[decl.name]
+
+    @contextmanager
     def fresh_stack(self) -> Iterator[None]:
         stack = self.stack
         self.stack = []

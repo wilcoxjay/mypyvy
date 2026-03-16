@@ -4,7 +4,7 @@ from syntax import SortDecl, RelationDecl, ConstantDecl, FunctionDecl, Definitio
 
 import utils
 
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 def check_constraint(span: Optional[Span], expected: InferenceSort, actual: InferenceSort) -> InferenceSort:
     def normalize(s: Union[Sort, SortInferencePlaceholder]) -> Union[Sort, SortInferencePlaceholder]:
@@ -442,7 +442,11 @@ def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
 
 def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
     RESERVED_FBII = ('__INV_P', '__M_P')
-    for step in fbii.steps:
+
+    def typecheck_steps(steps: List[syntax.FbiiStepDecl]) -> None:
+        if not steps:
+            return
+        step = steps[0]
         binder = syntax.Binder(step.params)
 
         # Check params and infer sorts (like transition parameters)
@@ -489,12 +493,17 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
                         inv.expr = syntax.close_free_vars(inv.expr, span=inv.span)
                         typecheck_expr(scope, inv.expr, BoolSort)
 
-        # After checking this step, promote params to immutable constants in scope
-        # so that subsequent steps can reference them
-        for sv in binder.vs:
-            actual_sort = syntax.safe_cast_sort(sv.sort)
-            const_decl = syntax.ConstantDecl(sv.name, actual_sort, mutable=False)
-            scope.add_constant(const_decl)
+        # Promote this step's params to immutable constants in scope for subsequent steps,
+        # then recurse. temp_constants ensures they are removed when we unwind, so that
+        # the verifier re-adds them incrementally (after each step passes).
+        param_decls = tuple(
+            syntax.ConstantDecl(sv.name, syntax.safe_cast_sort(sv.sort), mutable=False)
+            for sv in binder.vs
+        )
+        with scope.temp_constants(*param_decls):
+            typecheck_steps(steps[1:])
+
+    typecheck_steps(fbii.steps)
 
 
 def add_named_macro(

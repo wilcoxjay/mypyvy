@@ -59,7 +59,7 @@ from syntax import (
     Expr, SortedVar, InvariantDecl, FbiiDecl, FbiiStepDecl,
     And, Or, Not, Forall, Exists, Implies, New,
     AppExpr, Id, NaryExpr, TrueExpr,
-    RelationDecl, ModifiesClause,
+    ConstantDecl, RelationDecl, ModifiesClause,
 )
 from logic import Solver, check_unsat
 from semantics import Trace
@@ -795,6 +795,12 @@ def _check_fbii_proof(
             raise
 
         prev_formulas.extend(inv.expr for inv in body_invs)
+
+        # Promote this step's prophecy params to immutable constants in scope
+        # so that subsequent steps can reference them in their formulas.
+        for sv in step.params:
+            actual_sort = syntax.safe_cast_sort(sv.sort)
+            scope.constants[sv.name] = ConstantDecl(sv.name, actual_sort, mutable=False)
 
     inv_all = And(*prev_formulas)
     if not _run_final_checks(s, init_expr, safety_expr, inv_all, fbii.span):
