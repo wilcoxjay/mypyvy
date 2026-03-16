@@ -4,7 +4,7 @@ from syntax import SortDecl, RelationDecl, ConstantDecl, FunctionDecl, Definitio
 
 import utils
 
-from typing import Optional, Union, List
+from typing import Optional, Union, Tuple
 
 def check_constraint(span: Optional[Span], expected: InferenceSort, actual: InferenceSort) -> InferenceSort:
     def normalize(s: Union[Sort, SortInferencePlaceholder]) -> Union[Sort, SortInferencePlaceholder]:
@@ -443,7 +443,7 @@ def typecheck_tracedecl(scope: syntax.Scope, d: syntax.TraceDecl) -> None:
 def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
     RESERVED_FBII = ('__INV_P', '__M_P')
 
-    def typecheck_steps(steps: List[syntax.FbiiStepDecl]) -> None:
+    def typecheck_steps(steps: Tuple[syntax.FbiiStepDecl, ...]) -> None:
         if not steps:
             return
         step = steps[0]
@@ -486,7 +486,8 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
                 for item in step.prophecy:
                     if isinstance(item, syntax.FbiiHeuristicDecl):
                         if item.name == 'proph_select':
-                            # item.arg is not None by the FbiiHeuristicDecl class invariant
+                            # invariant of FbiiHeuristicDecl: name == 'proph_select' implies arg is not None
+                            assert item.arg is not None
                             item.arg = syntax.close_free_vars(item.arg, span=item.span)
                             typecheck_expr(scope, item.arg, BoolSort)
                         # proph_default has no expression to typecheck
