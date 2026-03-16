@@ -1,0 +1,8 @@
+checking init:
+  implies invariant on line 23... ok.
+checking transition decision_step:
+  preserves invariant on line 23... no!
+error 260207-incompatible-sort.pyv:23:1: invariant on line 23 is not preserved by transition decision_step
+error 260207-incompatible-sort.pyv:19:1: transition decision_step does not preserve invariant on line 23
+program has errors.
+mypyvy exiting with status 1

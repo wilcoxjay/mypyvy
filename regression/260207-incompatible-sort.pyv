@@ -1,0 +1,25 @@
+# MYPYVY: verify --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
+# see https://github.com/wilcoxjay/mypyvy/issues/31
+
+sort decision
+immutable constant commit: decision
+
+sort option_decision
+immutable constant none_decision: option_decision
+immutable function od_decision(option_decision): decision
+
+sort host
+immutable function host_preference(host) : decision
+
+mutable relation host_decision(host, option_decision)
+
+init forall H, OD. host_decision(H, OD) <-> OD = none_decision
+
+transition decision_step(next: option_decision)
+  modifies host_decision
+  forall H, OD. new(host_decision(H, OD)) <-> OD = next
+
+safety forall H, OD.
+  (host_decision(H, OD) & OD != none_decision & od_decision(OD) = commit) ->
+  (forall H2. host_preference(H2) = commit)
