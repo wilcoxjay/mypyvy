@@ -162,7 +162,7 @@ def split_conjuncts(expr: Expr) -> List[Expr]:
 def _subst_inv_p_in_expr(
         expr: Expr,
         params: Tuple[SortedVar, ...],
-        body_invs: List[InvariantDecl],
+        body_invs: Tuple[InvariantDecl, ...],
         scope: syntax.Scope,
 ) -> Expr:
     """
