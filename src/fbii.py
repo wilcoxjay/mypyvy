@@ -614,12 +614,7 @@ def _check_consecution_batch(
         for h in base_hyps:
             s.add(t.translate_expr(h))
         for ition in prog.transitions():
-            if extra_mods:
-                saved_mods = ition.mods
-                ition.mods = ition.mods + extra_mods
-            tr_expr = ition.as_twostate_formula(prog.scope)
-            if extra_mods:
-                ition.mods = saved_mods
+            tr_expr = ition.as_twostate_formula(prog.scope, extra_mods=extra_mods)
             if verbose:
                 utils.logger.always_print(f'  checking {title} (transition {ition.name}): {formula}')
             _t_tr = datetime.now()

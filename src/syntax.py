@@ -1147,11 +1147,11 @@ class DefinitionDecl(Decl):
 
         return tuple(frame)
 
-    def _framed_body(self, scope: Scope) -> Expr:
-        return And(self.expr, *DefinitionDecl._frame(scope, self.mods))
+    def _framed_body(self, scope: Scope, *, extra_mods: Tuple[ModifiesClause, ...] = ()) -> Expr:
+        return And(self.expr, *DefinitionDecl._frame(scope, self.mods + extra_mods))
 
-    def as_twostate_formula(self, scope: Scope) -> Expr:
-        return Exists(self.binder.vs, self._framed_body(scope))
+    def as_twostate_formula(self, scope: Scope, *, extra_mods: Tuple[ModifiesClause, ...] = ()) -> Expr:
+        return Exists(self.binder.vs, self._framed_body(scope, extra_mods=extra_mods))
 
 
 class InvariantDecl(Decl):
