@@ -1980,3 +1980,188 @@ def pretty_precedence(e: Expr) -> int:
         return PREC_TOP
     else:
         assert False
+
+
+# ---------------------------------------------------------------------------
+# Complexity metrics
+# ---------------------------------------------------------------------------
+
+def count_quantifiers(expr: Expr) -> int:
+    """Count the total number of bound variables across all quantifiers."""
+    if isinstance(expr, (Bool, Int, Id, AppExpr)):
+        if isinstance(expr, AppExpr):
+            return sum(count_quantifiers(a) for a in expr.args)
+        return 0
+    elif isinstance(expr, UnaryExpr):
+        return count_quantifiers(expr.arg)
+    elif isinstance(expr, BinaryExpr):
+        return count_quantifiers(expr.arg1) + count_quantifiers(expr.arg2)
+    elif isinstance(expr, NaryExpr):
+        return sum(count_quantifiers(a) for a in expr.args)
+    elif isinstance(expr, QuantifierExpr):
+        return len(expr.binder.vs) + count_quantifiers(expr.body)
+    elif isinstance(expr, IfThenElse):
+        return (count_quantifiers(expr.branch) + count_quantifiers(expr.then)
+                + count_quantifiers(expr.els))
+    elif isinstance(expr, Let):
+        return count_quantifiers(expr.val) + count_quantifiers(expr.body)
+    else:
+        assert False, (type(expr), expr)
+
+
+def count_alternations(expr: Expr, cur_quant: Optional[str] = None, alts: int = 0, polarity: int = 1) -> int:
+    """
+    Count nested quantifier alternations, respecting polarity.
+    Negation (and the antecedent of an implication) flips the effective quantifier type:
+      forall X. !(forall Y. ...)  ==  forall X. exists Y. ...  => 1 alternation
+      forall X. !(exists Y. ...)  ==  forall X. forall Y. ...  => 0 alternations
+    Tracks the maximum alternations along any root-to-leaf path.
+    """
+    if isinstance(expr, QuantifierExpr):
+        effective = expr.quant if polarity > 0 else ('EXISTS' if expr.quant == 'FORALL' else 'FORALL')
+        new_alts = alts + (1 if cur_quant is not None and effective != cur_quant else 0)
+        return count_alternations(expr.body, effective, new_alts, polarity)
+    elif isinstance(expr, (Bool, Int, Id)):
+        return alts
+    elif isinstance(expr, AppExpr):
+        if not expr.args:
+            return alts
+        return max(count_alternations(a, cur_quant, alts, polarity) for a in expr.args)
+    elif isinstance(expr, UnaryExpr):
+        new_pol = -polarity if expr.op == 'NOT' else polarity
+        return count_alternations(expr.arg, cur_quant, alts, new_pol)
+    elif isinstance(expr, BinaryExpr):
+        if expr.op == 'IMPLIES':
+            return max(
+                count_alternations(expr.arg1, cur_quant, alts, -polarity),  # antecedent: flipped
+                count_alternations(expr.arg2, cur_quant, alts, polarity),
+            )
+        elif expr.op == 'IFF':
+            # A <-> B appears in both polarities; take max over both
+            return max(
+                count_alternations(expr.arg1, cur_quant, alts, polarity),
+                count_alternations(expr.arg1, cur_quant, alts, -polarity),
+                count_alternations(expr.arg2, cur_quant, alts, polarity),
+                count_alternations(expr.arg2, cur_quant, alts, -polarity),
+            )
+        else:
+            return max(
+                count_alternations(expr.arg1, cur_quant, alts, polarity),
+                count_alternations(expr.arg2, cur_quant, alts, polarity),
+            )
+    elif isinstance(expr, NaryExpr):
+        if not expr.args:
+            return alts
+        return max(count_alternations(a, cur_quant, alts, polarity) for a in expr.args)
+    elif isinstance(expr, IfThenElse):
+        return max(
+            count_alternations(expr.branch, cur_quant, alts, polarity),
+            count_alternations(expr.then, cur_quant, alts, polarity),
+            count_alternations(expr.els, cur_quant, alts, polarity),
+        )
+    elif isinstance(expr, Let):
+        return max(
+            count_alternations(expr.val, cur_quant, alts, polarity),
+            count_alternations(expr.body, cur_quant, alts, polarity),
+        )
+    else:
+        assert False, (type(expr), expr)
+
+
+def count_boolean_connectives(expr: Expr) -> int:
+    """Count binary boolean connectives: AND, OR, IMPLIES, IFF (negation excluded)."""
+    if isinstance(expr, (Bool, Int, Id)):
+        return 0
+    elif isinstance(expr, AppExpr):
+        return sum(count_boolean_connectives(a) for a in expr.args)
+    elif isinstance(expr, UnaryExpr):
+        return count_boolean_connectives(expr.arg)
+    elif isinstance(expr, BinaryExpr):
+        is_bool_op = expr.op in ('IMPLIES', 'IFF')
+        return (1 if is_bool_op else 0) + count_boolean_connectives(expr.arg1) + count_boolean_connectives(expr.arg2)
+    elif isinstance(expr, NaryExpr):
+        is_bool_op = expr.op in ('AND', 'OR')
+        # NaryExpr with n args contributes (n-1) binary connectives
+        count = (len(expr.args) - 1) if is_bool_op else 0
+        return count + sum(count_boolean_connectives(a) for a in expr.args)
+    elif isinstance(expr, QuantifierExpr):
+        return count_boolean_connectives(expr.body)
+    elif isinstance(expr, IfThenElse):
+        return (count_boolean_connectives(expr.branch) + count_boolean_connectives(expr.then)
+                + count_boolean_connectives(expr.els))
+    elif isinstance(expr, Let):
+        return count_boolean_connectives(expr.val) + count_boolean_connectives(expr.body)
+    else:
+        assert False, (type(expr), expr)
+
+
+def is_atom(expr: Expr) -> bool:
+    """An atomic formula: relation application, equality/comparison, Bool, or Id (nullary relation)."""
+    if isinstance(expr, (Bool, Id)):
+        return True
+    if isinstance(expr, AppExpr):
+        return True
+    if isinstance(expr, BinaryExpr) and expr.op in ('EQUAL', 'NOTEQ', 'GE', 'GT', 'LE', 'LT'):
+        return True
+    return False
+
+
+def is_literal(expr: Expr) -> bool:
+    """An atom or its negation."""
+    if isinstance(expr, UnaryExpr) and expr.op == 'NOT':
+        return is_atom(expr.arg)
+    return is_atom(expr)
+
+
+def is_cube(expr: Expr) -> bool:
+    """
+    True if expr has the structure of a cube, with quantifiers allowed anywhere.
+    At each level, strips any leading quantifiers, then checks:
+      - a literal
+      - AND whose conjuncts are each cubes
+      - NOT(clause)
+    """
+    while isinstance(expr, QuantifierExpr):
+        expr = expr.body
+    if is_literal(expr):
+        return True
+    if isinstance(expr, NaryExpr) and expr.op == 'AND':
+        return all(is_cube(a) for a in expr.args)
+    if isinstance(expr, UnaryExpr) and expr.op == 'NOT':
+        return is_clause(expr.arg)
+    return False
+
+
+def is_clause(expr: Expr) -> bool:
+    """
+    True if expr has the structure of a clause, with quantifiers allowed anywhere.
+    At each level, strips any leading quantifiers, then checks:
+      - a literal
+      - OR whose disjuncts are each clauses
+      - NOT(cube)
+      - cube -> clause
+    """
+    while isinstance(expr, QuantifierExpr):
+        expr = expr.body
+    if is_literal(expr):
+        return True
+    if isinstance(expr, NaryExpr) and expr.op == 'OR':
+        return all(is_clause(a) for a in expr.args)
+    if isinstance(expr, BinaryExpr) and expr.op == 'IMPLIES':
+        return is_cube(expr.arg1) and is_clause(expr.arg2)
+    if isinstance(expr, UnaryExpr) and expr.op == 'NOT':
+        return is_cube(expr.arg)
+    return False
+
+
+def is_clausal(expr: Expr) -> bool:
+    """
+    True if expr has the structure of a conjunction of clauses.
+    Strips outer FORALL quantifiers and outer AND conjunctions (recursively),
+    then delegates to is_clause.
+    """
+    if isinstance(expr, QuantifierExpr) and expr.quant == 'FORALL':
+        return is_clausal(expr.body)
+    if isinstance(expr, NaryExpr) and expr.op == 'AND':
+        return all(is_clausal(a) for a in expr.args)
+    return is_clause(expr)
