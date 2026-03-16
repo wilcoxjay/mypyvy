@@ -1331,13 +1331,17 @@ class TraceDecl(Decl):
                 yield c
 
 
-class FbiiHeuristicDecl:
+class FbiiHeuristicDecl(Denotable):
     '''A heuristic shorthand in a prophecy block (e.g. "proph_select EXPR" or "proph_default").'''
     def __init__(self, name: str, arg: Optional['Expr'] = None, *, span: Optional[Span] = None) -> None:
+        super().__init__()
         assert name in ('proph_select', 'proph_default')
         self.name = name
         self.arg = arg   # present for 'proph_select', None for 'proph_default'
         self.span = span
+
+    def _denote(self) -> Tuple:
+        return (self.name, self.arg)
 
     def __repr__(self) -> str:
         if self.arg is not None:
@@ -1350,7 +1354,7 @@ class FbiiHeuristicDecl:
         return self.name
 
 
-class FbiiStepDecl:
+class FbiiStepDecl(Denotable):
     def __init__(
             self,
             direction: str,
@@ -1362,14 +1366,18 @@ class FbiiStepDecl:
             *,
             span: Optional[Span] = None
     ) -> None:
+        super().__init__()
         assert direction in ('forward', 'backward')
         self.span = span
         self.direction = direction
         self.name = name
         self.params = params
-        self.body = body
+        self.body = tuple(body)
         self.has_prophecy = has_prophecy
-        self.prophecy = prophecy
+        self.prophecy = tuple(prophecy) if prophecy is not None else None
+
+    def _denote(self) -> Tuple:
+        return (self.direction, self.name, self.params, self.body, self.has_prophecy, self.prophecy)
 
     def __repr__(self) -> str:
         return 'FbiiStepDecl(direction=%s, name=%s, has_prophecy=%s, params=%s, body=%s, prophecy=%s)' % (
@@ -1392,10 +1400,10 @@ class FbiiDecl(Decl):
     def __init__(self, steps: List[FbiiStepDecl], *, span: Optional[Span] = None) -> None:
         super().__init__(span)
         self.span = span
-        self.steps = steps
+        self.steps = tuple(steps)
 
     def _denote(self) -> Tuple:
-        return tuple(str(s) for s in self.steps)
+        return (self.steps,)
 
     def __repr__(self) -> str:
         return 'FbiiDecl(steps=%s)' % (self.steps,)
