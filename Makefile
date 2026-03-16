@@ -15,7 +15,7 @@ PYV_FILES := $(sort $(wildcard examples/*.pyv))
 
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
-gh-test: check check-imports unit typecheck verify trace updr sep
+gh-test: check check-imports unit typecheck verify trace updr sep fbii
 
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
@@ -113,6 +113,34 @@ pd-long: prelude
 	examples/lockserv.primal-dual-houdini, \
 	-E "Proved safety!$|Fixed point of induction width reached without a safety proof!$")
 
+fbii: \
+	examples/fbii/fast_paxos_epr/fast_paxos_epr_rv_sk.fbii \
+	examples/fbii/fast_paxos_epr/fast_paxos_epr_rv_sk_proph.fbii \
+	examples/fbii/fast_paxos_epr/fast_paxos_epr_v_sk_proph.fbii \
+	examples/fbii/flexible_paxos_epr/flexible_paxos_epr_rv_sk.fbii \
+	examples/fbii/flexible_paxos_epr/flexible_paxos_epr_rv_sk_proph.fbii \
+	examples/fbii/flexible_paxos_epr/flexible_paxos_epr_rvq_sk.fbii \
+	examples/fbii/flexible_paxos_epr/flexible_paxos_epr_v_sk_proph.fbii \
+	examples/fbii/multi_paxos_epr/multi_paxos_epr_nirv_sk.fbii \
+	examples/fbii/multi_paxos_epr/multi_paxos_epr_nirv_sk_proph.fbii \
+	examples/fbii/paxos_epr/paxos_epr_rv_sk.fbii \
+	examples/fbii/paxos_epr/paxos_epr_rv_sk_proph.fbii \
+	examples/fbii/paxos_epr/paxos_epr_rvq_sk.fbii \
+	examples/fbii/paxos_epr/paxos_epr_v_sk_proph.fbii \
+	examples/fbii/paxos_fol/paxos_fol_rv_sk.fbii \
+	examples/fbii/paxos_fol/paxos_fol_rv_sk_proph.fbii \
+	examples/fbii/paxos_fol/paxos_fol_rvq_sk.fbii \
+	examples/fbii/paxos_fol/paxos_fol_v_sk_proph.fbii \
+	examples/fbii/raft_epr/raft_epr_sk_proph.fbii \
+	examples/fbii/toy_examples/dealer_proph.fbii \
+	examples/fbii/toy_examples/dealer_rev_proph.fbii \
+	examples/fbii/toy_examples/dealer_two_players.fbii \
+
+%.fbii: %.pyv prelude
+	time ( $(PYTHON) src/mypyvy.py fbii $(MYPYVY_OPTS) $< > $@.out && \
+		echo && head -n 1 $@.out && \
+		grep "program proven SAFE" $@.out )
+
 sep: \
 	examples/ring_leader_election.sep \
 	examples/ring_leader_election_single_sort.sep \
@@ -134,4 +162,4 @@ clean:
 	rm -fv examples/*.out
 	rm -fr .mypy_cache/
 
-.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test
+.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test fbii

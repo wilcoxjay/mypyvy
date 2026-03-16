@@ -1,0 +1,183 @@
+# Model of single decree Paxos in first-order logic, based on the Ivy
+# model from:
+#
+# Oded Padon, Giuliano Losa, Mooly Sagiv, Sharon Shoham. Paxos Made
+# EPR: Decidable Reasoning about Distributed Protocols. OOPSLA
+# 2017. https://doi.org/10.1145/3140568
+#
+# This file is without the rewrites used to bring the model into EPR,
+# so the invariant is outside of EPR.
+
+sort round
+sort value
+sort quorum
+sort node
+
+immutable relation le(round, round)
+immutable constant round_zero: round
+
+# FBII Skolemization
+immutable constant r1: round
+immutable constant r2: round
+immutable constant v1: value
+immutable constant v2: value
+
+# le is a total order
+axiom le(X,X)
+axiom le(X, Y) & le(Y, Z) -> le(X, Z)
+axiom le(X, Y) & le(Y, X) -> X = Y
+axiom le(X, Y) | le(Y, X)
+axiom le(round_zero, X)
+
+immutable relation member(node, quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+mutable relation one_a(round)
+mutable relation one_b_never_voted(node, round)
+mutable relation one_b_with_max_vote(node, round, round, value)  # first round is "now", second round is max round sender voted in
+mutable function current_round(node): round
+mutable relation proposal(round, value)
+mutable relation vote(node, round, value)
+mutable relation decision(round, value)
+
+init !one_a(R)
+init !one_b_never_voted(N, R)
+init !one_b_with_max_vote(N, R1, R2, V)
+init current_round(N) = round_zero
+init !proposal(R, V)
+init !vote(N, R, V)
+init !decision(R, V)
+
+transition send_1a(r: round)
+  modifies one_a
+  (forall R. new(one_a(R)) <-> one_a(R) | R = r)
+
+transition join_round_never_voted(n: node, r: round)
+  modifies one_b_never_voted, current_round
+  one_a(r) &
+  !le(r, current_round(n)) &
+  (forall R. !le(r, R) -> !vote(n, R, V)) &
+  (forall N, R. new(one_b_never_voted(N, R)) <-> one_b_never_voted(N,R) | N = n & R = r) &
+  (forall N. N != n -> new(current_round(N)) = current_round(N)) &
+  new(current_round(n)) = r
+
+transition join_round_with_max_vote(n: node, r: round, maxr: round, v: value)
+  modifies one_b_with_max_vote, current_round
+  one_a(r) &
+  !le(r, current_round(n)) &
+  !le(r, maxr) &
+  vote(n, maxr, v) &
+  (forall R, V. !le(r, R) & vote(n, R, V) -> le(R, maxr)) &
+  (forall N, R, MAXR, V.
+    new(one_b_with_max_vote(N, R, MAXR, V)) <-> one_b_with_max_vote(N,R,MAXR,V) | N = n & R = r & MAXR = maxr & V = v) &
+  (forall N. N != n -> new(current_round(N)) = current_round(N)) &
+  new(current_round(n)) = r
+
+transition propose_without_votes(r: round, q: quorum, v: value)
+  modifies proposal
+  (forall V. !proposal(r, V)) &
+  (forall N. member(N, q) -> one_b_never_voted(N, r)) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
+
+transition propose_with_votes(r: round, q: quorum, maxr: round, v: value)
+  modifies proposal
+  (forall V. !proposal(r, V)) &
+  (forall N. member(N, q) -> one_b_never_voted(N, r) | exists R,V. one_b_with_max_vote(N, r, R, V)) &
+  (exists N. member(N, q) & one_b_with_max_vote(N, r, maxr, v)) &
+  (forall N,MAXR,V. member(N, q) & one_b_with_max_vote(N, r, MAXR, V) -> le(MAXR, maxr)) &
+  (forall R, V. new(proposal(R, V)) <-> proposal(R, V) | (R = r & V = v))
+
+transition cast_vote(n: node, v: value, r: round)
+  modifies vote
+  le(current_round(n), r) &
+  proposal(r, v) &
+  (forall N, R, V. new(vote(N, R, V)) <-> vote(N, R, V) | N = n & R = r & V = v)
+
+transition decide(r: round, v: value, q: quorum)
+  modifies decision
+  (forall N. member(N, q) -> vote(N, r, v)) &
+  (forall R, V. new(decision(R, V)) <-> decision(R, V) | R = r & V = v)
+
+safety [decisions_unique]
+  decision(r1, v1) & decision(r2, v2) -> v1 = v2
+
+invariant [proposal_partial_function] proposal(R,v1) & proposal(R,v2) -> v1 = v2
+invariant [votes_proposed1] vote(N,R,v1) -> proposal(R,v1)
+invariant [votes_proposed2] vote(N,R,v2) -> proposal(R,v2)
+invariant [decision_quorum1] decision(r1,v1) -> exists Q. forall N. member(N,Q) -> vote(N,r1,v1)
+invariant [decision_quorum2] decision(r2,v2) -> exists Q. forall N. member(N,Q) -> vote(N,r2,v2)
+invariant [proposals_choosable1]
+    (forall Q. exists N. member(N,Q) & !le(current_round(N),r1) & !vote(N,r1,v1)) |
+    (forall R. !le(R, r1) & v1 != v2 -> !proposal(R,v2))
+invariant [proposals_choosable2]
+    (forall Q. exists N. member(N,Q) & !le(current_round(N),r2) & !vote(N,r2,v2)) |
+    (forall R. !le(R, r2) & v1 != v2 -> !proposal(R,v1))
+invariant [oneb_vote1] one_b_with_max_vote(N,R1,R2,v1) -> vote(N,R2,v1)
+invariant [oneb_vote2] one_b_with_max_vote(N,R1,R2,v2) -> vote(N,R2,v2)
+invariant [oneb_never_vote1] !(!le(R2,R1) & vote(N,R1,v1) & one_b_never_voted(N,R2))
+invariant [oneb_never_vote2] !(!le(R2,R1) & vote(N,R1,v2) & one_b_never_voted(N,R2))
+invariant [oneb_vote_max1] one_b_with_max_vote(N,R1,R2,V2) & vote(N,r1,v1) & !le(R1,r1) -> le(r1,R2)
+invariant [oneb_vote_max2] one_b_with_max_vote(N,R1,R2,V2) & vote(N,r2,v2) & !le(R1,r2) -> le(r2,R2)
+invariant [oneb_never_vote_current_round]
+  one_b_never_voted(N,R1) -> le(R1, current_round(N))
+invariant [oneb_vote_current_round]
+  one_b_with_max_vote(N,R1,R2,V) -> le(R1, current_round(N))
+
+
+fbii {
+  forward prophecy q1:quorum {
+    invariant forall N:node. decision(r1, v1) & member(N, q1) -> vote(N, r1, v1)
+  } by {
+    proph_select decision(r1, v1)
+  }
+
+  forward prophecy q2:quorum {
+    invariant forall N:node. decision(r2, v2) & member(N, q2) -> vote(N, r2, v2)
+  } by {
+    proph_select decision(r2, v2)
+  }
+
+  backward {
+    invariant forall N. member(N,q1) & !le(current_round(N),r1) -> vote(N,r1,v1)
+    invariant forall N. member(N,q2) & !le(current_round(N),r2) -> vote(N,r2,v2)
+  }
+
+  forward {
+    invariant forall R:round. proposal(R,v1) & proposal(R,v2) -> v1 = v2
+    invariant forall R:round, N:node. vote(N,R,v1) -> proposal(R,v1)
+    invariant forall R:round, N:node. vote(N,R,v2) -> proposal(R,v2)
+    invariant forall R1:round, R2:round, N:node. one_b_with_max_vote(N,R1,R2,v1) -> vote(N,R2,v1)
+    invariant forall R1:round, R2:round, N:node. one_b_with_max_vote(N,R1,R2,v2) -> vote(N,R2,v2)
+    invariant forall R1:round, R2:round, N:node. !(!le(R2,R1) & vote(N,R1,v1) & one_b_never_voted(N,R2))
+    invariant forall R1:round, R2:round, N:node. !(!le(R2,R1) & vote(N,R1,v2) & one_b_never_voted(N,R2))
+    invariant forall R1:round, R2:round, V2:value, N:node. one_b_with_max_vote(N,R1,R2,V2) & vote(N,r1,v1) & !le(R1,r1) -> le(r1,R2)
+    invariant forall R1:round, R2:round, V2:value, N:node. one_b_with_max_vote(N,R1,R2,V2) & vote(N,r2,v2) & !le(R1,r2) -> le(r2,R2)
+    invariant forall R:round, N:node. one_b_never_voted(N,R) -> le(R, current_round(N))
+    invariant forall R1:round, R2:round, V:value, N:node. one_b_with_max_vote(N,R1,R2,V) -> le(R1, current_round(N))
+    invariant forall R:round. !le(R, r2) & v1 != v2 -> !proposal(R,v1)
+    invariant forall R:round. !le(R, r1) & v1 != v2 -> !proposal(R,v2)
+  }
+}
+
+
+sat trace {
+  send_1a
+  join_round_never_voted
+  propose_without_votes
+  cast_vote
+  decide
+  assert exists R, V. decision(R, V) 
+}
+
+sat trace {
+  send_1a
+  join_round_never_voted
+  propose_without_votes
+  cast_vote
+  send_1a
+  join_round_with_max_vote
+  propose_with_votes
+  cast_vote
+  decide
+  assert exists R, V. decision(R, V) 
+}
