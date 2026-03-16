@@ -474,12 +474,8 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
             )
             inv_p_decl = syntax.RelationDecl('__INV_P', param_actual_sorts, mutable=False)
             m_p_decl = syntax.RelationDecl('__M_P', param_actual_sorts, mutable=True)
-            assert '__INV_P' not in scope.relations
-            assert '__M_P' not in scope.relations
-            scope.relations['__INV_P'] = inv_p_decl
-            scope.relations['__M_P'] = m_p_decl
 
-            with scope.n_states(1):
+            with scope.temp_relations(inv_p_decl, m_p_decl), scope.n_states(1):
                 for item in step.prophecy:
                     if isinstance(item, syntax.FbiiHeuristicDecl):
                         if item.name == 'proph_select':
@@ -492,9 +488,6 @@ def typecheck_fbii_decl(scope: syntax.Scope, fbii: syntax.FbiiDecl) -> None:
                         inv = item
                         inv.expr = syntax.close_free_vars(inv.expr, span=inv.span)
                         typecheck_expr(scope, inv.expr, BoolSort)
-
-            del scope.relations['__INV_P']
-            del scope.relations['__M_P']
 
         # After checking this step, promote params to immutable constants in scope
         # so that subsequent steps can reference them

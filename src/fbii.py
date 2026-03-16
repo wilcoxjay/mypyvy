@@ -781,27 +781,18 @@ def _check_fbii_proof(
         prev = And(*prev_formulas)
         verbose = getattr(utils.args, 'verbose', False)
 
-        mp_decl: Optional[RelationDecl] = None
-        if step.has_prophecy:
-            param_sorts = tuple(syntax.safe_cast_sort(sv.sort) for sv in params)
-            mp_decl = RelationDecl('__M_P', param_sorts, mutable=True)
-            assert '__M_P' not in scope.relations, '__M_P already in scope'
-            scope.relations['__M_P'] = mp_decl
-
         try:
             if not step.has_prophecy:
                 _check_step_simple(s, prog, step.direction, init_expr, bad_expr, prev, inv_conj, verbose)
             else:
-                _check_step_prophecy(s, prog, scope, step, init_expr, bad_expr, prev, inv_conj, verbose)
+                param_sorts = tuple(syntax.safe_cast_sort(sv.sort) for sv in params)
+                mp_decl = RelationDecl('__M_P', param_sorts, mutable=True)
+                with scope.temp_relations(mp_decl):
+                    _check_step_prophecy(s, prog, scope, step, init_expr, bad_expr, prev, inv_conj, verbose)
             utils.logger.always_print(f'  step {step_idx + 1} OK')
         except _FbiiFailure:
             utils.logger.always_print(f'  step {step_idx + 1} FAILED')
             raise
-        finally:
-            if mp_decl is not None:
-                del scope.relations['__M_P']
-                mp_decl.mut_z3.clear()
-                mp_decl.immut_z3 = None
 
         prev_formulas.extend(inv.expr for inv in body_invs)
 
