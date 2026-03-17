@@ -1,4 +1,5 @@
 # MYPYVY: verify --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
+
 # see https://github.com/wilcoxjay/mypyvy/issues/31
 
 sort decision
