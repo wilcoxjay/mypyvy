@@ -13,24 +13,23 @@ MYPYVY_OPTS := --seed=0 --log=info --timeout 10000 --print-cmdline
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 PYV_FILES := $(sort $(wildcard examples/*.pyv))
 
-# pyv files that are slow to verify (>5s in CI)
-VERIFY_SLOW_FILES := \
-	examples/block_cache_system.pyv \
-	examples/fast_paxos_forall_choosable.pyv \
-	examples/paxos_fol.pyv \
-	examples/stoppable_paxos_forall.pyv \
-	examples/vertical_paxos_forall_choosable.pyv
+# Small representative subsets for fast CI jobs (each file <1s).
+# The full set is exercised by gh-test-full on the latest Python.
+VERIFY_FAST_FILES := \
+	examples/lockserv.pyv \
+	examples/client_server_ae.pyv \
+	examples/sharded_kv.pyv \
+	examples/toy_consensus_forall.pyv \
+	examples/ring_leader_election.pyv \
+	examples/flexible_paxos_epr.pyv
 
-# pyv files that are slow to trace (>5s in CI)
-TRACE_SLOW_FILES := \
-	examples/cache.pyv \
-	examples/flexible_paxos_forall_choosable.pyv \
-	examples/paxos_forall.pyv \
-	examples/paxos_forall_choosable.pyv \
-	examples/raft_epr.pyv
-
-VERIFY_FAST_FILES := $(filter-out $(VERIFY_SLOW_FILES), $(PYV_FILES))
-TRACE_FAST_FILES := $(filter-out $(TRACE_SLOW_FILES), $(PYV_FILES))
+TRACE_FAST_FILES := \
+	examples/lockserv.pyv \
+	examples/client_server_ae.pyv \
+	examples/sharded_kv.pyv \
+	examples/toy_consensus_forall.pyv \
+	examples/ring_leader_election.pyv \
+	examples/firewall_ae.pyv
 
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
