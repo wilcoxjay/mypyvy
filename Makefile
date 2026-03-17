@@ -13,9 +13,28 @@ MYPYVY_OPTS := --seed=0 --log=info --timeout 10000 --print-cmdline
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 PYV_FILES := $(sort $(wildcard examples/*.pyv))
 
+# pyv files that are slow to verify (>5s in CI)
+VERIFY_SLOW_FILES := \
+	examples/block_cache_system.pyv \
+	examples/fast_paxos_forall_choosable.pyv \
+	examples/paxos_fol.pyv \
+	examples/stoppable_paxos_forall.pyv \
+	examples/vertical_paxos_forall_choosable.pyv
+
+# pyv files that are slow to trace (>5s in CI)
+TRACE_SLOW_FILES := \
+	examples/cache.pyv \
+	examples/flexible_paxos_forall_choosable.pyv \
+	examples/paxos_forall.pyv \
+	examples/paxos_forall_choosable.pyv \
+	examples/raft_epr.pyv
+
+VERIFY_FAST_FILES := $(filter-out $(VERIFY_SLOW_FILES), $(PYV_FILES))
+TRACE_FAST_FILES := $(filter-out $(TRACE_SLOW_FILES), $(PYV_FILES))
+
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
-gh-test: check check-imports unit typecheck verify trace updr sep fbii
+gh-test: check check-imports unit typecheck verify-fast trace-fast updr sep fbii
 
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
@@ -42,9 +61,13 @@ typecheck: $(patsubst %.pyv, %.typecheck, $(PYV_FILES))
 
 verify: $(patsubst %.pyv, %.verify, $(PYV_FILES))
 
+verify-fast: $(patsubst %.pyv, %.verify, $(VERIFY_FAST_FILES))
+
 verify.cvc4: $(patsubst %.pyv, %.verify.cvc4, $(PYV_FILES))
 
 trace: $(patsubst %.pyv, %.trace, $(PYV_FILES))
+
+trace-fast: $(patsubst %.pyv, %.trace, $(TRACE_FAST_FILES))
 
 updr: examples/lockserv.updr examples/sharded_kv.updr
 
@@ -162,4 +185,4 @@ clean:
 	rm -fv examples/*.out
 	rm -fr .mypy_cache/
 
-.PHONY: style check run test verify verify-pd updr bench typecheck trace pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test fbii
+.PHONY: style check run test verify verify-fast verify-pd updr bench typecheck trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test fbii
