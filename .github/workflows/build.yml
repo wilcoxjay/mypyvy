@@ -7,25 +7,20 @@ on:
 
 jobs:
   build:
-    name: "py${{ matrix.python-version }} z3-${{ matrix.z3-version }}"
+    name: "py${{ matrix.python-version }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        z3-version: ["4.16.0"]
-        z3-glibc: ["2.39"]
+        make-target: ["gh-test"]
         include:
           - python-version: "3.14"
-            z3-version: "4.15.8"
-            z3-glibc: "2.39"
-          - python-version: "3.14"
-            z3-version: "4.14.1"
-            z3-glibc: "2.35"
+            make-target: "gh-test-full"
     env:
-      Z3_VERSION: ${{ matrix.z3-version }}
-      Z3_GLIBC: ${{ matrix.z3-glibc }}
+      Z3_VERSION: "4.16.0"
+      Z3_GLIBC: "2.39"
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python ${{ matrix.python-version }}
@@ -47,8 +42,8 @@ jobs:
         id: cache-z3
         uses: actions/cache@v4
         with:
-          path: z3-${{ matrix.z3-version }}-x64-glibc-${{ matrix.z3-glibc }}
-          key: z3-${{ matrix.z3-version }}-glibc-${{ matrix.z3-glibc }}
+          path: z3-${{ env.Z3_VERSION }}-x64-glibc-${{ env.Z3_GLIBC }}
+          key: z3-${{ env.Z3_VERSION }}-glibc-${{ env.Z3_GLIBC }}
       - name: Install Z3
         if: steps.cache-z3.outputs.cache-hit != 'true'
         run: |
@@ -60,4 +55,4 @@ jobs:
           echo PYTHONPATH=`pwd`/z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC}/bin/python >> $GITHUB_ENV
       - run: z3 --version  # make sure z3 is installed
       - run: python3 -c 'import z3; print(z3.get_version())'  # make sure z3 can be imported from python
-      - run: make gh-test
+      - run: make ${{ matrix.make-target }}

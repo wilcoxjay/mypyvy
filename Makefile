@@ -36,6 +36,8 @@ test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
 gh-test: check check-imports unit typecheck verify-fast trace-fast updr sep fbii
 
+gh-test-full: check check-imports unit typecheck verify trace updr sep fbii
+
 style:
 	$(PYTHON) -m flake8 $(SRC_FILES) || true
 	grep the_program $(SRC_FILES) || true
@@ -185,4 +187,4 @@ clean:
 	rm -fv examples/*.out
 	rm -fr .mypy_cache/
 
-.PHONY: style check run test verify verify-fast verify-pd updr bench typecheck trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test fbii
+.PHONY: style check run test verify verify-fast verify-pd updr bench typecheck trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test gh-test-full fbii

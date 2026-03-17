@@ -1,5 +1,4 @@
 # MYPYVY: verify --no-print-counterexample --no-query-time --error-filename-basename --no-print-cmdline --print-exit-code
-# MIN_Z3: 4.16.0
 # see https://github.com/wilcoxjay/mypyvy/issues/31
 
 sort decision
