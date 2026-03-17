@@ -8,10 +8,13 @@ import mypyvy
 
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 
-from typing import List
+import z3
+
+from typing import List, Optional, Tuple
 
 lockserv_path = utils.PROJECT_ROOT / 'examples' / 'lockserv.pyv'
 
@@ -116,27 +119,64 @@ def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3'
     return [python, str((utils.PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
 
+def _parse_min_z3_version(line: str) -> Optional[Tuple[int, ...]]:
+    """Parse a '# MIN_Z3: x.y.z' directive from a regression test file."""
+    m = re.match(r'#\s*MIN_Z3:\s*([\d.]+)', line)
+    if m:
+        return tuple(int(x) for x in m.group(1).split('.'))
+    return None
+
+def _z3_version_tuple() -> Tuple[int, ...]:
+    major, minor, build, revision = z3.get_version()
+    return (major, minor, build)
+
+def _truncated_diff(expect_path: Path, out_path: Path, max_lines: int = 10) -> str:
+    """Run diff and return first and last max_lines lines if output is long."""
+    proc = subprocess.run(
+        ['diff', '-uw', str(expect_path), str(out_path)],
+        capture_output=True, text=True,
+    )
+    lines = proc.stdout.splitlines()
+    if len(lines) <= 2 * max_lines:
+        return proc.stdout
+    head = lines[:max_lines]
+    tail = lines[-max_lines:]
+    skipped = len(lines) - 2 * max_lines
+    return '\n'.join(head + [f'... ({skipped} lines omitted) ...'] + tail) + '\n'
+
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
         any_tests = False
+        z3_ver = _z3_version_tuple()
         for p in sorted(Path(utils.PROJECT_ROOT / 'regression').glob('*.pyv')):
             any_tests = True
             with self.subTest(testFile=str(p)):
-                print(f'running regression test {p}')
                 with open(p) as f:
-                    line = f.readline()
+                    lines = [f.readline(), f.readline()]
                 magic_prefix = '# MYPYVY: '
-                assert line.startswith(magic_prefix)
-                line = line[len(magic_prefix):]
+                assert lines[0].startswith(magic_prefix)
+                # Check for MIN_Z3 directive on second line
+                min_ver = _parse_min_z3_version(lines[1])
+                if min_ver is not None and z3_ver < min_ver:
+                    min_ver_str = '.'.join(str(x) for x in min_ver)
+                    z3_ver_str = '.'.join(str(x) for x in z3_ver)
+                    print(f'skipping regression test {p} (requires z3 >= {min_ver_str}, have {z3_ver_str})')
+                    continue
+                print(f'running regression test {p}')
+                cmd_line = lines[0][len(magic_prefix):]
                 out_path = p.with_suffix('.output')
                 expect_path = p.with_suffix('.expect')
-                python_cmd = build_python_cmd() + shlex.split(line) + [str(p)]
+                python_cmd = build_python_cmd() + shlex.split(cmd_line) + [str(p)]
                 with open(out_path, 'w') as f_out:
                     proc = subprocess.run(python_cmd, stdout=f_out, stderr=subprocess.STDOUT)
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                msg = f'{p} generated output {out_path} which differs from expected output {expect_path}.\n' \
-                      f'{" ".join(python_cmd)}\n{" ".join(diff_cmd)}'
+                if proc.returncode != 0:
+                    diff_output = _truncated_diff(expect_path, out_path)
+                    msg = f'{p} generated output {out_path} which differs from expected output {expect_path}.\n' \
+                          f'{" ".join(python_cmd)}\n{" ".join(diff_cmd)}\n\n{diff_output}'
+                else:
+                    msg = ''
                 self.assertEqual(proc.returncode, 0, msg=msg)
         self.assertTrue(any_tests, 'internal error with regression tests: it seems no regression tests exist!')
 
