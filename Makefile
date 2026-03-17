@@ -13,8 +13,19 @@ MYPYVY_OPTS := --seed=0 --log=info --timeout 10000 --print-cmdline
 SRC_FILES := $(shell find src -name '*.py' -not -name '*parsetab*' -not -path '*/ply/*')
 PYV_FILES := $(sort $(wildcard examples/*.pyv))
 
+# 7 slowest verify files (>30s each in CI), run only in nightly.
+VERIFY_SLOW_FILES := \
+	examples/block_cache_system.pyv \
+	examples/fast_paxos_forall_choosable.pyv \
+	examples/paxos_fol.pyv \
+	examples/paxos_forall_choosable.pyv \
+	examples/stoppable_paxos_forall.pyv \
+	examples/stoppable_paxos_forall_choosable.pyv \
+	examples/vertical_paxos_forall_choosable.pyv
+
+VERIFY_MEDIUM_FILES := $(filter-out $(VERIFY_SLOW_FILES), $(PYV_FILES))
+
 # Small representative subsets for fast CI jobs (each file <1s).
-# The full set is exercised by gh-test-full on the latest Python.
 VERIFY_FAST_FILES := \
 	examples/lockserv.pyv \
 	examples/client_server_ae.pyv \
@@ -42,6 +53,8 @@ TYPECHECK_FAST_FILES := \
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
 gh-test: check check-imports unit typecheck-fast verify-fast trace-fast updr sep-fast fbii
+
+gh-test-medium: check check-imports unit typecheck verify-medium trace updr sep fbii
 
 gh-test-full: check check-imports unit typecheck verify trace updr sep fbii
 
@@ -71,6 +84,8 @@ typecheck: $(patsubst %.pyv, %.typecheck, $(PYV_FILES))
 typecheck-fast: $(patsubst %.pyv, %.typecheck, $(TYPECHECK_FAST_FILES))
 
 verify: $(patsubst %.pyv, %.verify, $(PYV_FILES))
+
+verify-medium: $(patsubst %.pyv, %.verify, $(VERIFY_MEDIUM_FILES))
 
 verify-fast: $(patsubst %.pyv, %.verify, $(VERIFY_FAST_FILES))
 
@@ -200,4 +215,4 @@ clean:
 	rm -fv examples/*.out
 	rm -fr .mypy_cache/
 
-.PHONY: style check run test verify verify-fast verify-pd updr bench typecheck typecheck-fast trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test gh-test-full fbii sep sep-fast
+.PHONY: style check run test verify verify-medium verify-fast verify-pd updr bench typecheck typecheck-fast trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test gh-test-medium gh-test-full fbii sep sep-fast

@@ -20,7 +20,7 @@ jobs:
             make-target: "gh-test"
         include:
           - python-version: "3.14"
-            make-target: "gh-test-full"
+            make-target: "gh-test-medium"
     env:
       Z3_VERSION: "4.16.0"
       Z3_GLIBC: "2.39"
