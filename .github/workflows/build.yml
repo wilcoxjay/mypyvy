@@ -1,32 +1,61 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 jobs:
   build:
-    name: Build and test
-    runs-on: ubuntu-22.04
+    name: "py${{ matrix.python-version }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        make-target: ["gh-test"]
+        exclude:
+          - python-version: "3.14"
+            make-target: "gh-test"
+        include:
+          - python-version: "3.14"
+            make-target: "gh-test-medium"
     env:
-      Z3_VERSION: "4.11.2"
+      Z3_VERSION: "4.16.0"
+      Z3_GLIBC: "2.39"
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Cache pip dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ matrix.python-version }}-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Cache Z3
+        id: cache-z3
+        uses: actions/cache@v5
+        with:
+          path: z3-${{ env.Z3_VERSION }}-x64-glibc-${{ env.Z3_GLIBC }}
+          key: z3-${{ env.Z3_VERSION }}-glibc-${{ env.Z3_GLIBC }}
       - name: Install Z3
+        if: steps.cache-z3.outputs.cache-hit != 'true'
         run: |
-          wget -nv https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/z3-${Z3_VERSION}-x64-glibc-2.31.zip
-          unzip z3-${Z3_VERSION}-x64-glibc-2.31.zip
-          echo `pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin >> $GITHUB_PATH
-          echo PYTHONPATH=`pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin/python >> $GITHUB_ENV
+          wget -nv https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC}.zip
+          unzip z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC}.zip
+      - name: Set up Z3 paths
+        run: |
+          echo `pwd`/z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC}/bin >> $GITHUB_PATH
+          echo PYTHONPATH=`pwd`/z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC}/bin/python >> $GITHUB_ENV
       - run: z3 --version  # make sure z3 is installed
-      - run: python3 -c 'import z3'  # make sure z3 can be imported from python
-      - run: make gh-test
+      - run: python3 -c 'import z3; print(z3.get_version())'  # make sure z3 can be imported from python
+      - run: make ${{ matrix.make-target }}

@@ -116,6 +116,20 @@ def build_python_cmd() -> List[str]:
     python = os.getenv('PYTHON') or 'python3'
     return [python, str((utils.PROJECT_ROOT / 'src' / 'mypyvy.py').resolve())]
 
+def _truncated_diff(expect_path: Path, out_path: Path, max_lines: int = 10) -> str:
+    """Run diff and return first and last max_lines lines if output is long."""
+    proc = subprocess.run(
+        ['diff', '-uw', str(expect_path), str(out_path)],
+        capture_output=True, text=True,
+    )
+    lines = proc.stdout.splitlines()
+    if len(lines) <= 2 * max_lines:
+        return proc.stdout
+    head = lines[:max_lines]
+    tail = lines[-max_lines:]
+    skipped = len(lines) - 2 * max_lines
+    return '\n'.join(head + [f'... ({skipped} lines omitted) ...'] + tail) + '\n'
+
 class RegressionTests(unittest.TestCase):
     def test_regressions(self) -> None:
         any_tests = False
@@ -135,8 +149,12 @@ class RegressionTests(unittest.TestCase):
                     proc = subprocess.run(python_cmd, stdout=f_out, stderr=subprocess.STDOUT)
                 diff_cmd = ['diff', '-uw', str(expect_path), str(out_path)]
                 proc = subprocess.run(diff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                msg = f'{p} generated output {out_path} which differs from expected output {expect_path}.\n' \
-                      f'{" ".join(python_cmd)}\n{" ".join(diff_cmd)}'
+                if proc.returncode != 0:
+                    diff_output = _truncated_diff(expect_path, out_path)
+                    msg = f'{p} generated output {out_path} which differs from expected output {expect_path}.\n' \
+                          f'{" ".join(python_cmd)}\n{" ".join(diff_cmd)}\n\n{diff_output}'
+                else:
+                    msg = ''
                 self.assertEqual(proc.returncode, 0, msg=msg)
         self.assertTrue(any_tests, 'internal error with regression tests: it seems no regression tests exist!')
 

@@ -4,7 +4,7 @@ A language for symbolic transition systems, inspired by Ivy.
 
 ## Dependencies
 
-You need python version 3.8 or higher.
+You need python version 3.10 or higher.
 
 ```
 python3 --version
