@@ -31,9 +31,17 @@ TRACE_FAST_FILES := \
 	examples/ring_leader_election.pyv \
 	examples/firewall_ae.pyv
 
+TYPECHECK_FAST_FILES := \
+	examples/lockserv.pyv \
+	examples/client_server_ae.pyv \
+	examples/sharded_kv.pyv \
+	examples/toy_consensus_forall.pyv \
+	examples/ring_leader_election.pyv \
+	examples/paxos_epr.pyv
+
 test: check check-imports unit typecheck verify verify.cvc4 trace updr pd sep
 
-gh-test: check check-imports unit typecheck verify-fast trace-fast updr sep fbii
+gh-test: check check-imports unit typecheck-fast verify-fast trace-fast updr sep-fast fbii
 
 gh-test-full: check check-imports unit typecheck verify trace updr sep fbii
 
@@ -59,6 +67,8 @@ prelude: check check-imports unit
 	@echo
 
 typecheck: $(patsubst %.pyv, %.typecheck, $(PYV_FILES))
+
+typecheck-fast: $(patsubst %.pyv, %.typecheck, $(TYPECHECK_FAST_FILES))
 
 verify: $(patsubst %.pyv, %.verify, $(PYV_FILES))
 
@@ -171,6 +181,10 @@ sep: \
 	examples/lockserv.sep \
 	examples/toy_leader_consensus_forall.sep \
 
+sep-fast: \
+	examples/ring_leader_election_single_sort.sep \
+	examples/lockserv.sep \
+
 %.sep: %.pyv prelude
 	time ( $(PYTHON) src/mypyvy.py sep $(MYPYVY_OPTS) $< > $@.out && \
 		echo && head -n 1 $@.out && \
@@ -186,4 +200,4 @@ clean:
 	rm -fv examples/*.out
 	rm -fr .mypy_cache/
 
-.PHONY: style check run test verify verify-fast verify-pd updr bench typecheck trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test gh-test-full fbii
+.PHONY: style check run test verify verify-fast verify-pd updr bench typecheck typecheck-fast trace trace-fast pd pd-old pd-long unit check-imports clear-cache nightly clean prelude gh-test gh-test-full fbii sep sep-fast
