@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Cache pip dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
@@ -43,7 +43,7 @@ jobs:
           pip install -r requirements.txt
       - name: Cache Z3
         id: cache-z3
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: z3-${{ env.Z3_VERSION }}-x64-glibc-${{ env.Z3_GLIBC }}
           key: z3-${{ env.Z3_VERSION }}-glibc-${{ env.Z3_GLIBC }}
