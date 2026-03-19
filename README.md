@@ -13,11 +13,11 @@ Python 3.8.2
 
 Make sure z3 is installed and on your `PYTHONPATH`. Basic functionality should
 work with any version from the past few years, but for best results, use a recent
-release, such as 4.11.2.
+release, such as 4.16.0.
 
 ```
 z3 --version
-Z3 version 4.11.2 - 64 bit
+Z3 version 4.16.0 - 64 bit
 ```
 
 Importing z3 should work (not report any errors) as follows.
